@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +40,8 @@ AMBIGUOUS_RULES = "AMBIGUOUS_RULES"
 MISSING_RUNTIME_INPUTS = "MISSING_RUNTIME_INPUTS"
 UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
 NO_RESULT = "NO_RESULT"
+SOURCE_SCOPE_UNRESOLVED = "SOURCE_SCOPE_UNRESOLVED"
+OUT_OF_SCOPE_RULE = "OUT_OF_SCOPE_RULE"
 
 _DERIVED_RESULTS = frozenset({"MATCH", "NO_MATCH"})
 _IGNORED_EVALUATION_STATUSES = frozenset({"NOT_APPLICABLE"})
@@ -122,15 +125,31 @@ def evaluate_deterministic_fast_path(
     missing_premises: Sequence[Any] = (),
     conflicts: Sequence[Any] = (),
     preparation_status: str = "ok",
+    scope_explicit: bool | None = None,
+    out_of_scope_rule_ids: Sequence[str] = (),
 ) -> DeterministicFastPathDecision:
-    """Elegible sólo con autoridad completa y sin incertidumbre (§1, §2)."""
+    """Elegible sólo con autoridad completa y sin incertidumbre (§1, §2).
+
+    P0.1: con `scope_explicit=False` (agente sin fuentes/KB/workspace) el fast
+    path NO decide sobre un universo no declarado: SOURCE_SCOPE_UNRESOLVED.
+    Una regla ganadora excluida por scope/mezcla tampoco puede sostenerlo.
+    """
     if not requires_deterministic:
         return _fail(NOT_EXECUTABLE)
+    if scope_explicit is False:
+        return _fail(SOURCE_SCOPE_UNRESOLVED)
     if str(preparation_status or "ok") == "error":
         return _fail(PREPARATION_ERROR)
     env = _payload(envelope)
     if env.get("authoritative") is not True:
         return _fail(NO_AUTHORITY)
+    excluded = {str(value) for value in out_of_scope_rule_ids if str(value or "").strip()}
+    if excluded:
+        winning = set(_texts(env.get("canonical_rule_ids")))
+        for claim in claims or ():
+            winning.update(_texts(_payload(claim).get("canonical_rule_ids")))
+        if winning & excluded:
+            return _fail(OUT_OF_SCOPE_RULE)
     g = _payload(grounded)
     if not g:
         return _fail(NO_GROUNDED_REASONING)
@@ -232,8 +251,28 @@ def evaluate_deterministic_fast_path(
     )
 
 
-def fast_path_decision_for(prep: Any, *, requires_deterministic: bool) -> DeterministicFastPathDecision:
+def fast_path_decision_for(
+    prep: Any,
+    *,
+    requires_deterministic: bool,
+    scope_explicit: bool | None = None,
+    out_of_scope_rule_ids: Sequence[str] = (),
+) -> DeterministicFastPathDecision:
     """Conveniencia sobre `DerivedPreparationResult` (duck-typed)."""
+    if scope_explicit is None:
+        scope_public = _payload(getattr(prep, "authorized_scope", None))
+        if "is_explicit" in scope_public:
+            scope_explicit = bool(scope_public.get("is_explicit"))
+    excluded_ids = list(out_of_scope_rule_ids)
+    for item in _records(getattr(prep, "scope_excluded_rules", ()) or ()):
+        reason = str(item.get("reason") or "")
+        rule_id = str(item.get("rule_id") or "")
+        if rule_id and reason in {
+            "OUT_OF_SCOPE_RULE",
+            "MIXED_SOURCE_RULE",
+            "RULE_PROVENANCE_UNVERIFIED",
+        }:
+            excluded_ids.append(rule_id)
     return evaluate_deterministic_fast_path(
         requires_deterministic=requires_deterministic,
         envelope=getattr(prep, "authoritative_envelope", None),
@@ -242,17 +281,238 @@ def fast_path_decision_for(prep: Any, *, requires_deterministic: bool) -> Determ
         missing_premises=list(getattr(prep, "missing_premises", ()) or ()),
         conflicts=list(getattr(prep, "conflicts", ()) or ()),
         preparation_status=str(getattr(prep, "status", "ok") or "ok"),
+        scope_explicit=scope_explicit,
+        out_of_scope_rule_ids=tuple(excluded_ids),
     )
+
+
+_INPUT_RE = re.compile(r"^\s*([^=]+?)\s*=\s*(.*)$")
+
+_RESULT_WORDS: dict[str, str] = {
+    "MATCH": "cumple",
+    "NO_MATCH": "no cumple",
+    "TRUE": "verdadero",
+    "FALSE": "falso",
+    "VALID": "válido",
+    "INVALID": "no válido",
+    "ELIGIBLE": "elegible",
+    "NOT_ELIGIBLE": "no elegible",
+}
+
+
+def _inputs(runtime_inputs: Sequence[Any]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for raw in runtime_inputs or ():
+        match = _INPUT_RE.match(str(raw or ""))
+        if match is None:
+            continue
+        key = match.group(1).strip().lower().replace(" ", "_")
+        value = match.group(2).strip()
+        if key and key not in parsed:
+            parsed[key] = value
+    return parsed
+
+
+def _input_values(runtime_inputs: Sequence[Any]) -> list[str]:
+    """Valores crudos (con o sin `clave=valor`), deduplicados."""
+    values: list[str] = []
+    for raw in runtime_inputs or ():
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        match = _INPUT_RE.match(text)
+        if match is not None:
+            text = match.group(2).strip()
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
+def _first_value(inputs: Mapping[str, str]) -> str:
+    for key in ("value", "valor", "input", "amount", "number", "age", "date", "fecha"):
+        if inputs.get(key):
+            return inputs[key]
+    for value in inputs.values():
+        if value:
+            return value
+    return ""
+
+
+def _normalized_result(operation: str, result: Any) -> str:
+    from src.runtime.decision_envelope import normalize_decision_result
+
+    return str(normalize_decision_result(operation, result) or "").upper()
+
+
+def _result_word(operation: str, result: str) -> str:
+    if operation in {"POSITIONAL_MATCH", "MATCH", "STRING_EQUALITY"}:
+        return "cumple" if result in {"MATCH", "TRUE", "VALID"} else "no cumple"
+    return _RESULT_WORDS.get(result, result.lower() or "evaluado")
+
+
+def _user_sources(citations: Sequence[Mapping[str, Any]]) -> list[str]:
+    sources: list[str] = []
+    for citation in citations or ():
+        item = _payload(citation)
+        name = str(
+            item.get("document_name")
+            or item.get("title")
+            or item.get("display_name")
+            or ""
+        ).strip()
+        if not name or name.lower().startswith("documento "):
+            continue
+        label = f"Fuente: {name}"
+        page = item.get("page")
+        if isinstance(page, int):
+            label += f" · pág. {page}"
+        section = item.get("section_path")
+        if isinstance(section, (list, tuple)):
+            section_text = " · ".join(str(part) for part in section[:2] if str(part))
+            if section_text:
+                label += f" · {section_text[:60]}"
+        if label not in sources:
+            sources.append(label)
+    return sources
+
+
+def build_user_deterministic_explanation(
+    envelope: Any,
+    *,
+    grounded: Any = None,
+    checks: Sequence[Any] = (),
+    runtime_inputs: Sequence[Any] = (),
+) -> str:
+    """Explicación natural, genérica por operación. Sin LLM y sin códigos.
+
+    Usa sólo resultado, checks e inputs publicados: nunca UUIDs, IDs de regla,
+    códigos internos ni cadenas de verificación. El detalle técnico completo
+    sigue disponible en `build_operation_explanation()`.
+    """
+    env = _payload(envelope)
+    operation = str(env.get("operation") or "").upper()
+    result = _normalized_result(operation, env.get("result"))
+    inputs = _inputs(
+        runtime_inputs or _texts(env.get("runtime_inputs"))
+    )
+    check_records = [_payload(check) for check in checks or ()]
+    lines: list[str] = []
+
+    if operation in {"POSITIONAL_MATCH", "MATCH", "STRING_EQUALITY"}:
+        pattern = inputs.get("pattern") or inputs.get("patrón") or ""
+        value = inputs.get("value") or inputs.get("valor") or ""
+        values = _input_values(runtime_inputs)
+        if not pattern:
+            pattern = next(
+                (item for item in values if any(ch in item for ch in "&*?%#$@!~^")),
+                "",
+            )
+        if not value:
+            value = next(
+                (
+                    item
+                    for item in values
+                    if item != pattern and item.replace(" ", "").isalnum()
+                ),
+                "",
+            )
+        if pattern and value:
+            described: list[str] = []
+            for index, char in enumerate(pattern):
+                if char.isalnum():
+                    described.append(f"posición {index + 1} debe ser «{char}»")
+                else:
+                    described.append(f"posición {index + 1} admite un carácter")
+            lines.append(
+                f"El patrón `{pattern}` exige que " + ", ".join(described) + "."
+            )
+            head = value[: len(pattern)]
+            if result in {"MATCH", "TRUE", "VALID"}:
+                lines.append(
+                    f"`{value}` comienza con `{head}`, por lo que satisface esas "
+                    "posiciones."
+                )
+            else:
+                lines.append(
+                    f"`{value}` no satisface todas las posiciones del patrón."
+                )
+            length_checked = any(
+                "length" in str(check.get("name") or "").lower()
+                or "length" in str(check.get("detail") or "").lower()
+                for check in check_records
+            )
+            if length_checked and len(value) > len(pattern):
+                lines.append(
+                    "La política de longitud documentada permite caracteres "
+                    "adicionales después de las posiciones del patrón."
+                )
+        else:
+            lines.append(
+                "El patrón documentado se comparó posición a posición con el "
+                "valor provisto."
+            )
+    elif operation in {"RANGE_CHECK", "COMPARISON", "NUMERIC_COMPARE"}:
+        value = _first_value(inputs)
+        if operation == "RANGE_CHECK":
+            inside = result in {"VALID", "TRUE", "MATCH"}
+            lines.append(
+                f"El valor `{value}` {('queda dentro' if inside else 'queda fuera')} "
+                "del rango documentado."
+                if value
+                else "El valor provisto se comparó contra el rango documentado."
+            )
+        else:
+            lines.append(
+                "Los valores provistos se compararon según la condición documentada."
+            )
+    elif operation in {"ENUM_CHECK", "SET_MEMBERSHIP"}:
+        value = _first_value(inputs)
+        inside = result in {"VALID", "TRUE", "MATCH"}
+        lines.append(
+            f"`{value}` {('figura' if inside else 'no figura')} entre los valores "
+            "documentados."
+            if value
+            else "El valor provisto se contrastó contra los valores documentados."
+        )
+    elif operation in {"DATE_COMPARE", "DATE_COMPARISON", "DATE_RANGE"}:
+        value = _first_value(inputs)
+        lines.append(
+            f"La fecha `{value}` {('cumple' if result in {'VALID', 'TRUE', 'MATCH'} else 'no cumple')} "
+            "la condición temporal documentada."
+            if value
+            else "La fecha provista se comparó contra la condición temporal documentada."
+        )
+    elif operation in {"BOOLEAN", "BOOLEAN_RULE"}:
+        lines.append(
+            "La condición documentada se evaluó como "
+            + ("verdadera." if result in {"TRUE", "VALID", "MATCH"} else "falsa.")
+        )
+    elif operation in {"FORMULA", "FORMULA_EVALUATION"}:
+        lines.append(
+            "La fórmula documentada se evaluó con los datos provistos."
+        )
+    else:
+        lines.append("La operación documentada se evaluó de forma determinista.")
+
+    lines.append(f"Resultado: {_result_word(operation, result)}.")
+    text = "\n\n".join(line for line in lines if line)
+    # Formato: nunca una barra invertida suelta entre líneas.
+    return text.replace("\\\n", "\n").strip()
 
 
 def render_deterministic_answer(
     envelope: Any,
     *,
+    grounded: Any = None,
+    checks: Sequence[Any] = (),
+    runtime_inputs: Sequence[Any] = (),
     citations: Sequence[Mapping[str, Any]] = (),
 ) -> str:
-    """Headline + explicación determinista + fuentes citadas. Sin LLM."""
-    from src.runtime.decision_envelope import build_operation_explanation
+    """Headline + explicación natural determinista + fuentes. Sin LLM.
 
+    La respuesta visible no expone IDs ni códigos internos; el detalle técnico
+    completo vive en la traza (`build_operation_explanation`).
+    """
     env = _payload(envelope)
     headline = ""
     operation = str(env.get("operation") or "")
@@ -266,31 +526,13 @@ def render_deterministic_answer(
             headline = decision_headline(operation, result)
     except Exception:  # noqa: BLE001 — el render nunca rompe la respuesta
         headline = ""
-    explanation = ""
-    if hasattr(envelope, "normalized_result"):
-        explanation = build_operation_explanation(envelope)  # type: ignore[arg-type]
-    else:
-        from src.runtime.decision_envelope import normalize_decision_result
-
-        normalized = normalize_decision_result(operation, result)
-        lines = [f"Resultado determinista ({operation or 'OPERACIÓN'}): {normalized}"]
-        rule_ids = _texts(env.get("canonical_rule_ids"))
-        if rule_ids:
-            lines.append("Regla canónica: " + ", ".join(rule_ids[:3]))
-        inputs = _texts(env.get("runtime_inputs"))
-        if inputs:
-            lines.append("Datos aplicados: " + ", ".join(inputs[:6]))
-        explanation = "\n".join(lines)
-    sources: list[str] = []
-    for citation in citations or ():
-        item = _payload(citation)
-        name = str(item.get("document_name") or item.get("title") or "").strip()
-        page = item.get("page")
-        if not name:
-            continue
-        label = f"Fuente: {name}" + (f" · pág. {page}" if isinstance(page, int) else "")
-        if label not in sources:
-            sources.append(label)
+    explanation = build_user_deterministic_explanation(
+        envelope,
+        grounded=grounded,
+        checks=checks,
+        runtime_inputs=runtime_inputs,
+    )
+    sources = _user_sources(citations)
     parts = [part for part in (headline, explanation, "\n".join(sources[:3])) if part]
     return "\n\n".join(parts).strip()
 
@@ -385,6 +627,9 @@ __all__ = [
     "MISSING_PREMISES",
     "NO_AUTHORITY",
     "NOT_EXECUTABLE",
+    "OUT_OF_SCOPE_RULE",
+    "SOURCE_SCOPE_UNRESOLVED",
+    "build_user_deterministic_explanation",
     "evaluate_deterministic_fast_path",
     "fast_path_decision_for",
     "fast_path_metrics",

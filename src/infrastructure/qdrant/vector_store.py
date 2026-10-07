@@ -1430,6 +1430,90 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         )
         return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
 
+    async def get_documents_by_metadata(
+        self,
+        organization_id: UUID,
+        *,
+        document_ids: list[str] | None = None,
+        source_ids: list[str] | None = None,
+        chunk_ids: list[str] | None = None,
+        knowledge_base_ids: list[str] | None = None,
+        role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
+        limit: int = 4,
+    ) -> RetrievalContext:
+        """Fetch scoped por metadata (`document_id`/`source_id`/`chunk_id`/KB).
+
+        Lookup determinista para hidratar referencias de decisión: NO es una
+        búsqueda semántica. Tenant y ACL se verifican post-hoc, igual que en
+        `get_documents`.
+        """
+        if organization_id is None:
+            raise ValueError(
+                "get_documents_by_metadata() requires organization_id (tenant isolation)"
+            )
+        organization_id = bind_organization_id(organization_id)
+        must = [
+            qdrant_models.FieldCondition(
+                key="organization_id",
+                match=qdrant_models.MatchValue(value=str(organization_id)),
+            )
+        ]
+        for key, values in (
+            ("metadata.document_id", document_ids),
+            ("metadata.source_id", source_ids),
+            ("metadata.chunk_id", chunk_ids),
+            ("metadata.knowledge_base_id", knowledge_base_ids),
+        ):
+            cleaned = [str(value) for value in values or [] if str(value or "").strip()]
+            if cleaned:
+                must.append(
+                    qdrant_models.FieldCondition(
+                        key=key, match=qdrant_models.MatchAny(any=cleaned)
+                    )
+                )
+        if len(must) == 1:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        client = await _get_client()
+        await self._ensure_collection()
+        start = time.perf_counter()
+        points, _ = await _retry_on_transient_error(
+            client.scroll,
+            reset_client=True,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            scroll_filter=qdrant_models.Filter(must=must),
+            limit=max(1, int(limit)),
+            with_payload=True,
+            with_vectors=False,
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+        chunks: list[RetrievalChunk] = []
+        for point in points:
+            payload = point.payload or {}
+            if payload.get("organization_id") != str(organization_id):
+                logger.warning(
+                    "Cross-tenant metadata fetch blocked",
+                    point_id=str(point.id),
+                    requested_by=str(organization_id),
+                )
+                continue
+            if not payload_visible(payload, role=role, user_id=user_id, groups=groups):
+                continue
+            try:
+                point_uuid = UUID(str(point.id))
+            except (ValueError, TypeError, AttributeError):
+                point_uuid = UUID(int=0)
+            chunks.append(
+                RetrievalChunk(
+                    document_id=point_uuid,
+                    content=payload.get("content", ""),
+                    score=0.0,
+                    metadata=payload.get("metadata", {}),
+                )
+            )
+        return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
+
     async def get_neighborhood(
         self,
         organization_id: UUID,

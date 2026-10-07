@@ -414,6 +414,122 @@ def test_trace_muestra_fast_path_y_narrativa_determinista() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trace_fast_path_consistencia_y_decision_evidence() -> None:
+    grounded = _grounded()
+    envelope = build_decision_envelope(grounded)
+    public = grounded
+    flow = {
+        "status": "completed",
+        "method": "agent",
+        "question": "¿ABCFGEGE cumple &&&F?",
+        "generation": {},
+        "sources": [],
+        "fallbacks": [],
+        "timings": {},
+        "execution_mode": EXECUTION_MODE_FAST_PATH,
+        "fast_path": {
+            **fast_path_metrics(latency_ms=85.0, llm_calls_avoided=2),
+            "reason": "SUPPORTED_DECISION",
+            "operation": envelope.operation,
+            "result": envelope.normalized_result,
+            "verification": {"status": "VERIFIED_DETERMINISTIC", "verified": True},
+            "decision_evidence": {
+                "resolved": 3,
+                "unresolved": [],
+                "main_retrieval_hits": 0,
+                "decision_evidence_count": 3,
+                "documents_used_for_decision": 1,
+            },
+        },
+        "evidence": {
+            "counts": {
+                "evidence_retrieved": 3,
+                "evidence_unique": 3,
+                "evidence_used": 3,
+                "evidence_used_for_decision": 3,
+                "evidence_decision": 3,
+                "main_retrieval_hits": 0,
+                "evidence_cited": 1,
+                "documents_used_for_decision": 1,
+            },
+            "collection": "complete",
+            "citations_summary": {"references": 1, "dangling": []},
+        },
+        "citations": [{"index": 1, "evidence_id": "E1", "cited": True}],
+        "steps": [
+            {"id": "s0", "type": "grounding", "status": "warn", "detail": "inicial"},
+            {"id": "s1", "type": "grounded_reasoning", "status": "ok", **public},
+            {
+                "id": "s2",
+                "type": "deterministic_verifier",
+                "status": "ok",
+                "verified": True,
+            },
+            {
+                "id": "s3",
+                "type": "final_authority_lock",
+                "authoritative": True,
+                "operation": envelope.operation,
+                "result": envelope.normalized_result,
+                "lock_action": "preserved",
+            },
+            {"id": "s4", "type": "final", "status": "ok", "answer": "Sí, cumple."},
+        ],
+    }
+    trace = build_traceability(flow)
+    assert trace["verification"]["status"] == "VERIFIED"
+    assert trace["verification"]["decision_verification"]["status"] == "VERIFIED"
+    assert (
+        trace["verification"]["narrative_verification"]["status"]
+        == "VERIFIED_DETERMINISTIC"
+    )
+    assert trace["verification"]["decision_grounding"] == "CONFIRMED"
+    assert trace["verification"]["narrative_grounding"] == "COMPLETE"
+    # P2.1: con 0 llamadas LLM la historia dice "construyó", no "generó".
+    journey = [node["kind"] for node in trace["presentation"]["journey"]]
+    assert "DETERMINISTIC_ANSWER_BUILT" in journey
+    assert "ANSWER_GENERATED" not in journey
+    # P2.2: el warn inicial quedó superado por la autoridad.
+    grounding_step = next(
+        step for step in trace["runtime_steps"] if step["type"] == "grounding"
+    )
+    assert grounding_step["superseded"] is True
+    assert grounding_step["superseded_by"].startswith("DecisionEnvelope")
+    # P1.2: main retrieval y decision evidence se cuentan por separado.
+    counts = trace["evidence"]["counts"]
+    assert counts["evidence_decision"] == 3
+    assert counts["main_retrieval_hits"] == 0
+    assert trace["presentation"]["support"]["main_retrieval_hits"] == 0
+    # Sin violaciones: una sola fuente de verdad de verificación.
+    invariant_codes = [item["code"] for item in trace["diagnostics"]["invariants"]]
+    assert "FAST_PATH_VERIFICATION_CONSISTENCY" not in invariant_codes
+
+
+def test_invariante_fast_path_verification_consistency() -> None:
+    flow = {
+        "status": "completed",
+        "method": "agent",
+        "generation": {},
+        "sources": [],
+        "fallbacks": [],
+        "timings": {},
+        "execution_mode": EXECUTION_MODE_FAST_PATH,
+        "fast_path": {
+            "verification": {"status": "VERIFIED_DETERMINISTIC", "verified": True},
+        },
+        "steps": [
+            {"id": "s1", "type": "guardrail", "detail": "algo"},
+            {"id": "s2", "type": "final", "status": "ok", "answer": "..."},
+        ],
+    }
+    trace = build_traceability(flow)
+    # Sin determinista en steps, el trace no puede sostener VERIFIED: el
+    # invariante debe señalar la inconsistencia, no maquillarla.
+    codes = [item["code"] for item in trace["diagnostics"]["invariants"]]
+    assert "FAST_PATH_VERIFICATION_CONSISTENCY" in codes
+
+
+@pytest.mark.asyncio
 async def test_e2e_runtime_no_llama_al_modelo(monkeypatch: pytest.MonkeyPatch) -> None:
     from src.agents.runtime import agent_runtime as runtime_module
     from src.agents.runtime.agent_runtime import AgentRunRequest, AgentRuntime
@@ -479,7 +595,11 @@ async def test_e2e_runtime_no_llama_al_modelo(monkeypatch: pytest.MonkeyPatch) -
         organization_id=uuid4(),
         name="fast-agent",
         tools=[],
-        config_json={"runtime": {"answer_gate": "off"}},
+        config_json={
+            "runtime": {"answer_gate": "off"},
+            "source_ids": [str(uuid4())],
+            "knowledge_base_ids": [str(uuid4())],
+        },
     )
     runtime = AgentRuntime(llm_provider=llm)
     result = await runtime.run(

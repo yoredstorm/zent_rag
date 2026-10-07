@@ -945,15 +945,16 @@ def _verification_overall(
     decision_status: str = "",
     deterministic_verified: bool = False,
 ) -> str:
+    # P1.8: fuente única de verdad. Si el verificador determinista pasó y la
+    # decisión es autoritativa, el estado global es `verified` aunque no haya
+    # checks narrativos (fast path no ejecuta gate).
+    if deterministic_verified and decision_status == "VERIFIED":
+        return "verified"
     if not checks:
         return "not_verified"
     states = {str(check.get("state")) for check in checks}
     grounding = next((c for c in checks if c.get("key") == "grounding"), None)
     grounded_ok = grounding is not None and grounding.get("state") == "ok"
-    if deterministic_verified and decision_status == "VERIFIED":
-        # El verificador determinista confirmó hechos y refs: la narrativa no
-        # necesita el verifier LLM y el estado global queda verificado.
-        return "verified"
     if decision_status == "VERIFIED":
         # La decisión ya está verificada por código; la narrativa sólo puede
         # volver "parcial", nunca "bloqueada" (§ DECISION_NARRATIVE_SEPARATION).
@@ -1314,6 +1315,8 @@ def build_agent_flow(
             ("evidence_used_for_rule_compilation", "used_for_rule_compilation_count", None),
             ("evidence_used_for_premise_closure", "used_for_premise_closure_count", None),
             ("evidence_used_for_decision", "used_for_decision_count", None),
+            ("evidence_decision", "decision_evidence_count", None),
+            ("main_retrieval_hits", "main_retrieval_count", None),
             ("evidence_cited", "cited_count", "evidence_cited_count"),
             ("documents_retrieved", "documents_retrieved_count", None),
             ("documents_selected", "documents_selected_count", None),

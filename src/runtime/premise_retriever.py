@@ -170,6 +170,9 @@ class PremiseEvidenceRetriever:
         vector_store: Any = None,
         embedding_provider: Any = None,
         exact_limit: int = 8,
+        source_ids: Sequence[Any] = (),
+        knowledge_base_ids: Sequence[Any] = (),
+        strict_scope: bool = False,
     ) -> None:
         self._organization_id = _uuid(organization_id)
         self._workspace_id = _uuid(workspace_id)
@@ -180,8 +183,27 @@ class PremiseEvidenceRetriever:
         self._vector_store = vector_store
         self._embedder = embedding_provider
         self._exact_limit = max(1, int(exact_limit))
+        # Scope autorizado del agente: con `strict_scope`, la búsqueda NO cae a
+        # la organización entera cuando no hay hits en el scope.
+        self._authorized_source_ids = [
+            str(value) for value in source_ids or () if str(value or "").strip()
+        ]
+        self._authorized_knowledge_base_ids = [
+            str(value)
+            for value in knowledge_base_ids or ()
+            if str(value or "").strip()
+        ]
+        self._strict_scope = bool(strict_scope)
         self.last_lanes: dict[str, int] = {}
         self.last_lane_errors: list[dict[str, Any]] = []
+
+    @property
+    def scope_is_enforced(self) -> bool:
+        return self._strict_scope and bool(
+            self._authorized_source_ids
+            or self._authorized_knowledge_base_ids
+            or self._workspace_id
+        )
 
     def _record_lane_error(
         self, lane: str, exc: Exception, *, stage: str, query: str = ""
@@ -208,10 +230,26 @@ class PremiseEvidenceRetriever:
         needles = exact_needles(query)
         if not needles:
             return []
-        source_ids = [u for u in (_uuid(s) for s in scope.source_ids) if u]
+        scope_sources = [u for u in (_uuid(s) for s in scope.source_ids) if u]
+        authorized_sources = [
+            u for u in (_uuid(s) for s in self._authorized_source_ids) if u
+        ]
+        source_ids = authorized_sources or scope_sources
+        knowledge_base_id = (
+            _uuid(self._authorized_knowledge_base_ids[0])
+            if self._authorized_knowledge_base_ids
+            else None
+        )
+        scoped_tier: dict[str, Any] = {}
+        if source_ids:
+            scoped_tier["source_ids"] = source_ids
+        if knowledge_base_id is not None:
+            scoped_tier["knowledge_base_id"] = knowledge_base_id
         # Escalado §4: doc/source primero; tenant/workspace autorizado después.
-        tiers: list[dict[str, Any]] = [{"source_ids": source_ids}] if source_ids else []
-        tiers.append({})
+        # Con scope autorizado explícito (strict) NO se cae a la organización.
+        tiers: list[dict[str, Any]] = [scoped_tier] if scoped_tier else []
+        if not self._strict_scope:
+            tiers.append({})
         scanners = [self._vector_store.scan_text_literal]
         tokenized = getattr(self._vector_store, "scan_text", None)
         if tokenized is not None:
@@ -223,6 +261,7 @@ class PremiseEvidenceRetriever:
                         self._organization_id,
                         needles,
                         source_ids=tier.get("source_ids"),
+                        knowledge_base_id=tier.get("knowledge_base_id"),
                         workspace_id=self._workspace_id,
                         role=self._role,
                         user_id=self._user_id,
@@ -268,15 +307,28 @@ class PremiseEvidenceRetriever:
                 embedded = embedded[0]
             if embedded and isinstance(embedded[0], (int, float)):
                 embedding = [float(value) for value in embedded]
-        source_ids = [u for u in (_uuid(s) for s in scope.source_ids) if u]
+        scope_sources = [u for u in (_uuid(s) for s in scope.source_ids) if u]
+        authorized_sources = [
+            u for u in (_uuid(s) for s in self._authorized_source_ids) if u
+        ]
+        source_ids = authorized_sources or scope_sources
+        knowledge_base_id = (
+            _uuid(self._authorized_knowledge_base_ids[0])
+            if self._authorized_knowledge_base_ids
+            else None
+        )
         document_id = str(scope.document_id or "")
         # Escalado §4: documento -> source -> tenant/workspace autorizado.
+        # Con scope autorizado explícito (strict) no hay tier sin filtro.
         tiers: list[dict[str, Any]] = []
         if document_id:
             tiers.append({"document_id": document_id, "source_ids": source_ids})
-        if source_ids:
-            tiers.append({"source_ids": source_ids})
-        tiers.append({})
+        if source_ids or knowledge_base_id is not None:
+            tiers.append(
+                {"source_ids": source_ids, "knowledge_base_id": knowledge_base_id}
+            )
+        if not self._strict_scope:
+            tiers.append({})
         for tier in tiers:
             filters: dict[str, str] = {}
             if tier.get("document_id"):
@@ -288,6 +340,7 @@ class PremiseEvidenceRetriever:
                 user_id=self._user_id,
                 groups=self._groups,
                 workspace_id=self._workspace_id,
+                knowledge_base_id=tier.get("knowledge_base_id"),
                 source_ids=tier.get("source_ids") or [],
                 top_k=max(limit * 3, limit),
                 effective_top_k=max(limit * 3, limit),
@@ -384,6 +437,15 @@ class PremiseEvidenceRetriever:
             scoped = [hit for hit in hits if hit.document_id in wanted]
             if scoped:
                 return scoped[:limit]
+        # Strict scope: un hit cuya fuente no está autorizada no se usa aunque
+        # el store lo haya devuelto (defensa en profundidad).
+        if self.scope_is_enforced and self._authorized_source_ids:
+            allowed = set(self._authorized_source_ids)
+            hits = [
+                hit
+                for hit in hits
+                if not hit.source_id or hit.source_id in allowed
+            ]
         return hits[:limit]
 
 
@@ -432,6 +494,9 @@ def build_premise_evidence_search_result(
     retriever: Any = None,
     vector_store: Any = None,
     embedding_provider: Any = None,
+    source_ids: Sequence[Any] = (),
+    knowledge_base_ids: Sequence[Any] = (),
+    strict_scope: bool = False,
 ) -> PremiseRetrieverBuildResult:
     """Factory central con resultado explícito (API y agent_runtime)."""
     components: dict[str, Any] = {
@@ -472,6 +537,9 @@ def build_premise_evidence_search_result(
         retriever=components["retriever"],
         vector_store=components["vector_store"],
         embedding_provider=components["embedding_provider"],
+        source_ids=source_ids,
+        knowledge_base_ids=knowledge_base_ids,
+        strict_scope=strict_scope,
     )
     return PremiseRetrieverBuildResult(
         available=True,
@@ -492,6 +560,9 @@ def build_premise_evidence_search(
     retriever: Any = None,
     vector_store: Any = None,
     embedding_provider: Any = None,
+    source_ids: Sequence[Any] = (),
+    knowledge_base_ids: Sequence[Any] = (),
+    strict_scope: bool = False,
 ) -> Any | None:
     """Compatibilidad: adapter.search o None (tests/CLI). En runtime usar el
     resultado explícito para distinguir "no disponible" de "no hay premisa"."""
@@ -504,6 +575,9 @@ def build_premise_evidence_search(
         retriever=retriever,
         vector_store=vector_store,
         embedding_provider=embedding_provider,
+        source_ids=source_ids,
+        knowledge_base_ids=knowledge_base_ids,
+        strict_scope=strict_scope,
     )
     if not result.available or result.adapter is None:
         return None

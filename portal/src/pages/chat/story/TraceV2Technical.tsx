@@ -22,6 +22,7 @@ import {
   groundingLabel,
   headlineFor,
   narrativeStatusLabel,
+  normalizeRuleId,
   type TraceV2,
 } from "../traceabilityV2";
 
@@ -85,6 +86,72 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
                 label="Verificación determinista"
                 value={trace.execution.fastPath.verificationStatus}
               />
+            ) : null}
+            {trace.execution.fastPath.decisionEvidence ? (
+              <>
+                <Row
+                  label="Evidencia de decisión"
+                  value={value(trace.execution.fastPath.decisionEvidence.decisionEvidenceCount)}
+                />
+                <Row
+                  label="Retrieval principal"
+                  value={value(trace.execution.fastPath.decisionEvidence.mainRetrievalHits)}
+                />
+                <Row
+                  label="Documentos para la decisión"
+                  value={value(
+                    trace.execution.fastPath.decisionEvidence.documentsUsedForDecision,
+                  )}
+                />
+                {trace.execution.fastPath.decisionEvidence.unresolved.length ? (
+                  <Row
+                    label="Refs sin resolver"
+                    value={trace.execution.fastPath.decisionEvidence.unresolved.join(", ")}
+                    mono
+                  />
+                ) : null}
+              </>
+            ) : null}
+            {trace.execution.fastPath.winningRule ? (
+              <>
+                <Row
+                  label="Regla ganadora"
+                  value={normalizeRuleId(
+                    trace.execution.fastPath.winningRule.ruleId ?? "—",
+                  )}
+                  mono
+                />
+                {trace.execution.fastPath.winningRule.documentTitle ? (
+                  <Row
+                    label="Fuente"
+                    value={trace.execution.fastPath.winningRule.documentTitle}
+                  />
+                ) : null}
+                {trace.execution.fastPath.winningRule.documentIds.length ? (
+                  <Row
+                    label="Documento"
+                    value={trace.execution.fastPath.winningRule.documentIds.join(", ")}
+                    mono
+                  />
+                ) : null}
+                {trace.execution.fastPath.winningRule.pages.length ? (
+                  <Row
+                    label="Páginas"
+                    value={trace.execution.fastPath.winningRule.pages.join(", ")}
+                  />
+                ) : null}
+                {trace.execution.fastPath.winningRule.parserVersion ||
+                trace.execution.fastPath.winningRule.parserEngine ? (
+                  <Row
+                    label="Parser"
+                    value={
+                      trace.execution.fastPath.winningRule.parserEngine ||
+                      trace.execution.fastPath.winningRule.parserVersion ||
+                      "—"
+                    }
+                  />
+                ) : null}
+              </>
             ) : null}
           </>
         ) : null}
@@ -159,6 +226,20 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
           help="Evidencia que contribuyó a una regla soportada, una premisa satisfecha, una evaluación, un claim o el envelope."
         />
         <Row label="Citadas" value={value(trace.counts.evidenceCited)} />
+        {trace.counts.evidenceDecision !== null ? (
+          <Row
+            label="Evidencia de decisión"
+            value={value(trace.counts.evidenceDecision)}
+            help="Evidencia hidratada desde las refs del DecisionEnvelope (lookup, no retrieval)."
+          />
+        ) : null}
+        {trace.counts.mainRetrievalHits !== null ? (
+          <Row
+            label="Retrieval principal"
+            value={value(trace.counts.mainRetrievalHits)}
+            help="Fragmentos del retrieval normal. En fast path puede ser 0 sin que la decisión pierda respaldo."
+          />
+        ) : null}
         {trace.citationsSummary.references !== null ? (
           <Row
             label="Referencias de cita"
@@ -362,6 +443,9 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
               {step.status ? ` · ${step.status}` : ""}
               {step.ms !== null ? ` · ${fmtMs(step.ms)}` : ""}
               {step.unmapped ? " · sin mapeo canónico (payload crudo en el flow)" : ""}
+              {step.superseded
+                ? ` · resuelto por ${step.supersededBy ?? "una etapa posterior"}`
+                : ""}
               {step.detail ? ` — ${step.detail}` : ""}
             </p>
           ))}

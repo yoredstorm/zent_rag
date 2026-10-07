@@ -372,6 +372,10 @@ class DerivedPreparationResult:
     steps: list[dict] = field(default_factory=list)
     premise_closure: Any = None
     evidence_counters: dict = field(default_factory=dict)
+    #: Reglas excluidas por scope autorizado / provenance mezclada (auditable).
+    scope_excluded_rules: list[dict] = field(default_factory=list)
+    #: Scope autorizado publicado (sin secretos) para «Ver flujo».
+    authorized_scope: dict = field(default_factory=dict)
     duration_ms: float = 0.0
     version: str = DETERMINISTIC_AUTHORITY_VERSION
 
@@ -501,6 +505,106 @@ def _evidence_identity(item: Any) -> str:
     return ""
 
 
+def _scope_retrieval_args(
+    authorized_scope: Any,
+) -> tuple[Any, tuple[Any, ...], tuple[Any, ...]]:
+    """(workspace_id, source_ids, document_ids) UUID para Rule Lane.
+
+    Sin scope explícito devuelve vacíos: el caller conserva la herencia desde
+    la evidencia (comportamiento histórico). Nunca amplía nada.
+    """
+    if authorized_scope is None:
+        return None, (), ()
+    if not bool(getattr(authorized_scope, "is_explicit", False)):
+        return None, (), ()
+
+    def _uuid(value: Any) -> Any:
+        try:
+            from uuid import UUID
+
+            return UUID(str(value))
+        except (TypeError, ValueError):
+            return None
+
+    workspace = _uuid(getattr(authorized_scope, "workspace_id", ""))
+    sources = tuple(
+        value
+        for value in (
+            _uuid(item) for item in getattr(authorized_scope, "source_ids", ()) or ()
+        )
+        if value is not None
+    )
+    documents = tuple(
+        value
+        for value in (
+            _uuid(item) for item in getattr(authorized_scope, "document_ids", ()) or ()
+        )
+        if value is not None
+    )
+    return workspace, sources, documents
+
+
+def _source_scope_for_closure(
+    *,
+    organization_id: Any,
+    evidence_items: Sequence[Any],
+    authorized_scope: Any = None,
+) -> Any:
+    """SourceScope de Premise Closure: autorizado ∩ evidencia, sin ampliar.
+
+    Con scope explícito, las fuentes autorizadas mandan aunque no haya
+    evidencia recuperada (fast path): la closure busca DENTRO de ellas, nunca
+    en toda la organización.
+    """
+    from src.runtime.premise_closure import SourceScope
+
+    documents: list[str] = []
+    sources: list[str] = []
+    for item in evidence_items or ():
+        metadata = getattr(item, "metadata", None)
+        metadata = metadata if isinstance(metadata, dict) else {}
+        document = str(
+            getattr(item, "document_id", None) or metadata.get("document_id") or ""
+        )
+        source = str(
+            getattr(item, "source_id", None) or metadata.get("source_id") or ""
+        )
+        if document and document not in documents:
+            documents.append(document)
+        if source and source not in sources:
+            sources.append(source)
+
+    workspace = ""
+    if authorized_scope is not None and bool(
+        getattr(authorized_scope, "is_explicit", False)
+    ):
+        workspace = str(getattr(authorized_scope, "workspace_id", "") or "")
+        allowed_sources = [
+            str(value)
+            for value in getattr(authorized_scope, "source_ids", ()) or ()
+            if str(value or "").strip()
+        ]
+        allowed_documents = [
+            str(value)
+            for value in getattr(authorized_scope, "document_ids", ()) or ()
+            if str(value or "").strip()
+        ]
+        if allowed_sources:
+            sources = [value for value in sources if value in allowed_sources]
+            if not sources:
+                sources = list(allowed_sources)
+        if allowed_documents:
+            documents = [value for value in documents if value in allowed_documents]
+            if not documents:
+                documents = list(allowed_documents)
+    return SourceScope(
+        organization_id=str(organization_id),
+        workspace_id=workspace,
+        document_ids=tuple(documents[:12]),
+        source_ids=tuple(sources[:12]),
+    )
+
+
 def _split_searchable_premises(
     premises: Sequence[str],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -533,13 +637,13 @@ async def _run_premise_closure_stage(
     rounds_left: int,
     evidence_search: Callable[..., Any] | None,
     reason_fn: Callable[..., Any] | None,
+    authorized_scope: Any = None,
 ) -> tuple[Any, Any]:
     """Ejecuta premise closure si hay puerto disponible. Fail-soft total."""
     try:
         from src.runtime.premise_closure import (
             PremiseClosureRequest,
             PremiseEvaluation,
-            SourceScope,
             normalize_premises,
             run_premise_closure,
         )
@@ -571,31 +675,18 @@ async def _run_premise_closure_stage(
         for obj in (getattr(semantics, "field_requirements", ()) or ())
     )
 
-    document_ids: list[str] = []
-    source_ids: list[str] = []
+    source_scope = _source_scope_for_closure(
+        organization_id=organization_id,
+        evidence_items=evidence_items,
+        authorized_scope=authorized_scope,
+    )
+    document_ids = list(source_scope.document_ids)
+    source_ids = list(source_scope.source_ids)
     seen_evidence: list[str] = []
     for item in evidence_items:
-        metadata = getattr(item, "metadata", None)
-        metadata = metadata if isinstance(metadata, dict) else {}
-        document_id = str(
-            getattr(item, "document_id", None) or metadata.get("document_id") or ""
-        )
-        source_id = str(
-            getattr(item, "source_id", None) or metadata.get("source_id") or ""
-        )
-        if document_id and document_id not in document_ids:
-            document_ids.append(document_id)
-        if source_id and source_id not in source_ids:
-            source_ids.append(source_id)
         identity = _evidence_identity(item)
         if identity:
             seen_evidence.append(identity)
-
-    source_scope = SourceScope(
-        organization_id=str(organization_id),
-        document_ids=tuple(document_ids[:12]),
-        source_ids=tuple(source_ids[:12]),
-    )
     document_id = document_ids[0] if document_ids else ""
 
     # Compilación provisional de la evidencia YA recuperada: si la ingesta no
@@ -845,11 +936,16 @@ async def prepare_derived_authority(
     premise_evidence_search: Callable[..., Any] | None = None,
     premise_retriever_status: dict[str, Any] | None = None,
     premise_closure_rounds: int = 2,
+    authorized_scope: Any = None,
 ) -> DerivedPreparationResult:
     """Ejecuta la cadena determinista por FASES con telemetría fail-closed.
 
     Cada fase emite su step ANTES de la siguiente. Un fallo posterior jamás
     borra la telemetría anterior (rule_retrieval sobrevive a grounding).
+
+    `authorized_scope` (AuthorizedKnowledgeScope) restringe Rule Lane y Premise
+    Closure a las fuentes/KB autorizadas del agente: el fast path corre antes
+    del retrieval principal y no puede ampliar el universo en silencio.
     """
     started = time.perf_counter()
     text_question = str(question or "")
@@ -895,6 +991,9 @@ async def prepare_derived_authority(
     # --- RULE RETRIEVAL ------------------------------------------------------
     retrieval_started = time.perf_counter()
     retrieval: Any = None
+    scope_workspace, scope_sources, scope_documents = _scope_retrieval_args(
+        authorized_scope
+    )
     try:
         retrieve = retrieval_fn
         if retrieve is None:
@@ -902,7 +1001,12 @@ async def prepare_derived_authority(
 
             retrieve = retrieve_canonical_rules
         retrieval = await retrieve(
-            organization_id, text_question, evidence_items=list(evidence_items)
+            organization_id,
+            text_question,
+            evidence_items=list(evidence_items),
+            workspace_id=scope_workspace,
+            source_ids=scope_sources,
+            document_ids=scope_documents,
         )
     except Exception as exc:  # noqa: BLE001 — fallo operativo explícito, no silencio
         prep.retrieval_unavailable = True
@@ -944,6 +1048,16 @@ async def prepare_derived_authority(
             duration_ms=round((time.perf_counter() - retrieval_started) * 1000, 2),
             canonical=True,
         )
+        # P0.2: provenance de las candidatas (fuente, documento, páginas) para
+        # «Ver flujo». No sólo el conteo.
+        try:
+            from src.runtime.authorized_scope import rule_provenance
+
+            step["rules"] = [
+                rule_provenance(rule) for rule in supported[:6]
+            ] or [rule_provenance(rule) for rule in candidates[:6]]
+        except Exception:  # noqa: BLE001 — la provenance no rompe el retrieval
+            pass
         if operational_failure:
             step["error_code"] = ERROR_RULE_RETRIEVAL_UNAVAILABLE
         if not supported:
@@ -954,6 +1068,29 @@ async def prepare_derived_authority(
         prep.steps.append(step)
 
     rules = _rules_for_grounding(retrieval)
+    # P0.2/P0.3: provenance de la regla candidata DENTRO del scope autorizado y
+    # sin mezclar reingestas. La exclusión es auditable en `scope_filter`.
+    if authorized_scope is not None:
+        from src.runtime.authorized_scope import filter_rules_for_scope
+
+        prep.authorized_scope = (
+            authorized_scope.to_public_dict()
+            if hasattr(authorized_scope, "to_public_dict")
+            else {}
+        )
+        kept_rules, excluded_rules = filter_rules_for_scope(rules, authorized_scope)
+        if excluded_rules:
+            prep.scope_excluded_rules = list(excluded_rules)
+            prep.steps.append(
+                stage_step(
+                    "scope_filter",
+                    "warn",
+                    excluded=len(excluded_rules),
+                    kept=len(kept_rules),
+                    rules=excluded_rules[:8],
+                )
+            )
+        rules = kept_rules
 
     # --- GROUNDING (incluye rule evaluation + derivation) --------------------
     grounding_started = time.perf_counter()
@@ -1085,6 +1222,7 @@ async def prepare_derived_authority(
             rounds_left=max(0, int(premise_closure_rounds)),
             evidence_search=premise_evidence_search,
             reason_fn=reason_fn,
+            authorized_scope=authorized_scope,
         )
         if closure is not None:
             prep.premise_closure = closure

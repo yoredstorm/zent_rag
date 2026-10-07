@@ -1397,6 +1397,7 @@ def build_journey(
     controls: Mapping[str, Any],
     outcome: Mapping[str, Any],
     steps: Sequence[Mapping[str, Any]] = (),
+    execution_mode: str = "",
 ) -> list[dict[str, Any]]:
     journey: list[dict[str, Any]] = []
 
@@ -1513,7 +1514,15 @@ def build_journey(
         )
     answer_calls = _int_or_none(generation.get("answer_calls")) or 0
     if outcome.get("answer_delivered"):
-        emit("ANSWER_GENERATED", {"calls": answer_calls or 1})
+        # P2.1: con fast path no hubo generación LLM: la respuesta se construyó
+        # desde el DecisionEnvelope y los checks estructurados.
+        if _text(execution_mode) == "DETERMINISTIC_FAST_PATH":
+            emit(
+                "DETERMINISTIC_ANSWER_BUILT",
+                {"llm_calls": 0, "checks": len(decision.get("checks") or ())},
+            )
+        else:
+            emit("ANSWER_GENERATED", {"calls": answer_calls or 1})
     if verification.get("status"):
         emit("ANSWER_VERIFIED", {"status": verification.get("status")})
     if outcome.get("answer_delivered"):
@@ -1533,6 +1542,7 @@ def build_presentation(
     cost: Mapping[str, Any],
     outcome: Mapping[str, Any],
     steps: Sequence[Mapping[str, Any]] = (),
+    execution_mode: str = "",
 ) -> dict[str, Any]:
     counts = _record(evidence.get("counts"))
     explanations: list[dict[str, Any]] = []
@@ -1664,6 +1674,8 @@ def build_presentation(
                 "evidence_used_for_premise_closure"
             ),
             "evidence_used_for_decision": counts.get("evidence_used_for_decision"),
+            "evidence_decision": counts.get("evidence_decision"),
+            "main_retrieval_hits": counts.get("main_retrieval_hits"),
             "evidence_cited": counts.get("evidence_cited"),
             "collection": evidence.get("collection"),
         },
@@ -1675,6 +1687,7 @@ def build_presentation(
             controls=controls,
             outcome=outcome,
             steps=steps,
+            execution_mode=execution_mode,
         ),
         "explanations": explanations,
         "metric_refs": metric_refs_for_trace(
@@ -1752,19 +1765,92 @@ def build_traceability(flow: Mapping[str, Any] | None) -> dict[str, Any]:
     # Pasos del runtime tal como los emitió, con su estado de mapeo canónico:
     # un tipo sin mapping NO se descarta; se marca `unmapped` y se muestra en
     # el detalle técnico.
+    # Resolución posterior: un warn intermedio que la autoridad determinista
+    # resolvió queda marcado (la historia no lo muestra como estado vigente).
+    authority_label = ""
+    for step in steps:
+        step_type = _text(step.get("type"))
+        if step_type == "final_authority_lock" and step.get("authoritative") is True:
+            result_value = step.get("result")
+            authority_label = (
+                f"DecisionEnvelope {result_value}"
+                if result_value not in (None, "")
+                else "DecisionEnvelope"
+            )
+            break
+        if step_type == "grounded_reasoning":
+            envelope = _record(step.get("decision_envelope"))
+            if envelope.get("authoritative") is True:
+                result_value = envelope.get("result")
+                authority_label = (
+                    f"DecisionEnvelope {result_value}"
+                    if result_value not in (None, "")
+                    else "DecisionEnvelope"
+                )
+                break
+    supersedable_types = {
+        "grounding",
+        "rule_evaluation",
+        "rule_retrieval",
+        "premise_retriever_health",
+        "requirement_graph",
+    }
     runtime_steps: list[dict[str, Any]] = []
     for step in steps[:80]:
+        step_type = _text(step.get("type"))
+        step_status = _text(step.get("status")) or "ok"
+        superseded = bool(
+            authority_label
+            and step_type in supersedable_types
+            and step_status in {"warn", "error"}
+        )
         runtime_steps.append(
             {
-                "type": _text(step.get("type")),
+                "type": step_type,
                 "name": _text(step.get("name")) or None,
-                "status": _text(step.get("status")) or "ok",
+                "status": step_status,
                 "detail": _text(step.get("detail"))[:200] or None,
                 "ms": _number(step.get("ms")),
                 "unmapped": step.get("unmapped") is True,
+                "superseded": superseded,
+                "superseded_by": authority_label if superseded else None,
             }
         )
     extra_items: list[dict[str, Any]] = _temporal_items(safe, timeline)
+    # P1.8/P1.2: invariantes del fast path visibles en el trace.
+    fast_path_block = _record(safe.get("fast_path"))
+    fast_verification = _record(fast_path_block.get("verification"))
+    if (
+        _text(fast_verification.get("status")) == "VERIFIED_DETERMINISTIC"
+        and verification.get("status") in {V_UNVERIFIED, V_INSUFFICIENT}
+    ):
+        extra_items.append(
+            diagnostic_item(
+                "FAST_PATH_VERIFICATION_CONSISTENCY",
+                params={
+                    "fast_path_status": _text(fast_verification.get("status")),
+                    "verification_status": verification.get("status"),
+                },
+                severity="ERROR",
+                material_effect=True,
+            )
+        )
+    decision_evidence_block = _record(fast_path_block.get("decision_evidence"))
+    unresolved_refs = [
+        str(value)
+        for value in decision_evidence_block.get("unresolved") or []
+        if str(value or "").strip()
+    ]
+    if unresolved_refs:
+        extra_items.append(
+            diagnostic_item(
+                "EVIDENCE_REF_UNRESOLVED",
+                params={
+                    "count": len(unresolved_refs),
+                    "evidence_ids": unresolved_refs[:8],
+                },
+            )
+        )
     diagnostics = build_diagnostics(
         evidence=evidence,
         jev=jev,
@@ -1794,6 +1880,7 @@ def build_traceability(flow: Mapping[str, Any] | None) -> dict[str, Any]:
         cost=cost,
         outcome=outcome,
         steps=steps,
+        execution_mode=_text(safe.get("execution_mode")),
     )
     # Evidencias usadas sin cita: hecho, no especulación.
     presentation["support"]["evidence_used_not_cited"] = (

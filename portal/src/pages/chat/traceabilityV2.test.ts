@@ -9,6 +9,7 @@ import {
   fmtPercent,
   fmtUsd,
   jevSummary,
+  normalizeRuleId,
   parseTraceabilityV2,
   supportSummary,
   verificationSummary,
@@ -387,6 +388,60 @@ describe("parseTraceabilityV2", () => {
     expect(trace.execution.fastPath?.latencyMs).toBe(85);
     expect(trace.execution.fastPath?.verificationStatus).toBe("VERIFIED_DETERMINISTIC");
     expect(headlineMeta("RESPONSE_VERIFIED").title).toBe("Respuesta verificada");
+  });
+
+  it("expone decisión hidratada y regla ganadora del fast path", () => {
+    const raw = {
+      ...TRACE,
+      execution: {
+        ...TRACE.execution,
+        mode: "DETERMINISTIC_FAST_PATH",
+        fast_path: {
+          eligible: true,
+          reason: "SUPPORTED_DECISION",
+          operation: "POSITIONAL_MATCH",
+          result: "MATCH",
+          llm_calls: 0,
+          llm_calls_avoided: 2,
+          latency_ms: 85,
+          verification: { status: "VERIFIED_DETERMINISTIC" },
+          decision_evidence: {
+            resolved: 5,
+            unresolved: [],
+            out_of_scope: [],
+            main_retrieval_hits: 0,
+            decision_evidence_count: 5,
+            documents_used_for_decision: 1,
+          },
+          winning_rule: {
+            rule_id: "rule:rule:293d1234",
+            source_ids: ["73080890-33bc-4a03-a6dc-938cb1aa8342"],
+            document_ids: ["98e1703f-975e-519b-9553-80ef029df99a"],
+            pages: [11, 12],
+            document_title: "Data Application For Record 2",
+            parser_engine: "opendataloader",
+            parser_version: "pdfplumber-text-1.1",
+          },
+        },
+      },
+      evidence: {
+        ...TRACE.evidence,
+        counts: { ...TRACE.evidence.counts, evidence_decision: 5, main_retrieval_hits: 0 },
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    expect(trace).not.toBeNull();
+    if (!trace) return;
+    expect(trace.execution.fastPath?.decisionEvidence?.decisionEvidenceCount).toBe(5);
+    expect(trace.execution.fastPath?.decisionEvidence?.mainRetrievalHits).toBe(0);
+    expect(trace.execution.fastPath?.winningRule?.documentTitle).toBe(
+      "Data Application For Record 2",
+    );
+    expect(trace.execution.fastPath?.winningRule?.pages).toEqual([11, 12]);
+    expect(trace.counts.evidenceDecision).toBe(5);
+    expect(trace.counts.mainRetrievalHits).toBe(0);
+    // P2.3: normalización sólo de presentación.
+    expect(normalizeRuleId("rule:rule:293d1234")).toBe("rule:293d1234");
   });
 
   it("traduce el titular desde el catálogo central", () => {

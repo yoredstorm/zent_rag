@@ -241,6 +241,8 @@ function EvidenceSection({ trace }: { trace: TraceV2 }) {
   const decision = counts.evidenceUsedForDecision;
   const reasoning = counts.evidenceUsedForReasoning;
   const cited = counts.evidenceCited;
+  const decisionEvidence = counts.evidenceDecision;
+  const mainHits = counts.mainRetrievalHits;
   const pieces: string[] = [];
   if (retrieved !== null) pieces.push(`Se encontraron ${retrieved} fragmentos`);
   if (deduplicated) pieces.push(`${deduplicated} eran duplicados o se solapaban`);
@@ -248,6 +250,15 @@ function EvidenceSection({ trace }: { trace: TraceV2 }) {
   if (decision !== null) pieces.push(`${decision} usadas para la decisión`);
   if (reasoning !== null && reasoning !== decision) {
     pieces.push(`${reasoning} usadas para razonar`);
+  }
+  if (
+    mainHits === 0 &&
+    decisionEvidence !== null &&
+    decisionEvidence > 0
+  ) {
+    pieces.push(
+      `respaldo por ${decisionEvidence} evidencias de decisión (lookup, sin retrieval)`,
+    );
   }
   if (cited !== null) pieces.push(`se citaron ${cited}`);
   return (
@@ -302,6 +313,9 @@ function DocumentCard({ document }: { document: TraceV2Document }) {
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-faint">
               {item.page !== null ? <span>pág. {item.page}</span> : null}
               {item.usedForDecision ? <Badge tone="ok">Decisión</Badge> : null}
+              {item.decisionEvidence ? (
+                <Badge tone="info">Evidencia de decisión</Badge>
+              ) : null}
               {item.usedForRuleCompilation ? <Badge tone="info">Regla</Badge> : null}
               {item.usedForPremiseClosure ? <Badge tone="info">Premisa</Badge> : null}
               {item.usedForReasoning ? <Badge tone="neutral">Razonamiento</Badge> : null}

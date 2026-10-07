@@ -461,4 +461,47 @@ describe("Verificación separada decisión/narrativa", () => {
     expect(screen.getByText("Grounding de la decisión")).toBeInTheDocument();
     expect(screen.getByText("Grounding de la narrativa")).toBeInTheDocument();
   });
+
+  it("la vista técnica muestra provenance de la regla ganadora", () => {
+    const raw = {
+      ...TRACE,
+      execution: {
+        ...TRACE.execution,
+        mode: "DETERMINISTIC_FAST_PATH",
+        fast_path: {
+          eligible: true,
+          operation: "POSITIONAL_MATCH",
+          result: "MATCH",
+          llm_calls: 0,
+          llm_calls_avoided: 2,
+          latency_ms: 85,
+          verification: { status: "VERIFIED_DETERMINISTIC" },
+          decision_evidence: {
+            resolved: 5,
+            unresolved: [],
+            main_retrieval_hits: 0,
+            decision_evidence_count: 5,
+            documents_used_for_decision: 1,
+          },
+          winning_rule: {
+            rule_id: "rule:rule:293d1234",
+            source_ids: ["73080890"],
+            document_ids: ["98e1703f"],
+            pages: [11, 12],
+            document_title: "Data Application For Record 2",
+            parser_version: "pdfplumber-text-1.1",
+          },
+        },
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    if (!trace) return;
+    render(<TraceV2Technical trace={trace} />);
+    expect(screen.getByText("Regla ganadora")).toBeInTheDocument();
+    expect(screen.getByText("rule:293d1234")).toBeInTheDocument();
+    expect(screen.getByText("Data Application For Record 2")).toBeInTheDocument();
+    expect(screen.getByText("11, 12")).toBeInTheDocument();
+    expect(screen.getByText("pdfplumber-text-1.1")).toBeInTheDocument();
+    expect(screen.getByText("Evidencia de decisión")).toBeInTheDocument();
+  });
 });

@@ -12,7 +12,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -2152,6 +2152,19 @@ class AgentRuntime:
         # Contrato de composición del run, capturado una vez: es por run (el
         # runtime es compartido entre requests).
         run_plan = getattr(self, "_pending_response_plan", None)
+        # P0.1: scope autorizado REAL del agente (config, no chunks). El fast
+        # path corre antes del retrieval principal: sin esto Rule Lane/Premise
+        # Closure buscarían en toda la organización.
+        from src.runtime.authorized_scope import scope_from_agent_config
+
+        authorized_scope = scope_from_agent_config(
+            organization_id=request.agent.organization_id,
+            agent_config=request.agent.config_json,
+            org_config=request.org_config,
+            role=request.role,
+            user_id=request.user_id,
+            groups=tuple(getattr(request, "groups", ()) or ()),
+        )
 
         # ---------------------------------------------------------------------
         # Turn intent: ¿qué está haciendo el usuario? Reglas para lo obvio, JEV
@@ -2590,9 +2603,13 @@ class AgentRuntime:
 
                 _premise_result = build_premise_evidence_search_result(
                     request.agent.organization_id,
+                    workspace_id=authorized_scope.workspace_id or None,
                     role=str(getattr(request, "role", "") or "admin"),
                     user_id=getattr(request, "user_id", None),
                     groups=tuple(getattr(request, "groups", ()) or ()),
+                    source_ids=authorized_scope.source_ids,
+                    knowledge_base_ids=authorized_scope.knowledge_base_ids,
+                    strict_scope=authorized_scope.is_explicit,
                 )
                 prep = await prepare_derived_authority(
                     organization_id=request.agent.organization_id,
@@ -2605,6 +2622,7 @@ class AgentRuntime:
                         else None
                     ),
                     premise_retriever_status=_premise_result.to_public_dict(),
+                    authorized_scope=authorized_scope,
                 )
             except Exception as exc:  # noqa: BLE001 — fallo explícito, no silencio
                 logger.warning("derived authority preparation failed", error=str(exc)[:200])
@@ -3267,17 +3285,85 @@ class AgentRuntime:
             _publish_authority_prep(probe)
             active = selection if selection is not None else _refresh_selection()
             decision_refs = set(fast_decision.evidence_refs) | set(envelope.evidence_refs)
-            cited_ids = {
-                item.evidence_id
-                for item in (getattr(active, "items", ()) or ())
-                if item.evidence_id in decision_refs
-            }
-            citations = (
-                citations_payload(active, cited_ids=cited_ids)
-                if active is not None
-                else []
+            # P1.1/P1.2: hidratar refs de decisión desde el store canónico
+            # (lookup por id/provenance, NO segundo retrieval semántico).
+            resolution = None
+            try:
+                from src.runtime.decision_evidence import DecisionEvidenceResolver
+
+                resolver = DecisionEvidenceResolver(
+                    organization_id=request.agent.organization_id,
+                    scope=authorized_scope,
+                    role=request.role,
+                    user_id=request.user_id,
+                    groups=tuple(getattr(request, "groups", ()) or ()),
+                )
+                known_ids = set(registry.ids())
+                missing_refs = [
+                    ref for ref in decision_refs if ref and ref not in known_ids
+                ]
+                if missing_refs:
+                    resolution = await resolver.resolve(missing_refs)
+                    if resolution.items:
+                        registry.add(resolution.items)
+            except Exception as exc:  # noqa: BLE001 — la hidratación nunca rompe
+                logger.warning("decision evidence resolve failed", error=str(exc)[:150])
+            resolved_items = list(getattr(resolution, "items", ()) or ())
+            cited_ids = (
+                {item.evidence_id for item in resolved_items}
+                if resolved_items
+                else {
+                    item.evidence_id
+                    for item in (getattr(active, "items", ()) or ())
+                    if item.evidence_id in decision_refs
+                }
             )
-            answer = render_deterministic_answer(envelope, citations=citations)
+            # P1.3: citas desde la evidencia de decisión resuelta ∩ refs del
+            # envelope. Nunca UUIDs: documento, página y sección.
+            if resolved_items:
+                citations = [
+                    {
+                        "index": index,
+                        "evidence_id": item.evidence_id,
+                        "document_id": item.document_id,
+                        "chunk_id": item.chunk_id,
+                        "document_name": item.title,
+                        "page": item.page,
+                        "section_path": list(item.section_path),
+                        "locator": item.label,
+                        "relevance": round(float(item.score or 0.0), 4),
+                        "match": "decision_lookup",
+                        "cited": item.evidence_id in decision_refs,
+                    }
+                    for index, item in enumerate(resolved_items, start=1)
+                ]
+            else:
+                citations = (
+                    citations_payload(active, cited_ids=cited_ids)
+                    if active is not None
+                    else []
+                )
+            runtime_values: list[str] = []
+            for value in list((grounded_public or {}).get("runtime_inputs") or ()):
+                text = str(value or "").strip()
+                if text and text not in runtime_values:
+                    runtime_values.append(text)
+            for value in list(getattr(envelope, "runtime_inputs", ()) or ()):
+                text = str(value or "").strip()
+                if text and text not in runtime_values:
+                    runtime_values.append(text)
+            for obj in (grounded_public or {}).get("query_semantics") or ():
+                if isinstance(obj, Mapping):
+                    text = str(obj.get("value") or "").strip()
+                    if text and text not in runtime_values:
+                        runtime_values.append(text)
+            answer = render_deterministic_answer(
+                envelope,
+                grounded=grounded_public,
+                checks=fast_decision.checks,
+                runtime_inputs=runtime_values,
+                citations=citations,
+            )
             # FINAL_AUTHORITY_LOCK obligatorio también en el fast path.
             answer = _apply_derived_guard(answer)
             # §4 POLISH OPCIONAL: una llamada pequeña de estilo. El modelo
@@ -3343,6 +3429,34 @@ class AgentRuntime:
             result.answer = answer
             result.citations = citations
             _publish_evidence(cited_ids)
+            published = result.evidence or {}
+            decision_block = {
+                "resolved": len(resolved_items),
+                "unresolved": list(getattr(resolution, "unresolved", ()) or ())[:8],
+                "out_of_scope": list(getattr(resolution, "out_of_scope", ()) or ())[:8],
+                "main_retrieval_hits": int(published.get("main_retrieval_count") or 0),
+                "decision_evidence_count": int(
+                    published.get("decision_evidence_count") or 0
+                ),
+                "documents_used_for_decision": int(
+                    published.get("documents_used_for_decision_count") or 0
+                ),
+            }
+            result.steps.append(
+                {
+                    "type": "decision_evidence",
+                    "status": "ok" if not decision_block["unresolved"] else "warn",
+                    **decision_block,
+                }
+            )
+            if decision_block["unresolved"]:
+                result.steps.append(
+                    {
+                        "type": "evidence_ref_unresolved",
+                        "status": "warn",
+                        "evidence_refs": decision_block["unresolved"],
+                    }
+                )
             result.status = "completed"
             result.answer_state = {"state": "DERIVED_RESULT", "message": ""}
             result.execution_mode = EXECUTION_MODE_FAST_PATH
@@ -3350,6 +3464,38 @@ class AgentRuntime:
                 getattr(settings, "RUNTIME_FAST_PATH_ESTIMATED_TOKENS", 0) or 0
             )
             llm_calls_avoided = 1 if polish_used else 2
+            # P0.2: provenance de la regla GANADORA (fuente/documento/páginas).
+            winning_rule: dict | None = None
+            try:
+                from src.runtime.authorized_scope import rule_provenance
+
+                wanted_rules = set(envelope.canonical_rule_ids)
+                for rule in list(
+                    getattr(probe.grounded_reasoning, "canonical_rules", ()) or ()
+                ):
+                    if str(getattr(rule, "rule_id", "")) in wanted_rules:
+                        winning_rule = rule_provenance(rule)
+                        break
+            except Exception:  # noqa: BLE001 — la provenance nunca rompe
+                winning_rule = None
+            # La evidencia hidratada aporta título/parser que la regla no trae.
+            if winning_rule and resolved_items:
+                primary = resolved_items[0]
+                metadata = primary.metadata if isinstance(primary.metadata, dict) else {}
+                if not winning_rule.get("document_title"):
+                    winning_rule["document_title"] = str(primary.title or "")
+                if not winning_rule.get("parser_version"):
+                    winning_rule["parser_version"] = str(
+                        metadata.get("parser_version") or ""
+                    )
+                if not winning_rule.get("parser_engine"):
+                    winning_rule["parser_engine"] = str(
+                        metadata.get("parser_engine") or ""
+                    )
+                if not winning_rule.get("content_hash"):
+                    winning_rule["content_hash"] = str(
+                        metadata.get("content_hash") or ""
+                    )
             result.fast_path = {
                 **fast_decision.to_public_dict(),
                 **fast_path_metrics(
@@ -3358,6 +3504,8 @@ class AgentRuntime:
                     tokens_avoided=tokens_avoided,
                 ),
                 "verification": verification,
+                "decision_evidence": decision_block,
+                "winning_rule": winning_rule,
             }
             if polish_used:
                 result.fast_path["llm_calls"] = 1
@@ -3431,7 +3579,9 @@ class AgentRuntime:
                 from src.runtime.fast_path import fast_path_decision_for
 
                 fast_decision = fast_path_decision_for(
-                    probe, requires_deterministic=query_executable
+                    probe,
+                    requires_deterministic=query_executable,
+                    scope_explicit=authorized_scope.is_explicit,
                 )
                 if fast_decision.eligible:
                     try:

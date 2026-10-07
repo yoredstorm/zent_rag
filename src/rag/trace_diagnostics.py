@@ -136,6 +136,22 @@ DIAGNOSTIC_DEFINITIONS: dict[str, tuple[str, str, bool, str, str, str | None]] =
         "narrative_failure_degraded_decision",
         "separate_decision_from_narrative",
     ),
+    "FAST_PATH_VERIFICATION_CONSISTENCY": (
+        "ERROR",
+        "verification",
+        True,
+        "fast_path_verification_inconsistent",
+        "verified_response_shown_as_unverified",
+        "unify_verification_source",
+    ),
+    "EVIDENCE_REF_UNRESOLVED": (
+        "WARNING",
+        "evidence",
+        False,
+        "evidence_ref_unresolved",
+        "decision_evidence_not_hydrated",
+        "hydrate_decision_evidence",
+    ),
     "EVIDENCE_USED_FOR_DECISION": (
         "INFO",
         "evidence",
@@ -331,6 +347,7 @@ INVARIANT_CODES = {
     "VERIFIED_WITH_MATERIAL_DEGRADATION",
     "DECISION_VERIFICATION_CONSISTENCY",
     "DECISION_NARRATIVE_SEPARATION",
+    "FAST_PATH_VERIFICATION_CONSISTENCY",
     "JOURNEY_DUPLICATE_PURPOSE",
     "DUPLICATE_EVIDENCE_ID",
 }
@@ -347,6 +364,7 @@ GAP_CODES = {
     "EVIDENCE_DETAIL_UNAVAILABLE",
     "CITATION_DANGLING",
     "CITATION_EVIDENCE_REFERENTIAL_INTEGRITY",
+    "EVIDENCE_REF_UNRESOLVED",
     "VERIFICATION_NOT_OBSERVED",
 }
 

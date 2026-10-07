@@ -266,6 +266,11 @@ export const JOURNEY_META: Record<
     title: "Aplicó una recuperación",
     body: (p) => `Se activó un control interno (${String(p.control_code ?? "recuperación")}).`,
   },
+  DETERMINISTIC_ANSWER_BUILT: {
+    title: "Construyó la respuesta determinista",
+    body: () =>
+      "ZENT generó la explicación directamente desde el DecisionEnvelope y las comprobaciones estructuradas, sin usar un modelo generativo.",
+  },
   ANSWER_GENERATED: {
     title: "Generó la respuesta",
     body: () => "Redactó la respuesta con la evidencia evaluada.",
@@ -971,6 +976,20 @@ export const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
       "Una decisión verificada convive con una verificación global no verificada: un problema de la explicación afectó el estado de la decisión.",
     impact: () => "El usuario podría creer que la decisión no está respaldada cuando sí lo está.",
     fix: () => "Recomponer el estado global desde la decisión verificada y la narrativa por separado.",
+  },
+  FAST_PATH_VERIFICATION_CONSISTENCY: {
+    title: "Fast path verificado mostrado como no verificado",
+    meaning: () =>
+      "El verificador determinista del fast path aprobó la respuesta, pero el trace la reporta como no verificada.",
+    impact: () => "Dos fuentes de verdad distintas para la misma ejecución.",
+    fix: () => "Unificar el estado de verificación en el contrato raíz del trace.",
+  },
+  EVIDENCE_REF_UNRESOLVED: {
+    title: "Referencias de evidencia sin resolver",
+    meaning: (p) =>
+      `${String(p.count ?? "Algunas")} referencias del DecisionEnvelope no se pudieron hidratar desde el store canónico.`,
+    impact: () => "La decisión no pierde autoridad; la evidencia citada queda incompleta.",
+    fix: () => "Verificar que los ids referenciados existan en el store y en el scope autorizado.",
   },
   PARALLEL_SPANS: {
     title: "Trabajo interno en paralelo",

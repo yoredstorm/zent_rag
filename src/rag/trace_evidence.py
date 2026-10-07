@@ -76,6 +76,7 @@ _FLAG_KEYS = (
     "used_for_premise_closure",
     "used_for_decision",
     "citation_only_context",
+    "decision_evidence",
 )
 
 #: Identidad física proveniente del parser/ingesta. Se transporta para que la
@@ -330,6 +331,7 @@ def normalize_hit(
         "used_for_premise_closure": _flag("used_for_premise_closure"),
         "used_for_decision": _flag("used_for_decision"),
         "citation_only_context": _flag("citation_only_context"),
+        "decision_evidence": _flag("decision_evidence"),
         "cited": True if cited else None,
     }
     # Identidad física del parser (file id, URI, hash, filename): sin esto la
@@ -600,6 +602,7 @@ def _legacy_item(canonical: Mapping[str, Any]) -> dict[str, Any]:
         "used_for_premise_closure",
         "used_for_decision",
         "citation_only_context",
+        "decision_evidence",
         "cited",
     ):
         if canonical.get(flag) is True:
@@ -818,6 +821,10 @@ def build_evidence_section(
     citation_only_measured = sum(
         1 for item in canonicals if item.get("citation_only_context") is True
     )
+    decision_evidence_measured = sum(
+        1 for item in canonicals if item.get("decision_evidence") is True
+    )
+    main_retrieval_measured = max(0, len(canonicals) - decision_evidence_measured)
     documents = _document_groups(canonicals)
     documents_retrieved = (
         _int_or_none(declared.get("documents_consulted"))
@@ -909,6 +916,12 @@ def build_evidence_section(
             "evidence_used_for_decision", decision_measured
         ),
         "evidence_citation_only_context": citation_only_measured,
+        "evidence_decision": _axis_count(
+            "evidence_decision", decision_evidence_measured
+        ),
+        "main_retrieval_hits": _axis_count(
+            "main_retrieval_hits", main_retrieval_measured
+        ),
         "evidence_cited": cited,
         # Espejo v1 (mismo valor, nombres históricos).
         "documents_consulted": documents_retrieved,
@@ -1050,6 +1063,7 @@ def build_evidence_section(
                     "used_for_premise_closure",
                     "used_for_decision",
                     "citation_only_context",
+                    "decision_evidence",
                     "cited",
                     "merged_count",
                     "dedup_kind",

@@ -55,6 +55,8 @@ export interface TraceV2Counts {
   evidenceUsedForRuleCompilation: number | null;
   evidenceUsedForPremiseClosure: number | null;
   evidenceUsedForDecision: number | null;
+  evidenceDecision: number | null;
+  mainRetrievalHits: number | null;
   evidenceCited: number | null;
 }
 
@@ -92,6 +94,7 @@ export interface TraceV2EvidenceItem {
   usedForPremiseClosure: boolean;
   usedForDecision: boolean;
   citationOnlyContext: boolean;
+  decisionEvidence: boolean;
   cited: boolean;
   selected: boolean;
   mergedCount: number;
@@ -263,6 +266,25 @@ export interface TraceV2Explanation {
   params: Json;
 }
 
+export interface TraceV2FastPathDecisionEvidence {
+  resolved: number | null;
+  unresolved: string[];
+  outOfScope: string[];
+  mainRetrievalHits: number | null;
+  decisionEvidenceCount: number | null;
+  documentsUsedForDecision: number | null;
+}
+
+export interface TraceV2WinningRule {
+  ruleId: string | null;
+  documentIds: string[];
+  sourceIds: string[];
+  pages: number[];
+  documentTitle: string | null;
+  parserEngine: string | null;
+  parserVersion: string | null;
+}
+
 export interface TraceV2FastPath {
   eligible: boolean;
   reason: string | null;
@@ -275,6 +297,8 @@ export interface TraceV2FastPath {
   costAvoidedUsd: number | null;
   latencyMs: number | null;
   verificationStatus: string | null;
+  decisionEvidence: TraceV2FastPathDecisionEvidence | null;
+  winningRule: TraceV2WinningRule | null;
 }
 
 export interface TraceV2 {
@@ -435,6 +459,8 @@ export interface TraceV2 {
     detail: string | null;
     ms: number | null;
     unmapped: boolean;
+    superseded: boolean;
+    supersededBy: string | null;
   }>;
 }
 
@@ -457,6 +483,8 @@ function parseCounts(raw: unknown): TraceV2Counts {
     evidenceUsedForRuleCompilation: num(block.evidence_used_for_rule_compilation),
     evidenceUsedForPremiseClosure: num(block.evidence_used_for_premise_closure),
     evidenceUsedForDecision: num(block.evidence_used_for_decision),
+    evidenceDecision: num(block.evidence_decision),
+    mainRetrievalHits: num(block.main_retrieval_hits),
     evidenceCited: num(block.evidence_cited),
   };
 }
@@ -501,6 +529,7 @@ function parseEvidenceItem(raw: Json): TraceV2EvidenceItem {
     usedForPremiseClosure: raw.used_for_premise_closure === true,
     usedForDecision: raw.used_for_decision === true,
     citationOnlyContext: raw.citation_only_context === true,
+    decisionEvidence: raw.decision_evidence === true,
     cited: raw.cited === true,
     selected: raw.selected === true,
     mergedCount: num(raw.merged_count) ?? 0,
@@ -697,7 +726,45 @@ function parseFastPath(raw: unknown): TraceV2FastPath | null {
     costAvoidedUsd: num(block.cost_avoided_usd),
     latencyMs: num(block.latency_ms),
     verificationStatus: str(record(block.verification).status),
+    decisionEvidence: parseFastPathDecisionEvidence(block.decision_evidence),
+    winningRule: parseWinningRule(block.winning_rule),
   };
+}
+
+function parseFastPathDecisionEvidence(
+  raw: unknown,
+): TraceV2FastPathDecisionEvidence | null {
+  const block = record(raw);
+  if (!Object.keys(block).length) return null;
+  return {
+    resolved: num(block.resolved),
+    unresolved: strings(block.unresolved),
+    outOfScope: strings(block.out_of_scope),
+    mainRetrievalHits: num(block.main_retrieval_hits),
+    decisionEvidenceCount: num(block.decision_evidence_count),
+    documentsUsedForDecision: num(block.documents_used_for_decision),
+  };
+}
+
+function parseWinningRule(raw: unknown): TraceV2WinningRule | null {
+  const block = record(raw);
+  if (!Object.keys(block).length) return null;
+  const pages = Array.isArray(block.pages)
+    ? block.pages.filter((item): item is number => typeof item === "number")
+    : [];
+  return {
+    ruleId: str(block.rule_id),
+    documentIds: strings(block.document_ids),
+    sourceIds: strings(block.source_ids),
+    pages,
+    documentTitle: str(block.document_title),
+    parserEngine: str(block.parser_engine),
+    parserVersion: str(block.parser_version),
+  };
+}
+
+export function normalizeRuleId(value: string): string {
+  return value.replace(/^rule:rule:/, "rule:");
 }
 
 export function parseTraceabilityV2(value: unknown): TraceV2 | null {
@@ -959,6 +1026,8 @@ export function parseTraceabilityV2(value: unknown): TraceV2 | null {
       detail: str(step.detail),
       ms: num(step.ms),
       unmapped: step.unmapped === true,
+      superseded: step.superseded === true,
+      supersededBy: str(step.superseded_by),
     })),
   };
 }

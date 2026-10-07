@@ -464,6 +464,15 @@ class EvidenceRegistry:
             if item.evidence_id in cited_all:
                 documents_cited.add(document)
 
+        # Evidencia de decisión hidratada (fast path) vs retrieval principal:
+        # son universos distintos y se cuentan por separado.
+        decision_evidence_all = {
+            item.evidence_id
+            for item in self.items
+            if isinstance(item.metadata, dict)
+            and item.metadata.get("decision_evidence") is True
+        }
+
         public = []
         for item in self.items[:limit]:
             payload = item.to_public_dict()
@@ -486,6 +495,7 @@ class EvidenceRegistry:
             payload["used_for_decision"] = is_decision
             payload["cited"] = is_cited
             payload["cited_in_answer"] = is_cited
+            payload["decision_evidence"] = item.evidence_id in decision_evidence_all
             # Una cita que sólo existió como contexto del texto, sin
             # contribuir a la decisión, se declara como tal.
             payload["citation_only_context"] = bool(
@@ -506,6 +516,8 @@ class EvidenceRegistry:
             "used_for_premise_closure_count": len(premise_closure_all),
             "used_for_decision_count": len(decision_all),
             "cited_count": len(cited_all),
+            "decision_evidence_count": len(decision_evidence_all),
+            "main_retrieval_count": max(0, len(all_ids) - len(decision_evidence_all)),
             "documents_retrieved_count": len(documents_retrieved),
             "documents_selected_count": len(documents_selected),
             "documents_used_for_decision_count": len(documents_decision),
