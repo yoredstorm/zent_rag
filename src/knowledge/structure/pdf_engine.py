@@ -18,7 +18,10 @@ from uuid import UUID
 from src.core.domain.knowledge_v2 import StructuredDocument
 from src.infrastructure.observability.logging_config import get_logger
 from src.knowledge.structure.base import StructuredParser
-from src.knowledge.structure.opendataloader_client import OpenDataLoaderOptions
+from src.knowledge.structure.opendataloader_client import (
+    OpenDataLoaderOptions,
+    odl_library_version,
+)
 from src.knowledge.structure.opendataloader_parser import OpenDataLoaderPdfParser
 from src.knowledge.structure.pdf_parser import PdfParseOptions, PdfParser
 
@@ -100,6 +103,125 @@ def _shadow_dir(settings: object | None) -> str | None:
     if not upload_dir:
         return None
     return str(Path(upload_dir) / "parser_shadow")
+
+
+def _pdfplumber_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return str(version("pdfplumber"))
+    except Exception:  # noqa: BLE001 — versión desconocida no rompe la ingesta
+        try:
+            import pdfplumber
+
+            return str(getattr(pdfplumber, "__version__", "unknown"))
+        except Exception:  # noqa: BLE001
+            return "unknown"
+
+
+def parser_engine_label(parser: StructuredParser) -> str:
+    """Etiqueta del motor REAL que parseó (no la configurada)."""
+    if isinstance(parser, ShadowPdfParser):
+        return str(parser.production_label or "pdfplumber")
+    if isinstance(parser, OpenDataLoaderPdfParser):
+        return "opendataloader"
+    if isinstance(parser, PdfParser):
+        return "pdfplumber"
+    return type(parser).__name__
+
+
+def parser_provenance(
+    parser: StructuredParser,
+    *,
+    settings: object | None = None,
+    document: StructuredDocument | None = None,
+) -> dict:
+    """Provenance del parser PDF: engine/version/mode/structure_source.
+
+    Genérico: funciona para pdfplumber y OpenDataLoader; el timestamp sella
+    cada ingesta. Sin secretos.
+    """
+    from datetime import datetime, timezone
+
+    engine = parser_engine_label(parser)
+    existing_parser = {}
+    if document is not None and isinstance(document.metadata, dict):
+        candidate = document.metadata.get("parser")
+        if isinstance(candidate, dict):
+            existing_parser = dict(candidate)
+    provenance: dict[str, object] = {
+        "engine": engine,
+        "parser_timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if engine == "opendataloader":
+        options = getattr(parser, "options", None)
+        provenance["version"] = (
+            existing_parser.get("version") or odl_library_version() or "unknown"
+        )
+        provenance["mode"] = str(
+            getattr(options, "mode", "") or existing_parser.get("mode") or "local"
+        )
+        provenance["structure_source"] = (
+            existing_parser.get("structure_source")
+            or (
+                document.metadata.get("structure_source")
+                if document is not None
+                else None
+            )
+            or "inferred_layout"
+        )
+        provenance["opendataloader_version"] = provenance["version"]
+        java = existing_parser.get("java")
+        if java:
+            provenance["java_version"] = java
+    else:
+        provenance["version"] = _pdfplumber_version()
+        provenance["mode"] = str(
+            getattr(settings, "PDF_PARSER_MODE", "pdfplumber") or "pdfplumber"
+        )
+        provenance["structure_source"] = (
+            existing_parser.get("structure_source") or "text_layout"
+        )
+    return provenance
+
+
+def stamp_parser_provenance(
+    document: StructuredDocument,
+    *,
+    parser: StructuredParser,
+    settings: object | None = None,
+) -> StructuredDocument:
+    """Sella el StructuredDocument con el parser real que lo produjo.
+
+    - metadata.parser (nested, canónico) + claves planas §13;
+    - metadata.document_parser: trace de ingesta §15 (engine/version/mode/
+      structure_source/pages/blocks/tables/status).
+    """
+    from dataclasses import replace
+
+    provenance = parser_provenance(parser, settings=settings, document=document)
+    metadata = dict(document.metadata or {})
+    existing = metadata.get("parser")
+    merged = dict(existing) if isinstance(existing, dict) else {}
+    merged.update({key: value for key, value in provenance.items() if value is not None})
+    metadata["parser"] = merged
+    metadata["parser_engine"] = merged.get("engine")
+    metadata["parser_version"] = merged.get("version")
+    metadata["parser_mode"] = merged.get("mode")
+    metadata["structure_source"] = merged.get("structure_source")
+    metadata["parser_timestamp"] = merged.get("parser_timestamp")
+    metadata["document_parser"] = {
+        "type": "document_parser",
+        "engine": merged.get("engine"),
+        "version": merged.get("version"),
+        "mode": merged.get("mode"),
+        "structure_source": merged.get("structure_source"),
+        "pages": len(document.pages),
+        "blocks": len(document.blocks),
+        "tables": len(document.tables),
+        "status": "ok",
+    }
+    return replace(document, metadata=metadata)
 
 
 class ShadowPdfParser(StructuredParser):

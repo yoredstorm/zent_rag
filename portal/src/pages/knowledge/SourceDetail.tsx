@@ -70,6 +70,12 @@ type SourceDocument = {
   document_id: string;
   status: string;
   last_seen_at: string | null;
+  parser?: {
+    engine?: string | null;
+    version?: string | null;
+    mode?: string | null;
+    structure_source?: string | null;
+  } | null;
 };
 
 type TabularTableInfo = {
@@ -162,6 +168,26 @@ const DOC_COLUMNS: Column<SourceDocument>[] = [
     key: "external_id",
     header: "Documento",
     render: (doc) => <span className="mono text-xs text-text">{doc.external_id}</span>,
+  },
+  {
+    key: "parser",
+    header: "Parser",
+    hideBelow: "md",
+    render: (doc) => {
+      const parser = doc.parser;
+      if (!parser || !parser.engine) {
+        return <span className="text-xs text-muted">—</span>;
+      }
+      const detail = [parser.version, parser.mode, parser.structure_source]
+        .filter((value) => Boolean(value))
+        .join(" · ");
+      return (
+        <span className="text-xs text-muted" title={detail}>
+          {parser.engine}
+          {detail ? ` · ${detail}` : ""}
+        </span>
+      );
+    },
   },
   {
     key: "status",

@@ -466,6 +466,7 @@ const DECISION_KIND_TITLES: Record<string, string> = {
   guardrail: "Aplicó una regla de seguridad",
   rule_evaluation: "Evaluó las reglas compiladas",
   requirement_graph: "Construyó el grafo de requisitos",
+  query_local_compilation: "Compiló reglas locales de la consulta",
 };
 
 const EVIDENCE_KIND_TITLES: Record<string, string> = {
@@ -480,6 +481,7 @@ const EVIDENCE_KIND_TITLES: Record<string, string> = {
   jev_retrieval: "Volvió a buscar: faltaba evidencia",
   rule_retrieval: "Buscó reglas canónicas",
   premise_closure: "Cerró las premisas faltantes",
+  document_parser: "Parseó el PDF (provenance del parser)",
 };
 
 const REASONING_KIND_TITLES: Record<string, string> = {
@@ -514,6 +516,7 @@ const UNDERSTANDING_KIND_TITLES: Record<string, string> = {
 const CONTEXT_KIND_TITLES: Record<string, string> = {
   embedding: "Convirtió la consulta en vector",
   build: "Build del runtime",
+  runtime_identity: "Identificó el runtime (SHA/build)",
 };
 
 const VERIFICATION_KIND_TITLES: Record<string, string> = {
@@ -523,6 +526,7 @@ const VERIFICATION_KIND_TITLES: Record<string, string> = {
   answer_state: "Estado de respuesta construido por código",
   decision_envelope: "Envolvió la decisión autoritativa",
   derived_guard: "Protegió el resultado determinista",
+  final_authority_lock: "Bloqueó la decisión final (autoridad)",
   finalization: "Cerró la respuesta final",
 };
 
@@ -1325,6 +1329,7 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   company_context: "context",
   embedding: "context",
   build: "context",
+  runtime_identity: "context",
   reasoning_plan: "planning",
   response_planning: "planning",
   agent_step: "decision",
@@ -1336,6 +1341,7 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   termination_gate: "decision",
   rule_evaluation: "decision",
   requirement_graph: "decision",
+  query_local_compilation: "decision",
   answer_gate: "verification",
   reasoning_incomplete: "verification",
   answer_revision: "verification",
@@ -1360,6 +1366,8 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   answer_state: "verification",
   decision_envelope: "verification",
   derived_guard: "verification",
+  final_authority_lock: "verification",
+  document_parser: "evidence",
   finalization: "generation",
   generation: "generation",
   final: "generation",

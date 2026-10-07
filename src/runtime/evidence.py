@@ -384,6 +384,7 @@ class EvidenceRegistry:
         limit: int = 24,
         cited_ids: Iterable[str] = (),
         selected_ids: Sequence[str] | None = None,
+        decision_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
         """Bloque para «Ver flujo»: SOURCE != EVIDENCE, y status explícito.
 
@@ -395,6 +396,10 @@ class EvidenceRegistry:
         Una evidencia citada cuenta automáticamente como usada; una usada, como
         seleccionada. Los conteos se calculan sobre TODA la evidencia, no sólo
         sobre la página que se publica.
+
+        §22: `decision_ids` son las refs usadas para construir CanonicalRule /
+        DerivedClaim. Cuentan como `used_for_decision` y como usadas aunque la
+        respuesta final no las cite literalmente.
         """
         cited = set(cited_ids)
         all_ids = [item.evidence_id for item in self.items]
@@ -404,7 +409,11 @@ class EvidenceRegistry:
         }
         # Una cita implica uso y selección: nunca used=0 con cited=2.
         selected_all.update(cited_all)
+        # §22: la evidencia que construyó la regla/claim es USADA para decidir
+        # aunque el texto final no la cite.
+        decision_all = {value for value in decision_ids if value in all_ids}
         used_all = set(selected_all)
+        used_all.update(decision_all)
         order = {
             evidence_id: index + 1
             for index, evidence_id in enumerate(selected_ids or ())
@@ -420,6 +429,8 @@ class EvidenceRegistry:
                 payload["doc_index"] = doc_index
             payload["selected"] = is_selected
             payload["used"] = is_used
+            payload["used_for_reasoning"] = is_used
+            payload["used_for_decision"] = item.evidence_id in decision_all
             payload["cited"] = is_cited
             payload["status"] = "USED" if is_used else "RETRIEVED"
             public.append(payload)
@@ -430,6 +441,8 @@ class EvidenceRegistry:
             "retrieved_count": len(all_ids),
             "selected_count": len(selected_all),
             "used_count": len(used_all),
+            "used_for_reasoning_count": len(used_all),
+            "used_for_decision_count": len(decision_all),
             "cited_count": len(cited_all),
             "version": EVIDENCE_INVARIANTS_VERSION,
         }
@@ -999,6 +1012,7 @@ def evidence_invariants(public: dict[str, Any] | None) -> list[str]:
         selected_count = int(public.get("selected_count") or 0)
         used_count = int(public.get("used_count") or 0)
         cited_count = int(public.get("cited_count") or 0)
+        decision_count = int(public.get("used_for_decision_count") or 0)
     except (TypeError, ValueError):
         return violations + ["counts_not_numeric"]
     if selected_count > retrieved:
@@ -1007,6 +1021,12 @@ def evidence_invariants(public: dict[str, Any] | None) -> list[str]:
         violations.append("used_gt_selected")
     if cited_count > used_count:
         violations.append(f"used_lt_cited:{used_count}<{cited_count}")
+    # §22: la evidencia de la decisión (regla/claim) es usada por definición.
+    if decision_count > used_count:
+        violations.append(f"used_lt_decision:{used_count}<{decision_count}")
+    flagged_decision = sum(1 for item in items if item.get("used_for_decision"))
+    if flagged_decision > decision_count:
+        violations.append("decision_flags_gt_count")
     flagged_cited = sum(1 for item in items if item.get("cited"))
     if flagged_cited > cited_count:
         violations.append("cited_flags_gt_count")

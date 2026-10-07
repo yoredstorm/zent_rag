@@ -1349,7 +1349,7 @@ class KnowledgeIngestionEngine:
             from src.knowledge.understanding.parse_policy import production_pdf_options
 
             parse_kwargs["options"] = production_pdf_options(du_settings)
-        return parser.parse(
+        document = parser.parse(
             raw_data,
             organization_id=job.organization_id,
             external_id=external_id,
@@ -1358,6 +1358,28 @@ class KnowledgeIngestionEngine:
             source_name=filename,
             **parse_kwargs,
         )
+        if getattr(parser, "kind", None) == "pdf":
+            # Provenance del parser REAL (pdfplumber | opendataloader): queda en
+            # el StructuredDocument y viaja a Postgres, chunks Qdrant y citas.
+            from src.knowledge.structure.pdf_engine import stamp_parser_provenance
+
+            document = stamp_parser_provenance(
+                document, parser=parser, settings=du_settings
+            )
+            trace = document.metadata.get("document_parser") or {}
+            logger.info(
+                "document_parser",
+                external_id=external_id,
+                engine=trace.get("engine"),
+                version=trace.get("version"),
+                mode=trace.get("mode"),
+                structure_source=trace.get("structure_source"),
+                pages=trace.get("pages"),
+                blocks=trace.get("blocks"),
+                tables=trace.get("tables"),
+                status=trace.get("status"),
+            )
+        return document
 
     def _compiler_view(self, document):
         """Vista pura del compilador (sin I/O) para metadata del índice.

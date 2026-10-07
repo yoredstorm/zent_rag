@@ -112,8 +112,21 @@ def expand_exact(chunks: list[DocumentChunk], needle: str) -> dict | None:
 def index_metadata(document: StructuredDocument, chunk: DocumentChunk) -> dict:
     """Campos extra del payload. No incluye el documento entero."""
     understanding = document.metadata.get("understanding") or {}
+    pdf_parser = document.metadata.get("parser")
+    extra: dict = {}
+    if isinstance(pdf_parser, dict) and pdf_parser:
+        # §14: cada punto Qdrant puede indicar el parser PDF que lo produjo.
+        for key, source in (
+            ("parser_engine", "engine"),
+            ("parser_mode", "mode"),
+            ("pdf_parser_version", "version"),
+            ("pdf_structure_source", "structure_source"),
+        ):
+            value = pdf_parser.get(source)
+            if value not in (None, [], ""):
+                extra[key] = value
     if not understanding:
-        return {}
+        return extra
     keys = (
         "exact_literals",
         "block_type",
@@ -131,7 +144,10 @@ def index_metadata(document: StructuredDocument, chunk: DocumentChunk) -> dict:
         "primary_block_type",
         "unit_id",
     )
-    extra = {key: chunk.metadata.get(key) for key in keys if chunk.metadata.get(key) not in (None, [], "")}
+    for key in keys:
+        value = chunk.metadata.get(key)
+        if value not in (None, [], ""):
+            extra[key] = value
     extra["canonical_version"] = understanding.get("schema_version")
     extra["parser_version"] = understanding.get("parser_version")
     return extra

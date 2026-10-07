@@ -104,6 +104,22 @@ DIAGNOSTIC_DEFINITIONS: dict[str, tuple[str, str, bool, str, str, str | None]] =
         "possible_unsupported_claim",
         "align_citations",
     ),
+    "AUTHORITATIVE_RESPONSE_CONSISTENCY": (
+        "ERROR",
+        "consistency",
+        True,
+        "authoritative_response_inconsistent",
+        "answer_contradicts_authoritative_decision",
+        "rebuild_from_decision_envelope",
+    ),
+    "EVIDENCE_USED_FOR_DECISION": (
+        "INFO",
+        "evidence",
+        False,
+        "evidence_used_for_decision",
+        "no_content_impact",
+        None,
+    ),
     "CITATION_REFERENCES_COLLAPSED": (
         "INFO",
         "evidence",
@@ -282,6 +298,7 @@ INVARIANT_CODES = {
     "INSUFFICIENT_THEN_GENERATED",
     "EVIDENCE_USED_EXCEEDS_UNIQUE",
     "EVIDENCE_CITED_EXCEEDS_USED",
+    "AUTHORITATIVE_RESPONSE_CONSISTENCY",
     "EVIDENCE_SELECTED_EXCEEDS_UNIQUE",
     "DOCUMENTS_USED_EXCEEDS_RETRIEVED",
     "EVIDENCE_DEDUP_ARITHMETIC",
@@ -420,6 +437,24 @@ def run_invariants(
                 params={"cited": cited, "used": used},
             )
         )
+    # AUTHORITATIVE_RESPONSE_CONSISTENCY: un envelope autoritativo no puede
+    # convivir con un estado de respuesta no derivado (contradicción P0).
+    envelope = _record(verification.get("decision_envelope"))
+    if envelope.get("authoritative") is True:
+        declared = str(envelope.get("result") or "").upper()
+        answer_state = verification.get("answer_state")
+        state = (
+            str(answer_state.get("state") or "")
+            if isinstance(answer_state, Mapping)
+            else str(answer_state or "")
+        )
+        if declared and state and state != "DERIVED_RESULT":
+            found.append(
+                diagnostic_item(
+                    "AUTHORITATIVE_RESPONSE_CONSISTENCY",
+                    params={"result": declared, "answer_state": state},
+                )
+            )
     if unique is not None and selected is not None and selected > unique:
         found.append(
             diagnostic_item(

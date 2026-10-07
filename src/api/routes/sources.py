@@ -365,15 +365,16 @@ async def list_source_documents(
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, external_id, document_id, status, last_seen_at "
+                    "SELECT id, external_id, document_id, status, last_seen_at, metadata "
                     "FROM ("
                     "  SELECT r.id::text AS id, r.external_id, "
-                    "         r.document_id::text AS document_id, r.status, r.last_seen_at "
+                    "         r.document_id::text AS document_id, r.status, r.last_seen_at, "
+                    "         NULL::jsonb AS metadata "
                     "  FROM source_documents r "
                     "  WHERE r.organization_id = :oid AND r.source_id = :sid "
                     "  UNION ALL "
                     "  SELECT s.id::text AS id, s.external_id, s.id::text AS document_id, "
-                    "         s.status, s.updated_at AS last_seen_at "
+                    "         s.status, s.updated_at AS last_seen_at, s.metadata "
                     "  FROM structured_documents s "
                     "  WHERE s.organization_id = :oid2 AND s.source_id = :sid "
                     "    AND NOT EXISTS ("
@@ -404,10 +405,38 @@ async def list_source_documents(
                 "document_id": str(r.document_id),
                 "status": r.status,
                 "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+                "parser": _parser_payload(r.metadata),
             }
             for r in rows
         ],
         "count": len(rows),
+    }
+
+
+def _parser_payload(metadata: object) -> dict[str, str | None] | None:
+    """§16: parser real de un documento (engine/version/mode/structure)."""
+    import json as _json
+
+    if isinstance(metadata, str):
+        try:
+            metadata = _json.loads(metadata)
+        except (TypeError, ValueError):
+            metadata = {}
+    if not isinstance(metadata, dict):
+        return None
+    parser = metadata.get("parser")
+    parser = parser if isinstance(parser, dict) else {}
+    engine = parser.get("engine") or metadata.get("parser_engine")
+    version = parser.get("version") or metadata.get("parser_version")
+    mode = parser.get("mode") or metadata.get("parser_mode")
+    structure = parser.get("structure_source") or metadata.get("structure_source")
+    if not any((engine, version, mode, structure)):
+        return None
+    return {
+        "engine": str(engine) if engine else None,
+        "version": str(version) if version else None,
+        "mode": str(mode) if mode else None,
+        "structure_source": str(structure) if structure else None,
     }
 
 

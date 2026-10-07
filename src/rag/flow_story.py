@@ -52,9 +52,11 @@ STATUS_PENDING = "pending"
 STEP_KIND_PHASES: dict[str, str] = {
     "reasoning_classification": PHASE_UNDERSTANDING,
     "conversation_intent": PHASE_UNDERSTANDING,
+    "query_semantics": PHASE_UNDERSTANDING,
     "context": PHASE_CONTEXT,
     "company_context": PHASE_CONTEXT,
     "embedding": PHASE_CONTEXT,
+    "runtime_identity": PHASE_CONTEXT,
     "reasoning_plan": PHASE_PLANNING,
     "response_planning": PHASE_PLANNING,
     "decision": PHASE_DECISION,
@@ -68,6 +70,20 @@ STEP_KIND_PHASES: dict[str, str] = {
     "reasoning_incomplete": PHASE_VERIFICATION,
     "answer_revision": PHASE_VERIFICATION,
     "verification": PHASE_VERIFICATION,
+    "grounding": PHASE_VERIFICATION,
+    "derived_claim": PHASE_VERIFICATION,
+    "decision_envelope": PHASE_VERIFICATION,
+    "derived_guard": PHASE_VERIFICATION,
+    "final_authority_lock": PHASE_VERIFICATION,
+    "answer_state": PHASE_VERIFICATION,
+    # Conocimiento determinista por fases: retrieval de reglas, evaluación,
+    # grafo de requisitos y compilación query-local.
+    "rule_retrieval": PHASE_EVIDENCE,
+    "premise_closure": PHASE_EVIDENCE,
+    "document_parser": PHASE_EVIDENCE,
+    "rule_evaluation": PHASE_DECISION,
+    "requirement_graph": PHASE_DECISION,
+    "query_local_compilation": PHASE_DECISION,
     # Agent JEV Loop: juicio del paso y búsqueda dirigida por JEV.
     "agent_step": PHASE_DECISION,
     "jev_retrieval": PHASE_EVIDENCE,
@@ -96,6 +112,7 @@ STEP_KIND_PHASES: dict[str, str] = {
     "error": PHASE_VERIFICATION,
     "final": PHASE_GENERATION,
     "llm": PHASE_GENERATION,
+    "finalization": PHASE_GENERATION,
     "memory": PHASE_LEARNING,
 }
 

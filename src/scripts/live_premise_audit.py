@@ -125,10 +125,19 @@ async def _source_info(org: UUID, source_id: UUID | None, document_id: UUID | No
                         "title": document.get("title"),
                         "block_count": document.get("block_count"),
                         "table_count": document.get("table_count"),
-                        "parser_engine": parser.get("engine"),
-                        "parser_version": parser.get("version"),
-                        "parser_mode": parser.get("mode"),
-                        "structure_source": metadata.get("structure_source"),
+                        "parser_engine": parser.get("engine")
+                        or metadata.get("parser_engine"),
+                        "parser_version": parser.get("version")
+                        or metadata.get("parser_version"),
+                        "parser_mode": parser.get("mode")
+                        or metadata.get("parser_mode"),
+                        "structure_source": parser.get("structure_source")
+                        or metadata.get("structure_source"),
+                        "parser_timestamp": parser.get("parser_timestamp")
+                        or metadata.get("parser_timestamp"),
+                        "java_version": parser.get("java_version"),
+                        "opendataloader_version": parser.get("opendataloader_version"),
+                        "document_parser": metadata.get("document_parser"),
                         "runtime_identity": metadata.get("runtime_identity"),
                         "updated_at": str(document.get("updated_at") or ""),
                     }
@@ -138,6 +147,47 @@ async def _source_info(org: UUID, source_id: UUID | None, document_id: UUID | No
     if document_id is not None:
         info["document_filter"] = str(document_id)
     return info
+
+
+def _parser_provenance_status(documents: list[dict[str, Any]]) -> dict[str, Any]:
+    """§17: OK / MISSING / INCONSISTENT — sin aceptar parser_engine=null.
+
+    No bloquea el root_cause cognitivo: coexiste y se muestra.
+    """
+    rows: list[dict[str, Any]] = []
+    for document in documents:
+        engine = str(document.get("parser_engine") or "")
+        version = str(document.get("parser_version") or "")
+        mode = str(document.get("parser_mode") or "")
+        structure = str(document.get("structure_source") or "")
+        status = "OK" if engine and version and mode else "MISSING"
+        if status == "OK" and engine not in ("pdfplumber", "opendataloader"):
+            status = "INCONSISTENT"
+        if status == "OK" and engine == "opendataloader" and mode == "pdfplumber":
+            status = "INCONSISTENT"
+        rows.append(
+            {
+                "document_id": document.get("id"),
+                "external_id": document.get("external_id"),
+                "parser_engine": engine or None,
+                "parser_version": version or None,
+                "parser_mode": mode or None,
+                "structure_source": structure or None,
+                "parser_timestamp": document.get("parser_timestamp"),
+                "java_version": document.get("java_version"),
+                "opendataloader_version": document.get("opendataloader_version"),
+                "status": status,
+            }
+        )
+    if not rows:
+        overall = "MISSING"
+    elif any(row["status"] == "INCONSISTENT" for row in rows):
+        overall = "INCONSISTENT"
+    elif all(row["status"] == "OK" for row in rows):
+        overall = "OK"
+    else:
+        overall = "MISSING"
+    return {"status": overall, "documents": rows}
 
 
 async def _main_retrieval(org: UUID, workspace_id: UUID | None, question: str) -> dict[str, Any]:
@@ -373,6 +423,9 @@ async def run_audit(
     report["premise_retriever"] = retriever_result.to_public_dict()
 
     report["source"] = await _source_info(org, source_id, document_id)
+    report["parser_provenance"] = _parser_provenance_status(
+        list(report["source"].get("documents") or [])
+    )
     if worker_identity is None:
         documents = (report["source"].get("documents") or [])
         recorded = next(
@@ -563,7 +616,17 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(report, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
-    print(json.dumps({"root_cause": report["root_cause"], "report": str(path)}))
+    print(
+        json.dumps(
+            {
+                "root_cause": report["root_cause"],
+                "parser_provenance": (report.get("parser_provenance") or {}).get(
+                    "status"
+                ),
+                "report": str(path),
+            }
+        )
+    )
     return 0
 
 
