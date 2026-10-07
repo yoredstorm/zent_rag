@@ -1,0 +1,1700 @@
+{
+  "schema": "zent.live_premise_audit.1",
+  "started_at": "2026-10-07T08:58:25.647683+00:00",
+  "question": "yo tengo en el record 2 &&&F y en el farebasis me viene ABCFGEGE cumple o no cumple",
+  "organization_id": "ef7e9a86-6a5b-465f-830c-04afaeada60f",
+  "runtime_identity": {
+    "git_sha": "2ad2ef4b63646f2099afa0dfbc5289376aa5ef79",
+    "build_timestamp": "unknown",
+    "image_id": "e2764e3e52bc",
+    "hostname": "e2764e3e52bc",
+    "process_started_at": "2026-10-07T08:58:25.646174+00:00",
+    "pid": "38",
+    "python": "3.11"
+  },
+  "build_parity": {
+    "status": "ok",
+    "api_git_sha": "2ad2ef4b63646f2099afa0dfbc5289376aa5ef79",
+    "worker_git_sha": "2ad2ef4b63646f2099afa0dfbc5289376aa5ef79",
+    "api_build_timestamp": "unknown",
+    "worker_build_timestamp": "unknown"
+  },
+  "dependency_health": {
+    "get_knowledge_retriever": {
+      "constructed": true,
+      "class": "StructuredRetriever"
+    },
+    "get_vector_store": {
+      "constructed": true,
+      "class": "QdrantVectorStore"
+    },
+    "get_embedding_provider": {
+      "constructed": true,
+      "class": "LiteLLMProvider"
+    }
+  },
+  "qdrant_collection": {
+    "write_collection": "rag_documents",
+    "read_collection": "rag_documents",
+    "env_collection": null,
+    "match": true
+  },
+  "premise_retriever": {
+    "available": true,
+    "error_code": "",
+    "dependency": "",
+    "exception_type": "",
+    "exception_message_safe": "",
+    "retriever_type": "StructuredRetriever",
+    "vector_store_type": "QdrantVectorStore",
+    "embedding_provider_type": "LiteLLMProvider"
+  },
+  "source": {
+    "source": {
+      "id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+      "type": "file",
+      "name": "Rec2_Rules_dapp_C.pdf",
+      "status": "indexed",
+      "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f"
+    },
+    "documents": [
+      {
+        "id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "external_id": "54e7eb6659404b53ae3a53b15c9cf97a_Rec2_Rules_dapp_C.pdf",
+        "title": "Data Application For Record 2 – Category Control",
+        "block_count": 655,
+        "table_count": 72,
+        "parser_engine": null,
+        "parser_version": null,
+        "parser_mode": null,
+        "structure_source": null,
+        "runtime_identity": null,
+        "updated_at": "2026-10-07 06:56:51.720573+00:00"
+      }
+    ]
+  },
+  "qdrant_scan": {
+    "needles": [
+      "ampersand",
+      "alphanumeric",
+      "additional characters may follow",
+      "position"
+    ],
+    "hits": [
+      {
+        "chunk_id": "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 11,
+        "section_path": [
+          "Fare Family Match using Hyphen (-)"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "The fare class coding convention is designed to match any alphanumeric string of characters. This is accomplished by placing a hyphen in the position at which v"
+      },
+      {
+        "chunk_id": "dad81e4d-4a5b-4aa5-9f05-d87e45351773",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 18,
+        "section_path": [
+          "Additional Examples for Fare Class/Family matching:"
+        ],
+        "v2_chunk": "false",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Additional Examples for Fare Class/Family matching: | Fare | | | Record 2 Fare Class Field | | | | | | | | | | | | | | | | | | | | | |"
+      },
+      {
+        "chunk_id": "94d36ca0-287b-4269-994c-cb79e3c05e06",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 13,
+        "section_path": [
+          "Fare Family Match using Hyphen (-)"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "| | DATA | APPLICATION | | FOR | | RECORD 2 – | CATEGORY | CONTROL | | | | | by a specified | character in | the fare | class, | that character | may be"
+      },
+      {
+        "chunk_id": "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 17,
+        "section_path": [
+          "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Example | 4: | W&2M can | also be used | to match | W12M, | W22M, and | W1 2MXRT | (the “&” in | the second | position | | an individual | number match | next"
+      },
+      {
+        "chunk_id": "5e6b0c64-918e-40d7-8520-f21a53606f3c",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 17,
+        "section_path": [
+          "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "position can represent an individual alpha or individual number next to the “2” in the third position"
+      },
+      {
+        "chunk_id": "b3e30486-cebe-47d8-93c9-d7facb95bcfd",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 20,
+        "section_path": [
+          "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "| Fare | | | Record 2 Fare Class Field | | | | | | | | | | | | | | | | | | | | | | | | Result | | | Description | YA12B234 | | | !"
+      },
+      {
+        "chunk_id": "0f41997b-5aa2-43b8-9fc5-8c4e3f94ae59",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 20,
+        "section_path": [
+          "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "| Fare | | | Record 2 Fare Class Field | | | | | | | | | | | | | | | | | | | | | | | | Result | | | Description | YA12BC | | | & |"
+      },
+      {
+        "chunk_id": "fc5670d2-040d-4593-9b23-eebffff001cd",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 16,
+        "section_path": [
+          "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Example 1: WM! can be used to match WMC, WMCA, WMC23, or WMCA12 (all are valid matches because the positional rules for “!” are obeyed and the matched fare clas"
+      },
+      {
+        "chunk_id": "66d888fd-fcca-4e6c-809b-bbd6a79b58aa",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 16,
+        "section_path": [
+          "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Example 1: W&C&M can be used to match WBCDM, W1C2M, WBC1M, W1CBM, and WBC2MXRT (all are valid matches because the positional rules for “&” are obeyed and the ma"
+      },
+      {
+        "chunk_id": "8ed885a4-705a-4807-afb8-86bb13335f3a",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 14,
+        "section_path": [
+          "Fare Family Match using Hyphen (-)"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Example 5: W!2M cannot be used to match W12M, W22M, and W1 2MXRT (the “!” in the second position is being used to represent a number, when the immediately follo"
+      }
+    ],
+    "errors": []
+  },
+  "main_retrieval": {
+    "items": [
+      {
+        "chunk_id": "c58449c7-ec10-4dfa-aa4d-f185fb58fcf8",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 62,
+        "section_path": [
+          "IF/AND"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "| | DATA | | APPLICATION | | FOR RECORD | 2 | – | CATEGORY | | | CONTROL | | • | Processing | matchs | the | IF/AND | portion of the | set and | applies"
+      },
+      {
+        "chunk_id": "d1ba145a-60b8-4509-a9b0-78d1ce5cb99d",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 11,
+        "section_path": [
+          "4",
+          "1",
+          "2"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "The fare class match field on the Footnote Record 2 and Rule Record 2 can be an exact match to the Fare Record, a fare family using a hyphen that matches to the"
+      },
+      {
+        "chunk_id": "b3616185-2613-465a-bac8-3cd11c012bea",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 62,
+        "section_path": [
+          "IF/AND"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "| | DATA | | APPLICATION | | FOR RECORD | 2 | – | CATEGORY | | | CONTROL | | | | | | | | | | | | | | | | | Cxr XX Flight | 100 | | | |"
+      },
+      {
+        "chunk_id": "8756ea8c-9ef7-4062-a36e-dc73dc1f6b96",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 25,
+        "section_path": [
+          "Fare:"
+        ],
+        "v2_chunk": "true",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Record 1 in as outlined in Section 3.0. If a match is made to the fields then this is the sequence that must be applied. If a match is not made to any of these"
+      },
+      {
+        "chunk_id": "8c80de3b-7919-47e8-a912-dd9c9a83f043",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 61,
+        "section_path": [
+          "IF/AND"
+        ],
+        "v2_chunk": "false",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "IF/AND Refer examples on the following pages. Example 1 (Directional Indicator on Qualfiying Category 4) Record 2 Loc 1 = Europe Loc 2 = Area 1 Data Table St"
+      },
+      {
+        "chunk_id": "b3bfb531-64fb-45e2-a739-388ce1505f97",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 11,
+        "section_path": [
+          "4",
+          "1",
+          "2"
+        ],
+        "v2_chunk": "false",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Fare Class match (Rule bytes 43-50, Footnote bytes 42-49) The fare class match field on the Footnote Record 2 and Rule Record 2 can be an exact match to the Fa"
+      },
+      {
+        "chunk_id": "2e085064-0710-446f-b031-33e845c6d4b5",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "workspace_id": "a768d054-3a08-42e4-b566-909a0813533f",
+        "page": 25,
+        "section_path": [
+          "Fare:"
+        ],
+        "v2_chunk": "false",
+        "representation_kind": null,
+        "parser": null,
+        "excerpt": "Fare: | Tariff | | | Carrier | | | Orig (City) | | | Dest (City) | | | Fare Class | | | Eff Date | | Disc Date | | Rule # | | | Rtg # | | | OW/"
+      }
+    ],
+    "errors": [],
+    "count": 7
+  },
+  "source_scope": {
+    "document_ids": [
+      "98e1703f-975e-519b-9553-80ef029df99a"
+    ],
+    "source_ids": [
+      "73080890-33bc-4a03-a6dc-938cb1aa8342"
+    ],
+    "workspace_ids": [
+      "a768d054-3a08-42e4-b566-909a0813533f"
+    ],
+    "origin": "initial_retrieval_metadata",
+    "source_visible_in_citation": true,
+    "source_id_missing_in_scope": false,
+    "document_id_missing_in_scope": false
+  },
+  "premise_queries": {
+    "queries": [
+      {
+        "premise": "definition:symbol:&",
+        "lane": "exact",
+        "query": "\"&\"",
+        "hit_count": 0,
+        "evidence_ids": []
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "lexical",
+        "query": "position positional same position left to right ordered comparison &",
+        "hit_count": 6,
+        "evidence_ids": [
+          "94d36ca0-287b-4269-994c-cb79e3c05e06",
+          "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+          "fbc39a4c-7991-40ef-a003-0406fcca8113",
+          "578fadfc-f8a1-4602-9317-1cd0c569c339",
+          "e1519ac1-f0e6-4f06-9ed4-c8667361bbab",
+          "b2727b5c-59d4-4342-a234-e9410450d0d6"
+        ]
+      },
+      {
+        "premise": "length_policy",
+        "lane": "lexical",
+        "query": "length number of characters additional characters extra characters longer shorter exact length minimum length maximum length trailing remaining characters &",
+        "hit_count": 6,
+        "evidence_ids": [
+          "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+          "52f74212-09b1-4417-8e0a-262e47d3acc7",
+          "ca1cd4e2-3d9f-4baa-90f5-674c4988d692",
+          "8e8a8c9a-ece4-4653-b133-ec258ef99088",
+          "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+          "dad81e4d-4a5b-4aa5-9f05-d87e45351773"
+        ]
+      },
+      {
+        "premise": "definition:symbol:&",
+        "lane": "symbol",
+        "query": "& ampersand symbol definition represents indicates",
+        "hit_count": 6,
+        "evidence_ids": [
+          "db3aedcd-5769-4077-9873-2e2e5cc7a24f",
+          "e1519ac1-f0e6-4f06-9ed4-c8667361bbab",
+          "ca1cd4e2-3d9f-4baa-90f5-674c4988d692",
+          "47480fc7-76e1-4d40-9799-014fa7d3c5a2",
+          "16fe0052-f7ff-4d15-9966-897553278749",
+          "18d90a0b-9751-438d-a3c5-98af8c8d974e"
+        ]
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "rule_index",
+        "query": "by position positionally match posición posicional misma posición &",
+        "hit_count": 6,
+        "evidence_ids": [
+          "e1519ac1-f0e6-4f06-9ed4-c8667361bbab",
+          "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+          "dad81e4d-4a5b-4aa5-9f05-d87e45351773",
+          "578fadfc-f8a1-4602-9317-1cd0c569c339",
+          "fbc39a4c-7991-40ef-a003-0406fcca8113",
+          "f01af81b-e8a9-449b-baf5-6f04db43707c"
+        ]
+      },
+      {
+        "premise": "length_policy",
+        "lane": "rule_index",
+        "query": "may follow longitud número de caracteres caracteres adicionales caracteres extra más largo más corto longitud exacta longitud mínima longitud máxima caracteres ",
+        "hit_count": 6,
+        "evidence_ids": [
+          "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+          "dad81e4d-4a5b-4aa5-9f05-d87e45351773",
+          "44648dd6-1446-40b3-a69a-c20cc3404d90",
+          "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+          "b3e30486-cebe-47d8-93c9-d7facb95bcfd",
+          "31105d2f-799d-4a56-aacc-be7ae5388a6e"
+        ]
+      }
+    ],
+    "hits": [
+      {
+        "premise": "matching:positional",
+        "lane": "exact",
+        "evidence_id": "94d36ca0-287b-4269-994c-cb79e3c05e06",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| | DATA | APPLICATION | | FOR | | RECORD 2 – | CATEGORY | CONTROL | | | | | by a specified | character in | the fare | class, | that character | may be"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "exact",
+        "evidence_id": "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Example | 4: | W&2M can | also be used | to match | W12M, | W22M, and | W1 2MXRT | (the “&” in | the second | position | | an individual | number match | next"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "fbc39a4c-7991-40ef-a003-0406fcca8113",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Example | 4: | W&2M can | also be used | to match | W12M, | W22M, and | W1 2MXRT | (the “&” in | the second | position | | can represent | an individual | num"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "578fadfc-f8a1-4602-9317-1cd0c569c339",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "because the positional rules for “&” are obeyed and the matched fare classes are at least seven"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "e1519ac1-f0e6-4f06-9ed4-c8667361bbab",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| | DATA | APPLICATION | | FOR | | RECORD 2 – | CATEGORY | CONTROL | | | | | | | | | | | | | Fare Family | Match using | | Exclamation Point ("
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "b2727b5c-59d4-4342-a234-e9410450d0d6",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "because the positional rules for “!” are obeyed and the matched fare classes are at least four because the positional rules for “!” are obeyed and the matched f"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Example | 4: | W&2M can | also be used | to match | W12M, | W22M, and | W1 2MXRT | (the “&” in | the second | position | | an individual | number match | next"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "canonical",
+        "evidence_id": "52f74212-09b1-4417-8e0a-262e47d3acc7",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "2 in the sixth position. The “!” in the example can match to any alpha character in the first, third and fifth position and/ or a number in the third position."
+      },
+      {
+        "premise": "length_policy",
+        "lane": "canonical",
+        "evidence_id": "ca1cd4e2-3d9f-4baa-90f5-674c4988d692",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| | DATA | APPLICATION | | FOR | | RECORD 2 – | CATEGORY | CONTROL | | ATPCO edits | require at least | one | alphanumeric in | the Fare | Class | field |"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "canonical",
+        "evidence_id": "8e8a8c9a-ece4-4653-b133-ec258ef99088",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "DATA | APPLICATION | FOR | RECORD | | 2 – | CATEGORY | CONTROL | | | specified character | in the | fare class, | that character | must | be an alpha | char"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "The fare class coding convention is designed to match any alphanumeric string of characters. This is accomplished by placing a hyphen in the position at which v"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "dad81e4d-4a5b-4aa5-9f05-d87e45351773",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Additional Examples for Fare Class/Family matching: | Fare | | | Record 2 Fare Class Field | | | | | | | | | | | | | | | | | | | | | |"
+      },
+      {
+        "premise": "definition:symbol:&",
+        "lane": "exact",
+        "evidence_id": "db3aedcd-5769-4077-9873-2e2e5cc7a24f",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Sequence 4000 continued: Rtg # | Fare | Rtg # | 99999 (Blank) in the routing field matches to all routing # on the Fare. Footnote | Fare | Footnote | Blank on"
+      },
+      {
+        "premise": "definition:symbol:&",
+        "lane": "canonical",
+        "evidence_id": "e1519ac1-f0e6-4f06-9ed4-c8667361bbab",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| | DATA | APPLICATION | | FOR | | RECORD 2 – | CATEGORY | CONTROL | | | | | | | | | | | | | Fare Family | Match using | | Exclamation Point ("
+      },
+      {
+        "premise": "definition:symbol:&",
+        "lane": "canonical",
+        "evidence_id": "ca1cd4e2-3d9f-4baa-90f5-674c4988d692",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| | DATA | APPLICATION | | FOR | | RECORD 2 – | CATEGORY | CONTROL | | ATPCO edits | require at least | one | alphanumeric in | the Fare | Class | field |"
+      },
+      {
+        "premise": "definition:symbol:&",
+        "lane": "canonical",
+        "evidence_id": "47480fc7-76e1-4d40-9799-014fa7d3c5a2",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| | | DATA | APPLICATION | | FOR | RECORD | 2 – | | CATEGORY | | CONTROL | | | 2. Within | each | set, the | following | rules apply: | | | | | |"
+      },
+      {
+        "premise": "definition:symbol:&",
+        "lane": "canonical",
+        "evidence_id": "16fe0052-f7ff-4d15-9966-897553278749",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| DATA | APPLICATION | | FOR | RECORD | 2 – | CATEGORY | CONTROL | | | | | | | | | | | | | | General Rule Application | (byte 102) | | Value |"
+      },
+      {
+        "premise": "definition:symbol:&",
+        "lane": "exact",
+        "evidence_id": "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "The fare class coding convention is designed to match any alphanumeric string of characters. This is accomplished by placing a hyphen in the position at which v"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "e1519ac1-f0e6-4f06-9ed4-c8667361bbab",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| | DATA | APPLICATION | | FOR | | RECORD 2 – | CATEGORY | CONTROL | | | | | | | | | | | | | Fare Family | Match using | | Exclamation Point ("
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "exact",
+        "evidence_id": "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "The fare class coding convention is designed to match any alphanumeric string of characters. This is accomplished by placing a hyphen in the position at which v"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "exact",
+        "evidence_id": "dad81e4d-4a5b-4aa5-9f05-d87e45351773",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Additional Examples for Fare Class/Family matching: | Fare | | | Record 2 Fare Class Field | | | | | | | | | | | | | | | | | | | | | |"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "578fadfc-f8a1-4602-9317-1cd0c569c339",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "because the positional rules for “&” are obeyed and the matched fare classes are at least seven"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "fbc39a4c-7991-40ef-a003-0406fcca8113",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Example | 4: | W&2M can | also be used | to match | W12M, | W22M, and | W1 2MXRT | (the “&” in | the second | position | | can represent | an individual | num"
+      },
+      {
+        "premise": "matching:positional",
+        "lane": "canonical",
+        "evidence_id": "f01af81b-e8a9-449b-baf5-6f04db43707c",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Example | 6: | W2!M cannot be used | to match | W21M, W22M, | and W21 | MXRT (the “!” | in the third position | is number is | used | at the end of the fare | f"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "The fare class coding convention is designed to match any alphanumeric string of characters. This is accomplished by placing a hyphen in the position at which v"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "dad81e4d-4a5b-4aa5-9f05-d87e45351773",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Additional Examples for Fare Class/Family matching: | Fare | | | Record 2 Fare Class Field | | | | | | | | | | | | | | | | | | | | | |"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "44648dd6-1446-40b3-a69a-c20cc3404d90",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL 23 | T 121 Cannot be used as high/low fare in diff calc | T 456 May be used for addon constr | TRF 010 Rule 01"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Example | 4: | W&2M can | also be used | to match | W12M, | W22M, and | W1 2MXRT | (the “&” in | the second | position | | an individual | number match | next"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "b3e30486-cebe-47d8-93c9-d7facb95bcfd",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "| Fare | | | Record 2 Fare Class Field | | | | | | | | | | | | | | | | | | | | | | | | Result | | | Description | YA12B234 | | | !"
+      },
+      {
+        "premise": "length_policy",
+        "lane": "exact",
+        "evidence_id": "31105d2f-799d-4a56-aacc-be7ae5388a6e",
+        "document_id": "98e1703f-975e-519b-9553-80ef029df99a",
+        "source_id": "73080890-33bc-4a03-a6dc-938cb1aa8342",
+        "excerpt": "Note: The following examples are for illustration purposes only. Assuming all Record 3 tables match, the following conditions indicate what is"
+      }
+    ],
+    "lane_errors": [],
+    "lanes": {
+      "exact": 30,
+      "canonical": 30
+    }
+  },
+  "raw_evidence_parity": {
+    "candidates": 6,
+    "supported": 3,
+    "executable": 3,
+    "conflicts": 0,
+    "rules": [
+      {
+        "rule_id": "rule:31eccc73bbb02ad8485bf5ec",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "logic.operators",
+          "matching.literal",
+          "matching.operator",
+          "matching.separator",
+          "modality",
+          "observed.statement",
+          "polarity",
+          "quantifier",
+          "temporal.relation"
+        ]
+      },
+      {
+        "rule_id": "rule:ca122a81cc0166a9a9615747",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "logic.operators",
+          "matching.literal",
+          "matching.operator",
+          "matching.separator",
+          "modality",
+          "observed.statement",
+          "polarity",
+          "quantifier",
+          "temporal.relation"
+        ]
+      },
+      {
+        "rule_id": "rule:cca487c82c3bb5ab5629bd40",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "logic.operators",
+          "matching.literal",
+          "matching.operator",
+          "matching.separator",
+          "modality",
+          "observed.statement",
+          "polarity",
+          "quantifier",
+          "temporal.relation"
+        ]
+      }
+    ]
+  },
+  "live_prepare": {
+    "status": "ok",
+    "has_authority": true,
+    "error_stage": "",
+    "error_code": "",
+    "error_message": "",
+    "answer_state": [
+      "DERIVED_RESULT",
+      ""
+    ],
+    "missing_premises": [],
+    "query_local_executable": 9,
+    "closure_termination": "SATISFIED",
+    "closure_evidence_added": 13,
+    "rule_evaluations": [
+      {
+        "rule_id": "rule:25d60450b903ed662578a1bb",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: definition:symbol:&",
+        "missing_premises": [
+          "definition:symbol:&"
+        ],
+        "symbols": [],
+        "operator": "POSITIONAL",
+        "statement": "W21M12 AB (all are valid matches because the positional rules for “&” are obeyed and the matched fare classes are at lea"
+      },
+      {
+        "rule_id": "rule:31eccc73bbb02ad8485bf5ec",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: definition:symbol:&, length_semantics, input:from, input:to",
+        "missing_premises": [
+          "definition:symbol:&",
+          "length_semantics",
+          "input:from",
+          "input:to"
+        ],
+        "symbols": [],
+        "operator": "LITERAL",
+        "statement": "The fare class match field on the Footnote Record 2 and Rule Record 2 can be an exact match to the Fare Record, a fare f"
+      },
+      {
+        "rule_id": "rule:ca122a81cc0166a9a9615747",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: definition:symbol:&, length_semantics, input:from, input:to",
+        "missing_premises": [
+          "definition:symbol:&",
+          "length_semantics",
+          "input:from",
+          "input:to"
+        ],
+        "symbols": [],
+        "operator": "LITERAL",
+        "statement": "The fare class match field on the Footnote Record 2 and Rule Record 2 can be an exact match to the Fare Record, a fare f"
+      },
+      {
+        "rule_id": "rule:cca487c82c3bb5ab5629bd40",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: definition:symbol:&, length_semantics, input:from, input:to",
+        "missing_premises": [
+          "definition:symbol:&",
+          "length_semantics",
+          "input:from",
+          "input:to"
+        ],
+        "symbols": [],
+        "operator": "LITERAL",
+        "statement": "Fare Class match (Rule bytes 43-50, Footnote bytes 42-49) The fare class match field on the Footnote Record 2 and Rule R"
+      },
+      {
+        "rule_id": "rule:812e3a554f22bb1604011ea8",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: length_semantics, input:from, input:to",
+        "missing_premises": [
+          "length_semantics",
+          "input:from",
+          "input:to"
+        ],
+        "symbols": [
+          "matching.symbol.&"
+        ],
+        "operator": "LITERAL",
+        "statement": "The fare class match field on the Footnote Record 2 and Rule Record 2 can be an exact match to the Fare Record, a fare f"
+      },
+      {
+        "rule_id": "rule:c46437570268106370a14c6a",
+        "status": "MATCH",
+        "reason": "derived_from_canonical_rule",
+        "missing_premises": [],
+        "symbols": [
+          "matching.symbol.&"
+        ],
+        "operator": "POSITIONAL",
+        "statement": "The action fields | on the recurring segments | (number of | segments, | relational indicator, | category number, table"
+      },
+      {
+        "rule_id": "rule:724f102002e486c4acdcdf30",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: input:from, input:to",
+        "missing_premises": [
+          "input:from",
+          "input:to"
+        ],
+        "symbols": [],
+        "operator": "",
+        "statement": "When a directional | value is | entered, edits require that | data also be present | in the Record | 2 Location fields a"
+      },
+      {
+        "rule_id": "rule:28c656b1feedf63f715f0fab",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: definition:symbol:&, length_semantics",
+        "missing_premises": [
+          "definition:symbol:&",
+          "length_semantics"
+        ],
+        "symbols": [],
+        "operator": "POSITIONAL",
+        "statement": "The action fields | on the recurring segments | (number of | segments, | relational indicator, | category number, table"
+      },
+      {
+        "rule_id": "rule:9db84201573a2ef2848ac70d",
+        "status": "UNDETERMINED",
+        "reason": "faltan premisas: definition:symbol:&, length_semantics",
+        "missing_premises": [
+          "definition:symbol:&",
+          "length_semantics"
+        ],
+        "symbols": [],
+        "operator": "LITERAL",
+        "statement": "Even though Sequence 5000 appears to be a more exact match it is not allowed to try and match the data with a higher seq"
+      }
+    ],
+    "derived_claims": [
+      {
+        "version": "grounding-contract-1",
+        "statement": "la regla compilada «DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL» se cumple",
+        "claim_type": "DERIVED_CLAIM",
+        "origin": "DERIVED",
+        "operation": "POSITIONAL_MATCH",
+        "result": true,
+        "premises": [
+          {
+            "statement": "rule:c46437570268106370a14c6a logic.operators=['AND']",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "44648dd6-1446-40b3-a69a-c20cc3404d90"
+            ],
+            "key": "logic.operators:['AND']"
+          },
+          {
+            "statement": "rule:c46437570268106370a14c6a matching.operator=POSITIONAL",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "44648dd6-1446-40b3-a69a-c20cc3404d90"
+            ],
+            "key": "matching.operator:POSITIONAL"
+          },
+          {
+            "statement": "rule:c46437570268106370a14c6a logic.operators.unmerged=['OR']",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "52f74212-09b1-4417-8e0a-262e47d3acc7"
+            ],
+            "key": "logic.operators.unmerged:['OR']"
+          },
+          {
+            "statement": "rule:c46437570268106370a14c6a comparison.operator=GTE",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "52f74212-09b1-4417-8e0a-262e47d3acc7"
+            ],
+            "key": "comparison.operator:GTE"
+          },
+          {
+            "statement": "rule:c46437570268106370a14c6a comparison.left=a fare class must contain",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "52f74212-09b1-4417-8e0a-262e47d3acc7"
+            ],
+            "key": "comparison.left:a fare class must contain"
+          },
+          {
+            "statement": "rule:c46437570268106370a14c6a comparison.right=number of characters referenced in",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "52f74212-09b1-4417-8e0a-262e47d3acc7"
+            ],
+            "key": "comparison.right:number of characters referenced in"
+          },
+          {
+            "statement": "rule:c46437570268106370a14c6a comparison.boundary=INCLUSIVE",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "52f74212-09b1-4417-8e0a-262e47d3acc7"
+            ],
+            "key": "comparison.boundary:INCLUSIVE"
+          },
+          {
+            "statement": "rule:c46437570268106370a14c6a length.policy=MIN_LENGTH",
+            "origin": "SOURCE",
+            "evidence_refs": [
+              "52f74212-09b1-4417-8e0a-262e47d3acc7"
+            ],
+            "key": "length.policy:MIN_LENGTH"
+          }
+        ],
+        "user_inputs": [
+          "pattern=&&&F",
+          "value=ABCFGEGE"
+        ],
+        "evidence_refs": [
+          "44648dd6-1446-40b3-a69a-c20cc3404d90",
+          "52f74212-09b1-4417-8e0a-262e47d3acc7",
+          "ca1cd4e2-3d9f-4baa-90f5-674c4988d692"
+        ],
+        "confidence": 0.6,
+        "verification_status": "SUPPORTED",
+        "missing_premises": [],
+        "verification_note": "premises grounded and derivation valid",
+        "canonical_rule_ids": [
+          "rule:c46437570268106370a14c6a"
+        ],
+        "deterministic": true,
+        "unresolved_requirements": [],
+        "conflicts": []
+      }
+    ],
+    "grounded_answerability": "ANSWERABLE_DERIVED",
+    "closure_rules": [
+      {
+        "rule_id": "rule:25d60450b903ed662578a1bb",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "comparison.boundary",
+          "comparison.left",
+          "comparison.operator",
+          "comparison.right",
+          "length.boundary",
+          "length.policy",
+          "length.value",
+          "logic.operators",
+          "matching.operator",
+          "modality"
+        ],
+        "evidence_ids": [
+          "ev:cb44376163d6aa195b2af684",
+          "ev:393e979f3afae00651380cd3",
+          "ev:b9f69488dd714512ec956510"
+        ]
+      },
+      {
+        "rule_id": "rule:0871bbdfbc1dfff1d30d84e3",
+        "state": "SUPPORTED",
+        "executable": false,
+        "missing_premises": [],
+        "properties": [
+          "comparison.boundary",
+          "comparison.left",
+          "comparison.operator",
+          "comparison.right",
+          "length.boundary",
+          "length.policy",
+          "length.value",
+          "logic.operators",
+          "matching.operator",
+          "modality"
+        ],
+        "evidence_ids": [
+          "ev:1483330a4f82f381a72595e6",
+          "ev:20466c210c24a0362390ea08",
+          "ev:5f8a1fedf64b9f1692470867",
+          "ev:b9f69488dd714512ec956510"
+        ]
+      },
+      {
+        "rule_id": "rule:eebbea2a5fd4e7eed96b6721",
+        "state": "SUPPORTED",
+        "executable": false,
+        "missing_premises": [],
+        "properties": [
+          "comparison.boundary",
+          "comparison.left",
+          "comparison.operator",
+          "comparison.right",
+          "length.boundary",
+          "length.policy",
+          "length.value",
+          "logic.operators",
+          "matching.operator",
+          "modality"
+        ],
+        "evidence_ids": [
+          "ev:23b6fee9b2b819a06805be3c",
+          "ev:24fd0034437dfb36417235be",
+          "ev:b9f69488dd714512ec956510"
+        ]
+      },
+      {
+        "rule_id": "rule:4199f1551f566c0380277582",
+        "state": "SUPPORTED",
+        "executable": false,
+        "missing_premises": [],
+        "properties": [
+          "comparison.boundary",
+          "comparison.left",
+          "comparison.operator",
+          "comparison.right",
+          "length.boundary",
+          "length.policy",
+          "length.value",
+          "logic.operators",
+          "matching.operator",
+          "modality"
+        ],
+        "evidence_ids": [
+          "ev:0d708c55a4414b6092ecc193",
+          "ev:1e137d6d047e35f3284767ef",
+          "ev:a2d8b661f26e88039d9e4c61"
+        ]
+      },
+      {
+        "rule_id": "rule:08f0d70d776bfa48424efa98",
+        "state": "SUPPORTED",
+        "executable": false,
+        "missing_premises": [],
+        "properties": [
+          "comparison.boundary",
+          "comparison.left",
+          "comparison.operator",
+          "comparison.right",
+          "length.boundary",
+          "length.policy",
+          "length.value",
+          "logic.operators",
+          "matching.operator",
+          "matching.symbol.!"
+        ],
+        "evidence_ids": [
+          "ev:8fe71c71b541002272ce1d13",
+          "ev:39108934e90e59e9666ade6b",
+          "ev:a2d8b661f26e88039d9e4c61"
+        ]
+      },
+      {
+        "rule_id": "rule:31eccc73bbb02ad8485bf5ec",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "logic.operators",
+          "matching.literal",
+          "matching.operator",
+          "matching.separator",
+          "modality",
+          "observed.statement",
+          "polarity",
+          "quantifier",
+          "temporal.relation"
+        ],
+        "evidence_ids": [
+          "d1ba145a-60b8-4509-a9b0-78d1ce5cb99d",
+          "b3bfb531-64fb-45e2-a739-388ce1505f97"
+        ]
+      },
+      {
+        "rule_id": "rule:ca122a81cc0166a9a9615747",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "logic.operators",
+          "matching.literal",
+          "matching.operator",
+          "matching.separator",
+          "modality",
+          "observed.statement",
+          "polarity",
+          "quantifier",
+          "temporal.relation"
+        ],
+        "evidence_ids": [
+          "d1ba145a-60b8-4509-a9b0-78d1ce5cb99d"
+        ]
+      },
+      {
+        "rule_id": "rule:cca487c82c3bb5ab5629bd40",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "logic.operators",
+          "matching.literal",
+          "matching.operator",
+          "matching.separator",
+          "modality",
+          "observed.statement",
+          "polarity",
+          "quantifier",
+          "temporal.relation"
+        ],
+        "evidence_ids": [
+          "b3bfb531-64fb-45e2-a739-388ce1505f97"
+        ]
+      },
+      {
+        "rule_id": "rule:812e3a554f22bb1604011ea8",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "logic.operators",
+          "logic.operators.unmerged",
+          "matching.literal",
+          "matching.operator",
+          "matching.separator",
+          "matching.symbol.&",
+          "matching.symbol.&.alphabet",
+          "modality",
+          "observed.statement",
+          "polarity"
+        ],
+        "evidence_ids": [
+          "d1ba145a-60b8-4509-a9b0-78d1ce5cb99d",
+          "ca1cd4e2-3d9f-4baa-90f5-674c4988d692",
+          "b3bfb531-64fb-45e2-a739-388ce1505f97",
+          "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+          "db3aedcd-5769-4077-9873-2e2e5cc7a24f"
+        ]
+      },
+      {
+        "rule_id": "rule:c46437570268106370a14c6a",
+        "state": "SUPPORTED",
+        "executable": true,
+        "missing_premises": [],
+        "properties": [
+          "comparison.boundary",
+          "comparison.left",
+          "comparison.operator",
+          "comparison.right",
+          "length.left_operand",
+          "length.policy",
+          "length.right_operand",
+          "logic.operators",
+          "logic.operators.unmerged",
+          "matching.operator"
+        ],
+        "evidence_ids": [
+          "44648dd6-1446-40b3-a69a-c20cc3404d90",
+          "52f74212-09b1-4417-8e0a-262e47d3acc7",
+          "ca1cd4e2-3d9f-4baa-90f5-674c4988d692"
+        ]
+      },
+      {
+        "rule_id": "rule:b81fe1adbc6ad168af48445a",
+        "state": "SUPPORTED",
+        "executable": false,
+        "missing_premises": [
+          "executable_semantics"
+        ],
+        "properties": [
+          "logic.operators",
+          "observed.statement",
+          "polarity"
+        ],
+        "evidence_ids": [
+          "16fe0052-f7ff-4d15-9966-897553278749"
+        ]
+      },
+      {
+        "rule_id": "rule:68937b24317e249218d1909c",
+        "state": "SUPPORTED",
+        "executable": false,
+        "missing_premises": [
+          "executable_semantics"
+        ],
+        "properties": [
+          "logic.operators",
+          "modality",
+          "observed.statement",
+          "polarity"
+        ],
+        "evidence_ids": [
+          "44648dd6-1446-40b3-a69a-c20cc3404d90"
+        ]
+      }
+    ],
+    "envelope": {
+      "version": "decision-envelope-1",
+      "state": "ANSWERABLE_DERIVED",
+      "operation": "POSITIONAL_MATCH",
+      "result": "MATCH",
+      "authoritative": true,
+      "canonical_rule_ids": [
+        "rule:c46437570268106370a14c6a"
+      ],
+      "runtime_inputs": [
+        "pattern=&&&F",
+        "value=ABCFGEGE"
+      ],
+      "premises": [
+        {
+          "statement": "rule:c46437570268106370a14c6a logic.operators=['AND']",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "44648dd6-1446-40b3-a69a-c20cc3404d90"
+          ],
+          "key": "logic.operators:['AND']"
+        },
+        {
+          "statement": "rule:c46437570268106370a14c6a matching.operator=POSITIONAL",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "44648dd6-1446-40b3-a69a-c20cc3404d90"
+          ],
+          "key": "matching.operator:POSITIONAL"
+        },
+        {
+          "statement": "rule:c46437570268106370a14c6a logic.operators.unmerged=['OR']",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "52f74212-09b1-4417-8e0a-262e47d3acc7"
+          ],
+          "key": "logic.operators.unmerged:['OR']"
+        },
+        {
+          "statement": "rule:c46437570268106370a14c6a comparison.operator=GTE",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "52f74212-09b1-4417-8e0a-262e47d3acc7"
+          ],
+          "key": "comparison.operator:GTE"
+        },
+        {
+          "statement": "rule:c46437570268106370a14c6a comparison.left=a fare class must contain",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "52f74212-09b1-4417-8e0a-262e47d3acc7"
+          ],
+          "key": "comparison.left:a fare class must contain"
+        },
+        {
+          "statement": "rule:c46437570268106370a14c6a comparison.right=number of characters referenced in",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "52f74212-09b1-4417-8e0a-262e47d3acc7"
+          ],
+          "key": "comparison.right:number of characters referenced in"
+        },
+        {
+          "statement": "rule:c46437570268106370a14c6a comparison.boundary=INCLUSIVE",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "52f74212-09b1-4417-8e0a-262e47d3acc7"
+          ],
+          "key": "comparison.boundary:INCLUSIVE"
+        },
+        {
+          "statement": "rule:c46437570268106370a14c6a length.policy=MIN_LENGTH",
+          "origin": "SOURCE",
+          "evidence_refs": [
+            "52f74212-09b1-4417-8e0a-262e47d3acc7"
+          ],
+          "key": "length.policy:MIN_LENGTH"
+        }
+      ],
+      "condition_results": [
+        {
+          "condition_id": "check:matching",
+          "result": "MATCH",
+          "operation": "POSITIONAL_MATCH"
+        },
+        {
+          "condition_id": "check:length",
+          "result": "MATCH",
+          "operation": "COMPARISON"
+        }
+      ],
+      "evidence_refs": [
+        "44648dd6-1446-40b3-a69a-c20cc3404d90",
+        "52f74212-09b1-4417-8e0a-262e47d3acc7",
+        "ca1cd4e2-3d9f-4baa-90f5-674c4988d692"
+      ],
+      "checks": [
+        {
+          "name": "matching",
+          "operation": "POSITIONAL_MATCH",
+          "status": "MATCH",
+          "result": "MATCH",
+          "detail": "derived_from_documented_grammar",
+          "evidence": [
+            "44648dd6-1446-40b3-a69a-c20cc3404d90",
+            "52f74212-09b1-4417-8e0a-262e47d3acc7",
+            "ca1cd4e2-3d9f-4baa-90f5-674c4988d692"
+          ],
+          "missing_premises": []
+        },
+        {
+          "name": "length",
+          "operation": "COMPARISON",
+          "status": "MATCH",
+          "result": true,
+          "detail": "MIN_LENGTH: length=8 8.0 >= 4.0 is True",
+          "evidence": [
+            "52f74212-09b1-4417-8e0a-262e47d3acc7"
+          ],
+          "missing_premises": []
+        }
+      ],
+      "statement": "la regla compilada «DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL» se cumple",
+      "confidence": 0.6,
+      "rule_version": "grounding-contract-1"
+    },
+    "steps": [
+      {
+        "type": "runtime_identity",
+        "status": "ok",
+        "git_sha": "2ad2ef4b63646f2099afa0dfbc5289376aa5ef79",
+        "build_timestamp": "unknown",
+        "image_id": "e2764e3e52bc",
+        "hostname": "e2764e3e52bc",
+        "process_started_at": "2026-10-07T08:58:25.646174+00:00",
+        "pid": "38",
+        "python": "3.11"
+      },
+      {
+        "type": "query_semantics",
+        "status": "ok",
+        "intent": "VALIDATE",
+        "intent_category": "OPERATION_REQUEST",
+        "semantics": {
+          "version": "query-semantics-1",
+          "intent": "VALIDATE",
+          "intent_confidence": 0.8,
+          "decided_by": "deterministic",
+          "objects": [
+            {
+              "value": "ABCFGEGE",
+              "lexical_kind": "sigla",
+              "semantic_role": "USER_INPUT",
+              "evidence_required": false,
+              "runtime_value": true,
+              "confidence": 0.9,
+              "decided_by": "deterministic",
+              "semantic_type": "runtime_input",
+              "cues": [
+                "tengo",
+                "me viene",
+                "tengo",
+                "me viene"
+              ]
+            },
+            {
+              "value": "&&&F",
+              "lexical_kind": "mascara",
+              "semantic_role": "RUNTIME_PATTERN",
+              "evidence_required": false,
+              "runtime_value": true,
+              "confidence": 0.93,
+              "decided_by": "deterministic",
+              "semantic_type": "pattern_candidate",
+              "requires_semantics": [
+                "symbol:&",
+                "definition:symbol:&",
+                "matching_policy",
+                "positional_semantics",
+                "literal_semantics",
+                "length_semantics"
+              ],
+              "cues": [
+                "tengo",
+                "tengo"
+              ]
+            }
+          ],
+          "runtime_inputs": [
+            "ABCFGEGE"
+          ],
+          "runtime_patterns": [
+            "&&&F"
+          ],
+          "field_requirements": [],
+          "documentable": []
+        }
+      },
+      {
+        "type": "rule_retrieval",
+        "status": "ok",
+        "strategy": "canonical_first",
+        "candidates_found": 20,
+        "supported_rules": 12,
+        "rule_ids": [
+          "rule:25d60450b903ed662578a1bb",
+          "rule:0871bbdfbc1dfff1d30d84e3",
+          "rule:eebbea2a5fd4e7eed96b6721",
+          "rule:296b478625ed06b3c4a87a9b",
+          "rule:ec1489ffba4c0523ea6bbbe0",
+          "rule:4199f1551f566c0380277582",
+          "rule:08f0d70d776bfa48424efa98",
+          "rule:1c740a0b793ee7333b5adb98",
+          "rule:5e0d15c29208cd3ddbd86684",
+          "rule:82b8d738c8122315feb367f5",
+          "rule:85940b209ef4906e8b892e49",
+          "rule:d771da37677193668b491cc8"
+        ],
+        "errors": [],
+        "duration_ms": 38.76,
+        "canonical": true
+      },
+      {
+        "type": "grounding",
+        "status": "warn",
+        "answerability": "UNANSWERABLE_MISSING_PREMISE",
+        "deterministic": false,
+        "missing_premises": [
+          "definition:symbol:&",
+          "rule:rule:0871bbdfbc1dfff1d30d84e3",
+          "rule:rule:eebbea2a5fd4e7eed96b6721",
+          "executable_semantics",
+          "rule:rule:4199f1551f566c0380277582",
+          "rule:rule:08f0d70d776bfa48424efa98"
+        ],
+        "conflicts": [],
+        "duration_ms": 93.19
+      },
+      {
+        "type": "rule_evaluation",
+        "status": "warn",
+        "executable_rules": 0,
+        "missing_requirements": [
+          "definition:symbol:&",
+          "rule:rule:0871bbdfbc1dfff1d30d84e3",
+          "rule:rule:eebbea2a5fd4e7eed96b6721",
+          "executable_semantics",
+          "rule:rule:4199f1551f566c0380277582",
+          "rule:rule:08f0d70d776bfa48424efa98"
+        ],
+        "conflicts": []
+      },
+      {
+        "type": "premise_retriever_health",
+        "status": "ok",
+        "available": true,
+        "error_code": "",
+        "dependency": "",
+        "exception_type": "",
+        "exception_message_safe": "",
+        "retriever_type": "StructuredRetriever",
+        "vector_store_type": "QdrantVectorStore",
+        "embedding_provider_type": "LiteLLMProvider"
+      },
+      {
+        "type": "requirement_graph",
+        "status": "warn",
+        "missing_premises": [
+          "definition:symbol:&",
+          "rule:rule:0871bbdfbc1dfff1d30d84e3",
+          "rule:rule:eebbea2a5fd4e7eed96b6721",
+          "executable_semantics",
+          "rule:rule:4199f1551f566c0380277582",
+          "rule:rule:08f0d70d776bfa48424efa98"
+        ],
+        "searchable_missing": [
+          "definition:symbol:&"
+        ],
+        "non_searchable_diagnostics": [
+          "rule:rule:0871bbdfbc1dfff1d30d84e3",
+          "rule:rule:eebbea2a5fd4e7eed96b6721",
+          "executable_semantics",
+          "rule:rule:4199f1551f566c0380277582",
+          "rule:rule:08f0d70d776bfa48424efa98"
+        ],
+        "canonical_rules": 12
+      },
+      {
+        "type": "premise_closure",
+        "status": "ok",
+        "termination": "SATISFIED",
+        "rounds": 1,
+        "information_gain": 2,
+        "missing_before": [
+          "definition:symbol:&",
+          "executable_semantics"
+        ],
+        "missing_after": [],
+        "compilation_gaps": 0,
+        "rules_added": 21,
+        "evidence_added": 13,
+        "detail": {
+          "version": "premise-closure-1",
+          "termination": "SATISFIED",
+          "missing_before": [
+            "definition:symbol:&",
+            "executable_semantics"
+          ],
+          "missing_after": [],
+          "rounds": [
+            {
+              "round": 1,
+              "missing_before": [
+                "definition:symbol:&",
+                "length_policy",
+                "input:from",
+                "input:to"
+              ],
+              "missing_after": [],
+              "premises_closed": [
+                "definition:symbol:&",
+                "length_policy",
+                "input:from",
+                "input:to"
+              ],
+              "queries": [
+                {
+                  "premise": "definition:symbol:&",
+                  "query": "\"&\"",
+                  "lane": "exact",
+                  "terms": [
+                    "definition",
+                    "defined as",
+                    "means",
+                    "represents"
+                  ],
+                  "symbol": "&"
+                },
+                {
+                  "premise": "length_policy",
+                  "query": "length number of characters additional characters extra characters longer shorter exact length minimum length maximum length trailing remaining characters &",
+                  "lane": "lexical",
+                  "terms": [
+                    "length",
+                    "number of characters",
+                    "additional characters",
+                    "extra characters",
+                    "longer",
+                    "shorter",
+                    "exact length",
+                    "minimum length"
+                  ],
+                  "symbol": ""
+                },
+                {
+                  "premise": "definition:symbol:&",
+                  "query": "& ampersand symbol definition represents indicates",
+                  "lane": "symbol",
+                  "terms": [
+                    "definition",
+                    "defined as",
+                    "means",
+                    "represents"
+                  ],
+                  "symbol": "&"
+                },
+                {
+                  "premise": "length_policy",
+                  "query": "may follow longitud número de caracteres caracteres adicionales caracteres extra más largo más corto longitud exacta longitud mínima longitud máxima caracteres restantes &",
+                  "lane": "rule_index",
+                  "terms": [
+                    "may follow",
+                    "longitud",
+                    "número de caracteres",
+                    "caracteres adicionales",
+                    "caracteres extra",
+                    "más largo",
+                    "más corto",
+                    "longitud exacta"
+                  ],
+                  "symbol": ""
+                },
+                {
+                  "premise": "definition:symbol:&",
+                  "query": "definition symbol & ampersand meaning position match &",
+                  "lane": "rule_index",
+                  "terms": [
+                    "definition",
+                    "defined as",
+                    "means",
+                    "represents"
+                  ],
+                  "symbol": "&"
+                }
+              ],
+              "new_rule_ids": [
+                "rule:812e3a554f22bb1604011ea8",
+                "rule:c46437570268106370a14c6a",
+                "rule:b81fe1adbc6ad168af48445a",
+                "rule:68937b24317e249218d1909c",
+                "rule:724f102002e486c4acdcdf30",
+                "rule:835522a4bbdd355530a37004",
+                "rule:82eea233e7ba6b6679553641",
+                "rule:09a8a6a3343a83623e14f5b6",
+                "rule:974059ec5472d94465ed4e84",
+                "rule:21e5b64b4e234ffdf47a74ad",
+                "rule:28c656b1feedf63f715f0fab",
+                "rule:57a7d76c369f29322336dc50"
+              ],
+              "new_evidence_refs": [
+                "16fe0052-f7ff-4d15-9966-897553278749",
+                "18d90a0b-9751-438d-a3c5-98af8c8d974e",
+                "31105d2f-799d-4a56-aacc-be7ae5388a6e",
+                "44648dd6-1446-40b3-a69a-c20cc3404d90",
+                "47480fc7-76e1-4d40-9799-014fa7d3c5a2",
+                "52f74212-09b1-4417-8e0a-262e47d3acc7",
+                "5c6545f2-9fb7-47ca-be33-5e6ef59c39b4",
+                "8e8a8c9a-ece4-4653-b133-ec258ef99088",
+                "b3e30486-cebe-47d8-93c9-d7facb95bcfd",
+                "ca1cd4e2-3d9f-4baa-90f5-674c4988d692",
+                "dad81e4d-4a5b-4aa5-9f05-d87e45351773",
+                "db3aedcd-5769-4077-9873-2e2e5cc7a24f"
+              ],
+              "new_semantic_dimensions": [
+                "comparison.boundary",
+                "comparison.left",
+                "comparison.operator",
+                "comparison.right",
+                "length.left_operand",
+                "length.policy",
+                "length.right_operand",
+                "logic.operators",
+                "logic.operators.unmerged",
+                "mapping.code",
+                "mapping.meaning",
+                "matching.literal"
+              ],
+              "information_gain": 2,
+              "stop_reason": "SATISFIED"
+            }
+          ],
+          "information_gain": 2,
+          "rules_added": 21,
+          "evidence_added": 13,
+          "compilation_gaps": [],
+          "compiler_feedback": [],
+          "errors": []
+        }
+      },
+      {
+        "type": "query_local_compilation",
+        "status": "ok",
+        "runs": 2,
+        "candidates": 27,
+        "supported": 18,
+        "executable": 10
+      },
+      {
+        "type": "derivation",
+        "status": "ok",
+        "deterministic": true,
+        "result": true,
+        "operation": "POSITIONAL_MATCH",
+        "claims": 1
+      },
+      {
+        "type": "decision_envelope",
+        "status": "ok",
+        "authoritative": true,
+        "operation": "POSITIONAL_MATCH",
+        "result": "MATCH"
+      }
+    ]
+  },
+  "root_cause": "PASS",
+  "finished_at": "2026-10-07T08:58:55.977048+00:00"
+}
