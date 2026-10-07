@@ -631,7 +631,17 @@ async def _run_premise_closure_stage(
                 logger.warning("query-local authority failed", error=str(exc)[:160])
         return None, grounded, local_stats
 
-    candidates = [*rules, *initial_local.rules]
+    # La cobertura estructural NO debe contar reglas de ingesta que no deciden
+    # (PARTIALLY_SUPPORTED / missing premises): si cubrieran, la closure se
+    # declararía satisfecha sin buscar la evidencia y el caso quedaría
+    # UNDETERMINED. Solo las decisorias cubren premisas.
+    decisive = [
+        rule
+        for rule in rules
+        if str(getattr(rule, "verification_state", "")) == "SUPPORTED"
+        and not getattr(rule, "missing_premises", None)
+    ]
+    candidates = [*decisive, *initial_local.rules]
 
     request = PremiseClosureRequest(
         original_query=question,
@@ -650,6 +660,60 @@ async def _run_premise_closure_stage(
 
     final_grounded: dict[str, Any] = {"value": grounded}
 
+    def _decisive_pass(items: Sequence[Any], rules_list: Sequence[Any]) -> Any | None:
+        """Pass decisivo: la mejor regla query-local EJECUTABLE decide.
+
+        El re-merge global del engine puede contaminar una regla autocontenida
+        con reglas ruidosas de otras secciones. Si una regla query-local ya
+        ejecutable declara los símbolos del patrón, se evalúa SOLA y su claim
+        determinista manda.
+        """
+        try:
+            from src.runtime.query_local_rules import rules_are_query_local
+
+            decisive = [
+                rule
+                for rule in rules_list or ()
+                if rules_are_query_local([rule]) and getattr(rule, "executable", False)
+            ]
+            if not decisive:
+                return None
+            symbols = {char for char in runtime_pattern if char in "&*?%#$@!~^"}
+            if not symbols:
+                return None
+
+            def _score(rule: Any) -> tuple[int, int, int]:
+                properties = getattr(rule, "properties", {}) or {}
+                symbol_hit = any(
+                    f"matching.symbol.{symbol}" in properties for symbol in symbols
+                )
+                operator_hit = "matching.operator" in properties
+                return (1 if symbol_hit else 0, 1 if operator_hit else 0, len(properties))
+
+            best = max(decisive, key=_score)
+            reason = reason_fn
+            if reason is None:
+                from src.intelligence.reasoning.grounded_engine import (
+                    reason_over_evidence,
+                )
+
+                reason = reason_over_evidence
+            grounded_now = reason(
+                question=question,
+                evidence_items=list(items),
+                canonical_rules=[best],
+            )
+            claims_now = list(getattr(grounded_now.derivations, "claims", ()) or ())
+            if any(
+                bool(getattr(claim, "deterministic", False))
+                and str(getattr(claim, "verification_status", "")) == "SUPPORTED"
+                for claim in claims_now
+            ):
+                return grounded_now
+        except Exception:  # noqa: BLE001 — pass decisivo fail-soft
+            return None
+        return None
+
     async def _evaluate(closure_rules: Sequence[Any], hits: Sequence[Any]) -> Any:
         items = [*evidence_items, *[_ClosureEvidenceItem(hit) for hit in hits]]
         reason = reason_fn
@@ -666,6 +730,9 @@ async def _run_premise_closure_stage(
         except Exception as exc:  # noqa: BLE001 — evaluación fail-soft
             logger.warning("premise closure evaluation failed", error=str(exc)[:160])
             return PremiseEvaluation(missing_premises=missing, conflicts=())
+        decisive_grounded = _decisive_pass(items, list(closure_rules))
+        if decisive_grounded is not None:
+            grounded_now = decisive_grounded
         final_grounded["value"] = grounded_now
         derivations = getattr(grounded_now, "derivations", None)
         return PremiseEvaluation(

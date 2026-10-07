@@ -240,6 +240,28 @@ def compile_query_local_rules(
             verified.append(rule)
         merged = merge_distributed_rules(verified) if verified else []
         compilation.conflicts = mark_grammar_conflicts(merged)
+        # Clúster por unidad de evidencia: una unidad autocontenida (definición
+        # + matching + longitud en un mismo chunk) conserva su propia regla
+        # aunque el merge global la haya perdido o contaminado.
+        clusters: dict[str, list[Any]] = {}
+        for rule in verified:
+            provenance = list(getattr(rule, "provenance", ()) or ())
+            unit = ""
+            if provenance:
+                unit = str(
+                    getattr(provenance[0], "unit_id", "")
+                    or getattr(provenance[0], "evidence_id", "")
+                    or ""
+                )
+            clusters.setdefault(unit or str(getattr(rule, "rule_id", "")), []).append(rule)
+        seen_ids = {str(getattr(rule, "rule_id", "") or id(rule)) for rule in merged}
+        for cluster in clusters.values():
+            for rule in merge_distributed_rules(cluster):
+                rule_id = str(getattr(rule, "rule_id", "") or id(rule))
+                if rule_id in seen_ids:
+                    continue
+                seen_ids.add(rule_id)
+                merged.append(rule)
         rules: list[Any] = []
         for rule in merged:
             if rule.verification_state != VerificationState.SUPPORTED.value:

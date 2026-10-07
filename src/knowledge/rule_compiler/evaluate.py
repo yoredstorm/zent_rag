@@ -1668,11 +1668,24 @@ def evaluate_rule(
         if check.name == "matching":
             primary_operation = check.operation
             break
+    # MATCH: el resultado es el valor del último check SATISFECHO (preserva
+    # valores de fórmula/medida); NUNCA el valor de un check NO_MATCH ajeno a
+    # la rama OR que decidió. Antes, un check NO_MATCH posterior invertía el
+    # resultado (MATCH con result=False).
+    if status == RuleEvaluationStatus.MATCH.value:
+        matched_results = [
+            check.result
+            for check in result_checks
+            if check.status == RuleEvaluationStatus.MATCH.value and check.result is not None
+        ]
+        final_result: Any = matched_results[-1] if matched_results else True
+    else:
+        final_result = result
     return RuleEvaluation(
         rule_id=rule.rule_id,
         status=status,
         operation=primary_operation,
-        result=result if status != RuleEvaluationStatus.MATCH.value or not result_checks else result_checks[-1].result,
+        result=final_result,
         checks=[*scope_checks, *condition_checks, *checks],
         missing_premises=list(dict.fromkeys(missing))[:16],
         premises_used=premises_used,

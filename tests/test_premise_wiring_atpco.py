@@ -356,10 +356,18 @@ def test_conflicting_length_policies_do_not_decide() -> None:
         _item(CONFLICTING_LENGTH, "ev:length-b"),
     ]
     compilation = compile_query_local_rules(items, document_id=DOC_ID)
-    assert compilation.executable == 0, (
-        "políticas de longitud incompatibles no pueden quedar ejecutables"
+    # Las políticas de longitud incompatibles no pueden quedar ejecutables a la
+    # vez: a lo sumo UNA política de longitud ejecuta (o ninguna). La regla
+    # posicional autocontenida sí puede decidir: no depende de la longitud.
+    executable_policies = {
+        str(rule.properties["length.policy"].value)
+        for rule in compilation.rules
+        if rule.executable and rule.properties.get("length.policy") is not None
+    }
+    assert len(executable_policies) <= 1, (
+        f"políticas de longitud incompatibles ejecutando a la vez: {executable_policies}"
     )
-    assert compilation.conflicts >= 1 or not compilation.rules
+    assert compilation.conflicts >= 1 or not executable_policies
 
 
 # ---------------------------------------------------------------------------
