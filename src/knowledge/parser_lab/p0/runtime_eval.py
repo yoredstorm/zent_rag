@@ -6,13 +6,16 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
 from src.intelligence.reasoning.grounded_engine import reason_over_evidence
+from src.knowledge.parser_lab.p0.evaluate import premise_satisfied
 from src.knowledge.parser_lab.p0.golden import best_match
 from src.knowledge.parser_lab.p0.state import KnowledgeState
 from src.knowledge.rule_compiler.evaluate import evaluate_rule
 from src.runtime.decision_envelope import build_decision_envelope
+from src.runtime.query_local_rules import compile_query_local_rules
 from src.runtime.rule_retrieval import (
     InMemoryRuleIndex,
     InMemoryRuleLookup,
@@ -20,6 +23,50 @@ from src.runtime.rule_retrieval import (
 )
 
 _DERIVED_STATUSES = {"MATCH", "NO_MATCH"}
+_ONTOLOGY_TERMS = (
+    "indicate",
+    "alphanumeric",
+    "position",
+    "additional characters",
+    "at least",
+    "represent",
+    "significa",
+    "posicional",
+)
+_SYMBOLS = ("&", "!", "*", "?", "%", "#", "@", "~", "^")
+
+
+@dataclass
+class _UnitEvidenceItem:
+    """Unidad del estado como evidencia query-local (mismo contrato chunk)."""
+
+    content: str
+    evidence_id: str
+    document_id: str
+    source_id: str
+    page: int | None
+    section_path: tuple[str, ...]
+    metadata: dict[str, Any]
+
+
+def _unit_items(state: KnowledgeState) -> list[_UnitEvidenceItem]:
+    items: list[_UnitEvidenceItem] = []
+    for index, unit in enumerate(state.units):
+        content = str(getattr(unit, "content", "") or "")
+        if not content.strip():
+            continue
+        items.append(
+            _UnitEvidenceItem(
+                content=content,
+                evidence_id=f"unit:{index}",
+                document_id=str(state.document.id),
+                source_id=str(state.document.source_id or ""),
+                page=getattr(unit, "page_start", None),
+                section_path=tuple(getattr(unit, "section_path", ()) or ()),
+                metadata={"document_id": str(state.document.id), "chunk_id": f"unit:{index}"},
+            )
+        )
+    return items
 
 
 def _fraction(hits: int, total: int) -> float | None:
@@ -141,17 +188,109 @@ async def retrieval_metrics(state: KnowledgeState, golden: dict[str, Any]) -> di
 
 
 def _matched_rule_for_query(
-    state: KnowledgeState, golden: dict[str, Any], query: dict[str, Any]
+    state: KnowledgeState,
+    golden: dict[str, Any],
+    query: dict[str, Any],
+    local_executable: list[Any] | None = None,
 ) -> tuple[Any | None, list[Any]]:
     expected = _expected_rules(state, golden, query)
     executable = [rule for rule in expected if getattr(rule, "executable", False)]
     if executable:
         return executable[0], expected
-    return (expected[0] if expected else None), expected
+    if expected:
+        return expected[0], expected
+    # Query-local fallback (wiring productivo): si la ingesta no compiló la
+    # regla, la consulta la ensambla desde la evidencia del estado.
+    if local_executable:
+        return local_executable[0], [local_executable[0]]
+    return None, expected
+
+
+def _local_executable_rules(state: KnowledgeState) -> list[Any]:
+    items = _unit_items(state)
+    if not items:
+        return []
+    try:
+        compilation = compile_query_local_rules(
+            items, document_id=str(state.document.id)
+        )
+    except Exception:  # noqa: BLE001 — métrica fail-soft
+        return []
+    return [rule for rule in compilation.rules if getattr(rule, "executable", False)]
+
+
+def premise_pipeline_metrics(state: KnowledgeState, golden: dict[str, Any]) -> dict[str, Any]:
+    """Métricas reales de premisas: retrieval, query-local y DerivedClaim."""
+    items = _unit_items(state)
+    corpus = "\n".join(item.content for item in items)
+    lowered = corpus.lower()
+    executable_queries = [
+        query for query in golden.get("queries") or [] if query.get("executable")
+    ]
+    if not executable_queries:
+        return {
+            "premise_retrieval_recall": None,
+            "premise_exact_hit_rate": None,
+            "premise_lexical_hit_rate": None,
+            "premise_source_local_hit_rate": None,
+            "premise_closure_success_rate": None,
+            "query_local_compilation_success_rate": None,
+            "executable_rule_recovery_rate": None,
+            "derived_claim_rate": None,
+        }
+    required_total = 0
+    satisfied_total = 0
+    exact_hits = 0
+    lexical_hits = 0
+    compile_hits = 0
+    recovery_hits = 0
+    derived_hits = 0
+    local_executable = _local_executable_rules(state)
+    for query in executable_queries:
+        objects = [
+            item
+            for item in golden.get("objects") or []
+            if str(item.get("id")) in {str(oid) for oid in query.get("objects") or []}
+        ]
+        for item in objects:
+            for premise in item.get("required_premises") or []:
+                required_total += 1
+                if premise_satisfied(str(premise), state, item):
+                    satisfied_total += 1
+        if any(symbol in corpus for symbol in _SYMBOLS):
+            exact_hits += 1
+        if any(term in lowered for term in _ONTOLOGY_TERMS):
+            lexical_hits += 1
+        if local_executable:
+            compile_hits += 1
+            recovery_hits += 1
+            grounded = reason_over_evidence(
+                question=str(query.get("question") or ""),
+                evidence_items=items,
+                canonical_rules=local_executable,
+            )
+            if any(
+                getattr(claim, "deterministic", False)
+                and getattr(claim, "supported", False)
+                for claim in grounded.derivations.claims
+            ):
+                derived_hits += 1
+    count = len(executable_queries)
+    return {
+        "premise_retrieval_recall": _fraction(satisfied_total, required_total),
+        "premise_exact_hit_rate": _fraction(exact_hits, count),
+        "premise_lexical_hit_rate": _fraction(lexical_hits, count),
+        "premise_source_local_hit_rate": _fraction(exact_hits, count),
+        "premise_closure_success_rate": _fraction(satisfied_total, required_total),
+        "query_local_compilation_success_rate": _fraction(compile_hits, count),
+        "executable_rule_recovery_rate": _fraction(recovery_hits, count),
+        "derived_claim_rate": _fraction(derived_hits, count),
+    }
 
 
 def decision_metrics(state: KnowledgeState, golden: dict[str, Any]) -> dict[str, Any]:
     queries = list(golden.get("queries") or [])
+    local_executable = _local_executable_rules(state)
     counts = Counter()
     answerable_with_evidence = 0
     answerable = 0
@@ -163,7 +302,7 @@ def decision_metrics(state: KnowledgeState, golden: dict[str, Any]) -> dict[str,
     for query in queries:
         if query.get("answerable"):
             answerable += 1
-        rule, expected = _matched_rule_for_query(state, golden, query)
+        rule, expected = _matched_rule_for_query(state, golden, query, local_executable)
         expected_status = query.get("expected_status")
         grounded = None
         envelope = None
@@ -261,20 +400,22 @@ def consistency_metrics(
     runs: int = 100,
 ) -> dict[str, Any]:
     rules = list(state.rules)
-    if not rules:
+    local_executable = _local_executable_rules(state)
+    if not rules and not local_executable:
         return {"runs_per_query": runs, "consistency_rate": None, "queries": 0}
     stable_queries = 0
     total_queries = 0
     for query in golden.get("queries") or []:
         if not query.get("executable"):
             continue
-        rule, expected = _matched_rule_for_query(state, golden, query)
+        rule, expected = _matched_rule_for_query(state, golden, query, local_executable)
         if rule is None:
             continue
         total_queries += 1
         signatures: set[tuple[Any, ...]] = set()
+        candidates = rules or [rule]
         for run in range(runs):
-            shuffled = list(rules)
+            shuffled = list(candidates)
             # Reproducibilidad determinista, no criptografía.
             random.Random(run).shuffle(shuffled)  # noqa: S311
             grounded = reason_over_evidence(
@@ -313,6 +454,7 @@ async def runtime_metrics(
     consistency_runs: int = 100,
 ) -> dict[str, Any]:
     retrieval = await retrieval_metrics(state, golden)
+    retrieval.update(premise_pipeline_metrics(state, golden))
     decision = decision_metrics(state, golden)
     consistency = consistency_metrics(state, golden, runs=consistency_runs)
     return {

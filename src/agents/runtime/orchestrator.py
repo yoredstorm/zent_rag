@@ -3796,12 +3796,20 @@ class RAGOrchestrator:
                     prepare_derived_authority,
                     requires_deterministic_decision,
                 )
+                from src.runtime.premise_retriever import build_premise_evidence_search
 
                 prep_pre = await prepare_derived_authority(
                     organization_id=organization_id,
                     question=semantic_query,
                     evidence_items=list(retrieval_context.chunks),
                     enable_premise_closure=True,
+                    premise_evidence_search=build_premise_evidence_search(
+                        organization_id,
+                        workspace_id=workspace_id,
+                        role=role,
+                        user_id=user_id,
+                        groups=tuple(locals().get("groups") or ()),
+                    ),
                 )
                 result.steps.extend(prep_pre.steps)
                 grounded_pre = prep_pre.grounded_reasoning
@@ -4069,6 +4077,7 @@ class RAGOrchestrator:
                 prepare_derived_authority,
                 requires_deterministic_decision,
             )
+            from src.runtime.premise_retriever import build_premise_evidence_search
 
             # Una consulta ejecutable exige decisión determinista: sin
             # DecisionEnvelope autoritativo no puede salir un sí/no del LLM.
@@ -4112,6 +4121,13 @@ class RAGOrchestrator:
                     question=semantic_query or query,
                     evidence_items=evidence_selection.items,
                     enable_premise_closure=True,
+                    premise_evidence_search=build_premise_evidence_search(
+                        organization_id,
+                        workspace_id=workspace_id,
+                        role=role,
+                        user_id=user_id,
+                        groups=tuple(locals().get("groups") or ()),
+                    ),
                 )
                 result.steps.extend(prep.steps)
                 grounded_reasoning = prep.grounded_reasoning

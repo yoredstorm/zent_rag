@@ -181,15 +181,24 @@ class TestRealPipelineIngestion:
         rule = candidates[0]
         assert is_pattern_relative_length(rule)
 
-    def test_standalone_length_sentence_compiles_executable(self) -> None:
+    def test_standalone_length_sentence_is_not_executable(self) -> None:
+        """Longitud referida al patrón sin matching no decide: fail-closed."""
         compilation = compile_query_local_rules(
             [_Item(LENGTH_SENTENCE, evidence_id="ev:length", page=10)],
             document_id=DOC_ID,
         )
         executable = [rule for rule in compilation.rules if rule.executable]
-        assert executable, "la política referenciada debe ser ejecutable"
-        outcome = evaluate_rule(executable[0], {"value": "ABCFGEGE", "pattern": "&&&F"})
-        assert outcome.status == RuleEvaluationStatus.MATCH.value
+        assert not executable, "la longitud sola no puede ejecutar un match"
+
+        complete = compile_query_local_rules(
+            [
+                _Item(SYMBOL_SENTENCE, evidence_id="ev:symbol", page=10),
+                _Item(LENGTH_SENTENCE, evidence_id="ev:length", page=10),
+            ],
+            document_id=DOC_ID,
+        )
+        executable = [rule for rule in complete.rules if rule.executable]
+        assert executable, "símbolo + matching + longitud sí ensambla ejecutable"
 
     @pytest.mark.asyncio
     async def test_rule_lane_finds_pipeline_rules(self, compiled_pipeline) -> None:

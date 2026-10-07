@@ -299,6 +299,7 @@ class EvidenceHit:
     section_path: tuple[str, ...] = ()
     score: float = 0.0
     matched_premises: tuple[str, ...] = ()
+    lane: str = ""
 
     @property
     def identity(self) -> str:
@@ -871,11 +872,14 @@ async def run_premise_closure(
                 new_rules.append(rule)
 
         # Compilación provisional desde evidencia (PROPOSED -> verificado
-        # contra la evidencia; NUNCA se persiste aquí).
+        # contra la evidencia; NUNCA se persiste aquí). La compilación recibe
+        # TODA la evidencia acumulada hasta la ronda (§8): base + A + B + C,
+        # no solo la nueva. Deduplicada por identity.
         if compile_evidence is not None and new_evidence:
             try:
+                accumulated = list(evidence_by_id.values())
                 compiled = list(
-                    await _maybe_await(compile_evidence(new_evidence, plan_request))
+                    await _maybe_await(compile_evidence(accumulated, plan_request))
                 )
             except Exception as exc:  # noqa: BLE001 — best-effort
                 result.errors.append(f"compile_error:{type(exc).__name__}")

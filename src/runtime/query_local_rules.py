@@ -40,6 +40,7 @@ class QueryLocalCompilation:
     supported: int = 0
     executable: int = 0
     rejected: int = 0
+    conflicts: int = 0
     errors: list[str] = field(default_factory=list)
     version: str = QUERY_LOCAL_RULES_VERSION
 
@@ -50,6 +51,7 @@ class QueryLocalCompilation:
             "supported": self.supported,
             "executable": self.executable,
             "rejected": self.rejected,
+            "conflicts": self.conflicts,
             "rules": [
                 {
                     "rule_id": str(getattr(rule, "rule_id", "")),
@@ -136,6 +138,61 @@ def evidence_items_to_context(items: Sequence[Any]) -> list[dict]:
     return entries
 
 
+_CONFLICT_DIMENSIONS = (
+    "length.policy",
+    "matching.operator",
+    "comparison.operator",
+    "temporal.relation",
+)
+
+
+def _symbols_of(rule: Any) -> set[str]:
+    symbols: set[str] = set()
+    for name in getattr(rule, "properties", {}) or {}:
+        if name.startswith("matching.symbol.") and not name.endswith(".alphabet"):
+            symbols.add(name.rsplit(".", 1)[-1])
+    return symbols
+
+
+def _known_dimension(rule: Any, dimension: str) -> str | None:
+    prop = (getattr(rule, "properties", {}) or {}).get(dimension)
+    if prop is None or not getattr(prop, "known", False):
+        return None
+    return str(getattr(prop, "value", "") or "")
+
+
+def mark_grammar_conflicts(rules: Sequence[Any]) -> int:
+    """Conflictos de gramática en la compilación query-local.
+
+    Dos reglas del mismo alcance que declaran valores incompatibles en la misma
+    dimensión (length.policy, matching.operator, ...) no pueden decidir: ambas
+    quedan CONFLICTING y no ejecutables. No inventa resolución.
+    """
+    count = 0
+    rule_list = list(rules)
+    for index, rule_a in enumerate(rule_list):
+        for rule_b in rule_list[index + 1 :]:
+            if getattr(rule_a, "exceptions", None) or getattr(rule_b, "exceptions", None):
+                continue
+            symbols_a, symbols_b = _symbols_of(rule_a), _symbols_of(rule_b)
+            if symbols_a and symbols_b and not (symbols_a & symbols_b):
+                continue
+            for dimension in _CONFLICT_DIMENSIONS:
+                value_a = _known_dimension(rule_a, dimension)
+                value_b = _known_dimension(rule_b, dimension)
+                if value_a is None or value_b is None or value_a == value_b:
+                    continue
+                for rule, other in ((rule_a, rule_b), (rule_b, rule_a)):
+                    rule.verification_state = VerificationState.CONFLICTING.value
+                    rule.executable = False
+                    if other.rule_id not in rule.conflicts_with:
+                        rule.conflicts_with.append(other.rule_id)
+                    if "conflict" not in rule.missing_premises:
+                        rule.missing_premises.append("conflict")
+                count += 1
+    return count
+
+
 def compile_query_local_rules(
     items: Sequence[Any],
     *,
@@ -182,6 +239,7 @@ def compile_query_local_rules(
                 continue
             verified.append(rule)
         merged = merge_distributed_rules(verified) if verified else []
+        compilation.conflicts = mark_grammar_conflicts(merged)
         rules: list[Any] = []
         for rule in merged:
             if rule.verification_state != VerificationState.SUPPORTED.value:

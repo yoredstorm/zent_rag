@@ -1362,7 +1362,9 @@ _MATCH_TABLE: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"(?:positional|posicional|matching\s+is\s+positional|"
             r"left[\s-]*to[\s-]*right|de\s+izquierda\s+a\s+derecha|same\s+position|"
-            r"misma\s+posici[oó]n|by\s+position|por\s+posici[oó]n|in\s+order|en\s+orden)",
+            r"misma\s+posici[oó]n|by\s+position|por\s+posici[oó]n|in\s+order|en\s+orden|"
+            r"(?:in|at)\s+(?:a\s+|the\s+)?(?:specific|given|fixed)\s+position|"
+            r"(?:en|a)\s+una\s+posici[oó]n\s+(?:espec[ií]fica|determinada|dada))",
             _FLAGS,
         ),
     ),

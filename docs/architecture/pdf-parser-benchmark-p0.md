@@ -171,3 +171,56 @@ Camino para convertir D en decisión firme:
 3. Repetir sobre documentos reales de producción (no sintéticos).
 4. Recién entonces aplicar el umbral §22. Hoy ODL está mejor posicionado en
    precisión y recuperación, pero la migración no está justificada todavía.
+
+## 9. Wiring fix posterior (RequirementGraph -> PremiseClosure -> DerivedClaim)
+
+Bug demostrado con código y test:
+
+1. Los 3 call sites productivos de `prepare_derived_authority`
+   (`orchestrator.py` x2, `agent_runtime.py`) habilitaban Premise Closure
+   (`enable_premise_closure=True`) SIN `premise_evidence_search`: la lane de
+   evidencia quedaba apagada (`evidence_search=None` -> `[]`). Solo los tests
+   inyectaban búsqueda real.
+2. La compilación query-local se descartaba cuando no había premisas faltantes
+   (evidencia recuperada con semántica suficiente pero sin regla de ingesta).
+3. `run_premise_closure` pasaba a `compile_evidence` solo la evidencia NUEVA de
+   la ronda, no la acumulada (§8).
+4. El compiler no ensamblaba `matching.operator` desde "in a specific
+   position" y una política de longitud referida al patrón sin matching podía
+   decidir sola (fail-open).
+
+Correcciones (sin tocar la elección de parser, top-k ni fail-closed):
+
+- `PremiseEvidenceRetriever` + `build_premise_evidence_search`: adapter único
+  sobre el retriever canónico (`StructuredRetriever`) y la pata exacta del
+  mismo `QdrantVectorStore` (`scan_text_literal`). Lanes: exact, canonical.
+  Respeta `organization_id`/`workspace_id`/`source_ids`/`document_ids` y
+  registra `lane` por hit.
+- Orchestrator y agent_runtime cablean el adapter con su scope/ACL.
+- `compile_evidence` recibe evidencia acumulada (dedupe por identity).
+- Query-local compilation corre también sin closure y re-groundea.
+- `Semantic Clause Decomposition` (`clauses.py`): texto completo + cláusulas,
+  fusión por propiedad con el mismo provenance.
+- Fail-closed: `length.policy` referida al patrón sin `matching.operator`
+  agrega `matching_policy` y no ejecuta.
+- `recompute_execution` recalcula premisas derivadas (no arrastra stale).
+- `matching.operator` POSITIONAL también para "in a specific position".
+
+Resultado ATPCO (mismo fixture, mismo motor):
+
+| Métrica | Antes | Después |
+| --- | ---: | ---: |
+| Premise Retrieval Recall (ATPCO) | 0.0 | **1.0** |
+| Query-local Compilation Success | n/a | **1.0** |
+| Executable Rule Recovery | n/a | **1.0** |
+| Derived Claim Rate | n/a | **1.0** |
+| Deterministic Decision Rate (ATPCO) | 0.0 | **1.0** |
+| Consistency (ODL, 100 runs) | no evaluable | **1.0** |
+| KCS pdfplumber / ODL | 0.7096 / 0.7493 | 0.7346 / 0.7743 |
+| ZPKS pdfplumber / ODL | 0.7116 / 0.7617 | 0.7364 / 0.7887 |
+
+Verdict del benchmark: sigue `D_NEED_MORE_DATA` (faltan
+`canonical_rule_recall_increased` y `false_abstentions_reduced` a nivel
+agregado). La decisión de parser no cambia; lo que cambió es que el caso
+documentado ahora **decide** (`DecisionEnvelope.authoritative=true`,
+`DerivedClaim POSITIONAL_MATCH MATCH deterministic=true`).

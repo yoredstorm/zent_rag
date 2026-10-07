@@ -21,6 +21,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -1340,6 +1341,9 @@ def classify_query_semantics(
     entities: Sequence[Any] = (),
 ) -> QuerySemantics:
     """Clasificación semántica determinista de la consulta (fail-soft)."""
+    # El portal puede guardar `&amp;&amp;&amp;F`: el mismo texto debe producir
+    # pattern `&&&F` y value `ABCFGEGE` en todas las lanes.
+    question = html.unescape(str(question or ""))
     try:
         if not anchors:
             from src.intelligence.response.anchors import extract_anchors

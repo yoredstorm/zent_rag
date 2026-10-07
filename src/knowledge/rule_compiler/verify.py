@@ -354,6 +354,15 @@ def _required_execution_missing(rule: CanonicalRule) -> list[str]:
             break
     if not capable and "executable_semantics" not in missing:
         missing.append("executable_semantics")
+    # Fail-closed: una política de longitud referida al patrón SIN semántica de
+    # matching no puede decidir un match. La longitud sola no valida posiciones
+    # ni símbolos; se exige la premisa de matching explícita.
+    matching_operator = rule.properties.get("matching.operator")
+    if is_pattern_relative_length(rule) and (
+        matching_operator is None or not matching_operator.known
+    ):
+        if "matching_policy" not in missing:
+            missing.append("matching_policy")
     return list(dict.fromkeys(missing))
 
 
@@ -448,17 +457,31 @@ def recompute_execution(rule: CanonicalRule) -> CanonicalRule:
 
     Solo SUPPORTED con premisas cerradas ejecuta. Una propiedad UNKNOWN o un
     conflicto bloquean la ejecución y quedan nombrados en missing_premises.
+    Las premisas DERIVADAS de la ejecución (matching_policy, length_*, ...) se
+    recalculan: si el merge ya las satisfizo, no se arrastran como stale.
     """
+    required = _required_execution_missing(rule)
+    derived = {
+        "conflict",
+        "executable_semantics",
+        "matching_policy",
+        "length_policy",
+        "length_value",
+        "length_upper",
+        "length_operand_role",
+        "boundary",
+        "formula_target",
+    }
     missing: list[str] = [
         value
         for value in rule.missing_premises
-        if value not in ("conflict", "executable_semantics")
+        if value not in derived or value in required
     ]
     for prop in rule.properties.values():
         for value in prop.missing_premises:
             if value not in missing:
                 missing.append(value)
-    for value in _required_execution_missing(rule):
+    for value in required:
         if value not in missing:
             missing.append(value)
     rule.missing_premises = list(dict.fromkeys(missing))[:24]

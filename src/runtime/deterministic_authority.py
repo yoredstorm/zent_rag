@@ -498,6 +498,27 @@ def _evidence_identity(item: Any) -> str:
     return ""
 
 
+def _split_searchable_premises(
+    premises: Sequence[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Separa premisas buscables (retrieval) de diagnósticos del compiler.
+
+    `executable_semantics`, `rule:*` y similares NO son buscables: no deben
+    disparar otra búsqueda documental inútil (§7). El cierre y el rule
+    assembly los resuelven.
+    """
+    try:
+        from src.runtime.premise_closure import _is_searchable_premise
+    except Exception:  # noqa: BLE001 — sin motor, todo es diagnóstico
+        return (), tuple(str(item) for item in premises)
+    searchable: list[str] = []
+    diagnostics: list[str] = []
+    for premise in premises:
+        text = str(premise or "")
+        (searchable if _is_searchable_premise(text) else diagnostics).append(text)
+    return tuple(searchable), tuple(diagnostics)
+
+
 async def _run_premise_closure_stage(
     *,
     organization_id: Any,
@@ -527,11 +548,9 @@ async def _run_premise_closure_stage(
         from src.runtime.query_local_rules import compile_query_local_rules
     except Exception as exc:  # noqa: BLE001 — sin motor no hay fase
         logger.warning("premise closure unavailable", error=str(exc)[:160])
-        return None, grounded
+        return None, grounded, {}
 
     missing = normalize_premises(getattr(grounded, "missing_premises", ()) or ())
-    if not missing or rounds_left <= 0:
-        return None, grounded
 
     runtime_pattern = ""
     for pattern in getattr(semantics, "runtime_patterns", ()) or ():
@@ -577,13 +596,41 @@ async def _run_premise_closure_stage(
     document_id = document_ids[0] if document_ids else ""
 
     # Compilación provisional de la evidencia YA recuperada: si la ingesta no
-    # compiló la premisa, la consulta no queda inútil.
+    # compiló la premisa, la consulta no queda inútil. Corre SIEMPRE (con o sin
+    # closure): una consulta ejecutable con evidencia suficiente no debe quedar
+    # UNDETERMINED solo porque no había premisas "faltantes" que buscar.
+    local_stats: dict[str, Any] = {"runs": 0, "candidates": 0, "supported": 0, "executable": 0}
     initial_local = compile_query_local_rules(
         evidence_items,
         document_id=document_id,
         document_title=str(getattr(grounded, "document_title", "") or ""),
         organization_id=str(organization_id),
     )
+    local_stats["runs"] += 1
+    local_stats["candidates"] += int(initial_local.candidates or 0)
+    local_stats["supported"] += int(initial_local.supported or 0)
+    local_stats["executable"] += int(initial_local.executable or 0)
+
+    if not missing or rounds_left <= 0:
+        if initial_local.rules:
+            try:
+                reground = reason_fn
+                if reground is None:
+                    from src.intelligence.reasoning.grounded_engine import (
+                        reason_over_evidence,
+                    )
+
+                    reground = reason_over_evidence
+                regrounded = reground(
+                    question=question,
+                    evidence_items=list(evidence_items),
+                    canonical_rules=list(initial_local.rules),
+                )
+                return None, regrounded, local_stats
+            except Exception as exc:  # noqa: BLE001 — fail-soft
+                logger.warning("query-local authority failed", error=str(exc)[:160])
+        return None, grounded, local_stats
+
     candidates = [*rules, *initial_local.rules]
 
     request = PremiseClosureRequest(
@@ -635,13 +682,30 @@ async def _run_premise_closure_stage(
         )
 
     def _compile_new(hits: Sequence[Any], _request: Any) -> list[Any]:
-        # Compila la evidencia YA recuperada + la nueva: la regla provisional
-        # resultante no depende de qué ronda trajo cada pieza.
-        return compile_query_local_rules(
-            [*evidence_items, *hits],
+        # Compila TODA la evidencia acumulada + la nueva (deduplicada por
+        # identity): la regla provisional no depende de qué ronda trajo cada
+        # pieza y no se pierde evidencia de rondas anteriores (§8).
+        deduped: list[Any] = []
+        seen_ids: set[str] = set()
+        for hit in hits:
+            identity = str(getattr(hit, "identity", "") or "")
+            if not identity:
+                identity = _evidence_identity(hit)
+            if identity and identity in seen_ids:
+                continue
+            if identity:
+                seen_ids.add(identity)
+            deduped.append(hit)
+        compilation = compile_query_local_rules(
+            [*evidence_items, *deduped],
             document_id=document_id,
             organization_id=str(organization_id),
-        ).rules
+        )
+        local_stats["runs"] += 1
+        local_stats["candidates"] += int(compilation.candidates or 0)
+        local_stats["supported"] += int(compilation.supported or 0)
+        local_stats["executable"] += int(compilation.executable or 0)
+        return compilation.rules
 
     source_local = make_source_local_expander(organization_id)
     fabric = make_fabric_expander(organization_id)
@@ -674,11 +738,11 @@ async def _run_premise_closure_stage(
         )
     except Exception as exc:  # noqa: BLE001 — la fase jamás rompe el run
         logger.warning("premise closure stage failed", error=str(exc)[:200])
-        return None, grounded
+        return None, grounded, local_stats
 
     if closure is None:
-        return None, grounded
-    return closure, final_grounded["value"]
+        return None, grounded, local_stats
+    return closure, final_grounded["value"], local_stats
 
 
 async def prepare_derived_authority(
@@ -893,7 +957,7 @@ async def prepare_derived_authority(
         and premisas
         and prep.grounded_reasoning is not None
     ):
-        closure, grounded_final = await _run_premise_closure_stage(
+        closure, grounded_final, local_stats = await _run_premise_closure_stage(
             organization_id=organization_id,
             question=text_question,
             evidence_items=list(evidence_items),
@@ -906,11 +970,14 @@ async def prepare_derived_authority(
         )
         if closure is not None:
             prep.premise_closure = closure
+            searchable_missing, diagnostics = _split_searchable_premises(premisas)
             prep.steps.append(
                 stage_step(
                     STAGE_REQUIREMENT_GRAPH,
                     "warn" if premisas else "ok",
                     missing_premises=list(premisas[:12]),
+                    searchable_missing=list(searchable_missing[:12]),
+                    non_searchable_diagnostics=list(diagnostics[:12]),
                     canonical_rules=len(list(getattr(prep.rule_retrieval, "supported_rules", ()) or ())),
                 )
             )
@@ -979,6 +1046,51 @@ async def prepare_derived_authority(
                 "used_for_reasoning": len(unique_initial) + len(closure.evidence),
                 "used_for_decision": len(decision_refs),
             }
+        elif grounded_final is not None and grounded_final is not prep.grounded_reasoning:
+            # Query-local compilation decidió sin closure (no había premisas
+            # buscables): la regla local re-evaluó la evidencia recuperada y
+            # debe reemplazar al grounding previo.
+            prep.grounded_reasoning = grounded_final
+            grounded = grounded_final
+            derivations = getattr(grounded_final, "derivations", None)
+            claims = list(getattr(derivations, "claims", ()) or ())
+            deterministic_claims = [
+                claim
+                for claim in claims
+                if bool(getattr(claim, "deterministic", False))
+                and str(getattr(claim, "verification_status", "")) == "SUPPORTED"
+            ]
+            premisas = tuple(
+                str(item)
+                for item in (getattr(grounded_final, "missing_premises", ()) or ())
+            )
+            conflicts = tuple(
+                str(item)
+                for item in (getattr(grounded_final, "conflicts", ()) or ())
+            )
+            prep.derived_claims = claims
+            prep.missing_premises = premisas
+            prep.conflicts = conflicts
+            searchable_missing, diagnostics = _split_searchable_premises(premisas)
+            prep.steps.append(
+                stage_step(
+                    STAGE_REQUIREMENT_GRAPH,
+                    "ok" if not searchable_missing else "warn",
+                    missing_premises=list(premisas[:12]),
+                    searchable_missing=list(searchable_missing[:12]),
+                    non_searchable_diagnostics=list(diagnostics[:12]),
+                )
+            )
+        prep.steps.append(
+            stage_step(
+                "query_local_compilation",
+                "ok" if local_stats.get("executable") else "warn",
+                runs=local_stats.get("runs", 0),
+                candidates=local_stats.get("candidates", 0),
+                supported=local_stats.get("supported", 0),
+                executable=local_stats.get("executable", 0),
+            )
+        )
 
     primary = deterministic_claims[0] if deterministic_claims else None
     prep.steps.append(

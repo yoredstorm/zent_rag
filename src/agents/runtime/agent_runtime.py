@@ -2466,11 +2466,19 @@ class AgentRuntime:
             active = selection if selection is not None else _refresh_selection()
             items = list(getattr(active, "items", ()) or ())
             try:
+                from src.runtime.premise_retriever import build_premise_evidence_search
+
                 prep = await prepare_derived_authority(
                     organization_id=request.agent.organization_id,
                     question=request.message,
                     evidence_items=items,
                     enable_premise_closure=True,
+                    premise_evidence_search=build_premise_evidence_search(
+                        request.agent.organization_id,
+                        role=str(getattr(request, "role", "") or "admin"),
+                        user_id=getattr(request, "user_id", None),
+                        groups=tuple(getattr(request, "groups", ()) or ()),
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 — fallo explícito, no silencio
                 logger.warning("derived authority preparation failed", error=str(exc)[:200])

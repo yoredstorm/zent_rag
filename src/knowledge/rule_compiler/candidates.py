@@ -30,7 +30,8 @@ from src.core.domain.rule_semantics import (
     is_normative,
 )
 
-from .language import StatementAnalysis, analyze_statement, classify_statement_kind
+from .clauses import analyze_with_clauses
+from .language import StatementAnalysis, classify_statement_kind
 from .model import (
     CandidateRule,
     RuleArgument,
@@ -528,7 +529,7 @@ def build_candidates(
         if candidate_id in seen:
             return None
         seen.add(candidate_id)
-        analysis = analyze_statement(text, evidence_id=source_item.evidence_id)
+        analysis = analyze_with_clauses(text, evidence_id=source_item.evidence_id)
         _ensure_modality(analysis, source_item.evidence_id, modality_fallback)
         modality_prop = analysis.properties.get("modality")
         modality = (
