@@ -104,6 +104,14 @@ DIAGNOSTIC_DEFINITIONS: dict[str, tuple[str, str, bool, str, str, str | None]] =
         "possible_unsupported_claim",
         "align_citations",
     ),
+    "CITATION_EVIDENCE_REFERENTIAL_INTEGRITY": (
+        "WARNING",
+        "consistency",
+        False,
+        "citation_reference_missing",
+        "possible_unsupported_claim",
+        "align_citations",
+    ),
     "AUTHORITATIVE_RESPONSE_CONSISTENCY": (
         "ERROR",
         "consistency",
@@ -111,6 +119,22 @@ DIAGNOSTIC_DEFINITIONS: dict[str, tuple[str, str, bool, str, str, str | None]] =
         "authoritative_response_inconsistent",
         "answer_contradicts_authoritative_decision",
         "rebuild_from_decision_envelope",
+    ),
+    "DECISION_VERIFICATION_CONSISTENCY": (
+        "ERROR",
+        "verification",
+        True,
+        "decision_verification_inconsistent",
+        "decision_verified_invalidated_by_narrative",
+        "separate_decision_from_narrative",
+    ),
+    "DECISION_NARRATIVE_SEPARATION": (
+        "ERROR",
+        "verification",
+        True,
+        "decision_narrative_not_separated",
+        "narrative_failure_degraded_decision",
+        "separate_decision_from_narrative",
     ),
     "EVIDENCE_USED_FOR_DECISION": (
         "INFO",
@@ -305,6 +329,8 @@ INVARIANT_CODES = {
     "ANSWER_CALLS_EXCEED_MODEL_CALLS",
     "MATERIAL_FALLBACK_WITHOUT_EVENT",
     "VERIFIED_WITH_MATERIAL_DEGRADATION",
+    "DECISION_VERIFICATION_CONSISTENCY",
+    "DECISION_NARRATIVE_SEPARATION",
     "JOURNEY_DUPLICATE_PURPOSE",
     "DUPLICATE_EVIDENCE_ID",
 }
@@ -320,6 +346,7 @@ GAP_CODES = {
     "EVIDENCE_COLLECTION_EXCEEDS_DECLARED",
     "EVIDENCE_DETAIL_UNAVAILABLE",
     "CITATION_DANGLING",
+    "CITATION_EVIDENCE_REFERENTIAL_INTEGRITY",
     "VERIFICATION_NOT_OBSERVED",
 }
 
@@ -455,6 +482,50 @@ def run_invariants(
                     params={"result": declared, "answer_state": state},
                 )
             )
+    # DECISION_VERIFICATION_CONSISTENCY: con DecisionEnvelope autoritativo y un
+    # DerivedClaim determinista SUPPORTED, la verificación de la DECISIÓN no
+    # puede quedar UNVERIFIED/NOT_VERIFIED.
+    decision_verification = _record(verification.get("decision_verification"))
+    decision_status = str(decision_verification.get("status") or "")
+    supported_claim = next(
+        (
+            claim
+            for claim in _records(verification.get("derived_claims"))
+            if claim.get("deterministic") is True
+            and str(claim.get("verification_status") or "") == "SUPPORTED"
+        ),
+        None,
+    )
+    if (
+        envelope.get("authoritative") is True
+        and supported_claim is not None
+        and decision_status
+        and decision_status != "VERIFIED"
+    ):
+        found.append(
+            diagnostic_item(
+                "DECISION_VERIFICATION_CONSISTENCY",
+                params={
+                    "decision_status": decision_status,
+                    "operation": supported_claim.get("operation"),
+                },
+            )
+        )
+    # DECISION_NARRATIVE_SEPARATION: un fallo narrativo no puede degradar la
+    # decisión (ni el estado global cuando la decisión está verificada).
+    narrative_verification = _record(verification.get("narrative_verification"))
+    narrative_status = str(narrative_verification.get("status") or "")
+    if decision_status == "VERIFIED" and str(verification.get("status") or "") == "UNVERIFIED":
+        found.append(
+            diagnostic_item(
+                "DECISION_NARRATIVE_SEPARATION",
+                params={
+                    "decision": "VERIFIED",
+                    "narrative": narrative_status or "UNKNOWN",
+                    "verification": "UNVERIFIED",
+                },
+            )
+        )
     if unique is not None and selected is not None and selected > unique:
         found.append(
             diagnostic_item(

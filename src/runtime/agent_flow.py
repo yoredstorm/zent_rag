@@ -207,6 +207,73 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "rule_evaluation_version",
         "query_local_rules_version",
     ),
+    "runtime_identity": (
+        "git_sha",
+        "build_timestamp",
+        "image_id",
+        "hostname",
+        "process_started_at",
+        "pid",
+        "python",
+        "detail",
+    ),
+    "evidence_selection": (
+        "selected",
+        "chars",
+        "budget_chars",
+        "evidence_ids",
+        "matches",
+        "dropped_count",
+        "detail",
+    ),
+    "premise_search": (
+        "queries",
+        "round",
+        "evidence_added",
+        "rules_added",
+        "missing_before",
+        "missing_after",
+        "detail",
+    ),
+    "rule_compilation": (
+        "rules",
+        "supported",
+        "executable",
+        "candidates",
+        "local",
+        "rule_ids",
+        "detail",
+    ),
+    "final_authority_lock": (
+        "authoritative",
+        "operation",
+        "result",
+        "overridden",
+        "lock_action",
+        "detail",
+    ),
+    "fast_path": (
+        "execution_mode",
+        "reason",
+        "operation",
+        "result",
+        "premise_status",
+        "fingerprint",
+        "latency_ms",
+        "llm_calls",
+        "llm_calls_avoided",
+        "tokens_avoided",
+        "detail",
+    ),
+    "deterministic_verifier": (
+        "verified",
+        "status",
+        "problems",
+        "rule_ids",
+        "checks",
+        "detail",
+    ),
+    "fast_path_polish": ("status", "detail"),
     "query_semantics": ("intent", "intent_category", "semantics", "detail", "latency_ms"),
     "rule_retrieval": (
         "strategy",
@@ -300,6 +367,12 @@ STEP_LABEL: dict[str, str] = {
     "error": "Error",
     # Cadena determinista (fail-closed).
     "build": "Build",
+    "runtime_identity": "Identidad del runtime",
+    "evidence_selection": "Selección de evidencia",
+    "premise_search": "Búsqueda de premisas",
+    "rule_compilation": "Compilación de reglas",
+    "grounded_reasoning": "Razonamiento fundado",
+    "derivation": "Derivación",
     "query_semantics": "Semántica de la pregunta",
     "rule_retrieval": "Retrieval de reglas",
     "rule_evaluation": "Evaluación de reglas",
@@ -310,8 +383,18 @@ STEP_LABEL: dict[str, str] = {
     "derived_claim": "DerivedClaim",
     "answer_state": "Estado de respuesta",
     "decision_envelope": "DecisionEnvelope",
+    "final_authority_lock": "Bloqueo de autoridad final",
+    "fast_path": "Fast path determinista",
+    "deterministic_verifier": "Verificador determinista",
+    "fast_path_polish": "Pulido de estilo (fast path)",
     "derived_guard": "Guard de derivados",
     "finalization": "Finalización",
+    "evidence_first_gate": "Gate de evidencia",
+    "grounding_override": "Ajuste de grounding",
+    "grounding_required": "Búsqueda requerida",
+    "retry_released": "Reintento liberado",
+    "approval": "Aprobación",
+    "response_delivery": "Entrega de respuesta",
 }
 
 OMIT_REASON_LABEL: dict[str, str] = {
@@ -800,26 +883,90 @@ def verification_summary(steps: list[dict[str, Any]], flow: dict[str, Any]) -> d
             }
         )
 
-    overall = _verification_overall(checks)
+    grounded: bool | None = None
+    grounding_verdict = ""
+    if isinstance(answer_gate, dict):
+        grounding_verdict = str(answer_gate.get("grounding_verdict") or "")
+    for check in checks:
+        if check.get("key") != "grounding":
+            continue
+        state = str(check.get("state") or "")
+        if state in {"ok", "blocked"}:
+            grounded = state == "ok"
+    # DECISIÓN y NARRATIVA se verifican por separado: un chequeo narrativo
+    # (respaldo documental del texto, citas, estilo) no degrada una decisión
+    # determinista autoritativa.
+    from src.runtime.decision_verification import (
+        answer_state_from_steps,
+        claims_from_steps,
+        compose_verification_split,
+        envelope_from_steps,
+    )
+
+    envelope = envelope_from_steps(steps)
+    claims = claims_from_steps(steps)
+    deterministic_verified = any(
+        str(step.get("type") or "") == "deterministic_verifier"
+        and step.get("verified") is True
+        for step in steps
+    )
+    split = compose_verification_split(
+        envelope=envelope,
+        claims=claims,
+        answer_state=answer_state_from_steps(steps),
+        grounded=grounded,
+        checks=checks,
+        grounding_verdict=grounding_verdict,
+        deterministic_verified=deterministic_verified,
+    )
+    overall = _verification_overall(
+        checks,
+        decision_status=str(split["decision_verification"]["status"]),
+        deterministic_verified=deterministic_verified,
+    )
     payload: dict[str, Any] = {"overall": overall}
     if checks:
         payload["checks"] = checks
+    if envelope:
+        payload["decision_envelope"] = envelope
+    if claims:
+        payload["derived_claims"] = claims
+    answer_state = answer_state_from_steps(steps)
+    if answer_state:
+        payload["answer_state"] = answer_state
+    payload.update(split)
     payload["source"] = "agent_runtime"
     return payload
 
 
-def _verification_overall(checks: list[dict[str, Any]]) -> str:
+def _verification_overall(
+    checks: list[dict[str, Any]],
+    *,
+    decision_status: str = "",
+    deterministic_verified: bool = False,
+) -> str:
     if not checks:
         return "not_verified"
     states = {str(check.get("state")) for check in checks}
+    grounding = next((c for c in checks if c.get("key") == "grounding"), None)
+    grounded_ok = grounding is not None and grounding.get("state") == "ok"
+    if deterministic_verified and decision_status == "VERIFIED":
+        # El verificador determinista confirmó hechos y refs: la narrativa no
+        # necesita el verifier LLM y el estado global queda verificado.
+        return "verified"
+    if decision_status == "VERIFIED":
+        # La decisión ya está verificada por código; la narrativa sólo puede
+        # volver "parcial", nunca "bloqueada" (§ DECISION_NARRATIVE_SEPARATION).
+        if "warn" in states or not grounded_ok:
+            return "partial"
+        return "verified"
     if "blocked" in states:
         return "blocked"
     if "warn" in states:
         return "partial"
-    grounding = next((c for c in checks if c.get("key") == "grounding"), None)
     # Sin respaldo en fuentes declarado, el run queda "verificado parcialmente":
     # no se dice "Verificada" si sólo corrió el gate de respuesta (§20).
-    if grounding is None or grounding.get("state") != "ok":
+    if not grounded_ok:
         return "partial"
     return "verified"
 
@@ -1108,6 +1255,14 @@ def build_agent_flow(
             if str(step.get("type") or "") == "guardrail"
         ][:8],
     }
+    # Modo de ejecución: DETERMINISTIC_FAST_PATH se muestra en «Ver flujo» con
+    # su telemetría de ahorro (llamadas/tokens evitados, latencia real).
+    execution_mode = str(getattr(result, "execution_mode", "") or "")
+    if execution_mode:
+        flow["execution_mode"] = execution_mode
+    fast_path_block = getattr(result, "fast_path", None)
+    if isinstance(fast_path_block, Mapping) and fast_path_block:
+        flow["fast_path"] = dict(fast_path_block)
     # Response Intelligence (§51): la forma de explicar es un dato de la traza.
     response_plan = getattr(result, "response_plan", None)
     if isinstance(response_plan, Mapping) and response_plan:
@@ -1140,7 +1295,7 @@ def build_agent_flow(
             if isinstance(item, Mapping) and item.get("cited") and item.get("evidence_id")
         }
         counts: dict[str, int] = {
-            "evidence_retrieved": int(block.get("count") or len(public_items)),
+            "evidence_retrieved": int(block.get("retrieved_count") or block.get("count") or len(public_items)),
             "documents_consulted": len(
                 {
                     str(item.get("document_id") or item.get("source_id") or "")
@@ -1149,20 +1304,121 @@ def build_agent_flow(
                 - {""}
             ),
         }
+        # Ejes de uso: cada uno con su conteo (UNKNOWN != ZERO: se copia lo
+        # medido por el registry, no se recalcula un `used` único).
+        counters = (
+            ("evidence_unique", "unique_count", "evidence_unique_count"),
+            ("evidence_selected", "selected_count", "evidence_selected_count"),
+            ("evidence_used", "used_count", "evidence_used_count"),
+            ("evidence_used_for_reasoning", "used_for_reasoning_count", None),
+            ("evidence_used_for_rule_compilation", "used_for_rule_compilation_count", None),
+            ("evidence_used_for_premise_closure", "used_for_premise_closure_count", None),
+            ("evidence_used_for_decision", "used_for_decision_count", None),
+            ("evidence_cited", "cited_count", "evidence_cited_count"),
+            ("documents_retrieved", "documents_retrieved_count", None),
+            ("documents_selected", "documents_selected_count", None),
+            ("documents_used_for_decision", "documents_used_for_decision_count", None),
+            ("documents_cited", "documents_cited_count", None),
+        )
+        for target, key, alias in counters:
+            value = block.get(key)
+            if isinstance(value, int):
+                counts[target] = value
+                if alias:
+                    counts[alias] = value
         # Sólo se declara lo medido: si el bloque público no cubre todo lo
         # recuperado, "usado" no se inventa.
         if len(public_items) >= int(block.get("count") or 0):
-            counts["evidence_used"] = len(used_items)
-            counts["documents_used"] = len(
-                {
-                    str(item.get("document_id") or item.get("source_id") or "")
-                    for item in used_items
-                }
-                - {""}
-            )
-        if cited_ids:
+            if "evidence_used" not in counts:
+                counts["evidence_used"] = len(used_items)
+            if "documents_used" not in counts:
+                counts["documents_used"] = len(
+                    {
+                        str(item.get("document_id") or item.get("source_id") or "")
+                        for item in used_items
+                    }
+                    - {""}
+                )
+        if cited_ids and "evidence_cited" not in counts:
             counts["evidence_cited"] = len(cited_ids)
         block["counts"] = counts
+        # Uso por eje calculado desde el RUN completo (no sólo desde el momento
+        # en que el registry se publicó): la decisión determinista marca su
+        # evidencia aunque no se haya mostrado al LLM ni citado.
+        from src.runtime.evidence_usage import collect_evidence_usage
+
+        grounded_step = next(
+            (step for step in steps if str(step.get("type")) == "grounded_reasoning"),
+            None,
+        )
+        usage = collect_evidence_usage(grounded_step, steps=steps)
+        envelope = getattr(result, "decision_envelope", None)
+        if isinstance(envelope, Mapping):
+            decision_refs = tuple(
+                dict.fromkeys(
+                    (
+                        *(usage.get("decision") or ()),
+                        *(
+                            str(value)
+                            for value in (envelope.get("evidence_refs") or ())
+                            if value
+                        ),
+                    )
+                )
+            )
+            usage = {**usage, "decision": decision_refs}
+        registry_ids = {
+            str(item.get("evidence_id")) for item in public_items if item.get("evidence_id")
+        }
+        axes = {
+            "used_for_decision": {
+                value for value in usage.get("decision") or () if value in registry_ids
+            },
+            "used_for_rule_compilation": {
+                value
+                for value in usage.get("rule_compilation") or ()
+                if value in registry_ids
+            },
+            "used_for_premise_closure": {
+                value
+                for value in usage.get("premise_closure") or ()
+                if value in registry_ids
+            },
+        }
+        block["items"] = [
+            {
+                **item,
+                **{
+                    axis: str(item.get("evidence_id") or "") in values
+                    for axis, values in axes.items()
+                },
+            }
+            for item in public_items
+        ]
+        for item in block["items"]:
+            if any(item.get(axis) for axis in axes):
+                item["used"] = True
+                item["status"] = "USED"
+        for axis, values in axes.items():
+            if not values:
+                continue
+            target = f"evidence_{axis}"
+            counts[target] = max(int(counts.get(target) or 0), len(values))
+        if axes["used_for_decision"]:
+            used_flagged = sum(1 for item in block["items"] if item.get("used"))
+            counts["evidence_used"] = max(
+                int(counts.get("evidence_used") or 0), used_flagged
+            )
+            decision_documents = {
+                str(item.get("document_id") or item.get("source_id") or "")
+                for item in block["items"]
+                if item.get("evidence_id") in axes["used_for_decision"]
+            } - {""}
+            if decision_documents:
+                counts["documents_used_for_decision"] = max(
+                    int(counts.get("documents_used_for_decision") or 0),
+                    len(decision_documents),
+                )
         flow["evidence"] = block
     sufficiency_block = getattr(result, "evidence_sufficiency", None)
     if isinstance(sufficiency_block, Mapping) and sufficiency_block:

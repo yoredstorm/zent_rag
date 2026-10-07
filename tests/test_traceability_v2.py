@@ -360,7 +360,8 @@ def test_jev_changes_route_and_requests_more_evidence() -> None:
     assert "RETRIEVAL_RETRIED" in journey_kinds
 
 
-def test_probability_mismatch_is_explained_with_both_magnitudes() -> None:
+def test_probability_and_confidence_are_not_compared() -> None:
+    """P(opción) y confianza derivada son magnitudes distintas: no hay mismatch."""
     flow = _flow(
         jev_preflight=_preflight(
             decisions=[],
@@ -386,6 +387,31 @@ def test_probability_mismatch_is_explained_with_both_magnitudes() -> None:
     assert interpretation["confidence"] == 0.49
     assert interpretation["margin"] == 0.5
     assert judgment["display"]["probability"] == 0.75
+    assert _diagnostic(trace, "PROBABILITY_MISMATCH") is None
+
+
+def test_probability_mismatch_only_when_same_magnitude_is_declared() -> None:
+    """El mismatch existe sólo si la distribución declara esa equivalencia."""
+    flow = _flow(
+        jev_preflight=_preflight(
+            decisions=[],
+            questions=[
+                {
+                    "id": "tool",
+                    "type": "choice",
+                    "decision": "none",
+                    "confidence": 0.49,
+                    "distribution": {
+                        "type": "choice",
+                        "confidence": 0.49,
+                        "probability_kind": "selected_probability",
+                        "probabilities": {"none": 0.75, "search_knowledge": 0.25},
+                    },
+                }
+            ],
+        )
+    )
+    trace = build_traceability(flow)
     mismatch = _diagnostic(trace, "PROBABILITY_MISMATCH")
     assert mismatch is not None
     assert mismatch["params"]["selected_probability"] == 0.75
@@ -914,8 +940,9 @@ def test_real_execution_regression_explains_every_difference() -> None:
     assert control["params"]["impact"] == "RECOVERED_NO_IMPACT"
     assert trace["verification"]["status"] == "VERIFIED"
 
-    # Las tres inconsistencias reportadas se explican, no se maquillan.
-    assert _diagnostic(trace, "PROBABILITY_MISMATCH") is not None
+    # Las tres observaciones se explican, no se maquillan. P(opción) y
+    # confianza derivada ya no se comparan: magnitudes distintas.
+    assert _diagnostic(trace, "PROBABILITY_MISMATCH") is None
     assert _diagnostic(trace, "SOURCE_NAME_MISSING") is not None
     assert _diagnostic(trace, "EVIDENCE_ID_MISSING") is not None
     metadata_warnings = [

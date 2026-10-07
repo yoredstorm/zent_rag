@@ -365,6 +365,68 @@ def test_step_to_flow_conserva_campos_de_gate() -> None:
     assert "unmapped" not in entry
 
 
+def test_evidence_de_la_decision_llega_al_flow() -> None:
+    """La evidencia que usó la regla/claim queda marcada, aunque no se citara."""
+    result = _result(
+        [
+            {
+                "type": "grounded_reasoning",
+                "status": "ok",
+                "derived_claim": {
+                    "deterministic": True,
+                    "verification_status": "SUPPORTED",
+                    "operation": "POSITIONAL_MATCH",
+                    "result": True,
+                    "evidence_refs": ["E3"],
+                },
+                "decision_envelope": {
+                    "authoritative": True,
+                    "operation": "POSITIONAL_MATCH",
+                    "result": "MATCH",
+                    "evidence_refs": ["E3"],
+                },
+            },
+            {"type": "final", "answer": "Sí, cumple."},
+        ]
+    )
+    result.evidence = {
+        "count": 3,
+        "retrieved_count": 3,
+        "unique_count": 3,
+        "selected_count": 2,
+        "used_count": 2,
+        "used_for_reasoning_count": 2,
+        "used_for_decision_count": 0,
+        "cited_count": 0,
+        "items": [
+            {
+                "evidence_id": "E1",
+                "document_id": "d1",
+                "selected": True,
+                "used": True,
+                "used_for_reasoning": True,
+                "status": "USED",
+            },
+            {
+                "evidence_id": "E2",
+                "document_id": "d1",
+                "selected": True,
+                "used": True,
+                "used_for_reasoning": True,
+                "status": "USED",
+            },
+            {"evidence_id": "E3", "document_id": "d1", "status": "RETRIEVED"},
+        ],
+    }
+    flow = build_agent_flow(result=result, question="&&&F vs ABCFGEGE")
+    by_id = {item["evidence_id"]: item for item in flow["evidence"]["items"]}
+    assert by_id["E3"]["used_for_decision"] is True
+    assert by_id["E3"]["used"] is True
+    assert flow["evidence"]["counts"]["evidence_used_for_decision"] >= 1
+    assert flow["evidence"]["counts"]["evidence_used"] >= 3
+    assert flow["evidence"]["counts"]["documents_used_for_decision"] >= 1
+
+
 # ---------------------------------------------------------------------------
 # §3, §13 — contrato del SSE
 # ---------------------------------------------------------------------------

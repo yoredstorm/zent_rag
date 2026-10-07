@@ -132,6 +132,34 @@ class AdaptivePlan:
         return payload
 
 
+#: Identidad física del origen (parser/ingesta) que «Ver flujo» puede usar para
+#: derivar una fuente canónica estable. Se transporta tal cual; no se inventa.
+IDENTITY_METADATA_KEYS: tuple[str, ...] = (
+    "original_file_id",
+    "file_id",
+    "source_file_id",
+    "storage_object_id",
+    "object_id",
+    "source_uri",
+    "storage_uri",
+    "object_uri",
+    "s3_uri",
+    "uri",
+    "url",
+    "path",
+    "original_filename",
+    "uploaded_filename",
+    "storage_filename",
+    "filename",
+    "content_hash",
+    "checksum",
+    "sha256",
+    "file_hash",
+    "external_id",
+    "document_version",
+)
+
+
 @dataclass(kw_only=True)
 class EvidenceItem:
     """Normalized evidence from any source. Tenant isolation stays in the caller.
@@ -212,6 +240,13 @@ class EvidenceItem:
             payload["knowledge_type"] = self.knowledge_type
         if self.content:
             payload["excerpt"] = " ".join(self.content.split())[:400]
+        # Identidad física del parser/ingesta: si existe, la fuente canónica se
+        # deriva de un ancla estable (file id, URI, hash, filename).
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        for key in IDENTITY_METADATA_KEYS:
+            value = metadata.get(key)
+            if value not in (None, "", [], {}):
+                payload[key] = value
         return payload
 
     def to_eval_dict(self) -> dict[str, Any]:

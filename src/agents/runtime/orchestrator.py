@@ -764,34 +764,30 @@ def _build_flow(
         if registry is not None and hasattr(registry, "to_public_dict"):
             try:
                 # §22: refs que construyeron la regla/claim cuentan como
-                # used_for_decision aunque el texto final no las cite.
-                decision_ids: list[str] = []
-                envelope_public = adaptive.get("decision_envelope")
-                if isinstance(envelope_public, dict):
-                    decision_ids.extend(
-                        str(value)
-                        for value in envelope_public.get("evidence_refs") or ()
-                        if value
-                    )
-                grounded_public = adaptive.get("grounded_reasoning")
-                if isinstance(grounded_public, dict):
-                    derivations = grounded_public.get("derivations")
-                    if isinstance(derivations, dict):
-                        for claim in derivations.get("claims") or ():
-                            if not isinstance(claim, dict):
-                                continue
-                            decision_ids.extend(
-                                str(value)
-                                for value in claim.get("evidence_refs") or ()
-                                if value
-                            )
+                # used_for_decision aunque el texto final no las cite. Los ejes
+                # (razonamiento/regla/closure/decisión) no se colapsan en `used`.
+                from src.runtime.evidence_usage import collect_evidence_usage
+
+                usage = collect_evidence_usage(
+                    adaptive.get("grounded_reasoning")
+                    if isinstance(adaptive, dict)
+                    else None,
+                    steps=adaptive.get("authority_steps")
+                    if isinstance(adaptive, dict)
+                    else (),
+                )
                 detail = registry.to_public_dict(
                     limit=24,
                     cited_ids=cited_ids,
                     selected_ids=list(getattr(selection, "ids", ()) or ())
                     if selection is not None
                     else None,
-                    decision_ids=decision_ids,
+                    reasoning_ids=list(getattr(selection, "ids", ()) or ())
+                    if selection is not None
+                    else None,
+                    decision_ids=usage.get("decision") or (),
+                    rule_compilation_ids=usage.get("rule_compilation") or (),
+                    premise_closure_ids=usage.get("premise_closure") or (),
                 )
                 evidence_block["items_detail"] = detail.get("items", [])
                 # Invariantes de decisión: cited ⊆ used ⊆ selected ⊆ retrieved.
@@ -831,16 +827,34 @@ def _build_flow(
                 - {""}
             )
         if detail:
-            # Conteos del registry con invariantes aplicados: una cita cuenta
-            # como usada; usado nunca puede quedar por debajo de citado.
+            # Conteos del registry con invariantes aplicados: cada eje con su
+            # valor; una cita cuenta como usada; usado nunca por debajo de citado.
+            counts["evidence_unique"] = int(
+                detail.get("unique_count") or detail.get("count") or 0
+            )
             counts["evidence_selected"] = int(detail.get("selected_count") or 0)
             counts["evidence_used"] = int(detail.get("used_count") or 0)
             counts["evidence_used_for_reasoning"] = int(
                 detail.get("used_for_reasoning_count") or 0
             )
+            counts["evidence_used_for_rule_compilation"] = int(
+                detail.get("used_for_rule_compilation_count") or 0
+            )
+            counts["evidence_used_for_premise_closure"] = int(
+                detail.get("used_for_premise_closure_count") or 0
+            )
             counts["evidence_used_for_decision"] = int(
                 detail.get("used_for_decision_count") or 0
             )
+            for target, key in (
+                ("documents_selected", "documents_selected_count"),
+                ("documents_used_for_decision", "documents_used_for_decision_count"),
+                ("documents_cited", "documents_cited_count"),
+                ("documents_retrieved", "documents_retrieved_count"),
+            ):
+                value = detail.get(key)
+                if isinstance(value, int):
+                    counts[target] = value
             if citations_known or detail.get("cited_count"):
                 counts["evidence_cited"] = int(detail.get("cited_count") or 0)
         if citations_known:

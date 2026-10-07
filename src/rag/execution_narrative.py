@@ -980,6 +980,20 @@ def _trace_overrides(
         ),
         "corrections": [],
         "source_event_ids": [],
+        # Separación decisión/narrativa: la historia muestra ambos estados sin
+        # recalcularlos (schema v2 manda).
+        "decision_status": signals.get("decision_status")
+        or _record(trace_verification.get("decision_verification")).get("status"),
+        "narrative_status": signals.get("narrative_status")
+        or _record(trace_verification.get("narrative_verification")).get("status"),
+        "decision_grounding": trace_verification.get("decision_grounding"),
+        "narrative_grounding": trace_verification.get("narrative_grounding"),
+        "decision_verification": _record(
+            trace_verification.get("decision_verification")
+        ),
+        "narrative_verification": _record(
+            trace_verification.get("narrative_verification")
+        ),
     }
 
     return {

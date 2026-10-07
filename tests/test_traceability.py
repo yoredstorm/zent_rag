@@ -284,7 +284,8 @@ def test_probability_has_a_single_display_source() -> None:
     assert alternative["probability"] == display["probability"]
 
 
-def test_probability_mismatch_is_flagged_as_invariant() -> None:
+def test_probability_and_confidence_are_separate_magnitudes() -> None:
+    """P(opción) ≠ confianza derivada: no se marca mismatch sin equivalencia."""
     flow = _base_flow()
     preflight = _preflight()
     question = preflight["packs"][0]["questions"][0]
@@ -293,6 +294,11 @@ def test_probability_mismatch_is_flagged_as_invariant() -> None:
         "generate": 0.73,
     }
     flow["jev_preflight"] = preflight
+    trace = build_traceability(flow)
+    codes = [inv["code"] for inv in trace["diagnostics"]["invariants"]]
+    assert "PROBABILITY_MISMATCH" not in codes
+    # Sólo una distribución que declara la misma magnitud puede marcarlo.
+    question["distribution"]["probability_kind"] = "selected_probability"
     trace = build_traceability(flow)
     codes = [inv["code"] for inv in trace["diagnostics"]["invariants"]]
     assert "PROBABILITY_MISMATCH" in codes

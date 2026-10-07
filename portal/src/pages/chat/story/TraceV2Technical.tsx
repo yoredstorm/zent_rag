@@ -15,10 +15,13 @@ import {
   severityMeta,
 } from "../traceabilityCatalog";
 import {
+  decisionStatusLabel,
   fmtMs,
   fmtPercent,
   fmtUsd,
+  groundingLabel,
   headlineFor,
+  narrativeStatusLabel,
   type TraceV2,
 } from "../traceabilityV2";
 
@@ -44,6 +47,47 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
         <Row label="Estado" value={trace.execution.status ?? "—"} />
         <Row label="Respuesta entregada" value={yesNo(trace.execution.delivered)} />
         <Row label="Método" value={trace.execution.method ?? "—"} />
+        {trace.execution.mode ? (
+          <Row label="Modo de ejecución" value={trace.execution.mode} mono />
+        ) : null}
+        {trace.execution.fastPath ? (
+          <>
+            <Row
+              label="Llamadas LLM"
+              value={value(trace.execution.fastPath.llmCalls)}
+              help="El fast path responde desde la autoridad determinista: no llama al modelo."
+            />
+            <Row
+              label="Llamadas evitadas"
+              value={value(trace.execution.fastPath.llmCallsAvoided)}
+              help="Llamadas que el pipeline normal habría necesitado (razonamiento + respuesta)."
+            />
+            {trace.execution.fastPath.tokensAvoided !== null ? (
+              <Row
+                label="Tokens evitados (estimado)"
+                value={value(trace.execution.fastPath.tokensAvoided)}
+              />
+            ) : null}
+            {trace.execution.fastPath.costAvoidedUsd !== null ? (
+              <Row
+                label="Costo evitado (estimado)"
+                value={fmtUsd(trace.execution.fastPath.costAvoidedUsd)}
+              />
+            ) : null}
+            {trace.execution.fastPath.latencyMs !== null ? (
+              <Row
+                label="Latencia del fast path"
+                value={fmtMs(trace.execution.fastPath.latencyMs)}
+              />
+            ) : null}
+            {trace.execution.fastPath.verificationStatus ? (
+              <Row
+                label="Verificación determinista"
+                value={trace.execution.fastPath.verificationStatus}
+              />
+            ) : null}
+          </>
+        ) : null}
         {trace.execution.question ? (
           <Row label="Pregunta" value={trace.execution.question} />
         ) : null}
@@ -79,6 +123,12 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
       <Card title="EVIDENCIA">
         <Row label="Documentos recuperados" value={value(trace.counts.documentsRetrieved)} />
         <Row label="Documentos usados" value={value(trace.counts.documentsUsed)} />
+        <Row label="Documentos seleccionados" value={value(trace.counts.documentsSelected)} />
+        <Row
+          label="Documentos usados para la decisión"
+          value={value(trace.counts.documentsUsedForDecision)}
+        />
+        <Row label="Documentos citados" value={value(trace.counts.documentsCited)} />
         <Row label="Fragmentos recuperados" value={value(trace.counts.evidenceRetrieved)} />
         <Row
           label="Duplicados fusionados"
@@ -88,6 +138,26 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
         <Row label="Evidencias únicas" value={value(trace.counts.evidenceUnique)} />
         <Row label="Seleccionadas" value={value(trace.counts.evidenceSelected)} />
         <Row label="Usadas" value={value(trace.counts.evidenceUsed)} />
+        <Row
+          label="Usadas para razonar"
+          value={value(trace.counts.evidenceUsedForReasoning)}
+          help="Evidencia que entró al contexto del generador."
+        />
+        <Row
+          label="Usadas para compilar reglas"
+          value={value(trace.counts.evidenceUsedForRuleCompilation)}
+          help="Evidencia que sostiene propiedades de una CanonicalRule."
+        />
+        <Row
+          label="Usadas para cerrar premisas"
+          value={value(trace.counts.evidenceUsedForPremiseClosure)}
+          help="Evidencia recuperada por Premise Closure para satisfacer premisas."
+        />
+        <Row
+          label="Usadas para la decisión"
+          value={value(trace.counts.evidenceUsedForDecision)}
+          help="Evidencia que contribuyó a una regla soportada, una premisa satisfecha, una evaluación, un claim o el envelope."
+        />
         <Row label="Citadas" value={value(trace.counts.evidenceCited)} />
         {trace.citationsSummary.references !== null ? (
           <Row
@@ -128,6 +198,20 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
         <Row label="Cambió la ruta" value={yesNo(trace.jev.changedRoute)} />
         <Row label="Pidió más evidencia" value={yesNo(trace.jev.requestedMoreEvidence)} />
         <Row label="Bloqueó la generación" value={yesNo(trace.jev.blockedGeneration)} />
+        {trace.jev.supersededCount ? (
+          <Row
+            label="Juicios superados"
+            value={String(trace.jev.supersededCount)}
+            help="Juicios intermedios que una etapa posterior (Premise Closure o la decisión determinista) resolvió."
+          />
+        ) : null}
+        {trace.jev.resolution?.label ? (
+          <Row
+            label="Resolución"
+            value={trace.jev.resolution.label}
+            help="Qué etapa resolvió los juicios intermedios negativos."
+          />
+        ) : null}
         {trace.jev.latencyMs !== null ? <Row label="Latencia JEV" value={fmtMs(trace.jev.latencyMs)} /> : null}
         {trace.jev.judgments.length ? (
           <div className="mt-2 col-span-2 flex flex-col gap-1">
@@ -135,6 +219,9 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
             {trace.jev.judgments.map((judgment) => (
               <p key={judgment.id} className="text-[12px] text-muted">
                 {judgment.questionCode}: {judgment.answer ?? "—"}
+                {judgment.status === "SUPERSEDED"
+                  ? ` · superado por ${judgment.supersededBy ?? "una etapa posterior"}`
+                  : ""}
                 {judgment.selectedProbability !== null
                   ? ` · probabilidad ${fmtPercent(judgment.selectedProbability)}`
                   : ""}
@@ -192,6 +279,41 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
       <Card title="VERIFICACIÓN">
         <Row label="Estado" value={verificationLabel(trace.verification.status)} />
         <Row label="Grounding" value={yesNo(trace.verification.grounded)} />
+        {trace.verification.decisionVerification ? (
+          <>
+            <Row
+              label="Decisión"
+              value={decisionStatusLabel(trace.verification.decisionVerification.status)}
+              help="Estado de la decisión determinista; no lo degrada la narrativa generada."
+            />
+            {trace.verification.decisionVerification.operation ? (
+              <Row label="Operación" value={trace.verification.decisionVerification.operation} mono />
+            ) : null}
+            {trace.verification.decisionVerification.result !== null ? (
+              <Row label="Resultado" value={trace.verification.decisionVerification.result} mono />
+            ) : null}
+            <Row
+              label="Grounding de la decisión"
+              value={groundingLabel(trace.verification.decisionGrounding)}
+            />
+          </>
+        ) : null}
+        {trace.verification.narrativeVerification ? (
+          <>
+            <Row
+              label="Narrativa"
+              value={narrativeStatusLabel(trace.verification.narrativeVerification.status)}
+              help="Estado de la explicación generada; no modifica la decisión."
+            />
+            <Row
+              label="Grounding de la narrativa"
+              value={groundingLabel(trace.verification.narrativeGrounding)}
+            />
+            {trace.verification.narrativeVerification.truncated ? (
+              <Row label="Explicación truncada" value="Sí" />
+            ) : null}
+          </>
+        ) : null}
         <Row label="Fallback del verificador" value={yesNo(trace.verification.fallbackUsed)} />
         {trace.verification.fallbackCode ? (
           <Row label="Código de fallback" value={trace.verification.fallbackCode} mono />
@@ -230,6 +352,21 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
           </div>
         ) : null}
       </Card>
+
+      {trace.runtimeSteps.length ? (
+        <Card title="PASOS DEL RUNTIME">
+          {trace.runtimeSteps.map((step, index) => (
+            <p key={`${step.type}-${index}`} className="col-span-2 text-[12px] text-muted">
+              <span className="text-text">{step.type}</span>
+              {step.name ? ` · ${step.name}` : ""}
+              {step.status ? ` · ${step.status}` : ""}
+              {step.ms !== null ? ` · ${fmtMs(step.ms)}` : ""}
+              {step.unmapped ? " · sin mapeo canónico (payload crudo en el flow)" : ""}
+              {step.detail ? ` — ${step.detail}` : ""}
+            </p>
+          ))}
+        </Card>
+      ) : null}
 
       <Card title="TIEMPOS">
         <Row

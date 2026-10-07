@@ -295,6 +295,36 @@ describe("TraceV2Story", () => {
     expect(screen.getByText("Carrier Code aplicable al record dos.")).toBeInTheDocument();
   });
 
+  it("muestra el fast path determinista con su ahorro", () => {
+    const raw = {
+      ...TRACE,
+      execution: {
+        ...TRACE.execution,
+        mode: "DETERMINISTIC_FAST_PATH",
+        fast_path: {
+          eligible: true,
+          reason: "SUPPORTED_DECISION",
+          operation: "POSITIONAL_MATCH",
+          result: "MATCH",
+          execution_mode: "DETERMINISTIC_FAST_PATH",
+          llm_calls: 0,
+          llm_calls_avoided: 2,
+          tokens_avoided: 3500,
+          latency_ms: 85,
+          verification: { status: "VERIFIED_DETERMINISTIC" },
+        },
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    if (!trace) return;
+    render(<TraceV2Story trace={trace} onOpenTechnical={vi.fn()} />);
+    expect(screen.getByText("Fast path determinista")).toBeInTheDocument();
+    expect(
+      screen.getByText("0 llamadas LLM · 2 evitadas · 3500 tokens evitados"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("85 ms")).toBeInTheDocument();
+  });
+
   it("permite abrir la vista técnica", async () => {
     const trace = parseTraceabilityV2(TRACE);
     if (!trace) return;
@@ -302,6 +332,56 @@ describe("TraceV2Story", () => {
     render(<TraceV2Story trace={trace} onOpenTechnical={onOpenTechnical} />);
     await userEvent.click(screen.getByText("Ver detalles técnicos"));
     expect(onOpenTechnical).toHaveBeenCalledTimes(1);
+  });
+
+  it("muestra ejes de uso y juicios superados", async () => {
+    const raw = {
+      ...TRACE,
+      evidence: {
+        ...TRACE.evidence,
+        counts: {
+          ...TRACE.evidence.counts,
+          evidence_used_for_reasoning: 2,
+          evidence_used_for_decision: 3,
+        },
+        documents: [
+          {
+            ...TRACE.evidence.documents[0],
+            decision_count: 1,
+            items: TRACE.evidence.documents[0].items.map((item) => ({
+              ...item,
+              used_for_decision: true,
+            })),
+          },
+        ],
+      },
+      jev: {
+        ...TRACE.jev,
+        requested_more_evidence: true,
+        superseded_count: 1,
+        resolution: {
+          label: "DecisionEnvelope MATCH",
+          authority: true,
+          premise_closed: true,
+        },
+        judgments: TRACE.jev.judgments.map((judgment) => ({
+          ...judgment,
+          status: "SUPERSEDED",
+          superseded_by: "DecisionEnvelope MATCH",
+        })),
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    if (!trace) return;
+    render(<TraceV2Story trace={trace} onOpenTechnical={vi.fn()} />);
+    expect(screen.getByText(/3 usadas para la decisión/)).toBeInTheDocument();
+    const evidenceToggle = screen.getByText("Evidencia utilizada").closest("button");
+    if (evidenceToggle) await userEvent.click(evidenceToggle);
+    expect(screen.getByText("Decisión")).toBeInTheDocument();
+    const jevToggle = screen.getByText("Decisiones JEV").closest("button");
+    if (jevToggle) await userEvent.click(jevToggle);
+    expect(screen.getByText("Superado")).toBeInTheDocument();
+    expect(screen.getAllByText(/superado por/).length).toBeGreaterThan(0);
   });
 });
 
@@ -318,5 +398,67 @@ describe("TraceV2Technical", () => {
     expect(screen.getByText("CALIDAD DE TELEMETRÍA")).toBeInTheDocument();
     expect(screen.getByText("Límite de generación alcanzado")).toBeInTheDocument();
     expect(screen.getByText(/Resuelto automáticamente/)).toBeInTheDocument();
+  });
+});
+
+describe("Verificación separada decisión/narrativa", () => {
+  const SPLIT_TRACE = {
+    ...TRACE,
+    verification: {
+      ...TRACE.verification,
+      status: "PARTIALLY_VERIFIED",
+      signals: { grounded: false, fallback_used: false, material_fallback: false },
+      decision_verification: {
+        status: "VERIFIED",
+        authoritative: true,
+        deterministic: true,
+        operation: "POSITIONAL_MATCH",
+        result: "MATCH",
+        canonical_rule_ids: ["rule:atpco"],
+        premise_status: "SATISFIED",
+        evidence_refs: ["E1"],
+        rule_verification: "SUPPORTED",
+        conflicts: [],
+      },
+      narrative_verification: {
+        status: "TRUNCATED",
+        truncated: true,
+        warnings: ["MAX_TOKENS_REACHED"],
+        citations_valid: null,
+        explanation_complete: false,
+        grounding_complete: false,
+      },
+      decision_grounding: "CONFIRMED",
+      narrative_grounding: "BLOCKED",
+    },
+    presentation: {
+      ...TRACE.presentation,
+      headline: { code: "RESPONSE_DECISION_VERIFIED_NARRATIVE_PARTIAL", params: {} },
+    },
+  };
+
+  it("muestra DECISIÓN y EXPLICACIÓN con estados independientes", () => {
+    const trace = parseTraceabilityV2(SPLIT_TRACE);
+    if (!trace) return;
+    render(<TraceV2Story trace={trace} onOpenTechnical={vi.fn()} />);
+    expect(
+      screen.getAllByText("Decisión verificada · explicación parcialmente verificada").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("DECISIÓN")).toBeInTheDocument();
+    expect(screen.getByText("Verificada determinísticamente")).toBeInTheDocument();
+    expect(screen.getByText("POSITIONAL_MATCH")).toBeInTheDocument();
+    expect(screen.getByText("MATCH")).toBeInTheDocument();
+    expect(screen.getByText("EXPLICACIÓN")).toBeInTheDocument();
+    expect(screen.getByText("Truncada por límite de generación")).toBeInTheDocument();
+    expect(screen.getByText("MAX_TOKENS_REACHED")).toBeInTheDocument();
+  });
+
+  it("la vista técnica expone ambos groundings", () => {
+    const trace = parseTraceabilityV2(SPLIT_TRACE);
+    if (!trace) return;
+    render(<TraceV2Technical trace={trace} />);
+    expect(screen.getByText("Decisión")).toBeInTheDocument();
+    expect(screen.getByText("Grounding de la decisión")).toBeInTheDocument();
+    expect(screen.getByText("Grounding de la narrativa")).toBeInTheDocument();
   });
 });

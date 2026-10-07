@@ -18,11 +18,14 @@ import {
   severityMeta,
 } from "../traceabilityCatalog";
 import {
+  decisionStatusLabel,
   fmtMs,
   fmtPercent,
   fmtUsd,
+  groundingLabel,
   headlineFor,
   jevSummary,
+  narrativeStatusLabel,
   supportSummary,
   type TraceV2,
   type TraceV2DiagnosticItem,
@@ -39,10 +42,26 @@ export function TraceV2Story({
   onOpenTechnical: () => void;
 }) {
   const headline = headlineFor(trace);
+  const fastPath = trace.execution.fastPath;
+  const isFastPath = trace.execution.mode === "DETERMINISTIC_FAST_PATH";
   const metrics: Array<{ label: string; value: string; help?: string }> = [
     { label: "Respaldo", value: supportSummary(trace) },
     { label: "JEV", value: jevSummary(trace) },
     { label: "Verificación", value: verificationSummary(trace) },
+    ...(isFastPath
+      ? [
+          {
+            label: "Fast path",
+            value: `0 llamadas LLM${
+              fastPath?.llmCallsAvoided ? ` · ${fastPath.llmCallsAvoided} evitadas` : ""
+            }${fastPath?.tokensAvoided ? ` · ${fastPath.tokensAvoided} tokens evitados` : ""}`,
+            help: "La autoridad determinista resolvió la consulta sin razonamiento, JEV ni generación.",
+          },
+          ...(fastPath?.latencyMs !== null && fastPath?.latencyMs !== undefined
+            ? [{ label: "Latencia fast path", value: fmtMs(fastPath.latencyMs) }]
+            : []),
+        ]
+      : []),
     {
       label: "Tiempo",
       value: fmtMs(trace.timing.wallClockMs),
@@ -61,6 +80,7 @@ export function TraceV2Story({
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-h2 text-text">{headline.title}</h2>
           <Badge tone={headline.tone}>{trace.upgradedFromSchema ? "Trazo histórico" : "Schema v2"}</Badge>
+          {isFastPath ? <Badge tone="ok">Fast path determinista</Badge> : null}
         </div>
         <p className="mt-1 text-[12.5px] text-muted">{headline.detail}</p>
         <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 text-[12px] sm:grid-cols-2">
@@ -75,6 +95,8 @@ export function TraceV2Story({
           ))}
         </dl>
       </header>
+
+      <VerificationSplitSection trace={trace} />
 
       <section aria-label="Cómo llegó Zent a esta respuesta">
         <p className="eyebrow mb-2">Cómo llegó Zent a esta respuesta</p>
@@ -118,6 +140,81 @@ export function TraceV2Story({
   );
 }
 
+function VerificationSplitSection({ trace }: { trace: TraceV2 }) {
+  const decision = trace.verification.decisionVerification;
+  const narrative = trace.verification.narrativeVerification;
+  if (!decision && !narrative) return null;
+  const reason = narrative?.warnings?.[0] ?? null;
+  return (
+    <section aria-label="Verificación de la decisión y de la explicación">
+      <p className="eyebrow mb-2">Verificación</p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {decision ? (
+          <article className="rounded-md border border-border-soft px-3 py-2">
+            <p className="text-[11px] font-medium tracking-wide text-faint">DECISIÓN</p>
+            <p className="mt-1 text-[12.5px] text-text">
+              {decisionStatusLabel(decision.status)}
+            </p>
+            <dl className="mt-1.5 flex flex-col gap-0.5 text-[12px] text-muted">
+              {decision.operation ? (
+                <div>
+                  <dt className="inline text-faint">Operación: </dt>
+                  <dd className="inline">{decision.operation}</dd>
+                </div>
+              ) : null}
+              {decision.result !== null ? (
+                <div>
+                  <dt className="inline text-faint">Resultado: </dt>
+                  <dd className="inline">{decision.result}</dd>
+                </div>
+              ) : null}
+              {decision.ruleVerification ? (
+                <div>
+                  <dt className="inline text-faint">Regla: </dt>
+                  <dd className="inline">{decision.ruleVerification}</dd>
+                </div>
+              ) : null}
+              {decision.premiseStatus ? (
+                <div>
+                  <dt className="inline text-faint">Premisas: </dt>
+                  <dd className="inline">{decision.premiseStatus}</dd>
+                </div>
+              ) : null}
+              <div>
+                <dt className="inline text-faint">Grounding: </dt>
+                <dd className="inline">{groundingLabel(trace.verification.decisionGrounding)}</dd>
+              </div>
+            </dl>
+          </article>
+        ) : null}
+        {narrative ? (
+          <article className="rounded-md border border-border-soft px-3 py-2">
+            <p className="text-[11px] font-medium tracking-wide text-faint">EXPLICACIÓN</p>
+            <p className="mt-1 text-[12.5px] text-text">
+              {narrativeStatusLabel(narrative.status)}
+            </p>
+            <dl className="mt-1.5 flex flex-col gap-0.5 text-[12px] text-muted">
+              <div>
+                <dt className="inline text-faint">Grounding: </dt>
+                <dd className="inline">{groundingLabel(trace.verification.narrativeGrounding)}</dd>
+              </div>
+              {narrative.citationsValid === false ? <div>Citas: con referencias colgantes</div> : null}
+              {reason ? (
+                <div>
+                  <dt className="inline text-faint">Motivo: </dt>
+                  <dd className="inline">
+                    <code>{reason}</code>
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </article>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function Help({ label, help }: { label: string; help: string }) {
   return (
     <Tooltip label={help}>
@@ -141,8 +238,18 @@ function EvidenceSection({ trace }: { trace: TraceV2 }) {
   const retrieved = counts.evidenceRetrieved;
   const deduplicated = counts.evidenceDeduplicated;
   const unique = counts.evidenceUnique;
-  const used = counts.evidenceUsed;
+  const decision = counts.evidenceUsedForDecision;
+  const reasoning = counts.evidenceUsedForReasoning;
   const cited = counts.evidenceCited;
+  const pieces: string[] = [];
+  if (retrieved !== null) pieces.push(`Se encontraron ${retrieved} fragmentos`);
+  if (deduplicated) pieces.push(`${deduplicated} eran duplicados o se solapaban`);
+  if (unique !== null) pieces.push(`quedaron ${unique} evidencias únicas`);
+  if (decision !== null) pieces.push(`${decision} usadas para la decisión`);
+  if (reasoning !== null && reasoning !== decision) {
+    pieces.push(`${reasoning} usadas para razonar`);
+  }
+  if (cited !== null) pieces.push(`se citaron ${cited}`);
   return (
     <section aria-label="Evidencia utilizada">
       <button
@@ -155,13 +262,7 @@ function EvidenceSection({ trace }: { trace: TraceV2 }) {
         <span className="text-[11.5px] text-accent">{open ? "Ocultar" : "Mostrar"}</span>
       </button>
       <p className="mb-2 text-[12px] text-muted">
-        {retrieved !== null
-          ? `Se encontraron ${retrieved} fragmentos`
-          : "Se recuperó evidencia"}
-        {deduplicated ? `; ${deduplicated} eran duplicados o se solapaban` : ""}
-        {unique !== null ? `; quedaron ${unique} evidencias únicas` : ""}
-        {used !== null ? `, se usaron ${used}` : ""}
-        {cited !== null ? ` y se citaron ${cited}.` : "."}
+        {pieces.length ? `${pieces.join("; ")}.` : "Se recuperó evidencia"}
       </p>
       {open ? (
         <div className="flex flex-col gap-2">
@@ -191,6 +292,7 @@ function DocumentCard({ document }: { document: TraceV2Document }) {
         ) : null}
         <span className="text-[11px] text-faint">
           {document.evidenceCount} {document.evidenceCount === 1 ? "evidencia" : "evidencias"}
+          {document.decisionCount ? ` · ${document.decisionCount} para la decisión` : ""}
           {document.citedCount ? ` · ${document.citedCount} citada${document.citedCount === 1 ? "" : "s"}` : ""}
         </span>
       </div>
@@ -199,8 +301,15 @@ function DocumentCard({ document }: { document: TraceV2Document }) {
           <li key={item.evidenceId ?? `${document.key}-${index}`} className="text-[12px]">
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-faint">
               {item.page !== null ? <span>pág. {item.page}</span> : null}
-              {item.used ? <Badge tone="ok">Usada</Badge> : null}
+              {item.usedForDecision ? <Badge tone="ok">Decisión</Badge> : null}
+              {item.usedForRuleCompilation ? <Badge tone="info">Regla</Badge> : null}
+              {item.usedForPremiseClosure ? <Badge tone="info">Premisa</Badge> : null}
+              {item.usedForReasoning ? <Badge tone="neutral">Razonamiento</Badge> : null}
+              {item.used && !item.usedForDecision && !item.usedForRuleCompilation && !item.usedForPremiseClosure && !item.usedForReasoning ? (
+                <Badge tone="ok">Usada</Badge>
+              ) : null}
               {item.cited ? <Badge tone="accent">Citada</Badge> : null}
+              {item.citationOnlyContext ? <Badge tone="warn">Solo contexto</Badge> : null}
               {item.mergedCount > 0 ? (
                 <Tooltip
                   label={`Se fusionaron ${item.hitCount} fragmentos (${item.dedupKind ?? "duplicado"}).`}
@@ -285,10 +394,19 @@ function JudgmentCard({ judgment }: { judgment: TraceV2Judgment }) {
     judgment.answer !== null
       ? (JUDGMENT_VALUE_LABELS[judgment.answer] ?? judgment.answer)
       : "Sin respuesta registrada";
+  const superseded = judgment.status === "SUPERSEDED";
   return (
     <article className="rounded-md border border-border-soft px-3 py-2">
-      <p className="text-[12.5px] font-medium text-text">{question}</p>
-      <p className="text-[12px] text-text">Resultado: {answer}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[12.5px] font-medium text-text">{question}</p>
+        {superseded ? <Badge tone="neutral">Superado</Badge> : null}
+      </div>
+      <p className="text-[12px] text-text">
+        Resultado: {answer}
+        {superseded && judgment.supersededBy ? (
+          <span className="text-muted"> · superado por {judgment.supersededBy}</span>
+        ) : null}
+      </p>
       <p className="text-[11.5px] text-muted">
         {judgment.selectedProbability !== null ? (
           <>

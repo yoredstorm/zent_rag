@@ -43,11 +43,18 @@ function str(value: unknown): string | null {
 export interface TraceV2Counts {
   documentsRetrieved: number | null;
   documentsUsed: number | null;
+  documentsSelected: number | null;
+  documentsUsedForDecision: number | null;
+  documentsCited: number | null;
   evidenceRetrieved: number | null;
   evidenceDeduplicated: number | null;
   evidenceUnique: number | null;
   evidenceSelected: number | null;
   evidenceUsed: number | null;
+  evidenceUsedForReasoning: number | null;
+  evidenceUsedForRuleCompilation: number | null;
+  evidenceUsedForPremiseClosure: number | null;
+  evidenceUsedForDecision: number | null;
   evidenceCited: number | null;
 }
 
@@ -80,6 +87,11 @@ export interface TraceV2EvidenceItem {
   authority: string | null;
   knowledgeType: string | null;
   used: boolean;
+  usedForReasoning: boolean;
+  usedForRuleCompilation: boolean;
+  usedForPremiseClosure: boolean;
+  usedForDecision: boolean;
+  citationOnlyContext: boolean;
   cited: boolean;
   selected: boolean;
   mergedCount: number;
@@ -98,6 +110,7 @@ export interface TraceV2Document {
   identityWeak: boolean;
   evidenceCount: number;
   usedCount: number;
+  decisionCount: number;
   citedCount: number;
   items: TraceV2EvidenceItem[];
 }
@@ -126,6 +139,11 @@ export interface TraceV2Judgment {
   raw: Json;
   appliedDecisionId: string | null;
   effectCode: string | null;
+  status: string;
+  supersededBy: string | null;
+  sequence: number | null;
+  timestamp: string | null;
+  finalEffect: string | null;
 }
 
 export interface TraceV2Decision {
@@ -143,6 +161,9 @@ export interface TraceV2Decision {
   effectCodes: string[];
   allowGeneration: boolean | null;
   tier: string | null;
+  status: string;
+  supersededBy: string | null;
+  sequence: number | null;
 }
 
 export interface TraceV2Control {
@@ -183,6 +204,28 @@ export interface TraceV2VerificationCheck {
   quality: number | null;
 }
 
+export interface TraceV2DecisionVerification {
+  status: string;
+  authoritative: boolean;
+  deterministic: boolean;
+  operation: string | null;
+  result: string | null;
+  canonicalRuleIds: string[];
+  premiseStatus: string | null;
+  evidenceRefs: string[];
+  ruleVerification: string | null;
+  conflicts: string[];
+}
+
+export interface TraceV2NarrativeVerification {
+  status: string;
+  citationsValid: boolean | null;
+  explanationComplete: boolean | null;
+  groundingComplete: boolean | null;
+  truncated: boolean;
+  warnings: string[];
+}
+
 export interface TraceV2Degradation {
   code: string;
   impact: string;
@@ -220,6 +263,20 @@ export interface TraceV2Explanation {
   params: Json;
 }
 
+export interface TraceV2FastPath {
+  eligible: boolean;
+  reason: string | null;
+  operation: string | null;
+  result: string | null;
+  executionMode: string | null;
+  llmCalls: number | null;
+  llmCallsAvoided: number | null;
+  tokensAvoided: number | null;
+  costAvoidedUsd: number | null;
+  latencyMs: number | null;
+  verificationStatus: string | null;
+}
+
 export interface TraceV2 {
   schemaVersion: 2;
   upgradedFromSchema: number | null;
@@ -230,6 +287,8 @@ export interface TraceV2 {
     status: string | null;
     delivered: boolean | null;
     method: string | null;
+    mode: string | null;
+    fastPath: TraceV2FastPath | null;
   };
   routing: {
     route: string | null;
@@ -284,6 +343,8 @@ export interface TraceV2 {
     costUsd: number | null;
     judgments: TraceV2Judgment[];
     decisions: TraceV2Decision[];
+    supersededCount: number;
+    resolution: { label: string | null; authority: boolean; premiseClosed: boolean } | null;
   };
   generation: {
     observed: boolean;
@@ -316,6 +377,10 @@ export interface TraceV2 {
     fallbackCode: string | null;
     materialFallback: boolean;
     quality: number | null;
+    decisionVerification: TraceV2DecisionVerification | null;
+    narrativeVerification: TraceV2NarrativeVerification | null;
+    decisionGrounding: string | null;
+    narrativeGrounding: string | null;
   };
   memory: {
     observed: boolean;
@@ -363,6 +428,14 @@ export interface TraceV2 {
     status: string;
     decisionId: string | null;
   }>;
+  runtimeSteps: Array<{
+    type: string;
+    name: string | null;
+    status: string;
+    detail: string | null;
+    ms: number | null;
+    unmapped: boolean;
+  }>;
 }
 
 /* --- Parser --------------------------------------------------------------- */
@@ -370,13 +443,20 @@ export interface TraceV2 {
 function parseCounts(raw: unknown): TraceV2Counts {
   const block = record(raw);
   return {
-    documentsRetrieved: num(block.documents_retrieved),
+    documentsRetrieved: num(block.documents_retrieved) ?? num(block.documents_consulted),
     documentsUsed: num(block.documents_used),
+    documentsSelected: num(block.documents_selected),
+    documentsUsedForDecision: num(block.documents_used_for_decision),
+    documentsCited: num(block.documents_cited),
     evidenceRetrieved: num(block.evidence_retrieved),
     evidenceDeduplicated: num(block.evidence_deduplicated),
     evidenceUnique: num(block.evidence_unique),
     evidenceSelected: num(block.evidence_selected),
     evidenceUsed: num(block.evidence_used),
+    evidenceUsedForReasoning: num(block.evidence_used_for_reasoning),
+    evidenceUsedForRuleCompilation: num(block.evidence_used_for_rule_compilation),
+    evidenceUsedForPremiseClosure: num(block.evidence_used_for_premise_closure),
+    evidenceUsedForDecision: num(block.evidence_used_for_decision),
     evidenceCited: num(block.evidence_cited),
   };
 }
@@ -416,6 +496,11 @@ function parseEvidenceItem(raw: Json): TraceV2EvidenceItem {
     authority: str(raw.authority),
     knowledgeType: str(raw.knowledge_type),
     used: raw.used === true,
+    usedForReasoning: raw.used_for_reasoning === true,
+    usedForRuleCompilation: raw.used_for_rule_compilation === true,
+    usedForPremiseClosure: raw.used_for_premise_closure === true,
+    usedForDecision: raw.used_for_decision === true,
+    citationOnlyContext: raw.citation_only_context === true,
     cited: raw.cited === true,
     selected: raw.selected === true,
     mergedCount: num(raw.merged_count) ?? 0,
@@ -436,6 +521,7 @@ function parseDocument(raw: Json): TraceV2Document {
     identityWeak: raw.identity_weak === true,
     evidenceCount: num(raw.evidence_count) ?? 0,
     usedCount: num(raw.used_count) ?? 0,
+    decisionCount: num(raw.decision_count) ?? 0,
     citedCount: num(raw.cited_count) ?? 0,
     items: records(raw.items).map(parseEvidenceItem),
   };
@@ -466,6 +552,14 @@ function parseJudgment(raw: Json): TraceV2Judgment {
     raw: record(raw.raw),
     appliedDecisionId: str(raw.applied_decision_id),
     effectCode: str(raw.effect_code),
+    status: text(raw.status) || "ACTIVE",
+    supersededBy: str(raw.superseded_by),
+    sequence: num(raw.sequence),
+    timestamp: str(raw.timestamp),
+    finalEffect:
+      raw.final_effect === null || raw.final_effect === undefined
+        ? null
+        : String(raw.final_effect),
   };
 }
 
@@ -489,6 +583,9 @@ function parseDecision(raw: Json): TraceV2Decision {
       : [],
     allowGeneration: bool(raw.allow_generation),
     tier: str(raw.tier),
+    status: text(raw.status) || "ACTIVE",
+    supersededBy: str(raw.superseded_by),
+    sequence: num(raw.sequence),
   };
 }
 
@@ -520,6 +617,86 @@ function parseDiagnosticItem(raw: Json): TraceV2DiagnosticItem {
     sourceEventIds: Array.isArray(raw.source_event_ids)
       ? raw.source_event_ids.filter((id): id is string => typeof id === "string")
       : [],
+  };
+}
+
+function parseDecisionVerification(raw: unknown): TraceV2DecisionVerification | null {
+  const block = record(raw);
+  const status = str(block.status);
+  if (!status) return null;
+  const result = block.result;
+  return {
+    status,
+    authoritative: block.authoritative === true,
+    deterministic: block.deterministic === true,
+    operation: str(block.operation),
+    result:
+      result === null || result === undefined
+        ? null
+        : typeof result === "boolean" || typeof result === "number" || typeof result === "string"
+          ? String(result)
+          : JSON.stringify(result),
+    canonicalRuleIds: strings(block.canonical_rule_ids),
+    premiseStatus: str(block.premise_status),
+    evidenceRefs: strings(block.evidence_refs),
+    ruleVerification: str(block.rule_verification),
+    conflicts: strings(block.conflicts),
+  };
+}
+
+function parseNarrativeVerification(raw: unknown): TraceV2NarrativeVerification | null {
+  const block = record(raw);
+  const status = str(block.status);
+  if (!status) return null;
+  return {
+    status,
+    citationsValid: bool(block.citations_valid),
+    explanationComplete: bool(block.explanation_complete),
+    groundingComplete: bool(block.grounding_complete),
+    truncated: block.truncated === true,
+    warnings: strings(block.warnings),
+  };
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function parseJevResolution(
+  raw: unknown,
+): { label: string | null; authority: boolean; premiseClosed: boolean } | null {
+  const block = record(raw);
+  if (!Object.keys(block).length) return null;
+  return {
+    label: str(block.label),
+    authority: block.authority === true,
+    premiseClosed: block.premise_closed === true,
+  };
+}
+
+function parseFastPath(raw: unknown): TraceV2FastPath | null {
+  const block = record(raw);
+  if (!Object.keys(block).length) return null;
+  const result = block.result;
+  return {
+    eligible: block.eligible === true,
+    reason: str(block.reason),
+    operation: str(block.operation),
+    result:
+      result === null || result === undefined
+        ? null
+        : typeof result === "boolean" || typeof result === "number" || typeof result === "string"
+          ? String(result)
+          : JSON.stringify(result),
+    executionMode: str(block.execution_mode),
+    llmCalls: num(block.llm_calls),
+    llmCallsAvoided: num(block.llm_calls_avoided),
+    tokensAvoided: num(block.tokens_avoided),
+    costAvoidedUsd: num(block.cost_avoided_usd),
+    latencyMs: num(block.latency_ms),
+    verificationStatus: str(record(block.verification).status),
   };
 }
 
@@ -558,6 +735,8 @@ export function parseTraceabilityV2(value: unknown): TraceV2 | null {
       status: str(record(raw.execution).status),
       delivered: bool(record(raw.execution).delivered),
       method: str(record(raw.execution).method),
+      mode: str(record(raw.execution).mode),
+      fastPath: parseFastPath(record(raw.execution).fast_path),
     },
     routing: {
       route: str(record(raw.routing).route),
@@ -621,6 +800,8 @@ export function parseTraceabilityV2(value: unknown): TraceV2 | null {
       costUsd: num(jev.cost_usd),
       judgments: records(jev.judgments).map(parseJudgment),
       decisions: records(jev.decisions).map(parseDecision),
+      supersededCount: num(jev.superseded_count) ?? 0,
+      resolution: parseJevResolution(jev.resolution),
     },
     generation: {
       observed: generation.observed === true,
@@ -691,6 +872,10 @@ export function parseTraceabilityV2(value: unknown): TraceV2 | null {
       fallbackCode: str(record(verification.signals).fallback_code),
       materialFallback: record(verification.signals).material_fallback === true,
       quality: num(record(record(verification.metrics).quality).value),
+      decisionVerification: parseDecisionVerification(verification.decision_verification),
+      narrativeVerification: parseNarrativeVerification(verification.narrative_verification),
+      decisionGrounding: str(verification.decision_grounding) ?? str(record(verification.signals).decision_grounding),
+      narrativeGrounding: str(verification.narrative_grounding) ?? str(record(verification.signals).narrative_grounding),
     },
     memory: {
       observed: memory.observed === true,
@@ -767,6 +952,14 @@ export function parseTraceabilityV2(value: unknown): TraceV2 | null {
       status: text(entry.status) || "ok",
       decisionId: str(entry.decision_id),
     })),
+    runtimeSteps: records(raw.runtime_steps).map((step) => ({
+      type: text(step.type) || "step",
+      name: str(step.name),
+      status: text(step.status) || "ok",
+      detail: str(step.detail),
+      ms: num(step.ms),
+      unmapped: step.unmapped === true,
+    })),
   };
 }
 
@@ -794,18 +987,85 @@ export function jevSummary(trace: TraceV2): string {
     checks !== null
       ? `Revisó ${checks} ${checks === 1 ? "decisión" : "decisiones"}`
       : "Revisó las decisiones";
+  if (jev.requestedMoreEvidence) {
+    const resolution = jev.resolution?.label;
+    if (resolution) {
+      return `${checksText}, pidió más evidencia y ese juicio quedó superado por ${resolution}`;
+    }
+    return `${checksText} y pidió más evidencia`;
+  }
   if (jev.changedRoute) return `${checksText} y cambió el camino`;
-  if (jev.requestedMoreEvidence) return `${checksText} y pidió más evidencia`;
   return `${checksText} y mantuvo el camino original`;
 }
 
+export function evidenceUsageSummary(trace: TraceV2): string {
+  const counts = trace.counts;
+  const parts: string[] = [];
+  if (counts.evidenceRetrieved !== null) {
+    parts.push(
+      `${counts.evidenceRetrieved} ${counts.evidenceRetrieved === 1 ? "fragmento recuperado" : "fragmentos recuperados"}`,
+    );
+  }
+  if (counts.evidenceUnique !== null) {
+    parts.push(
+      `${counts.evidenceUnique} ${counts.evidenceUnique === 1 ? "evidencia única" : "evidencias únicas"}`,
+    );
+  }
+  if (counts.evidenceUsedForDecision !== null) {
+    parts.push(`${counts.evidenceUsedForDecision} usadas para la decisión`);
+  }
+  if (counts.evidenceUsedForReasoning !== null) {
+    parts.push(`${counts.evidenceUsedForReasoning} usadas para razonar`);
+  }
+  if (counts.evidenceCited !== null) {
+    parts.push(
+      `${counts.evidenceCited} ${counts.evidenceCited === 1 ? "citada" : "citadas"}`,
+    );
+  }
+  return parts.join(" · ");
+}
+
 export function verificationSummary(trace: TraceV2): string {
+  const decision = trace.verification.decisionVerification;
+  const narrative = trace.verification.narrativeVerification;
+  if (decision && decision.status === "VERIFIED") {
+    if (narrative && narrative.status === "VERIFIED") return "Respuesta verificada";
+    if (narrative && narrative.status === "UNVERIFIED") {
+      return "Decisión verificada · explicación sin verificar";
+    }
+    return "Decisión verificada · explicación parcialmente verificada";
+  }
+  if (decision && decision.status === "NOT_VERIFIED") return "Decisión no verificada";
   const status = trace.verification.status;
   if (status === "VERIFIED") return "Respaldo confirmado";
   if (status === "PARTIALLY_VERIFIED") return "Respaldo confirmado parcialmente";
   if (status === "CONFLICTING_EVIDENCE") return "Evidencia en conflicto";
   if (status === "INSUFFICIENT_EVIDENCE") return "Evidencia insuficiente";
   return "Sin respaldo confirmado";
+}
+
+export function decisionStatusLabel(status: string): string {
+  if (status === "VERIFIED") return "Verificada determinísticamente";
+  if (status === "NOT_VERIFIED") return "No verificada";
+  if (status === "UNDETERMINED") return "Sin decisión determinista";
+  return status;
+}
+
+export function narrativeStatusLabel(status: string): string {
+  if (status === "VERIFIED") return "Verificada";
+  if (status === "PARTIAL") return "Parcialmente verificada";
+  if (status === "TRUNCATED") return "Truncada por límite de generación";
+  if (status === "UNVERIFIED") return "Sin verificar";
+  return status;
+}
+
+export function groundingLabel(status: string | null): string {
+  if (status === "CONFIRMED") return "Confirmado";
+  if (status === "COMPLETE") return "Completo";
+  if (status === "PARTIAL") return "Parcial";
+  if (status === "BLOCKED") return "Bloqueado";
+  if (status === "UNKNOWN") return "Sin datos";
+  return "—";
 }
 
 export function findingGroups(trace: TraceV2): Array<{

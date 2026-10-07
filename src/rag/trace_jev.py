@@ -100,6 +100,147 @@ def _int_or_none(value: Any) -> int | None:
     return int(number) if number is not None else None
 
 
+#: Fases que representan el estado FINAL de la narrativa: un juicio negativo
+#: acá no lo resuelve la autoridad determinista (habla del texto, no del hecho).
+_FINAL_JUDGMENT_PHASES = frozenset(
+    {"post_generation", "answer_gate", "verification", "response_composition"}
+)
+
+#: Códigos de pregunta que expresan suficiencia/satisfacción de premisas.
+_SUFFICIENCY_MARKERS = ("satisf", "sufficien", "complete", "grounded", "covered")
+_NEEDS_MORE_MARKERS = ("needs_more", "needs_evidence", "needs_search", "needs_tool")
+
+
+def _resolution(flow: Mapping[str, Any]) -> dict[str, Any]:
+    """Qué resolvió los juicios intermedios: autoridad o Premise Closure.
+
+    Lee SÓLO hechos publicados en los steps. No decide nada: describe la
+    cronología para que la UI no muestre un estado intermedio como final.
+    """
+    authority = False
+    operation = ""
+    result: Any = None
+    premise_closed = False
+    retrieval_expanded = bool(_record(flow.get("retrieval")).get("expanded"))
+    for step in _records(flow.get("steps")):
+        step_type = _text(step.get("type"))
+        if step_type == "final_authority_lock" and step.get("authoritative") is True:
+            authority = True
+            operation = _text(step.get("operation")) or operation
+            result = step.get("result") if step.get("result") is not None else result
+        elif step_type == "grounded_reasoning":
+            envelope = _record(step.get("decision_envelope"))
+            if envelope.get("authoritative") is True:
+                authority = True
+                operation = _text(envelope.get("operation")) or operation
+                result = envelope.get("result") if envelope.get("result") is not None else result
+        elif step_type == "decision_envelope" and step.get("authoritative") is True:
+            authority = True
+            operation = _text(step.get("operation")) or operation
+            result = step.get("result") if step.get("result") is not None else result
+        elif step_type == "premise_closure":
+            detail = _record(step.get("detail"))
+            termination = _text(step.get("termination") or detail.get("termination")).upper()
+            missing_after = step.get("missing_after")
+            if not isinstance(missing_after, list):
+                missing_after = detail.get("missing_after") or []
+            rules_added = _int_or_none(step.get("rules_added"))
+            if rules_added is None:
+                rules_added = _int_or_none(detail.get("rules_added"))
+            evidence_added = _int_or_none(step.get("evidence_added"))
+            if evidence_added is None:
+                evidence_added = _int_or_none(detail.get("evidence_added"))
+            if termination == "SATISFIED" or (
+                not missing_after and bool(rules_added or evidence_added)
+            ):
+                premise_closed = True
+    label = ""
+    if authority:
+        label = f"DecisionEnvelope {result}" if result not in (None, "") else "DecisionEnvelope"
+    elif premise_closed:
+        label = "premise_closure"
+    elif retrieval_expanded:
+        label = "retrieval_expanded"
+    return {
+        "authority": authority,
+        "operation": operation or None,
+        "result": result,
+        "premise_closed": premise_closed,
+        "retrieval_expanded": retrieval_expanded,
+        "label": label,
+    }
+
+
+def _judgment_is_negative(judgment: Mapping[str, Any]) -> bool:
+    code = _text(judgment.get("question_code")).lower()
+    answer = _text(judgment.get("answer")).lower()
+    interpretation = _record(judgment.get("interpretation"))
+    if any(marker in code for marker in _NEEDS_MORE_MARKERS):
+        return answer in {"yes", "true", "1"}
+    if any(marker in code for marker in _SUFFICIENCY_MARKERS):
+        return answer in {"no", "false", "0"}
+    if answer in {"no", "false", "0"} and _text(judgment.get("type")) in {"noul", "choice"}:
+        return True
+    return False
+
+
+def _mark_supersession(
+    judgments: list[dict[str, Any]],
+    decisions: list[dict[str, Any]],
+    resolution: Mapping[str, Any],
+) -> None:
+    label = _text(resolution.get("label"))
+    if not label:
+        for index, judgment in enumerate(judgments, start=1):
+            judgment["sequence"] = index
+            judgment["status"] = "ACTIVE"
+            judgment["final_effect"] = judgment.get("effect_code") or judgment.get("answer")
+            judgment.setdefault("superseded_by", None)
+            judgment.setdefault("timestamp", None)
+        for index, decision in enumerate(decisions, start=1):
+            decision["sequence"] = index
+            decision["status"] = "ACTIVE"
+            decision["final_effect"] = (
+                decision["effect_codes"][0] if decision.get("effect_codes") else decision.get("action")
+            )
+            decision.setdefault("superseded_by", None)
+        return
+    for index, judgment in enumerate(judgments, start=1):
+        judgment["sequence"] = index
+        judgment.setdefault("superseded_by", None)
+        judgment.setdefault("timestamp", None)
+        phase = _text(judgment.get("phase"))
+        if (
+            phase not in _FINAL_JUDGMENT_PHASES
+            and _judgment_is_negative(judgment)
+        ):
+            judgment["status"] = "SUPERSEDED"
+            judgment["superseded_by"] = label
+            judgment["final_effect"] = "resolved_by_later_stage"
+        else:
+            judgment["status"] = "ACTIVE"
+            judgment["final_effect"] = (
+                judgment.get("effect_code") or judgment.get("answer")
+            )
+    for index, decision in enumerate(decisions, start=1):
+        decision["sequence"] = index
+        decision.setdefault("superseded_by", None)
+        action = _text(decision.get("action"))
+        applied = decision.get("action_applied") is True
+        supersedable = applied and (
+            action in RETRY_ACTIONS or action in BLOCKING_ACTIONS
+        )
+        if supersedable:
+            decision["status"] = "SUPERSEDED"
+            decision["superseded_by"] = label
+            decision["final_effect"] = "resolved_by_later_stage"
+        else:
+            decision["status"] = "ACTIVE"
+            decision["final_effect"] = (
+                decision["effect_codes"][0] if decision.get("effect_codes") else decision.get("action")
+            )
+
+
 def classify(action: str, applied: bool, allow_generation: bool | None,
              influenced: bool | None) -> str:
     if applied and (action in BLOCKING_ACTIONS or allow_generation is False):
@@ -321,6 +462,11 @@ def _judgments(
                     "certainty": _probability(question.get("certainty")),
                     "distribution": _record(question.get("distribution")) or None,
                 },
+                "timestamp": (
+                    _text(question.get("timestamp"))
+                    or _text(question.get("created_at"))
+                    or None
+                ),
                 "source_event_ids": [],
             }
             entries[identity] = entry
@@ -358,11 +504,19 @@ def _judgments(
 def _check_probability(
     judgment: Mapping[str, Any], diagnostics: list[dict[str, Any]]
 ) -> None:
-    # Sólo aplica a elecciones con distribución: ahí P(opción elegida) y la
-    # confianza derivada pueden confundirse. En noul la magnitud es la certeza.
+    # P(opción elegida) y la confianza derivada son magnitudes DISTINTAS: la UI
+    # las muestra etiquetadas y no se comparan. El mismatch sólo se emite si la
+    # propia distribución declara que ambas representan la misma magnitud.
     if _text(judgment.get("type")) != "choice":
         return
     interpretation = _record(judgment.get("interpretation"))
+    raw = _record(judgment.get("raw"))
+    distribution = _record(raw.get("distribution"))
+    if _text(distribution.get("probability_kind")) not in {
+        "selected_probability",
+        "option_probability",
+    }:
+        return
     selected = interpretation.get("selected_probability")
     confidence = interpretation.get("confidence")
     if selected is None or confidence is None:
@@ -546,6 +700,10 @@ def build_jev_section(
     diagnostics: list[dict[str, Any]] = []
     decisions = _decision_events(flow, events, diagnostics)
     judgments = _judgments(flow, events, decisions, diagnostics)
+    # Cronología: un juicio intermedio negativo que una etapa posterior resolvió
+    # queda SUPERSEDED (se conserva para auditoría, no como estado vigente).
+    resolution = _resolution(flow)
+    _mark_supersession(judgments, decisions, resolution)
 
     block = _record(flow.get("jev_preflight"))
     packs = _records(block.get("packs"))
@@ -606,6 +764,10 @@ def build_jev_section(
         "material_decisions": material_decisions,
         "judgments": judgments,
         "summary": summary or None,
+        "resolution": resolution or None,
+        "superseded_count": sum(
+            1 for item in (*judgments, *decisions) if item.get("status") == "SUPERSEDED"
+        ),
         "diagnostics": diagnostics,
     }
 

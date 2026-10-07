@@ -94,6 +94,32 @@ rag_errors_total = Counter(
     labelnames=["organization_id", "error_type"],
 )
 
+# Deterministic Fast Path: consultas ejecutables resueltas sin LLM.
+rag_fast_path_total = Counter(
+    "rag_fast_path_total",
+    "Evaluaciones del deterministic fast path",
+    labelnames=["organization_id", "outcome", "reason"],  # outcome: hit | miss | failure
+)
+
+rag_fast_path_latency = Histogram(
+    "rag_fast_path_latency_seconds",
+    "Latencia del deterministic fast path (decisión a respuesta)",
+    labelnames=["organization_id"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+
+rag_llm_calls_avoided = Counter(
+    "rag_llm_calls_avoided_total",
+    "Llamadas LLM evitadas por el deterministic fast path",
+    labelnames=["organization_id", "reason"],
+)
+
+rag_tokens_avoided = Counter(
+    "rag_tokens_avoided_total",
+    "Tokens estimados evitados por el deterministic fast path",
+    labelnames=["organization_id", "token_type"],
+)
+
 rag_active_requests = Gauge(
     "rag_active_requests",
     "Número de consultas RAG en proceso",

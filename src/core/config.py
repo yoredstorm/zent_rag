@@ -1449,6 +1449,31 @@ class Settings(BaseSettings):
             "responder. 0 = sin tope."
         ),
     )
+    RUNTIME_FAST_PATH: Literal["off", "on"] = Field(
+        default="on",
+        description=(
+            "Deterministic Fast Path: una consulta ejecutable con autoridad "
+            "completa (regla SUPPORTED + premisas SATISFIED + envelope) se "
+            "responde sin LLM. 'off' conserva el pipeline normal."
+        ),
+    )
+    RUNTIME_FAST_PATH_POLISH: bool = Field(
+        default=False,
+        description=(
+            "Fast path con UNA llamada pequena de estilo opcional. El modelo "
+            "recibe headline, resultado, checks y citas; no puede cambiar la "
+            "decision y el texto vuelve a pasar por FINAL_AUTHORITY_LOCK."
+        ),
+    )
+    RUNTIME_FAST_PATH_ESTIMATED_TOKENS: int = Field(
+        default=0,
+        ge=0,
+        le=100000,
+        description=(
+            "Estimacion de tokens evitados por fast path para telemetria de "
+            "ahorro. 0 = no se declara ahorro de tokens (UNKNOWN != ZERO)."
+        ),
+    )
     RUNTIME_ANSWER_FACT_CHECK: str = Field(
         default="on",
         description=(

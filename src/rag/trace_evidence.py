@@ -69,6 +69,42 @@ _ITEM_LEGACY_KEYS = (
     "cited",
 )
 
+#: Uso por eje: flags independientes (nunca un solo `used`).
+_FLAG_KEYS = (
+    "used_for_reasoning",
+    "used_for_rule_compilation",
+    "used_for_premise_closure",
+    "used_for_decision",
+    "citation_only_context",
+)
+
+#: Identidad física proveniente del parser/ingesta. Se transporta para que la
+#: fuente no se declare "débil" cuando el origen sí tiene un ancla estable.
+_IDENTITY_METADATA_KEYS = (
+    "original_file_id",
+    "file_id",
+    "source_file_id",
+    "storage_object_id",
+    "object_id",
+    "source_uri",
+    "storage_uri",
+    "object_uri",
+    "s3_uri",
+    "uri",
+    "url",
+    "path",
+    "original_filename",
+    "uploaded_filename",
+    "storage_filename",
+    "filename",
+    "content_hash",
+    "checksum",
+    "sha256",
+    "file_hash",
+    "external_id",
+    "document_version",
+)
+
 
 def _record(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
@@ -242,7 +278,17 @@ def normalize_hit(
     else:
         used = None
 
-    return {
+    # Uso por eje: cada flag es independiente (razonamiento, compilación de
+    # regla, cierre de premisas, decisión, cita). No se colapsa a `used`.
+    def _flag(key: str) -> bool | None:
+        value = raw.get(key)
+        if value is True:
+            return True
+        if value is False:
+            return False
+        return None
+
+    payload = {
         "hit_id": f"hit:{index}",
         "origin": _text(raw.get("_hit_origin")) or None,
         "raw_evidence_id": raw_evidence_id,
@@ -279,8 +325,23 @@ def normalize_hit(
         "entity_pin": True if raw.get("entity_pin") is True else None,
         "selected": selected or None,
         "used": used,
+        "used_for_reasoning": _flag("used_for_reasoning"),
+        "used_for_rule_compilation": _flag("used_for_rule_compilation"),
+        "used_for_premise_closure": _flag("used_for_premise_closure"),
+        "used_for_decision": _flag("used_for_decision"),
+        "citation_only_context": _flag("citation_only_context"),
         "cited": True if cited else None,
     }
+    # Identidad física del parser (file id, URI, hash, filename): sin esto la
+    # fuente se vuelve "débil" aunque la ingesta la conozca.
+    for key in _IDENTITY_METADATA_KEYS:
+        value = raw.get(key)
+        if value not in (None, "", [], {}):
+            payload[key] = value
+    for key in _FLAG_KEYS:
+        if payload.get(key) is None:
+            payload.pop(key, None)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +441,11 @@ def _merge_group(group: list[dict[str, Any]], *, kinds: list[str | None]) -> dic
     )
     lead["cited"] = True if any(hit.get("cited") is True for hit in ordered) else None
     lead["selected"] = True if any(hit.get("selected") is True for hit in ordered) else None
+    for key in _FLAG_KEYS:
+        if any(hit.get(key) is True for hit in ordered):
+            lead[key] = True
+        elif key in lead and lead.get(key) is None:
+            lead.pop(key, None)
     scores = [_number(hit.get("score")) for hit in ordered]
     lead["score"] = max((value for value in scores if value is not None), default=None)
     reranks = [_number(hit.get("rerank_score")) for hit in ordered]
@@ -501,12 +567,9 @@ def _identity_key(hit: Mapping[str, Any]) -> tuple[Any, ...]:
 
 def _absorb(target: dict[str, Any], extra: Mapping[str, Any]) -> None:
     """Propaga flags de una observación duplicada sin contarla como evidencia."""
-    if extra.get("cited") is True:
-        target["cited"] = True
-    if extra.get("used") is True:
-        target["used"] = True
-    if extra.get("selected") is True:
-        target["selected"] = True
+    for key in ("cited", "used", "selected", *_FLAG_KEYS):
+        if extra.get(key) is True:
+            target[key] = True
     current_score = _number(target.get("score"))
     extra_score = _number(extra.get("score"))
     if extra_score is not None and (current_score is None or extra_score > current_score):
@@ -529,6 +592,18 @@ def _legacy_item(canonical: Mapping[str, Any]) -> dict[str, Any]:
     item["dedup_kind"] = canonical.get("dedup_kind") or "none"
     if canonical.get("used") is not None:
         item["used_in_answer"] = canonical["used"] is True
+    for flag in (
+        "selected",
+        "used",
+        "used_for_reasoning",
+        "used_for_rule_compilation",
+        "used_for_premise_closure",
+        "used_for_decision",
+        "citation_only_context",
+        "cited",
+    ):
+        if canonical.get(flag) is True:
+            item[flag] = True
     return item
 
 
@@ -551,6 +626,7 @@ def _document_groups(canonicals: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "name_missing": bool(canonical.get("name_missing")),
                 "evidence_count": 0,
                 "used_count": 0,
+                "decision_count": 0,
                 "cited_count": 0,
                 "items": [],
             }
@@ -563,6 +639,8 @@ def _document_groups(canonicals: list[dict[str, Any]]) -> list[dict[str, Any]]:
         group["evidence_count"] += 1
         if canonical.get("used") is True:
             group["used_count"] += 1
+        if canonical.get("used_for_decision") is True:
+            group["decision_count"] += 1
         if canonical.get("cited") is True:
             group["cited_count"] += 1
         group["items"].append(_legacy_item(canonical))
@@ -644,6 +722,8 @@ def build_evidence_section(
     canonicals: list[dict[str, Any]] = dedup["canonical"]
     stats = dedup["stats"]
 
+    weak_identity_ids: list[str] = []
+    weak_identity_basis = ""
     for canonical in canonicals:
         if not canonical.get("canonical_source_id"):
             diagnostics.append(
@@ -653,13 +733,9 @@ def build_evidence_section(
                 }
             )
         elif canonical.get("identity_weak"):
-            diagnostics.append(
-                {
-                    "code": "CANONICAL_SOURCE_WEAK_IDENTITY",
-                    "evidence_id": canonical.get("evidence_id"),
-                    "identity_basis": canonical.get("identity_basis"),
-                }
-            )
+            weak_identity_ids.append(str(canonical.get("evidence_id") or ""))
+            if not weak_identity_basis:
+                weak_identity_basis = str(canonical.get("identity_basis") or "")
         if not canonical.get("evidence_id"):
             diagnostics.append(
                 {
@@ -682,6 +758,17 @@ def build_evidence_section(
                     "evidence_id": canonical.get("evidence_id"),
                 }
             )
+    # Un mismo problema (identidad débil) se agrupa: una advertencia con
+    # cantidad, no seis entradas idénticas.
+    if weak_identity_ids:
+        diagnostics.append(
+            {
+                "code": "CANONICAL_SOURCE_WEAK_IDENTITY",
+                "count": len(weak_identity_ids),
+                "evidence_ids": weak_identity_ids[:8],
+                "identity_basis": weak_identity_basis or None,
+            }
+        )
     if stats["merged"]:
         diagnostics.append(
             {
@@ -716,6 +803,21 @@ def build_evidence_section(
     used_measured = sum(1 for item in canonicals if item.get("used") is True)
     cited_measured = sum(1 for item in canonicals if item.get("cited") is True)
     selected_measured = sum(1 for item in canonicals if item.get("selected") is True)
+    reasoning_measured = sum(
+        1 for item in canonicals if item.get("used_for_reasoning") is True
+    )
+    rule_measured = sum(
+        1 for item in canonicals if item.get("used_for_rule_compilation") is True
+    )
+    closure_measured = sum(
+        1 for item in canonicals if item.get("used_for_premise_closure") is True
+    )
+    decision_measured = sum(
+        1 for item in canonicals if item.get("used_for_decision") is True
+    )
+    citation_only_measured = sum(
+        1 for item in canonicals if item.get("citation_only_context") is True
+    )
     documents = _document_groups(canonicals)
     documents_retrieved = (
         _int_or_none(declared.get("documents_consulted"))
@@ -731,6 +833,36 @@ def build_evidence_section(
     if cited is None:
         cited = cited_measured
     selected = declared_selected if declared_selected is not None else selected_measured
+
+    def _axis_count(name: str, measured: int) -> int:
+        """Conteo declarado por el registry si existe; si no, lo medido acá."""
+        declared_value = _int_or_none(declared.get(name))
+        return declared_value if declared_value is not None else measured
+
+    def _document_key(item: Mapping[str, Any]) -> str:
+        return _text(
+            item.get("document_id")
+            or item.get("source_id")
+            or item.get("canonical_source_id")
+        )
+
+    def _documents_with(flag: str) -> int:
+        keys = {
+            _document_key(item)
+            for item in canonicals
+            if item.get(flag) is True and _document_key(item)
+        }
+        return len(keys)
+
+    documents_selected = _int_or_none(declared.get("documents_selected"))
+    if documents_selected is None:
+        documents_selected = _documents_with("selected")
+    documents_decision = _int_or_none(declared.get("documents_used_for_decision"))
+    if documents_decision is None:
+        documents_decision = _documents_with("used_for_decision")
+    documents_cited = _int_or_none(declared.get("documents_cited"))
+    if documents_cited is None:
+        documents_cited = _documents_with("cited")
 
     if not collection_complete:
         diagnostics.append(
@@ -756,17 +888,32 @@ def build_evidence_section(
     counts = {
         "documents_retrieved": documents_retrieved,
         "documents_used": documents_used,
+        "documents_selected": documents_selected,
+        "documents_used_for_decision": documents_decision,
+        "documents_cited": documents_cited,
         "evidence_retrieved": retrieved,
         "evidence_deduplicated": deduplicated,
         "evidence_unique": unique,
         "evidence_selected": selected,
         "evidence_used": used,
+        "evidence_used_for_reasoning": _axis_count(
+            "evidence_used_for_reasoning", reasoning_measured
+        ),
+        "evidence_used_for_rule_compilation": _axis_count(
+            "evidence_used_for_rule_compilation", rule_measured
+        ),
+        "evidence_used_for_premise_closure": _axis_count(
+            "evidence_used_for_premise_closure", closure_measured
+        ),
+        "evidence_used_for_decision": _axis_count(
+            "evidence_used_for_decision", decision_measured
+        ),
+        "evidence_citation_only_context": citation_only_measured,
         "evidence_cited": cited,
         # Espejo v1 (mismo valor, nombres históricos).
         "documents_consulted": documents_retrieved,
     }
 
-    citations: list[dict[str, Any]] = []
     citations: list[dict[str, Any]] = []
     raw_citations = _records(flow.get("citations")) or _records(
         _record(flow.get("evidence")).get("citations")
@@ -796,14 +943,33 @@ def build_evidence_section(
                 "cited": citation.get("cited") is not False,
             }
         )
+    # CITATION_EVIDENCE_REFERENTIAL_INTEGRITY: una cita debe apuntar a un
+    # evidence_id existente en el registry canónico. La que no existe NO se
+    # publica; se registra un warning técnico con los ids faltantes.
+    canonical_ids = {item.get("evidence_id") for item in canonicals if item.get("evidence_id")}
+    valid_citations: list[dict[str, Any]] = []
+    missing_refs: list[str] = []
+    for citation in citations:
+        evidence_id = citation.get("evidence_id")
+        if evidence_id and evidence_id not in canonical_ids:
+            if evidence_id not in missing_refs:
+                missing_refs.append(evidence_id)
+            continue
+        valid_citations.append(citation)
+    citations = valid_citations
+    if missing_refs:
+        diagnostics.append(
+            {
+                "code": "CITATION_EVIDENCE_REFERENTIAL_INTEGRITY",
+                "count": len(missing_refs),
+                "evidence_ids": missing_refs[:8],
+            }
+        )
     cited_references = [item for item in citations if item["cited"]]
     cited_ids = {item["evidence_id"] for item in cited_references if item["evidence_id"]}
-    canonical_ids = {item.get("evidence_id") for item in canonicals if item.get("evidence_id")}
+    # Tras filtrar las citas sin referencia, un "dangling" ya no puede existir:
+    # el invariante real es la integridad referencial de arriba.
     dangling = sorted(cited_ids - canonical_ids)
-    if dangling and collection_complete:
-        diagnostics.append(
-            {"code": "CITATION_DANGLING", "evidence_ids": dangling[:8]}
-        )
     references_collapsed = len(cited_references) - len(cited_ids)
     if references_collapsed > 0:
         diagnostics.append(
@@ -838,6 +1004,11 @@ def build_evidence_section(
                     "origin",
                     "selected",
                     "used",
+                    "used_for_reasoning",
+                    "used_for_rule_compilation",
+                    "used_for_premise_closure",
+                    "used_for_decision",
+                    "citation_only_context",
                     "cited",
                     "merged_into",
                 )
@@ -874,11 +1045,17 @@ def build_evidence_section(
                     "entity_pin",
                     "selected",
                     "used",
+                    "used_for_reasoning",
+                    "used_for_rule_compilation",
+                    "used_for_premise_closure",
+                    "used_for_decision",
+                    "citation_only_context",
                     "cited",
                     "merged_count",
                     "dedup_kind",
                     "hit_count",
                     "raw_hits",
+                    *_IDENTITY_METADATA_KEYS,
                 )
                 if canonical.get(key) is not None
             }

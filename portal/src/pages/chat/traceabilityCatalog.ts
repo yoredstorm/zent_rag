@@ -89,6 +89,29 @@ export const HEADLINE_META: Record<
     tone: "ok",
     detail: "Las afirmaciones principales quedaron respaldadas por las fuentes.",
   },
+  RESPONSE_VERIFIED: {
+    title: "Respuesta verificada",
+    tone: "ok",
+    detail: "La decisión determinista y su explicación quedaron verificadas.",
+  },
+  RESPONSE_DECISION_VERIFIED_NARRATIVE_PARTIAL: {
+    title: "Decisión verificada · explicación parcialmente verificada",
+    tone: "info",
+    detail:
+      "El resultado lo decidió código con respaldo; la explicación generada quedó parcial (por ejemplo, por un límite de generación o citas incompletas).",
+  },
+  RESPONSE_DECISION_VERIFIED_NARRATIVE_UNVERIFIED: {
+    title: "Decisión verificada · explicación sin verificar",
+    tone: "info",
+    detail:
+      "El resultado determinista está verificado; la explicación generada no pudo verificarse, sin afectar la decisión.",
+  },
+  RESPONSE_DECISION_NOT_VERIFIED: {
+    title: "Decisión no verificada",
+    tone: "danger",
+    detail:
+      "Una premisa o el respaldo de la decisión entró en conflicto; no se publica como verificada.",
+  },
   RESPONSE_PARTIALLY_SUPPORTED: {
     title: "Respuesta con verificación parcial",
     tone: "warn",
@@ -194,6 +217,41 @@ export const JOURNEY_META: Record<
   RETRIEVAL_RETRIED: {
     title: "Amplió la búsqueda",
     body: () => "JEV pidió otra ronda de evidencia antes de responder.",
+  },
+  PREMISES_CLOSED: {
+    title: "Cerró premisas faltantes",
+    body: (p) => {
+      const rules = n(p, "rules_added");
+      const evidence = n(p, "evidence_added");
+      const termination = String(p.termination ?? "");
+      if (termination === "SATISFIED") {
+        return "Premise Closure recuperó las premisas que faltaban y quedaron satisfechas.";
+      }
+      const parts = [
+        rules ? `${rules} ${rules === 1 ? "regla" : "reglas"} nueva${rules === 1 ? "" : "s"}` : null,
+        evidence ? `${evidence} ${evidence === 1 ? "evidencia" : "evidencias"}` : null,
+      ].filter((part): part is string => Boolean(part));
+      return parts.length
+        ? `Premise Closure sumó ${parts.join(" y ")}.`
+        : "Premise Closure buscó las premisas que faltaban.";
+    },
+  },
+  RULE_COMPILED: {
+    title: "Ensambló la regla",
+    body: (p) => {
+      const rules = n(p, "rules");
+      return rules !== null && rules > 0
+        ? `El Rule Compiler produjo ${rules} ${rules === 1 ? "regla soportada" : "reglas soportadas"}.`
+        : "El Rule Compiler ensambló una regla soportada con la evidencia disponible.";
+    },
+  },
+  DETERMINISTIC_AUTHORITY: {
+    title: "Decisión determinista",
+    body: (p) => {
+      const operation = String(p.operation ?? "");
+      const result = String(p.result ?? "");
+      return `La evaluación determinista produjo ${result || "un resultado"}${operation ? ` con ${operation}` : ""} y quedó bloqueada como autoritativa.`;
+    },
   },
   REASONING_PREPARED: {
     title: "Preparó el razonamiento",
@@ -321,6 +379,41 @@ export const EXPLANATION_META: Record<
       }
       return "El límite interno afectó materialmente la respuesta.";
     },
+  },
+  DECISION_VERIFIED: {
+    question: "¿Cómo se verificó la decisión?",
+    answer: (p) => {
+      const result = String(p.result ?? "");
+      const operation = String(p.operation ?? "determinista");
+      const premises = String(p.premise_status ?? "");
+      return `El resultado ${result || "de la decisión"} se obtuvo por código con la operación ${operation}${premises ? ` y premisas ${premises}` : ""}; no depende del texto generado.`;
+    },
+  },
+  DECISION_NOT_VERIFIED: {
+    question: "¿Por qué la decisión no está verificada?",
+    answer: () =>
+      "Una premisa o el respaldo de la decisión entró en conflicto. Por seguridad no se publica como verificada hasta resolver el conflicto.",
+  },
+  DECISION_UNDETERMINED: {
+    question: "¿Por qué no hay decisión verificada?",
+    answer: () =>
+      "No se produjo una decisión determinista autoritativa para esta pregunta; el estado global se evalúa por la vía documental.",
+  },
+  NARRATIVE_PARTIAL: {
+    question: "¿Por qué la explicación quedó parcial?",
+    answer: () =>
+      "Parte de la explicación generada no pudo verificarse por completo (citación o respaldo documental del texto). La decisión determinista, si existe, no cambia.",
+  },
+  NARRATIVE_TRUNCATED: {
+    question: "¿La explicación quedó incompleta?",
+    answer: (p) =>
+      String(p.warning ?? "") ||
+      "La explicación pudo quedar incompleta; el resultado determinista no fue afectado.",
+  },
+  NARRATIVE_UNVERIFIED: {
+    question: "¿Por qué la explicación no se verificó?",
+    answer: () =>
+      "No se pudo confirmar el respaldo documental de la explicación generada. La decisión determinista, si existe, se verifica por separado.",
   },
   FALLBACK_TAXONOMY: {
     question: "¿Ocurrió algún fallback?",
@@ -716,8 +809,14 @@ export const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
   },
   CANONICAL_SOURCE_WEAK_IDENTITY: {
     title: "Identidad de fuente débil",
-    meaning: (p) =>
-      `La identidad se derivó de ${String(p.identity_basis ?? "un id generado")}, que puede no sobrevivir a una reingesta.`,
+    meaning: (p) => {
+      const count = n(p, "count");
+      const basis = String(p.identity_basis ?? "un id generado");
+      if (count !== null && count > 1) {
+        return `${count} fuentes canónicas se derivaron de ${basis}, que puede no sobrevivir a una reingesta.`;
+      }
+      return `La identidad se derivó de ${basis}, que puede no sobrevivir a una reingesta.`;
+    },
     impact: () => UPSTREAM_IMPACT,
     fix: () => "Persistir el archivo original (file id, URI o hash) como ancla de identidad.",
   },
@@ -754,6 +853,19 @@ export const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
     meaning: (p) =>
       `Hay citas que apuntan a evidencias no presentes en la colección (${Array.isArray(p.evidence_ids) ? p.evidence_ids.join(", ") : ""}).`.trim(),
     impact: () => "Una cita podría no estar respaldada por el detalle recuperado.",
+    fix: () => "Alinear los ids de cita con los del registro de evidencia.",
+  },
+  CITATION_EVIDENCE_REFERENTIAL_INTEGRITY: {
+    title: "Cita con referencia inexistente",
+    meaning: (p) => {
+      const count = n(p, "count");
+      const ids = Array.isArray(p.evidence_ids) ? p.evidence_ids.join(", ") : "";
+      if (count !== null && count > 1) {
+        return `${count} citas apuntan a evidence_ids que no existen en el registro canónico (${ids}). Esas citas no se publican.`;
+      }
+      return `Una cita apunta a un evidence_id que no existe en el registro canónico (${ids}). Esa cita no se publica.`;
+    },
+    impact: () => "La cita se descarta para no mostrar respaldo inexistente.",
     fix: () => "Alinear los ids de cita con los del registro de evidencia.",
   },
   CITATION_REFERENCES_COLLAPSED: {
@@ -845,6 +957,20 @@ export const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
     meaning: () => "La verificación figura como VERIFIED mientras existe una degradación material sin resolver.",
     impact: () => "La confianza mostrada no refleja el problema detectado.",
     fix: () => "Degradar la verificación a parcial o no verificada y explicar por qué.",
+  },
+  DECISION_VERIFICATION_CONSISTENCY: {
+    title: "Decisión verificada marcada como no verificada",
+    meaning: () =>
+      "Con DecisionEnvelope autoritativo y un DerivedClaim determinista respaldado, la verificación de la decisión quedó en un estado distinto de VERIFIED.",
+    impact: () => "La interfaz podría mostrar la decisión como no respaldada aunque la decidió código.",
+    fix: () => "Separar la verificación de la narrativa: la decisión mantiene su estado VERIFIED.",
+  },
+  DECISION_NARRATIVE_SEPARATION: {
+    title: "La narrativa degradó la decisión",
+    meaning: () =>
+      "Una decisión verificada convive con una verificación global no verificada: un problema de la explicación afectó el estado de la decisión.",
+    impact: () => "El usuario podría creer que la decisión no está respaldada cuando sí lo está.",
+    fix: () => "Recomponer el estado global desde la decisión verificada y la narrativa por separado.",
   },
   PARALLEL_SPANS: {
     title: "Trabajo interno en paralelo",

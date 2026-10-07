@@ -27,7 +27,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Sequence
 
-from src.core.domain.adaptive import EvidenceItem
+from src.core.domain.adaptive import IDENTITY_METADATA_KEYS, EvidenceItem
 
 #: Presupuesto por defecto del contexto de evidencia (chars) y topes por ítem.
 DEFAULT_BUDGET_CHARS = 12_000
@@ -309,6 +309,11 @@ class EvidenceRegistry:
                     metadata={
                         "ref": str(raw.get("ref") or ""),
                         "doc_index": raw.get("doc_index"),
+                        **{
+                            key: raw[key]
+                            for key in IDENTITY_METADATA_KEYS
+                            if raw.get(key) not in (None, "", [], {})
+                        },
                     },
                 )
             )
@@ -358,6 +363,11 @@ class EvidenceRegistry:
                     entity_pin=str(metadata.get("retrieval") or "").startswith("entity"),
                     authority=str(metadata.get("authority") or "") or None,
                     knowledge_type=str(metadata.get("knowledge_type") or "") or None,
+                    metadata={
+                        key: metadata[key]
+                        for key in IDENTITY_METADATA_KEYS
+                        if metadata.get(key) not in (None, "", [], {})
+                    },
                 )
             )
         _, nuevos = self.add(items)
@@ -384,22 +394,21 @@ class EvidenceRegistry:
         limit: int = 24,
         cited_ids: Iterable[str] = (),
         selected_ids: Sequence[str] | None = None,
+        reasoning_ids: Iterable[str] | None = None,
         decision_ids: Iterable[str] = (),
+        rule_compilation_ids: Iterable[str] = (),
+        premise_closure_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
-        """Bloque para «Ver flujo»: SOURCE != EVIDENCE, y status explícito.
+        """Bloque para «Ver flujo»: SOURCE != EVIDENCE, y uso explícito por eje.
 
-        `doc_index` es el número `[Doc N]` que el generador vio para ese
-        fragmento (orden de la SELECCIÓN); si no entró al contexto, se omite —
-        nunca se inventa un índice.
+        Un solo `used` mezclaba dimensiones: evidencia mostrada al LLM,
+        evidencia que compiló una regla, evidencia que cerró una premisa y
+        evidencia citada son hechos distintos. Cada eje viaja con su propio
+        flag y su propio conteo; `used` queda como unión para compatibilidad.
 
-        Invariantes de decisión (§12): `cited ⊆ used ⊆ selected ⊆ retrieved`.
-        Una evidencia citada cuenta automáticamente como usada; una usada, como
-        seleccionada. Los conteos se calculan sobre TODA la evidencia, no sólo
-        sobre la página que se publica.
-
-        §22: `decision_ids` son las refs usadas para construir CanonicalRule /
-        DerivedClaim. Cuentan como `used_for_decision` y como usadas aunque la
-        respuesta final no las cite literalmente.
+        Invariantes de decisión: `cited ⊆ used ⊆ retrieved` y
+        `used_for_* ⊆ used`. Los conteos se calculan sobre TODA la evidencia,
+        no sólo sobre la página que se publica.
         """
         cited = set(cited_ids)
         all_ids = [item.evidence_id for item in self.items]
@@ -409,29 +418,79 @@ class EvidenceRegistry:
         }
         # Una cita implica uso y selección: nunca used=0 con cited=2.
         selected_all.update(cited_all)
-        # §22: la evidencia que construyó la regla/claim es USADA para decidir
-        # aunque el texto final no la cite.
+        reasoning_all: set[str] = {
+            value for value in (reasoning_ids or ()) if value in all_ids
+        }
         decision_all = {value for value in decision_ids if value in all_ids}
+        rule_compilation_all = {
+            value for value in rule_compilation_ids if value in all_ids
+        }
+        premise_closure_all = {
+            value for value in premise_closure_ids if value in all_ids
+        }
         used_all = set(selected_all)
+        used_all.update(reasoning_all)
         used_all.update(decision_all)
+        used_all.update(rule_compilation_all)
+        used_all.update(premise_closure_all)
         order = {
             evidence_id: index + 1
             for index, evidence_id in enumerate(selected_ids or ())
         }
+
+        def _document_key(payload: Mapping[str, Any]) -> str:
+            return str(
+                payload.get("document_id")
+                or payload.get("source_id")
+                or payload.get("title")
+                or ""
+            )
+
+        # Documentos: derivados de los ids reales del registry (todas las
+        # evidencias, no sólo las publicadas), nunca de un contador paralelo.
+        documents_retrieved: set[str] = set()
+        documents_selected: set[str] = set()
+        documents_decision: set[str] = set()
+        documents_cited: set[str] = set()
+        for item in self.items:
+            document = _document_key(item.to_public_dict())
+            if not document:
+                continue
+            documents_retrieved.add(document)
+            if item.evidence_id in selected_all:
+                documents_selected.add(document)
+            if item.evidence_id in decision_all:
+                documents_decision.add(document)
+            if item.evidence_id in cited_all:
+                documents_cited.add(document)
+
         public = []
         for item in self.items[:limit]:
             payload = item.to_public_dict()
             is_cited = item.evidence_id in cited_all
             is_selected = item.evidence_id in selected_all
+            is_reasoning = item.evidence_id in reasoning_all
+            is_decision = item.evidence_id in decision_all
+            is_rule = item.evidence_id in rule_compilation_all
+            is_closure = item.evidence_id in premise_closure_all
             is_used = item.evidence_id in used_all
             doc_index = order.get(item.evidence_id)
             if doc_index is not None:
                 payload["doc_index"] = doc_index
             payload["selected"] = is_selected
             payload["used"] = is_used
-            payload["used_for_reasoning"] = is_used
-            payload["used_for_decision"] = item.evidence_id in decision_all
+            payload["retrieved"] = True
+            payload["used_for_reasoning"] = is_reasoning
+            payload["used_for_rule_compilation"] = is_rule
+            payload["used_for_premise_closure"] = is_closure
+            payload["used_for_decision"] = is_decision
             payload["cited"] = is_cited
+            payload["cited_in_answer"] = is_cited
+            # Una cita que sólo existió como contexto del texto, sin
+            # contribuir a la decisión, se declara como tal.
+            payload["citation_only_context"] = bool(
+                is_cited and not (is_reasoning or is_decision or is_rule or is_closure)
+            )
             payload["status"] = "USED" if is_used else "RETRIEVED"
             public.append(payload)
         return {
@@ -439,11 +498,18 @@ class EvidenceRegistry:
             "chars": self.chars(),
             "items": public,
             "retrieved_count": len(all_ids),
+            "unique_count": len(all_ids),
             "selected_count": len(selected_all),
             "used_count": len(used_all),
-            "used_for_reasoning_count": len(used_all),
+            "used_for_reasoning_count": len(reasoning_all),
+            "used_for_rule_compilation_count": len(rule_compilation_all),
+            "used_for_premise_closure_count": len(premise_closure_all),
             "used_for_decision_count": len(decision_all),
             "cited_count": len(cited_all),
+            "documents_retrieved_count": len(documents_retrieved),
+            "documents_selected_count": len(documents_selected),
+            "documents_used_for_decision_count": len(documents_decision),
+            "documents_cited_count": len(documents_cited),
             "version": EVIDENCE_INVARIANTS_VERSION,
         }
 
@@ -981,10 +1047,13 @@ def observe_selection(selection: EvidenceSelection) -> None:
 
 
 def evidence_invariants(public: dict[str, Any] | None) -> list[str]:
-    """Violaciones de `cited ⊆ used ⊆ selected ⊆ unique ⊆ retrieved`.
+    """Violaciones del modelo de uso de evidencia por ejes.
 
     Un payload con `selected=5, used=0, cited=2` es inválido por construcción:
-    la cita implica uso. Devuelve la lista de violaciones ([] = consistente).
+    la cita implica uso. Los ejes (`used_for_reasoning`,
+    `used_for_rule_compilation`, `used_for_premise_closure`,
+    `used_for_decision`) son subconjuntos de `used` y de `retrieved`.
+    Devuelve la lista de violaciones ([] = consistente).
     """
     if not isinstance(public, dict):
         return ["payload_missing"]
@@ -1005,31 +1074,45 @@ def evidence_invariants(public: dict[str, Any] | None) -> list[str]:
         selected = bool(item.get("selected"))
         if cited and not used:
             violations.append(f"cited_not_used:{evidence_id}")
-        if used and not selected:
-            violations.append(f"used_not_selected:{evidence_id}")
+        if item.get("used_for_decision") and not used:
+            violations.append(f"decision_not_used:{evidence_id}")
+        if item.get("used_for_reasoning") and not selected:
+            violations.append(f"reasoning_not_selected:{evidence_id}")
     try:
         retrieved = int(public.get("retrieved_count") or len(items))
         selected_count = int(public.get("selected_count") or 0)
         used_count = int(public.get("used_count") or 0)
         cited_count = int(public.get("cited_count") or 0)
         decision_count = int(public.get("used_for_decision_count") or 0)
+        reasoning_count = int(public.get("used_for_reasoning_count") or 0)
+        rule_count = int(public.get("used_for_rule_compilation_count") or 0)
+        closure_count = int(public.get("used_for_premise_closure_count") or 0)
     except (TypeError, ValueError):
         return violations + ["counts_not_numeric"]
     if selected_count > retrieved:
         violations.append("selected_gt_retrieved")
-    if used_count > selected_count:
-        violations.append("used_gt_selected")
+    if used_count > retrieved:
+        violations.append("used_gt_retrieved")
     if cited_count > used_count:
         violations.append(f"used_lt_cited:{used_count}<{cited_count}")
-    # §22: la evidencia de la decisión (regla/claim) es usada por definición.
     if decision_count > used_count:
         violations.append(f"used_lt_decision:{used_count}<{decision_count}")
-    flagged_decision = sum(1 for item in items if item.get("used_for_decision"))
-    if flagged_decision > decision_count:
-        violations.append("decision_flags_gt_count")
-    flagged_cited = sum(1 for item in items if item.get("cited"))
-    if flagged_cited > cited_count:
-        violations.append("cited_flags_gt_count")
+    if reasoning_count > selected_count:
+        violations.append(f"selected_lt_reasoning:{selected_count}<{reasoning_count}")
+    if rule_count > used_count:
+        violations.append(f"used_lt_rule:{used_count}<{rule_count}")
+    if closure_count > used_count:
+        violations.append(f"used_lt_closure:{used_count}<{closure_count}")
+    for key, count in (
+        ("used_for_decision", decision_count),
+        ("used_for_reasoning", reasoning_count),
+        ("used_for_rule_compilation", rule_count),
+        ("used_for_premise_closure", closure_count),
+        ("cited", cited_count),
+    ):
+        flagged = sum(1 for item in items if item.get(key))
+        if flagged > count:
+            violations.append(f"{key}_flags_gt_count")
     return violations
 
 

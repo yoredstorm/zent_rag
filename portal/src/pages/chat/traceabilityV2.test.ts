@@ -4,12 +4,14 @@
 import { describe, expect, it } from "vitest";
 import { diagnosticCopy, headlineMeta } from "./traceabilityCatalog";
 import {
+  evidenceUsageSummary,
   fmtMs,
   fmtPercent,
   fmtUsd,
   jevSummary,
   parseTraceabilityV2,
   supportSummary,
+  verificationSummary,
 } from "./traceabilityV2";
 
 const TRACE = {
@@ -300,12 +302,171 @@ describe("parseTraceabilityV2", () => {
     expect(control.params.impact).toBe("RECOVERED_NO_IMPACT");
   });
 
+  it("separa ejes de uso y juicios superados", () => {
+    const raw = {
+      ...TRACE,
+      evidence: {
+        ...TRACE.evidence,
+        counts: {
+          ...TRACE.evidence.counts,
+          evidence_used_for_reasoning: 2,
+          evidence_used_for_rule_compilation: 1,
+          evidence_used_for_premise_closure: 1,
+          evidence_used_for_decision: 3,
+          documents_selected: 1,
+          documents_used_for_decision: 1,
+          documents_cited: 1,
+        },
+        canonical_evidence: [
+          {
+            ...TRACE.evidence.canonical_evidence[0],
+            used_for_decision: true,
+            used_for_reasoning: true,
+            citation_only_context: false,
+          },
+        ],
+      },
+      jev: {
+        ...TRACE.jev,
+        requested_more_evidence: true,
+        superseded_count: 2,
+        resolution: {
+          label: "DecisionEnvelope MATCH",
+          authority: true,
+          premise_closed: true,
+        },
+        judgments: TRACE.jev.judgments.map((judgment) => ({
+          ...judgment,
+          status: "SUPERSEDED",
+          superseded_by: "DecisionEnvelope MATCH",
+          sequence: 1,
+          final_effect: "resolved_by_later_stage",
+        })),
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    expect(trace).not.toBeNull();
+    if (!trace) return;
+    expect(trace.counts.evidenceUsedForDecision).toBe(3);
+    expect(trace.counts.documentsUsedForDecision).toBe(1);
+    expect(trace.jev.supersededCount).toBe(2);
+    expect(trace.jev.judgments[0].status).toBe("SUPERSEDED");
+    expect(trace.jev.judgments[0].supersededBy).toBe("DecisionEnvelope MATCH");
+    expect(trace.canonicalEvidence[0].usedForDecision).toBe(true);    expect(evidenceUsageSummary(trace)).toContain("3 usadas para la decisión");
+    expect(evidenceUsageSummary(trace)).toContain("2 usadas para razonar");
+    expect(jevSummary(trace)).toContain("superado por DecisionEnvelope MATCH");
+  });
+
+  it("expone el modo de ejecución y la telemetría del fast path", () => {
+    const raw = {
+      ...TRACE,
+      execution: {
+        ...TRACE.execution,
+        mode: "DETERMINISTIC_FAST_PATH",
+        fast_path: {
+          eligible: true,
+          reason: "SUPPORTED_DECISION",
+          operation: "POSITIONAL_MATCH",
+          result: "MATCH",
+          execution_mode: "DETERMINISTIC_FAST_PATH",
+          llm_calls: 0,
+          llm_calls_avoided: 2,
+          tokens_avoided: 3500,
+          latency_ms: 85,
+          verification: { status: "VERIFIED_DETERMINISTIC" },
+        },
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    expect(trace).not.toBeNull();
+    if (!trace) return;
+    expect(trace.execution.mode).toBe("DETERMINISTIC_FAST_PATH");
+    expect(trace.execution.fastPath?.llmCalls).toBe(0);
+    expect(trace.execution.fastPath?.llmCallsAvoided).toBe(2);
+    expect(trace.execution.fastPath?.tokensAvoided).toBe(3500);
+    expect(trace.execution.fastPath?.latencyMs).toBe(85);
+    expect(trace.execution.fastPath?.verificationStatus).toBe("VERIFIED_DETERMINISTIC");
+    expect(headlineMeta("RESPONSE_VERIFIED").title).toBe("Respuesta verificada");
+  });
+
   it("traduce el titular desde el catálogo central", () => {
     expect(headlineMeta("RESPONSE_SUPPORTED").title).toBe("Respuesta respaldada");
     expect(headlineMeta("RESPONSE_PARTIALLY_SUPPORTED").title).toBe(
       "Respuesta con verificación parcial",
     );
     expect(headlineMeta("DESCONOCIDO").title).toBe("Ejecución sin estado canónico");
+  });
+
+  it("separa la decisión verificada de la narrativa parcial", () => {
+    const raw = {
+      ...TRACE,
+      verification: {
+        ...TRACE.verification,
+        status: "PARTIALLY_VERIFIED",
+        signals: { grounded: false, fallback_used: false, material_fallback: false },
+        decision_verification: {
+          status: "VERIFIED",
+          authoritative: true,
+          deterministic: true,
+          operation: "POSITIONAL_MATCH",
+          result: "MATCH",
+          canonical_rule_ids: ["rule:atpco"],
+          premise_status: "SATISFIED",
+          evidence_refs: ["E1"],
+          rule_verification: "SUPPORTED",
+          conflicts: [],
+        },
+        narrative_verification: {
+          status: "TRUNCATED",
+          truncated: true,
+          warnings: ["MAX_TOKENS_REACHED"],
+          citations_valid: null,
+          explanation_complete: false,
+          grounding_complete: false,
+        },
+        decision_grounding: "CONFIRMED",
+        narrative_grounding: "BLOCKED",
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    expect(trace).not.toBeNull();
+    if (!trace) return;
+    expect(trace.verification.decisionVerification?.status).toBe("VERIFIED");
+    expect(trace.verification.decisionVerification?.operation).toBe("POSITIONAL_MATCH");
+    expect(trace.verification.narrativeVerification?.status).toBe("TRUNCATED");
+    expect(trace.verification.decisionGrounding).toBe("CONFIRMED");
+    expect(trace.verification.narrativeGrounding).toBe("BLOCKED");
+    expect(verificationSummary(trace)).toBe(
+      "Decisión verificada · explicación parcialmente verificada",
+    );
+    expect(headlineMeta("RESPONSE_DECISION_VERIFIED_NARRATIVE_PARTIAL").title).toBe(
+      "Decisión verificada · explicación parcialmente verificada",
+    );
+    expect(headlineMeta("RESPONSE_DECISION_NOT_VERIFIED").title).toBe("Decisión no verificada");
+  });
+
+  it("no muestra 'sin respaldo' para una decisión verificada", () => {
+    const raw = {
+      ...TRACE,
+      verification: {
+        ...TRACE.verification,
+        status: "PARTIALLY_VERIFIED",
+        signals: { grounded: false, fallback_used: false, material_fallback: false },
+        decision_verification: {
+          status: "VERIFIED",
+          authoritative: true,
+          deterministic: true,
+          operation: "POSITIONAL_MATCH",
+          result: "MATCH",
+        },
+        narrative_verification: { status: "PARTIAL", warnings: ["GROUNDING_BLOCKED"] },
+        decision_grounding: "CONFIRMED",
+        narrative_grounding: "BLOCKED",
+      },
+    };
+    const trace = parseTraceabilityV2(raw);
+    if (!trace) return;
+    expect(verificationSummary(trace)).not.toBe("Sin respaldo confirmado");
   });
 
   it("mantiene los conteos legacy como espejo", () => {

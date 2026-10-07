@@ -48,6 +48,19 @@ from src.rag.trace_jev import (
     classify,
 )
 from src.rag.trace_metrics import GLOSSARY_TERMS, metric_refs_for_trace
+from src.runtime.decision_verification import (
+    DECISION_NOT_VERIFIED,
+    DECISION_VERIFIED,
+    NARRATIVE_PARTIAL,
+    NARRATIVE_TRUNCATED,
+    NARRATIVE_UNVERIFIED,
+    NARRATIVE_VERIFIED,
+    NARRATIVE_VERIFIED_DETERMINISTIC,
+    answer_state_from_steps,
+    claims_from_steps,
+    compose_verification_split,
+    envelope_from_steps,
+)
 
 TRACEABILITY_SCHEMA_VERSION = 2
 
@@ -114,6 +127,29 @@ _EVENT_KIND_MAP: dict[str, tuple[str, bool]] = {
     "guardrail": (EV_GUARDRAIL, True),
     "fallback": (EV_GUARDRAIL, True),
     "error": (EV_GUARDRAIL, True),
+    # Pasos canónicos de la cadena determinista y de la ejecución agentica:
+    # se mapean para que el timeline no los descarte (UNMAPPED_STEPS avisa si
+    # aparece un tipo nuevo).
+    "build": (EV_CONTEXT_LOADED, False),
+    "runtime_identity": (EV_CONTEXT_LOADED, False),
+    "deterministic_operation": (EV_VERIFICATION_COMPLETED, False),
+    "grounded_reasoning": (EV_VERIFICATION_COMPLETED, False),
+    "derivation": (EV_VERIFICATION_COMPLETED, False),
+    "decision_verification": (EV_VERIFICATION_COMPLETED, False),
+    "narrative_verification": (EV_VERIFICATION_COMPLETED, False),
+    "premise_search": (EV_RETRIEVAL_COMPLETED, False),
+    "evidence_selection": (EV_EVIDENCE_ASSESSED, False),
+    "rule_compilation": (EV_EVIDENCE_ASSESSED, False),
+    "query_local_compilation": (EV_EVIDENCE_ASSESSED, False),
+    "evidence_first_gate": (EV_EVIDENCE_ASSESSED, False),
+    "grounding_override": (EV_VERIFICATION_COMPLETED, False),
+    "grounding_required": (EV_RETRIEVAL_EXPANDED, False),
+    "retry_released": (EV_RETRIEVAL_EXPANDED, False),
+    "approval": (EV_ROUTE_SELECTED, False),
+    "response_delivery": (EV_RESPONSE_DELIVERED, False),
+    "fast_path": (EV_VERIFICATION_COMPLETED, False),
+    "deterministic_verifier": (EV_VERIFICATION_COMPLETED, False),
+    "fast_path_polish": (EV_GENERATION_COMPLETED, False),
 }
 
 _SUMMARY_CODES: dict[str, str] = {
@@ -484,11 +520,13 @@ def build_verification_section(
     )
 
     explanation: list[dict[str, Any]] = []
+    insufficient_reason = ""
     if contradiction_count > 0:
         status = V_CONFLICTING
         explanation.append({"code": "EVIDENCE_CONFLICT", "count": contradiction_count})
     elif retained or evidence_empty:
         status = V_INSUFFICIENT
+        insufficient_reason = "retained" if retained else "evidence_empty"
         explanation.append(
             {"code": "GENERATION_RETAINED"} if retained else {"code": "EVIDENCE_INSUFFICIENT"}
         )
@@ -556,6 +594,136 @@ def build_verification_section(
             if status in {V_VERIFIED, V_PARTIALLY}:
                 explanation.append({"code": "MAX_TOKENS_POSSIBLY_INCOMPLETE"})
 
+    # --- DECISIÓN y NARRATIVA: estados independientes --------------------
+    # Una decisión determinista autoritativa NO se degrada por la narrativa
+    # (max_tokens, citas colgantes, verificador narrativo caído). El estado
+    # global puede quedar parcial por la explicación; la decisión no.
+    steps = _records(flow.get("steps"))
+    envelope = _record(declared.get("decision_envelope")) or envelope_from_steps(steps)
+    declared_claims = [
+        dict(item)
+        for item in declared.get("derived_claims") or ()
+        if isinstance(item, Mapping)
+    ]
+    claims = claims_from_steps(steps) or declared_claims
+    answer_state = _record(declared.get("answer_state")) or answer_state_from_steps(
+        steps
+    )
+    citations_summary = _record(evidence.get("citations_summary"))
+    dangling = [
+        str(item) for item in citations_summary.get("dangling") or [] if str(item)
+    ]
+    citations_known = (
+        citations_summary.get("references") is not None
+        or citations_summary.get("dangling") is not None
+    )
+    citations_valid = (not dangling) if citations_known else None
+    grounding_verdict = next(
+        (
+            _text(step.get("grounding_verdict"))
+            for step in steps
+            if _text(step.get("type")) == "answer_gate"
+            and _text(step.get("grounding_verdict"))
+        ),
+        "",
+    )
+    deterministic_verified = any(
+        _text(step.get("type")) == "deterministic_verifier"
+        and step.get("verified") is True
+        for step in steps
+    )
+    split = compose_verification_split(
+        envelope=envelope,
+        claims=claims,
+        answer_state=answer_state,
+        grounded=grounded,
+        checks=checks,
+        citations_valid=citations_valid,
+        generation_warnings=_records(controls.get("generation_warnings")),
+        grounding_verdict=grounding_verdict,
+        deterministic_verified=deterministic_verified,
+    )
+    decision_verification = split["decision_verification"]
+    narrative_verification = split["narrative_verification"]
+    decision_status = _text(decision_verification.get("status"))
+    narrative_status = _text(narrative_verification.get("status"))
+
+    if decision_status == DECISION_VERIFIED:
+        # DECISION_VERIFICATION_CONSISTENCY: con autoridad determinista la
+        # verificación de la DECISIÓN es VERIFIED; la narrativa sólo ajusta el
+        # estado global entre verificado y parcial, nunca lo vuelve unverified.
+        explanation = [
+            item
+            for item in explanation
+            if item.get("code")
+            not in {"SUPPORT_NOT_CONFIRMED", "NO_VERIFICATION_RECORDED"}
+            and not (
+                item.get("code") == "EVIDENCE_INSUFFICIENT"
+                and insufficient_reason == "evidence_empty"
+            )
+        ]
+        narrative_partial = narrative_status in {
+            NARRATIVE_PARTIAL,
+            NARRATIVE_TRUNCATED,
+            NARRATIVE_UNVERIFIED,
+        }
+        # Un conflicto real de evidencia o una abstención explícita del run
+        # mandan; la ausencia de documentos no degrada una decisión por regla.
+        if status == V_CONFLICTING or (
+            status == V_INSUFFICIENT and insufficient_reason == "retained"
+        ):
+            pass
+        else:
+            status = V_PARTIALLY if narrative_partial else V_VERIFIED
+        explanation.insert(
+            0,
+            {
+                "code": "DECISION_VERIFIED",
+                "operation": decision_verification.get("operation"),
+                "result": decision_verification.get("result"),
+                "canonical_rule_ids": list(
+                    decision_verification.get("canonical_rule_ids") or ()
+                )[:3],
+                "premise_status": decision_verification.get("premise_status"),
+            },
+        )
+        if narrative_status == NARRATIVE_TRUNCATED:
+            explanation.insert(
+                1,
+                {
+                    "code": "NARRATIVE_TRUNCATED",
+                    "warning": (
+                        "La explicación pudo quedar incompleta; el resultado "
+                        "determinista no fue afectado."
+                    ),
+                },
+            )
+        elif narrative_status == NARRATIVE_VERIFIED_DETERMINISTIC:
+            explanation.insert(
+                1,
+                {
+                    "code": "NARRATIVE_VERIFIED_DETERMINISTIC",
+                    "detail": "verificador determinista: hechos y refs confirmados sin LLM",
+                },
+            )
+        elif narrative_status == NARRATIVE_PARTIAL:
+            explanation.insert(1, {"code": "NARRATIVE_PARTIAL"})
+        elif narrative_status == NARRATIVE_UNVERIFIED:
+            explanation.insert(1, {"code": "NARRATIVE_UNVERIFIED"})
+    elif decision_status == DECISION_NOT_VERIFIED:
+        # Fail closed: una premisa en conflicto invalida la decisión. No se
+        # conserva un VERIFIED mientras la autoridad está comprometida.
+        status = V_UNVERIFIED
+        explanation.insert(
+            0,
+            {
+                "code": "DECISION_NOT_VERIFIED",
+                "conflicts": list(decision_verification.get("conflicts") or ())[:4],
+            },
+        )
+    elif envelope and decision_status:
+        explanation.append({"code": "DECISION_UNDETERMINED"})
+
     primary = next(
         (check for check in checks if check["key"] in {"grounding", "answer_gate"}), None
     )
@@ -569,6 +737,15 @@ def build_verification_section(
         "explanation_codes": explanation[:8],
         "checks": checks,
         "degradations": degradations,
+        # Separación explícita: la decisión determinista y la narrativa generada
+        # tienen estados independientes (DECISION_NARRATIVE_SEPARATION).
+        "decision_verification": decision_verification,
+        "narrative_verification": narrative_verification,
+        "decision_grounding": split["decision_grounding"],
+        "narrative_grounding": split["narrative_grounding"],
+        "decision_envelope": envelope or None,
+        "derived_claims": claims[:6],
+        "answer_state": answer_state or None,
         "signals": {
             "grounded": grounded if isinstance(grounded, bool) else None,
             "overall": overall or None,
@@ -579,6 +756,10 @@ def build_verification_section(
             "answerability": answerability.get("answerable")
             if answerability.get("answerable") is not None
             else None,
+            "decision_status": decision_status or None,
+            "narrative_status": narrative_status or None,
+            "decision_grounding": split["decision_grounding"],
+            "narrative_grounding": split["narrative_grounding"],
         },
         "metrics": {"quality": {"value": quality, "ref": "quality"}}
         if quality is not None
@@ -1184,6 +1365,19 @@ def _headline_code(outcome: Mapping[str, Any], verification: Mapping[str, Any]) 
     code = _text(outcome.get("code"))
     if code in {"ABSTAINED", "FAILED", "BLOCKED"}:
         return f"RESPONSE_{code}"
+    decision = _record(verification.get("decision_verification"))
+    decision_status = _text(decision.get("status"))
+    if decision_status == DECISION_VERIFIED:
+        narrative_status = _text(
+            _record(verification.get("narrative_verification")).get("status")
+        )
+        if narrative_status in {NARRATIVE_VERIFIED, NARRATIVE_VERIFIED_DETERMINISTIC}:
+            return "RESPONSE_VERIFIED"
+        if narrative_status == NARRATIVE_UNVERIFIED:
+            return "RESPONSE_DECISION_VERIFIED_NARRATIVE_UNVERIFIED"
+        return "RESPONSE_DECISION_VERIFIED_NARRATIVE_PARTIAL"
+    if decision_status == DECISION_NOT_VERIFIED:
+        return "RESPONSE_DECISION_NOT_VERIFIED"
     status = _text(verification.get("status"))
     return {
         V_VERIFIED: "RESPONSE_SUPPORTED",
@@ -1202,6 +1396,7 @@ def build_journey(
     verification: Mapping[str, Any],
     controls: Mapping[str, Any],
     outcome: Mapping[str, Any],
+    steps: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     journey: list[dict[str, Any]] = []
 
@@ -1250,6 +1445,61 @@ def build_journey(
         )
     if jev.get("requested_more_evidence"):
         emit("RETRIEVAL_RETRIED")
+    # Cronología determinista: Premise Closure cierra premisas, la regla se
+    # ensambla y la evaluación produce el resultado autoritativo. Sin esto, un
+    # juicio intermedio parecía el estado final.
+    premise_closure = next(
+        (
+            _record(step)
+            for step in steps
+            if _text(step.get("type")) == "premise_closure"
+        ),
+        None,
+    )
+    if premise_closure is not None:
+        detail = _record(premise_closure.get("detail"))
+        missing_after = premise_closure.get("missing_after")
+        if not isinstance(missing_after, list):
+            missing_after = detail.get("missing_after") or []
+        rules_added = _int_or_none(premise_closure.get("rules_added"))
+        if rules_added is None:
+            rules_added = _int_or_none(detail.get("rules_added"))
+        evidence_added = _int_or_none(premise_closure.get("evidence_added"))
+        if evidence_added is None:
+            evidence_added = _int_or_none(detail.get("evidence_added"))
+        emit(
+            "PREMISES_CLOSED",
+            {
+                "termination": _text(
+                    premise_closure.get("termination") or detail.get("termination")
+                )
+                or None,
+                "rules_added": rules_added,
+                "evidence_added": evidence_added,
+                "missing_after": missing_after[:6],
+            },
+        )
+    decision = _record(verification.get("decision_verification"))
+    if _text(decision.get("status")) == DECISION_VERIFIED:
+        rule_ids = [
+            str(item) for item in decision.get("canonical_rule_ids") or [] if item
+        ]
+        emit(
+            "RULE_COMPILED",
+            {
+                "rules": len(rule_ids) or None,
+                "rule_ids": rule_ids[:3],
+                "premise_status": decision.get("premise_status"),
+            },
+        )
+        emit(
+            "DETERMINISTIC_AUTHORITY",
+            {
+                "operation": decision.get("operation"),
+                "result": decision.get("result"),
+                "rule_ids": rule_ids[:3],
+            },
+        )
     reasoning_calls = _int_or_none(generation.get("reasoning_calls")) or 0
     if reasoning_calls:
         emit("REASONING_PREPARED", {"calls": reasoning_calls})
@@ -1282,6 +1532,7 @@ def build_presentation(
     timing: Mapping[str, Any],
     cost: Mapping[str, Any],
     outcome: Mapping[str, Any],
+    steps: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     counts = _record(evidence.get("counts"))
     explanations: list[dict[str, Any]] = []
@@ -1400,8 +1651,19 @@ def build_presentation(
         },
         "support": {
             "documents_used": counts.get("documents_used"),
+            "documents_selected": counts.get("documents_selected"),
+            "documents_used_for_decision": counts.get("documents_used_for_decision"),
+            "documents_cited": counts.get("documents_cited"),
             "evidence_unique": counts.get("evidence_unique"),
             "evidence_used": counts.get("evidence_used"),
+            "evidence_used_for_reasoning": counts.get("evidence_used_for_reasoning"),
+            "evidence_used_for_rule_compilation": counts.get(
+                "evidence_used_for_rule_compilation"
+            ),
+            "evidence_used_for_premise_closure": counts.get(
+                "evidence_used_for_premise_closure"
+            ),
+            "evidence_used_for_decision": counts.get("evidence_used_for_decision"),
             "evidence_cited": counts.get("evidence_cited"),
             "collection": evidence.get("collection"),
         },
@@ -1412,6 +1674,7 @@ def build_presentation(
             verification=verification,
             controls=controls,
             outcome=outcome,
+            steps=steps,
         ),
         "explanations": explanations,
         "metric_refs": metric_refs_for_trace(
@@ -1479,11 +1742,28 @@ def build_traceability(flow: Mapping[str, Any] | None) -> dict[str, Any]:
         "status": _text(safe.get("status")) or None,
         "delivered": outcome.get("answer_delivered"),
         "method": _text(safe.get("method")) or None,
+        "mode": _text(safe.get("execution_mode")) or None,
+        "fast_path": _record(safe.get("fast_path")) or None,
     }
 
     generation["warnings"] = list(_records(controls.get("generation_warnings")))
 
     steps = _records(safe.get("steps"))
+    # Pasos del runtime tal como los emitió, con su estado de mapeo canónico:
+    # un tipo sin mapping NO se descarta; se marca `unmapped` y se muestra en
+    # el detalle técnico.
+    runtime_steps: list[dict[str, Any]] = []
+    for step in steps[:80]:
+        runtime_steps.append(
+            {
+                "type": _text(step.get("type")),
+                "name": _text(step.get("name")) or None,
+                "status": _text(step.get("status")) or "ok",
+                "detail": _text(step.get("detail"))[:200] or None,
+                "ms": _number(step.get("ms")),
+                "unmapped": step.get("unmapped") is True,
+            }
+        )
     extra_items: list[dict[str, Any]] = _temporal_items(safe, timeline)
     diagnostics = build_diagnostics(
         evidence=evidence,
@@ -1513,6 +1793,7 @@ def build_traceability(flow: Mapping[str, Any] | None) -> dict[str, Any]:
         timing=timing,
         cost=cost,
         outcome=outcome,
+        steps=steps,
     )
     # Evidencias usadas sin cita: hecho, no especulación.
     presentation["support"]["evidence_used_not_cited"] = (
@@ -1525,8 +1806,27 @@ def build_traceability(flow: Mapping[str, Any] | None) -> dict[str, Any]:
     counts_legacy = {
         "documents_consulted": evidence["counts"].get("documents_retrieved"),
         "documents_used": evidence["counts"].get("documents_used"),
+        "documents_selected": evidence["counts"].get("documents_selected"),
+        "documents_used_for_decision": evidence["counts"].get(
+            "documents_used_for_decision"
+        ),
+        "documents_cited": evidence["counts"].get("documents_cited"),
         "evidence_retrieved": evidence["counts"].get("evidence_retrieved"),
+        "evidence_unique": evidence["counts"].get("evidence_unique"),
+        "evidence_selected": evidence["counts"].get("evidence_selected"),
         "evidence_used": evidence["counts"].get("evidence_used"),
+        "evidence_used_for_reasoning": evidence["counts"].get(
+            "evidence_used_for_reasoning"
+        ),
+        "evidence_used_for_rule_compilation": evidence["counts"].get(
+            "evidence_used_for_rule_compilation"
+        ),
+        "evidence_used_for_premise_closure": evidence["counts"].get(
+            "evidence_used_for_premise_closure"
+        ),
+        "evidence_used_for_decision": evidence["counts"].get(
+            "evidence_used_for_decision"
+        ),
         "evidence_cited": evidence["counts"].get("evidence_cited"),
     }
 
@@ -1561,6 +1861,7 @@ def build_traceability(flow: Mapping[str, Any] | None) -> dict[str, Any]:
         "diagnostics": diagnostics,
         "presentation": presentation,
         "cognitive": _cognitive_section(safe),
+        "runtime_steps": runtime_steps,
         # --- espejo schema 1 (misma verdad, nombres históricos) ---
         "counts": counts_legacy,
         "decisions": jev["decisions"],
@@ -1809,6 +2110,7 @@ def upgrade_traceability_v1(trace: Mapping[str, Any] | None) -> dict[str, Any]:
         "decisions": upgraded_decisions,
         "judgments": items_upgraded,
         "timeline": _records(safe.get("timeline")),
+        "runtime_steps": [],
     }
 
 
