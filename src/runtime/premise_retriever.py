@@ -227,9 +227,9 @@ class PremiseEvidenceRetriever:
                     # que solo lo menciona al pasar.
                     lowered = [needle.lower() for needle in needles]
 
-                    def _coverage(hit: EvidenceHit) -> int:
+                    def _coverage(hit: EvidenceHit, needles_lower: list[str] = lowered) -> int:
                         text = hit.content.lower()
-                        return sum(1 for needle in lowered if needle in text)
+                        return sum(1 for needle in needles_lower if needle in text)
 
                     hits.sort(key=_coverage, reverse=True)
                     return hits
