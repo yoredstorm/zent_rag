@@ -108,6 +108,9 @@ _STATE_BY_STAGE: dict[str, str] = {
     STAGE_DECISION_ENVELOPE: ANSWER_STATE_DERIVATION_FAILED,
 }
 
+#: Operadores de matching de MÁSCARA (patrón posicional), no de comparación.
+_MASK_MATCH_OPERATORS = frozenset({"POSITIONAL", "FIXED_POSITION", "PREFIX", "SUFFIX"})
+
 #: Intenciones donde un patrón de runtime (máscara/símbolo) NO es aplicación
 #: de regla sino consulta sobre el patrón: no fuerzan decisión determinista.
 _PATTERN_LOOKUP_INTENTS = frozenset(
@@ -671,26 +674,39 @@ async def _run_premise_closure_stage(
         try:
             from src.runtime.query_local_rules import rules_are_query_local
 
-            decisive = [
-                rule
-                for rule in rules_list or ()
-                if rules_are_query_local([rule]) and getattr(rule, "executable", False)
-            ]
-            if not decisive:
-                return None
             symbols = {char for char in runtime_pattern if char in "&*?%#$@!~^"}
             if not symbols:
                 return None
+            # Una regla sin la definición de los símbolos del patrón no puede
+            # decidir el match: jamás un NO_MATCH incidental sin semántica.
+            decisive = [
+                rule
+                for rule in rules_list or ()
+                if rules_are_query_local([rule])
+                and getattr(rule, "executable", False)
+                and any(
+                    f"matching.symbol.{symbol}" in (getattr(rule, "properties", {}) or {})
+                    for symbol in symbols
+                )
+            ]
+            if not decisive:
+                return None
 
-            def _score(rule: Any) -> tuple[int, int, int]:
+            def _score(rule: Any) -> tuple[int, int, int, int]:
                 properties = getattr(rule, "properties", {}) or {}
                 symbol_hit = any(
                     f"matching.symbol.{symbol}" in properties for symbol in symbols
                 )
-                operator_hit = "matching.operator" in properties
-                return (1 if symbol_hit else 0, 1 if operator_hit else 0, len(properties))
+                operator_prop = properties.get("matching.operator")
+                operator = (
+                    str(getattr(operator_prop, "value", "") or "").upper()
+                    if operator_prop is not None
+                    else ""
+                )
+                mask_hit = 1 if operator in _MASK_MATCH_OPERATORS else 0
+                operator_hit = 1 if "matching.operator" in properties else 0
+                return (symbol_hit, mask_hit, operator_hit, len(properties))
 
-            best = max(decisive, key=_score)
             reason = reason_fn
             if reason is None:
                 from src.intelligence.reasoning.grounded_engine import (
@@ -698,18 +714,22 @@ async def _run_premise_closure_stage(
                 )
 
                 reason = reason_over_evidence
-            grounded_now = reason(
-                question=question,
-                evidence_items=list(items),
-                canonical_rules=[best],
-            )
-            claims_now = list(getattr(grounded_now.derivations, "claims", ()) or ())
-            if any(
-                bool(getattr(claim, "deterministic", False))
-                and str(getattr(claim, "verification_status", "")) == "SUPPORTED"
-                for claim in claims_now
-            ):
-                return grounded_now
+            # La mejor regla por score puede no poder decidir (p.ej. un modo de
+            # matching que exige datos ausentes). Se prueban en orden: la
+            # primera que produzca un claim determinista SUPPORTED manda.
+            for best in sorted(decisive, key=_score, reverse=True):
+                grounded_now = reason(
+                    question=question,
+                    evidence_items=list(items),
+                    canonical_rules=[best],
+                )
+                claims_now = list(getattr(grounded_now.derivations, "claims", ()) or ())
+                if any(
+                    bool(getattr(claim, "deterministic", False))
+                    and str(getattr(claim, "verification_status", "")) == "SUPPORTED"
+                    for claim in claims_now
+                ):
+                    return grounded_now
         except Exception:  # noqa: BLE001 — pass decisivo fail-soft
             return None
         return None
@@ -823,6 +843,7 @@ async def prepare_derived_authority(
     envelope_fn: Callable[..., Any] | None = None,
     enable_premise_closure: bool = False,
     premise_evidence_search: Callable[..., Any] | None = None,
+    premise_retriever_status: dict[str, Any] | None = None,
     premise_closure_rounds: int = 2,
 ) -> DerivedPreparationResult:
     """Ejecuta la cadena determinista por FASES con telemetría fail-closed.
@@ -837,6 +858,12 @@ async def prepare_derived_authority(
     prep.requires_deterministic_decision = requires_deterministic_decision(
         sem if sem is not None else text_question
     )
+    try:
+        from src.runtime.runtime_identity import runtime_identity
+
+        prep.steps.append(stage_step("runtime_identity", "ok", **runtime_identity()))
+    except Exception:  # noqa: BLE001 — la identidad nunca rompe el run
+        pass
 
     # --- query semantics (observabilidad obligatoria) -----------------------
     if sem is None:
@@ -1018,11 +1045,35 @@ async def prepare_derived_authority(
     # --- PREMISE CLOSURE: retrieval dirigido por premisas faltantes ----------
     # JEV/answer gate decide "necesitamos más"; ESTA fase decide exactamente
     # qué buscar. No repite la búsqueda semántica de la pregunta original.
+    if enable_premise_closure and prep.requires_deterministic_decision and premisas:
+        health = dict(premise_retriever_status or {})
+        if premise_evidence_search is None:
+            # Sin retriever NO se puede afirmar que la fuente carezca de la
+            # premisa: el diagnóstico es operacional, no documental.
+            health.setdefault("available", False)
+            health.setdefault("error_code", "PREMISE_RETRIEVER_FACTORY_FAILED")
+            prep.steps.append(
+                stage_step("premise_retriever_health", "error", **health)
+            )
+            prep.status = "degraded"
+            prep.error_stage = "premise_retrieval"
+            prep.error_code = "PREMISE_RETRIEVER_UNAVAILABLE"
+            prep.error_message = (
+                "No se pudo completar la búsqueda de premisas: el retriever de "
+                "evidencia no está disponible. No se comprobó que la fuente "
+                "carezca de la premisa."
+            )
+        else:
+            health.setdefault("available", True)
+            prep.steps.append(
+                stage_step("premise_retriever_health", "ok", **health)
+            )
     if (
         enable_premise_closure
         and prep.requires_deterministic_decision
         and premisas
         and prep.grounded_reasoning is not None
+        and premise_evidence_search is not None
     ):
         closure, grounded_final, local_stats = await _run_premise_closure_stage(
             organization_id=organization_id,

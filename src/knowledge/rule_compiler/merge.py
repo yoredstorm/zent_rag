@@ -358,6 +358,10 @@ def merge_distributed_rules(
     ``grammar_only=True`` fusiona fragmentos de gramática (matching/length),
     que es donde la distribución entre páginas es estructural. Otras familias
     se evalúan por separado.
+
+    Entre varios clústeres compatibles se prefiere el de operador de MÁSCARA
+    (POSITIONAL/FIXED_POSITION/...): una política de longitud pertenece a la
+    gramática del patrón, no a una regla de comparación de campos.
     """
     rules = list(rules)
     fragments = [
@@ -367,19 +371,50 @@ def merge_distributed_rules(
     others = [rule for rule in rules if id(rule) not in fragment_ids]
     clusters: list[CanonicalRule] = []
     for rule in fragments:
-        merged = False
+        best_index = -1
+        best_score: tuple[int, int, int] | None = None
         for index, cluster in enumerate(clusters):
-            if rules_compatible(cluster, rule):
-                clusters[index] = merge_rule_pair(cluster, rule)
-                merged = True
-                break
-        if not merged:
+            if not rules_compatible(cluster, rule):
+                continue
+            score = _cluster_preference(cluster, rule)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_index = index
+        if best_index >= 0:
+            clusters[best_index] = merge_rule_pair(clusters[best_index], rule)
+        else:
             clusters.append(rule)
     result: list[CanonicalRule] = []
     for cluster in [*clusters, *others]:
         recompute_execution(cluster)
         result.append(cluster)
     return result
+
+
+#: Operadores que describen la gramática del patrón (máscara), no comparación.
+_MASK_OPERATORS = frozenset({"POSITIONAL", "FIXED_POSITION", "PREFIX", "SUFFIX"})
+
+
+def _rule_symbols(rule: CanonicalRule) -> set[str]:
+    return {
+        name[len("matching.symbol.") :]
+        for name in rule.properties
+        if name.startswith("matching.symbol.") and not name.endswith(".alphabet")
+    }
+
+
+def _cluster_preference(
+    cluster: CanonicalRule, fragment: CanonicalRule
+) -> tuple[int, int, int]:
+    operator_prop = cluster.properties.get("matching.operator")
+    operator = (
+        str(operator_prop.value or "").upper()
+        if operator_prop is not None and operator_prop.known
+        else ""
+    )
+    mask = 1 if operator in _MASK_OPERATORS else 0
+    overlap = len(_rule_symbols(cluster) & _rule_symbols(fragment))
+    return (mask, overlap, len(cluster.properties))
 
 
 __all__ = [

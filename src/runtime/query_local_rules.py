@@ -154,6 +154,13 @@ def _symbols_of(rule: Any) -> set[str]:
     return symbols
 
 
+def _scope_key(rule: Any) -> str:
+    """Alcance documental de la regla (sección); vacío = alcance no declarado."""
+    scope = getattr(rule, "scope", None)
+    section = tuple(str(part) for part in (getattr(scope, "section_path", ()) or ()))
+    return " / ".join(section).strip().lower()
+
+
 def _known_dimension(rule: Any, dimension: str) -> str | None:
     prop = (getattr(rule, "properties", {}) or {}).get(dimension)
     if prop is None or not getattr(prop, "known", False):
@@ -173,6 +180,11 @@ def mark_grammar_conflicts(rules: Sequence[Any]) -> int:
     for index, rule_a in enumerate(rule_list):
         for rule_b in rule_list[index + 1 :]:
             if getattr(rule_a, "exceptions", None) or getattr(rule_b, "exceptions", None):
+                continue
+            scope_a, scope_b = _scope_key(rule_a), _scope_key(rule_b)
+            if scope_a and scope_b and scope_a != scope_b:
+                # Distinto alcance documental: gramáticas de secciones distintas
+                # no se contradicen entre sí (el docstring exige "mismo alcance").
                 continue
             symbols_a, symbols_b = _symbols_of(rule_a), _symbols_of(rule_b)
             if symbols_a and symbols_b and not (symbols_a & symbols_b):

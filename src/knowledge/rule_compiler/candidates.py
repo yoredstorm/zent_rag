@@ -30,7 +30,7 @@ from src.core.domain.rule_semantics import (
     is_normative,
 )
 
-from .clauses import analyze_with_clauses
+from .clauses import analyze_with_clauses, decompose_clauses
 from .language import StatementAnalysis, classify_statement_kind
 from .model import (
     CandidateRule,
@@ -224,6 +224,38 @@ def _is_symbol_label(label: str) -> bool:
     return 0 < len(text) <= 3 and not text.isalnum()
 
 
+#: Generalidad de un alfabeto documentado: la definición general manda sobre
+#: el ejemplo particular (si una fuente dice "alfanumérico", el símbolo acepta
+#: letras y dígitos aunque un ejemplo solo muestre números).
+_ALPHABET_GENERALITY = {
+    "": 0,
+    "letter": 1,
+    "digit": 1,
+    "space": 1,
+    "literal": 1,
+    "alphanumeric": 2,
+    "any_char": 3,
+}
+
+
+def _index_symbol(indexes: "_Indexes", symbol: str, item: RuleContextItem) -> None:
+    existing = indexes.symbols.get(symbol)
+    if existing is None:
+        indexes.symbols[symbol] = item
+        return
+    try:
+        new_rank = _ALPHABET_GENERALITY.get(
+            analyze_language(item.text).match.alphabet, 0
+        )
+        old_rank = _ALPHABET_GENERALITY.get(
+            analyze_language(existing.text).match.alphabet, 0
+        )
+    except Exception:  # noqa: BLE001 — índice best-effort
+        return
+    if new_rank > old_rank:
+        indexes.symbols[symbol] = item
+
+
 def build_indexes(items: Sequence[RuleContextItem]) -> _Indexes:
     indexes = _Indexes()
     for item in items:
@@ -242,7 +274,7 @@ def build_indexes(items: Sequence[RuleContextItem]) -> _Indexes:
         ):
             symbol = item.label.strip()
             if symbol:
-                indexes.symbols.setdefault(symbol, item)
+                _index_symbol(indexes, symbol, item)
                 # Símbolos nombrados en el texto ("& representa...") también indexan.
         for symbol_match in re.finditer(
             r"[\"'«“(\[]?\s*(?P<sym>&|\*|\?|%|#|\$|@|!|~|\^)\s*[\"'»”) \]]?\s*"
@@ -258,7 +290,7 @@ def build_indexes(items: Sequence[RuleContextItem]) -> _Indexes:
             item.text,
             re.IGNORECASE,
         ):
-            indexes.symbols.setdefault(symbol_match.group("sym"), item)
+            _index_symbol(indexes, symbol_match.group("sym"), item)
         if item.kind in ("section",) and normalized_label:
             indexes.sections.setdefault(normalized_label, item)
         logic = analyze_language(item.text).logic
@@ -580,8 +612,11 @@ def build_candidates(
             if entry.evidence_id and entry.evidence_id not in candidate.evidence_ids:
                 candidate.evidence.append(entry)
         candidate._source_item = source_item  # type: ignore[attr-defined]
-        _merge_analysis_into_candidate(candidate, analysis)
+        # Las definiciones/símbolos distribuidos agregan propiedades AL ANÁLISIS:
+        # deben fusionarse ANTES de copiar el análisis al candidato. Al revés,
+        # `matching.symbol.*` se pierde y la regla queda sin semántica de símbolo.
         _attach_distributed_context(candidate, analysis, indexes)
+        _merge_analysis_into_candidate(candidate, analysis)
         _resolve_references(candidate, analysis, indexes, items)
         # Reunir missing de properties.
         for prop in candidate.properties.values():
@@ -663,6 +698,23 @@ def build_candidates(
         kind = classify_statement_kind(text)
         normative = is_normative(text, min_length=24)
         if kind == RuleKind.EXAMPLE.value:
+            # Un chunk-ejemplo puede contener oraciones normativas pegadas (p.ej.
+            # la política de longitud junto al ejemplo). Solo las cláusulas
+            # normativas generan candidato; el ejemplo en sí nunca es regla.
+            for clause in decompose_clauses(text):
+                if classify_statement_kind(clause) == RuleKind.EXAMPLE.value:
+                    continue
+                if not is_normative(clause, min_length=24):
+                    continue
+                clause_subject = _subject_from_section(
+                    item.section_path, clause, item.label or document_title
+                )
+                add_candidate(
+                    statement=clause,
+                    subject=clause_subject,
+                    source_item=item,
+                    confidence=0.6,
+                )
             continue
         if not normative and kind not in (
             RuleKind.DEFINITION.value,

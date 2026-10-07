@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+from dataclasses import dataclass
 from typing import Any, Sequence
 from uuid import UUID
 
@@ -180,6 +181,24 @@ class PremiseEvidenceRetriever:
         self._embedder = embedding_provider
         self._exact_limit = max(1, int(exact_limit))
         self.last_lanes: dict[str, int] = {}
+        self.last_lane_errors: list[dict[str, Any]] = []
+
+    def _record_lane_error(
+        self, lane: str, exc: Exception, *, stage: str, query: str = ""
+    ) -> None:
+        """Fail-soft para el usuario, NUNCA fail-silent para observabilidad."""
+        from src.runtime.runtime_identity import query_fingerprint
+
+        self.last_lane_errors.append(
+            {
+                "lane": lane,
+                "stage": stage,
+                "status": "error",
+                "exception_type": type(exc).__name__,
+                "exception_message_safe": str(exc)[:200],
+                "query_fingerprint": query_fingerprint(query),
+            }
+        )
 
     # -- lanes --------------------------------------------------------------
 
@@ -210,7 +229,8 @@ class PremiseEvidenceRetriever:
                         groups=self._groups,
                         limit=min(limit, self._exact_limit),
                     )
-                except Exception:  # noqa: BLE001, S112 — lane fail-soft
+                except Exception as exc:  # noqa: BLE001, S112 — lane fail-soft
+                    self._record_lane_error("exact", exc, stage="scan", query=query)
                     continue
                 hits = [
                     hit
@@ -287,7 +307,8 @@ class PremiseEvidenceRetriever:
                         source_diversity=False,
                     ),
                 )
-            except Exception:  # noqa: BLE001, S112 — tier fail-soft
+            except Exception as exc:  # noqa: BLE001, S112 — tier fail-soft
+                self._record_lane_error("canonical", exc, stage="retrieve", query=query)
                 continue
             chunks = list(getattr(assembled, "context", None) or [])
             if not chunks:
@@ -331,10 +352,11 @@ class PremiseEvidenceRetriever:
         ):
             try:
                 lane_hits = await lane(str(query or ""), scope, limit)
-            except Exception:  # noqa: BLE001 — lane fail-soft, la closure sigue
+            except Exception as exc:  # noqa: BLE001 — lane fail-soft, la closure sigue
                 self.last_lanes[f"{lane_name}_errors"] = (
                     self.last_lanes.get(f"{lane_name}_errors", 0) + 1
                 )
+                self._record_lane_error(lane_name, exc, stage="lane", query=query)
                 continue
             self.last_lanes[lane_name] = self.last_lanes.get(lane_name, 0) + len(lane_hits)
             collected.extend(lane_hits)
@@ -365,6 +387,101 @@ class PremiseEvidenceRetriever:
         return hits[:limit]
 
 
+@dataclass(frozen=True)
+class PremiseRetrieverBuildResult:
+    """Resultado explícito de construir el adapter de evidencia.
+
+    `available=False` NUNCA puede convertirse en "la fuente no contiene la
+    premisa": significa que la búsqueda no se ejecutó. Sin secretos.
+    """
+
+    available: bool = False
+    adapter: Any = None
+    error_code: str = ""
+    dependency: str = ""
+    exception_type: str = ""
+    exception_message_safe: str = ""
+    retriever_type: str = ""
+    vector_store_type: str = ""
+    embedding_provider_type: str = ""
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "available": bool(self.available),
+            "error_code": self.error_code,
+            "dependency": self.dependency,
+            "exception_type": self.exception_type,
+            "exception_message_safe": self.exception_message_safe,
+            "retriever_type": self.retriever_type,
+            "vector_store_type": self.vector_store_type,
+            "embedding_provider_type": self.embedding_provider_type,
+        }
+
+
+def _type_name(value: Any) -> str:
+    return type(value).__name__ if value is not None else ""
+
+
+def build_premise_evidence_search_result(
+    organization_id: Any,
+    *,
+    workspace_id: Any = None,
+    role: str = "admin",
+    user_id: Any = None,
+    groups: Sequence[str] = (),
+    retriever: Any = None,
+    vector_store: Any = None,
+    embedding_provider: Any = None,
+) -> PremiseRetrieverBuildResult:
+    """Factory central con resultado explícito (API y agent_runtime)."""
+    components: dict[str, Any] = {
+        "retriever": retriever,
+        "vector_store": vector_store,
+        "embedding_provider": embedding_provider,
+    }
+    getters: dict[str, str] = {
+        "retriever": "get_knowledge_retriever",
+        "vector_store": "get_vector_store",
+        "embedding_provider": "get_embedding_provider",
+    }
+    for key, getter_name in getters.items():
+        if components[key] is not None:
+            continue
+        try:
+            from src.api import deps as deps_module
+
+            components[key] = getattr(deps_module, getter_name)()
+        except Exception as exc:  # noqa: BLE001 — se reporta, no se oculta
+            return PremiseRetrieverBuildResult(
+                available=False,
+                adapter=None,
+                error_code="PREMISE_RETRIEVER_FACTORY_FAILED",
+                dependency=getter_name,
+                exception_type=type(exc).__name__,
+                exception_message_safe=str(exc)[:200],
+                retriever_type=_type_name(components["retriever"]),
+                vector_store_type=_type_name(components["vector_store"]),
+                embedding_provider_type=_type_name(components["embedding_provider"]),
+            )
+    adapter = PremiseEvidenceRetriever(
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        role=role,
+        user_id=user_id,
+        groups=groups,
+        retriever=components["retriever"],
+        vector_store=components["vector_store"],
+        embedding_provider=components["embedding_provider"],
+    )
+    return PremiseRetrieverBuildResult(
+        available=True,
+        adapter=adapter,
+        retriever_type=_type_name(components["retriever"]),
+        vector_store_type=_type_name(components["vector_store"]),
+        embedding_provider_type=_type_name(components["embedding_provider"]),
+    )
+
+
 def build_premise_evidence_search(
     organization_id: Any,
     *,
@@ -376,26 +493,10 @@ def build_premise_evidence_search(
     vector_store: Any = None,
     embedding_provider: Any = None,
 ) -> Any | None:
-    """Factory central: un solo adapter para orchestrator y agent_runtime.
-
-    Fail-soft: si el retriever canónico no está disponible (tests/CLI),
-    devuelve None y Premise Closure mantiene su comportamiento previo.
-    """
-    try:
-        if retriever is None or vector_store is None or embedding_provider is None:
-            from src.api.deps import (
-                get_embedding_provider,
-                get_knowledge_retriever,
-                get_vector_store,
-            )
-
-            retriever = retriever or get_knowledge_retriever()
-            vector_store = vector_store or get_vector_store()
-            embedding_provider = embedding_provider or get_embedding_provider()
-    except Exception:  # noqa: BLE001 — sin deps no hay adapter, no hay crash
-        return None
-    adapter = PremiseEvidenceRetriever(
-        organization_id=organization_id,
+    """Compatibilidad: adapter.search o None (tests/CLI). En runtime usar el
+    resultado explícito para distinguir "no disponible" de "no hay premisa"."""
+    result = build_premise_evidence_search_result(
+        organization_id,
         workspace_id=workspace_id,
         role=role,
         user_id=user_id,
@@ -404,11 +505,15 @@ def build_premise_evidence_search(
         vector_store=vector_store,
         embedding_provider=embedding_provider,
     )
-    return adapter.search
+    if not result.available or result.adapter is None:
+        return None
+    return result.adapter.search
 
 
 __all__ = [
     "PremiseEvidenceRetriever",
+    "PremiseRetrieverBuildResult",
     "build_premise_evidence_search",
+    "build_premise_evidence_search_result",
     "exact_needles",
 ]

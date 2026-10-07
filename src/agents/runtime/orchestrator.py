@@ -3796,20 +3796,28 @@ class RAGOrchestrator:
                     prepare_derived_authority,
                     requires_deterministic_decision,
                 )
-                from src.runtime.premise_retriever import build_premise_evidence_search
+                from src.runtime.premise_retriever import (
+                    build_premise_evidence_search_result,
+                )
 
+                _premise_result = build_premise_evidence_search_result(
+                    organization_id,
+                    workspace_id=workspace_id,
+                    role=role,
+                    user_id=user_id,
+                    groups=tuple(locals().get("groups") or ()),
+                )
                 prep_pre = await prepare_derived_authority(
                     organization_id=organization_id,
                     question=semantic_query,
                     evidence_items=list(retrieval_context.chunks),
                     enable_premise_closure=True,
-                    premise_evidence_search=build_premise_evidence_search(
-                        organization_id,
-                        workspace_id=workspace_id,
-                        role=role,
-                        user_id=user_id,
-                        groups=tuple(locals().get("groups") or ()),
+                    premise_evidence_search=(
+                        _premise_result.adapter.search
+                        if _premise_result.available and _premise_result.adapter is not None
+                        else None
                     ),
+                    premise_retriever_status=_premise_result.to_public_dict(),
                 )
                 result.steps.extend(prep_pre.steps)
                 grounded_pre = prep_pre.grounded_reasoning
@@ -4077,7 +4085,9 @@ class RAGOrchestrator:
                 prepare_derived_authority,
                 requires_deterministic_decision,
             )
-            from src.runtime.premise_retriever import build_premise_evidence_search
+            from src.runtime.premise_retriever import (
+                build_premise_evidence_search_result,
+            )
 
             # Una consulta ejecutable exige decisión determinista: sin
             # DecisionEnvelope autoritativo no puede salir un sí/no del LLM.
@@ -4116,18 +4126,24 @@ class RAGOrchestrator:
                 # step aunque una posterior falle; rule_retrieval sobrevive a un
                 # fallo de grounding. Una consulta ejecutable sin envelope no
                 # puede terminar en una decisión binaria libre del LLM.
+                _premise_result = build_premise_evidence_search_result(
+                    organization_id,
+                    workspace_id=workspace_id,
+                    role=role,
+                    user_id=user_id,
+                    groups=tuple(locals().get("groups") or ()),
+                )
                 prep = await prepare_derived_authority(
                     organization_id=organization_id,
                     question=semantic_query or query,
                     evidence_items=evidence_selection.items,
                     enable_premise_closure=True,
-                    premise_evidence_search=build_premise_evidence_search(
-                        organization_id,
-                        workspace_id=workspace_id,
-                        role=role,
-                        user_id=user_id,
-                        groups=tuple(locals().get("groups") or ()),
+                    premise_evidence_search=(
+                        _premise_result.adapter.search
+                        if _premise_result.available and _premise_result.adapter is not None
+                        else None
                     ),
+                    premise_retriever_status=_premise_result.to_public_dict(),
                 )
                 result.steps.extend(prep.steps)
                 grounded_reasoning = prep.grounded_reasoning
