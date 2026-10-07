@@ -1422,7 +1422,9 @@ _ALPHABET_TABLE: tuple[tuple[str, re.Pattern[str]], ...] = (
         "alphanumeric",
         re.compile(
             r"\b(alpha[- ]?numeric|alfanum[eé]ric[oa]s?|letter\s+or\s+digit|"
-            r"letra\s+o\s+d[ií]gito)\b",
+            r"letra\s+o\s+d[ií]gito|"
+            r"(?:alpha|letter|letra)s?\s+or\s+(?:number|digit|num[eé]ric[oa]s?|d[ií]gitos?)|"
+            r"(?:number|digit|num[eé]ric[oa]s?|d[ií]gitos?)\s+or\s+(?:alpha|letter|letra)s?)\b",
             _FLAGS,
         ),
     ),

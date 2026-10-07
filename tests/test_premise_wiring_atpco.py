@@ -474,3 +474,48 @@ def test_factory_returns_none_without_deps(monkeypatch) -> None:
 
     monkeypatch.setattr(deps, "get_knowledge_retriever", lambda: (_ for _ in ()).throw(RuntimeError("no deps")))
     assert build_premise_evidence_search(ORG) is None
+
+
+# ---------------------------------------------------------------------------
+# I. Definiciones de símbolo en conflicto: gana la general (alfanumérico)
+# ---------------------------------------------------------------------------
+
+
+def test_symbol_definition_generality_wins_in_merge() -> None:
+    """Un chunk que lee «number or alpha» y otro que define «alphanumeric»:
+    la regla fusionada debe aceptar letras y dígitos, nunca solo dígitos."""
+    items = [
+        _item(
+            "An & can be used to indicate a number or alpha in a specific "
+            "position of the fare class.",
+            "ev:symbol-specific",
+        ),
+        _item(
+            "Fare Family Match using Ampersand (&): the & indicate a match to "
+            "any alphanumeric character in that position of the fare class.",
+            "ev:symbol-general",
+        ),
+        _item(
+            "When using special characters &, a fare class must contain at "
+            "least the number of characters referenced in the fare class field "
+            "(additional characters may follow).",
+            "ev:length",
+        ),
+    ]
+    compilation = compile_query_local_rules(items, document_id=DOC_ID)
+    symbol_rules = [
+        rule
+        for rule in compilation.rules
+        if rule.executable and rule.properties.get("matching.symbol.&") is not None
+    ]
+    assert symbol_rules, "la gramática del símbolo debe compilar"
+    for rule in symbol_rules:
+        outcome = evaluate_rule(rule, {"value": "ABCFGEGE", "pattern": "&&&F"})
+        assert outcome.status != RuleEvaluationStatus.NO_MATCH.value, (
+            f"definición general ignorada: {outcome.status} en {rule.rule_id}"
+        )
+    outcomes = [
+        evaluate_rule(rule, {"value": "ABCFGEGE", "pattern": "&&&F"}).status
+        for rule in symbol_rules
+    ]
+    assert RuleEvaluationStatus.MATCH.value in outcomes

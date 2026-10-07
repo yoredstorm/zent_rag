@@ -13,7 +13,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 from src.core.domain.rule_semantics import ClaimLayer, RuleKind, VerificationState
 
@@ -154,6 +154,55 @@ def _evidence_key(evidence: RuleEvidence) -> str:
     return evidence.evidence_id or evidence.unit_id or evidence.locator.get("locator", "")
 
 
+def _alphabet_generality(value: Any) -> int:
+    """Generalidad de un alfabeto: la definición general manda sobre el ejemplo."""
+    return {
+        "": 0,
+        "letter": 1,
+        "digit": 1,
+        "space": 1,
+        "literal": 1,
+        "alphanumeric": 2,
+        "any_char": 3,
+    }.get(str(value or "").strip().lower(), 0)
+
+
+def _symbol_generality(name: str, prop: RuleProperty) -> int:
+    """Generalidad de una propiedad de símbolo (definición o alfabeto)."""
+    if name.endswith(".alphabet"):
+        return _alphabet_generality(prop.value)
+    text = str(prop.value or "").lower()
+    if any(
+        marker in text
+        for marker in (
+            "any character",
+            "cualquier car",
+            "any position",
+            "cualquier posici",
+        )
+    ):
+        return 3
+    if any(
+        marker in text
+        for marker in (
+            "alphanumeric",
+            "alfanum",
+            "letter or digit",
+            "letra o d",
+            "or alpha",
+            "alpha or",
+            "letter or",
+        )
+    ):
+        return 2
+    if any(
+        marker in text
+        for marker in ("number", "digit", "numeric", "letter", "alpha", "letra")
+    ):
+        return 1
+    return 0
+
+
 def merge_rule_pair(left: CanonicalRule, right: CanonicalRule) -> CanonicalRule:
     """Union de semántica compatible, evidencia y excepciones."""
     properties: dict[str, RuleProperty] = {}
@@ -186,6 +235,18 @@ def merge_rule_pair(left: CanonicalRule, right: CanonicalRule) -> CanonicalRule:
                 ),
                 note=existing.note or prop.note,
             )
+        elif name.startswith("matching.symbol.") and (
+            name.endswith(".alphabet")
+            or "." not in name[len("matching.symbol.") :]
+        ):
+            # Dos definiciones del MISMO símbolo: la más general manda
+            # (alfanumérico sobre dígito/letra). La desplazada queda visible
+            # como `.superseded` para auditoría, nunca como decisión.
+            if _symbol_generality(name, prop) > _symbol_generality(name, existing):
+                properties[name] = prop
+                properties[f"{name}.superseded"] = existing
+            else:
+                properties[f"{name}.superseded"] = prop
         elif existing.explicit and prop.explicit and existing.value != prop.value:
             # Valores incompatibles no se fusionan en silencio.
             properties[f"{name}.unmerged"] = prop
