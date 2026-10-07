@@ -465,6 +465,24 @@ _PREMISE_EXPECTED_DIMENSION: dict[str, str] = {
     PREMISE_LENGTH_POLICY: "length.policy",
 }
 
+#: Nombre tipográfico del símbolo (genérico, no de dominio): la pata exacta
+#: no puede escanear un carácter suelto; con su nombre sí encuentra la
+#: definición ("The ... Ampersand (&) is used in conjunction with ...").
+_SYMBOL_NAMES: dict[str, str] = {
+    "&": "ampersand",
+    "!": "exclamation point",
+    "*": "asterisk",
+    "?": "question mark",
+    "%": "percent",
+    "#": "number sign",
+    "$": "dollar",
+    "@": "at sign",
+    "~": "tilde",
+    "^": "caret",
+    "|": "pipe",
+    "-": "hyphen",
+}
+
 
 def expected_semantic_dimension(premise: str) -> str:
     key = normalize_premise(premise)
@@ -497,12 +515,14 @@ class PremiseQueryPlanner:
             symbol = symbol_from_premise(premise)
             built: list[PlannedPremiseQuery] = []
             if symbol:
+                symbol_name = _SYMBOL_NAMES.get(symbol, "")
+                symbol_terms = f"{symbol} {symbol_name}".strip()
                 for lane, query in (
                     (LANE_EXACT, f'"{symbol}"'),
-                    (LANE_SYMBOL, f"{symbol} symbol definition represents indicates"),
+                    (LANE_SYMBOL, f"{symbol_terms} symbol definition represents indicates"),
                     (
                         LANE_RULE_INDEX,
-                        f"definition symbol {symbol} meaning position match{context_suffix}",
+                        f"definition symbol {symbol_terms} meaning position match{context_suffix}",
                     ),
                 ):
                     built.append(
