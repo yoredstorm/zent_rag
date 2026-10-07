@@ -29,17 +29,17 @@
       "golden_queries": 6,
       "performance": {
         "pdfplumber": {
-          "seconds": 1.9713,
-          "seconds_per_page": 0.08214,
-          "peak_python_bytes": 12861912,
+          "seconds": 1.0742,
+          "seconds_per_page": 0.04476,
+          "peak_python_bytes": 12865156,
           "pages": 24,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 7.3336,
-          "seconds_per_page": 0.30557,
-          "peak_python_bytes": 1353084,
+          "seconds": 5.8908,
+          "seconds_per_page": 0.24545,
+          "peak_python_bytes": 1354328,
           "pages": 24,
           "json_bytes": 77251,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -139,7 +139,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.9792,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 6,
@@ -434,9 +441,9 @@
             }
           },
           "performance": {
-            "seconds": 1.9713,
-            "seconds_per_page": 0.08214,
-            "peak_python_bytes": 12861912,
+            "seconds": 1.0742,
+            "seconds_per_page": 0.04476,
+            "peak_python_bytes": 12865156,
             "pages": 24,
             "json_bytes": null,
             "java": null
@@ -536,7 +543,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.9653,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 6,
@@ -831,9 +845,9 @@
             }
           },
           "performance": {
-            "seconds": 7.3336,
-            "seconds_per_page": 0.30557,
-            "peak_python_bytes": 1353084,
+            "seconds": 5.8908,
+            "seconds_per_page": 0.24545,
+            "peak_python_bytes": 1354328,
             "pages": 24,
             "json_bytes": 77251,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -1091,17 +1105,17 @@
       "golden_queries": 2,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.3309,
-          "seconds_per_page": 0.05515,
-          "peak_python_bytes": 1876746,
+          "seconds": 0.4733,
+          "seconds_per_page": 0.07888,
+          "peak_python_bytes": 1917910,
           "pages": 6,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.7616,
-          "seconds_per_page": 0.46027,
-          "peak_python_bytes": 722760,
+          "seconds": 1.2267,
+          "seconds_per_page": 0.20446,
+          "peak_python_bytes": 725224,
           "pages": 6,
           "json_bytes": 50935,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -1199,7 +1213,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": null,
               "source_local_success": null,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -1254,9 +1275,9 @@
             }
           },
           "performance": {
-            "seconds": 0.3309,
-            "seconds_per_page": 0.05515,
-            "peak_python_bytes": 1876746,
+            "seconds": 0.4733,
+            "seconds_per_page": 0.07888,
+            "peak_python_bytes": 1917910,
             "pages": 6,
             "json_bytes": null,
             "java": null
@@ -1352,7 +1373,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": null,
               "source_local_success": null,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -1407,9 +1435,9 @@
             }
           },
           "performance": {
-            "seconds": 2.7616,
-            "seconds_per_page": 0.46027,
-            "peak_python_bytes": 722760,
+            "seconds": 1.2267,
+            "seconds_per_page": 0.20446,
+            "peak_python_bytes": 725224,
             "pages": 6,
             "json_bytes": 50935,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -1456,17 +1484,17 @@
       "golden_queries": 4,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.2368,
-          "seconds_per_page": 0.07895,
-          "peak_python_bytes": 1150236,
+          "seconds": 0.2646,
+          "seconds_per_page": 0.08819,
+          "peak_python_bytes": 1253300,
           "pages": 3,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.9792,
-          "seconds_per_page": 0.99307,
-          "peak_python_bytes": 608051,
+          "seconds": 1.8776,
+          "seconds_per_page": 0.62587,
+          "peak_python_bytes": 608313,
           "pages": 3,
           "json_bytes": 3389,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -1569,7 +1597,14 @@
               "premise_retrieval_recall": 0.0,
               "irrelevant_evidence_ratio": 0.85,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": 1.0,
+              "premise_lexical_hit_rate": 0.0,
+              "premise_source_local_hit_rate": 1.0,
+              "premise_closure_success_rate": 0.0,
+              "query_local_compilation_success_rate": 1.0,
+              "executable_rule_recovery_rate": 1.0,
+              "derived_claim_rate": 0.0
             },
             "decision": {
               "queries_total": 4,
@@ -1637,9 +1672,9 @@
             }
           },
           "performance": {
-            "seconds": 0.2368,
-            "seconds_per_page": 0.07895,
-            "peak_python_bytes": 1150236,
+            "seconds": 0.2646,
+            "seconds_per_page": 0.08819,
+            "peak_python_bytes": 1253300,
             "pages": 3,
             "json_bytes": null,
             "java": null
@@ -1739,11 +1774,18 @@
               "premise_retrieval_recall": 0.0,
               "irrelevant_evidence_ratio": 0.8333,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": 1.0,
+              "premise_lexical_hit_rate": 0.0,
+              "premise_source_local_hit_rate": 1.0,
+              "premise_closure_success_rate": 0.0,
+              "query_local_compilation_success_rate": 1.0,
+              "executable_rule_recovery_rate": 1.0,
+              "derived_claim_rate": 0.0
             },
             "decision": {
               "queries_total": 4,
-              "answerable_with_evidence_rate": 0.75,
+              "answerable_with_evidence_rate": 1.0,
               "false_abstention_rate": 0.25,
               "unsupported_hallucination_rate": 0.0,
               "deterministic_decision_rate": 0.0,
@@ -1760,8 +1802,8 @@
             },
             "consistency": {
               "runs_per_query": 100,
-              "queries": 0,
-              "consistency_rate": null
+              "queries": 1,
+              "consistency_rate": 1.0
             }
           },
           "matches": {
@@ -1807,9 +1849,9 @@
             }
           },
           "performance": {
-            "seconds": 2.9792,
-            "seconds_per_page": 0.99307,
-            "peak_python_bytes": 608051,
+            "seconds": 1.8776,
+            "seconds_per_page": 0.62587,
+            "peak_python_bytes": 608313,
             "pages": 3,
             "json_bytes": 3389,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -1898,17 +1940,17 @@
       "golden_queries": 2,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.1369,
-          "seconds_per_page": 0.06844,
-          "peak_python_bytes": 958899,
+          "seconds": 0.1796,
+          "seconds_per_page": 0.0898,
+          "peak_python_bytes": 841836,
           "pages": 2,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.3827,
-          "seconds_per_page": 1.19135,
-          "peak_python_bytes": 603545,
+          "seconds": 1.7287,
+          "seconds_per_page": 0.86433,
+          "peak_python_bytes": 602602,
           "pages": 2,
           "json_bytes": 3266,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -2010,7 +2052,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.8333,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -2055,9 +2104,9 @@
             }
           },
           "performance": {
-            "seconds": 0.1369,
-            "seconds_per_page": 0.06844,
-            "peak_python_bytes": 958899,
+            "seconds": 0.1796,
+            "seconds_per_page": 0.0898,
+            "peak_python_bytes": 841836,
             "pages": 2,
             "json_bytes": null,
             "java": null
@@ -2157,7 +2206,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.75,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -2202,9 +2258,9 @@
             }
           },
           "performance": {
-            "seconds": 2.3827,
-            "seconds_per_page": 1.19135,
-            "peak_python_bytes": 603545,
+            "seconds": 1.7287,
+            "seconds_per_page": 0.86433,
+            "peak_python_bytes": 602602,
             "pages": 2,
             "json_bytes": 3266,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -2262,17 +2318,17 @@
       "golden_queries": 4,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.1282,
-          "seconds_per_page": 0.04273,
-          "peak_python_bytes": 909252,
+          "seconds": 0.2027,
+          "seconds_per_page": 0.06757,
+          "peak_python_bytes": 902423,
           "pages": 3,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.4838,
-          "seconds_per_page": 0.82793,
-          "peak_python_bytes": 606192,
+          "seconds": 2.032,
+          "seconds_per_page": 0.67732,
+          "peak_python_bytes": 606828,
           "pages": 3,
           "json_bytes": 2702,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -2373,7 +2429,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.9375,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 4,
@@ -2428,9 +2491,9 @@
             }
           },
           "performance": {
-            "seconds": 0.1282,
-            "seconds_per_page": 0.04273,
-            "peak_python_bytes": 909252,
+            "seconds": 0.2027,
+            "seconds_per_page": 0.06757,
+            "peak_python_bytes": 902423,
             "pages": 3,
             "json_bytes": null,
             "java": null
@@ -2529,7 +2592,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.6667,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 4,
@@ -2584,9 +2654,9 @@
             }
           },
           "performance": {
-            "seconds": 2.4838,
-            "seconds_per_page": 0.82793,
-            "peak_python_bytes": 606192,
+            "seconds": 2.032,
+            "seconds_per_page": 0.67732,
+            "peak_python_bytes": 606828,
             "pages": 3,
             "json_bytes": 2702,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -2664,17 +2734,17 @@
       "golden_queries": 2,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.1344,
-          "seconds_per_page": 0.06722,
-          "peak_python_bytes": 595763,
+          "seconds": 0.1197,
+          "seconds_per_page": 0.05983,
+          "peak_python_bytes": 686407,
           "pages": 2,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.6476,
-          "seconds_per_page": 1.32381,
-          "peak_python_bytes": 600182,
+          "seconds": 1.7643,
+          "seconds_per_page": 0.88215,
+          "peak_python_bytes": 600312,
           "pages": 2,
           "json_bytes": 1996,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -2776,7 +2846,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.75,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -2831,9 +2908,9 @@
             }
           },
           "performance": {
-            "seconds": 0.1344,
-            "seconds_per_page": 0.06722,
-            "peak_python_bytes": 595763,
+            "seconds": 0.1197,
+            "seconds_per_page": 0.05983,
+            "peak_python_bytes": 686407,
             "pages": 2,
             "json_bytes": null,
             "java": null
@@ -2932,7 +3009,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.75,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -2987,9 +3071,9 @@
             }
           },
           "performance": {
-            "seconds": 2.6476,
-            "seconds_per_page": 1.32381,
-            "peak_python_bytes": 600182,
+            "seconds": 1.7643,
+            "seconds_per_page": 0.88215,
+            "peak_python_bytes": 600312,
             "pages": 2,
             "json_bytes": 1996,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -3036,17 +3120,17 @@
       "golden_queries": 2,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.0734,
-          "seconds_per_page": 0.07338,
-          "peak_python_bytes": 365117,
+          "seconds": 0.0903,
+          "seconds_per_page": 0.09026,
+          "peak_python_bytes": 379421,
           "pages": 1,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 4.2814,
-          "seconds_per_page": 4.28135,
-          "peak_python_bytes": 587200,
+          "seconds": 3.3097,
+          "seconds_per_page": 3.30966,
+          "peak_python_bytes": 598454,
           "pages": 1,
           "json_bytes": 1702,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -3144,7 +3228,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.75,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -3184,9 +3275,9 @@
             }
           },
           "performance": {
-            "seconds": 0.0734,
-            "seconds_per_page": 0.07338,
-            "peak_python_bytes": 365117,
+            "seconds": 0.0903,
+            "seconds_per_page": 0.09026,
+            "peak_python_bytes": 379421,
             "pages": 1,
             "json_bytes": null,
             "java": null
@@ -3283,7 +3374,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.75,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -3323,9 +3421,9 @@
             }
           },
           "performance": {
-            "seconds": 4.2814,
-            "seconds_per_page": 4.28135,
-            "peak_python_bytes": 587200,
+            "seconds": 3.3097,
+            "seconds_per_page": 3.30966,
+            "peak_python_bytes": 598454,
             "pages": 1,
             "json_bytes": 1702,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -3372,17 +3470,17 @@
       "golden_queries": 2,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.1094,
-          "seconds_per_page": 0.05472,
-          "peak_python_bytes": 821358,
+          "seconds": 0.1841,
+          "seconds_per_page": 0.09207,
+          "peak_python_bytes": 788950,
           "pages": 2,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.7477,
-          "seconds_per_page": 1.37384,
-          "peak_python_bytes": 601226,
+          "seconds": 1.7555,
+          "seconds_per_page": 0.87774,
+          "peak_python_bytes": 600584,
           "pages": 2,
           "json_bytes": 2321,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -3485,7 +3583,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 1.0,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -3530,9 +3635,9 @@
             }
           },
           "performance": {
-            "seconds": 0.1094,
-            "seconds_per_page": 0.05472,
-            "peak_python_bytes": 821358,
+            "seconds": 0.1841,
+            "seconds_per_page": 0.09207,
+            "peak_python_bytes": 788950,
             "pages": 2,
             "json_bytes": null,
             "java": null
@@ -3633,7 +3738,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 1.0,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -3679,9 +3791,9 @@
             }
           },
           "performance": {
-            "seconds": 2.7477,
-            "seconds_per_page": 1.37384,
-            "peak_python_bytes": 601226,
+            "seconds": 1.7555,
+            "seconds_per_page": 0.87774,
+            "peak_python_bytes": 600584,
             "pages": 2,
             "json_bytes": 2321,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -3738,17 +3850,17 @@
       "golden_queries": 2,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.1502,
-          "seconds_per_page": 0.05005,
-          "peak_python_bytes": 551486,
+          "seconds": 0.1527,
+          "seconds_per_page": 0.05091,
+          "peak_python_bytes": 559191,
           "pages": 3,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.8921,
-          "seconds_per_page": 0.96405,
-          "peak_python_bytes": 603555,
+          "seconds": 1.6819,
+          "seconds_per_page": 0.56063,
+          "peak_python_bytes": 603561,
           "pages": 3,
           "json_bytes": 2452,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -3849,7 +3961,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 1.0,
               "source_local_success": null,
-              "cross_page_evidence_recovery": 0.0
+              "cross_page_evidence_recovery": 0.0,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -3889,9 +4008,9 @@
             }
           },
           "performance": {
-            "seconds": 0.1502,
-            "seconds_per_page": 0.05005,
-            "peak_python_bytes": 551486,
+            "seconds": 0.1527,
+            "seconds_per_page": 0.05091,
+            "peak_python_bytes": 559191,
             "pages": 3,
             "json_bytes": null,
             "java": null
@@ -3990,7 +4109,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 1.0,
               "source_local_success": null,
-              "cross_page_evidence_recovery": 0.0
+              "cross_page_evidence_recovery": 0.0,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -4030,9 +4156,9 @@
             }
           },
           "performance": {
-            "seconds": 2.8921,
-            "seconds_per_page": 0.96405,
-            "peak_python_bytes": 603555,
+            "seconds": 1.6819,
+            "seconds_per_page": 0.56063,
+            "peak_python_bytes": 603561,
             "pages": 3,
             "json_bytes": 2452,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -4108,17 +4234,17 @@
       "golden_queries": 1,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.1886,
-          "seconds_per_page": 0.06286,
-          "peak_python_bytes": 1245353,
+          "seconds": 0.3151,
+          "seconds_per_page": 0.10503,
+          "peak_python_bytes": 1289153,
           "pages": 3,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.5876,
-          "seconds_per_page": 0.86254,
-          "peak_python_bytes": 603099,
+          "seconds": 1.7789,
+          "seconds_per_page": 0.59297,
+          "peak_python_bytes": 603528,
           "pages": 3,
           "json_bytes": 1513,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -4216,7 +4342,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.8333,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 1,
@@ -4261,9 +4394,9 @@
             }
           },
           "performance": {
-            "seconds": 0.1886,
-            "seconds_per_page": 0.06286,
-            "peak_python_bytes": 1245353,
+            "seconds": 0.3151,
+            "seconds_per_page": 0.10503,
+            "peak_python_bytes": 1289153,
             "pages": 3,
             "json_bytes": null,
             "java": null
@@ -4359,7 +4492,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.6667,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 1,
@@ -4404,9 +4544,9 @@
             }
           },
           "performance": {
-            "seconds": 2.5876,
-            "seconds_per_page": 0.86254,
-            "peak_python_bytes": 603099,
+            "seconds": 1.7789,
+            "seconds_per_page": 0.59297,
+            "peak_python_bytes": 603528,
             "pages": 3,
             "json_bytes": 1513,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -4453,16 +4593,16 @@
       "golden_queries": 2,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.0999,
-          "seconds_per_page": 0.04997,
-          "peak_python_bytes": 411806,
+          "seconds": 0.0893,
+          "seconds_per_page": 0.04463,
+          "peak_python_bytes": 433047,
           "pages": 2,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 2.5527,
-          "seconds_per_page": 1.27635,
+          "seconds": 1.6513,
+          "seconds_per_page": 0.82565,
           "peak_python_bytes": 599748,
           "pages": 2,
           "json_bytes": 2109,
@@ -4564,7 +4704,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 1.0,
               "source_local_success": null,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -4609,9 +4756,9 @@
             }
           },
           "performance": {
-            "seconds": 0.0999,
-            "seconds_per_page": 0.04997,
-            "peak_python_bytes": 411806,
+            "seconds": 0.0893,
+            "seconds_per_page": 0.04463,
+            "peak_python_bytes": 433047,
             "pages": 2,
             "json_bytes": null,
             "java": null
@@ -4710,7 +4857,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 1.0,
               "source_local_success": null,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 2,
@@ -4755,8 +4909,8 @@
             }
           },
           "performance": {
-            "seconds": 2.5527,
-            "seconds_per_page": 1.27635,
+            "seconds": 1.6513,
+            "seconds_per_page": 0.82565,
             "peak_python_bytes": 599748,
             "pages": 2,
             "json_bytes": 2109,
@@ -4804,17 +4958,17 @@
       "golden_queries": 3,
       "performance": {
         "pdfplumber": {
-          "seconds": 0.1754,
-          "seconds_per_page": 0.08769,
-          "peak_python_bytes": 1474781,
+          "seconds": 0.2551,
+          "seconds_per_page": 0.12753,
+          "peak_python_bytes": 1420335,
           "pages": 2,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 3.2738,
-          "seconds_per_page": 1.63689,
-          "peak_python_bytes": 611309,
+          "seconds": 1.826,
+          "seconds_per_page": 0.91299,
+          "peak_python_bytes": 611205,
           "pages": 2,
           "json_bytes": 8706,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -4915,32 +5069,38 @@
               "recall_at_k": 0.3333,
               "rule_retrieval_recall": 0.3333,
               "mrr": 0.3333,
-              "premise_retrieval_recall": 0.0,
+              "premise_retrieval_recall": 1.0,
               "irrelevant_evidence_ratio": 0.8333,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": 1.0,
+              "premise_lexical_hit_rate": 1.0,
+              "premise_source_local_hit_rate": 1.0,
+              "premise_closure_success_rate": 1.0,
+              "query_local_compilation_success_rate": 1.0,
+              "executable_rule_recovery_rate": 1.0,
+              "derived_claim_rate": 1.0
             },
             "decision": {
               "queries_total": 3,
-              "answerable_with_evidence_rate": 0.6667,
-              "false_abstention_rate": 0.3333,
+              "answerable_with_evidence_rate": 1.0,
+              "false_abstention_rate": 0.0,
               "unsupported_hallucination_rate": 0.0,
-              "deterministic_decision_rate": 0.0,
+              "deterministic_decision_rate": 1.0,
               "executable_queries": 1,
               "answer_counts": {
-                "AbstainedIncorrectly": 1,
-                "Correct": 2
+                "Correct": 3
               },
               "answer_accuracy": 1.0,
-              "correct_rate": 0.6667,
+              "correct_rate": 1.0,
               "_executable_query_ids": [
                 "q-atpco-match"
               ]
             },
             "consistency": {
               "runs_per_query": 100,
-              "queries": 0,
-              "consistency_rate": null
+              "queries": 1,
+              "consistency_rate": 1.0
             }
           },
           "matches": {
@@ -4971,9 +5131,9 @@
             }
           },
           "performance": {
-            "seconds": 0.1754,
-            "seconds_per_page": 0.08769,
-            "peak_python_bytes": 1474781,
+            "seconds": 0.2551,
+            "seconds_per_page": 0.12753,
+            "peak_python_bytes": 1420335,
             "pages": 2,
             "json_bytes": null,
             "java": null
@@ -5072,32 +5232,38 @@
               "recall_at_k": 0.0,
               "rule_retrieval_recall": 0.0,
               "mrr": 0.0,
-              "premise_retrieval_recall": 0.0,
+              "premise_retrieval_recall": 1.0,
               "irrelevant_evidence_ratio": null,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": 1.0,
+              "premise_lexical_hit_rate": 1.0,
+              "premise_source_local_hit_rate": 1.0,
+              "premise_closure_success_rate": 1.0,
+              "query_local_compilation_success_rate": 1.0,
+              "executable_rule_recovery_rate": 1.0,
+              "derived_claim_rate": 1.0
             },
             "decision": {
               "queries_total": 3,
-              "answerable_with_evidence_rate": 0.6667,
-              "false_abstention_rate": 0.3333,
+              "answerable_with_evidence_rate": 1.0,
+              "false_abstention_rate": 0.0,
               "unsupported_hallucination_rate": 0.0,
-              "deterministic_decision_rate": 0.0,
+              "deterministic_decision_rate": 1.0,
               "executable_queries": 1,
               "answer_counts": {
-                "AbstainedIncorrectly": 1,
-                "Correct": 2
+                "Correct": 3
               },
               "answer_accuracy": 1.0,
-              "correct_rate": 0.6667,
+              "correct_rate": 1.0,
               "_executable_query_ids": [
                 "q-atpco-match"
               ]
             },
             "consistency": {
               "runs_per_query": 100,
-              "queries": 0,
-              "consistency_rate": null
+              "queries": 1,
+              "consistency_rate": 1.0
             }
           },
           "matches": {
@@ -5128,9 +5294,9 @@
             }
           },
           "performance": {
-            "seconds": 3.2738,
-            "seconds_per_page": 1.63689,
-            "peak_python_bytes": 611309,
+            "seconds": 1.826,
+            "seconds_per_page": 0.91299,
+            "peak_python_bytes": 611205,
             "pages": 2,
             "json_bytes": 8706,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -5140,8 +5306,8 @@
       "errors": {},
       "status": "ok",
       "kcs": {
-        "pdfplumber": 0.5806,
-        "opendataloader": 0.5708
+        "pdfplumber": 0.6306,
+        "opendataloader": 0.6208
       },
       "diff": {
         "schema": "zent.knowledge_diff.1",
@@ -5175,7 +5341,7 @@
             {
               "kind": "canonical_rule",
               "text": "The ! or & indicate a match to any alphanumeric character in that position of the fare class. When using special characters ! or &, a fare class must contain at",
-              "object_id": "rule:893f2e36fc3151e3929f84dd",
+              "object_id": "rule:2d3377a2003047f3f1e3313f",
               "semantic_type": "rule",
               "side": "b"
             },
@@ -5229,17 +5395,17 @@
       "golden_queries": 6,
       "performance": {
         "pdfplumber": {
-          "seconds": 14.6528,
-          "seconds_per_page": 0.12211,
-          "peak_python_bytes": 64958459,
+          "seconds": 14.6759,
+          "seconds_per_page": 0.1223,
+          "peak_python_bytes": 64714623,
           "pages": 120,
           "json_bytes": null,
           "java": null
         },
         "opendataloader": {
-          "seconds": 7.6817,
-          "seconds_per_page": 0.06401,
-          "peak_python_bytes": 3193132,
+          "seconds": 4.1554,
+          "seconds_per_page": 0.03463,
+          "peak_python_bytes": 3175021,
           "pages": 120,
           "json_bytes": 369938,
           "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -5339,7 +5505,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.9861,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 6,
@@ -6714,9 +6887,9 @@
             }
           },
           "performance": {
-            "seconds": 14.6528,
-            "seconds_per_page": 0.12211,
-            "peak_python_bytes": 64958459,
+            "seconds": 14.6759,
+            "seconds_per_page": 0.1223,
+            "peak_python_bytes": 64714623,
             "pages": 120,
             "json_bytes": null,
             "java": null
@@ -6816,7 +6989,14 @@
               "premise_retrieval_recall": null,
               "irrelevant_evidence_ratio": 0.9653,
               "source_local_success": 1.0,
-              "cross_page_evidence_recovery": null
+              "cross_page_evidence_recovery": null,
+              "premise_exact_hit_rate": null,
+              "premise_lexical_hit_rate": null,
+              "premise_source_local_hit_rate": null,
+              "premise_closure_success_rate": null,
+              "query_local_compilation_success_rate": null,
+              "executable_rule_recovery_rate": null,
+              "derived_claim_rate": null
             },
             "decision": {
               "queries_total": 6,
@@ -8191,9 +8371,9 @@
             }
           },
           "performance": {
-            "seconds": 7.6817,
-            "seconds_per_page": 0.06401,
-            "peak_python_bytes": 3193132,
+            "seconds": 4.1554,
+            "seconds_per_page": 0.03463,
+            "peak_python_bytes": 3175021,
             "pages": 120,
             "json_bytes": 369938,
             "java": "C:\\Users\\ppimentel\\AppData\\Local\\zent\\tools\\jre17\\jdk-17.0.20.1+1-jre\\bin\\java.exe"
@@ -9517,29 +9697,36 @@
           "mrr": 0.30965,
           "irrelevant_evidence_ratio": 0.896058,
           "source_local_success": 1.0,
-          "premise_retrieval_recall": 0.0,
+          "premise_retrieval_recall": 0.5,
+          "premise_exact_hit_rate": 1.0,
+          "premise_lexical_hit_rate": 0.5,
+          "premise_source_local_hit_rate": 1.0,
+          "premise_closure_success_rate": 0.5,
+          "query_local_compilation_success_rate": 1.0,
+          "executable_rule_recovery_rate": 1.0,
+          "derived_claim_rate": 0.5,
           "cross_page_evidence_recovery": 0.0
         },
         "decision": {
           "queries_total": 2.923077,
-          "answerable_with_evidence_rate": 0.974362,
-          "false_abstention_rate": 0.044869,
+          "answerable_with_evidence_rate": 1.0,
+          "false_abstention_rate": 0.019231,
           "unsupported_hallucination_rate": 0.0,
           "executable_queries": 0.153846,
           "answer_accuracy": 1.0,
-          "correct_rate": 0.955131,
-          "deterministic_decision_rate": 0.0
+          "correct_rate": 0.980769,
+          "deterministic_decision_rate": 0.5
         },
         "consistency": {
           "runs_per_query": 100.0,
-          "queries": 0.076923,
+          "queries": 0.153846,
           "consistency_rate": 1.0
         }
       },
       "performance": {
-        "seconds": 1.414477,
-        "seconds_per_page": 0.068878,
-        "peak_python_bytes": 6783166.769231,
+        "seconds": 1.390508,
+        "seconds_per_page": 0.081674,
+        "peak_python_bytes": 6773211.692308,
         "pages": 13.307692
       }
     },
@@ -9627,28 +9814,36 @@
           "mrr": 0.351742,
           "irrelevant_evidence_ratio": 0.849755,
           "source_local_success": 1.0,
-          "premise_retrieval_recall": 0.0,
+          "premise_retrieval_recall": 0.5,
+          "premise_exact_hit_rate": 1.0,
+          "premise_lexical_hit_rate": 0.5,
+          "premise_source_local_hit_rate": 1.0,
+          "premise_closure_success_rate": 0.5,
+          "query_local_compilation_success_rate": 1.0,
+          "executable_rule_recovery_rate": 1.0,
+          "derived_claim_rate": 0.5,
           "cross_page_evidence_recovery": 0.0
         },
         "decision": {
           "queries_total": 2.923077,
-          "answerable_with_evidence_rate": 0.916669,
-          "false_abstention_rate": 0.083331,
+          "answerable_with_evidence_rate": 0.961538,
+          "false_abstention_rate": 0.057692,
           "unsupported_hallucination_rate": 0.0,
           "executable_queries": 0.153846,
           "answer_accuracy": 1.0,
-          "correct_rate": 0.916669,
-          "deterministic_decision_rate": 0.0
+          "correct_rate": 0.942308,
+          "deterministic_decision_rate": 0.5
         },
         "consistency": {
           "runs_per_query": 100.0,
-          "queries": 0.0
+          "queries": 0.153846,
+          "consistency_rate": 1.0
         }
       },
       "performance": {
-        "seconds": 3.585038,
-        "seconds_per_page": 1.197002,
-        "peak_python_bytes": 868698.692308,
+        "seconds": 2.359908,
+        "seconds_per_page": 0.81645,
+        "peak_python_bytes": 868439.076923,
         "pages": 13.307692,
         "json_bytes": 40636.923077
       }
@@ -10145,8 +10340,8 @@
       "path": "runtime.retrieval.premise_retrieval_recall",
       "higher_is_better": true,
       "values": {
-        "pdfplumber": 0.0,
-        "opendataloader": 0.0
+        "pdfplumber": 0.5,
+        "opendataloader": 0.5
       },
       "winner": "tie"
     },
@@ -10189,8 +10384,8 @@
       "path": "runtime.decision.answerable_with_evidence_rate",
       "higher_is_better": true,
       "values": {
-        "pdfplumber": 0.974362,
-        "opendataloader": 0.916669
+        "pdfplumber": 1.0,
+        "opendataloader": 0.961538
       },
       "winner": "pdfplumber"
     },
@@ -10200,8 +10395,8 @@
       "path": "runtime.decision.false_abstention_rate",
       "higher_is_better": false,
       "values": {
-        "pdfplumber": 0.044869,
-        "opendataloader": 0.083331
+        "pdfplumber": 0.019231,
+        "opendataloader": 0.057692
       },
       "winner": "pdfplumber"
     },
@@ -10233,8 +10428,8 @@
       "path": "runtime.decision.deterministic_decision_rate",
       "higher_is_better": true,
       "values": {
-        "pdfplumber": 0.0,
-        "opendataloader": 0.0
+        "pdfplumber": 0.5,
+        "opendataloader": 0.5
       },
       "winner": "tie"
     },
@@ -10245,9 +10440,9 @@
       "higher_is_better": true,
       "values": {
         "pdfplumber": 1.0,
-        "opendataloader": null
+        "opendataloader": 1.0
       },
-      "winner": "-"
+      "winner": "tie"
     },
     {
       "section": "PERFORMANCE",
@@ -10255,16 +10450,16 @@
       "path": "performance.seconds_per_page",
       "higher_is_better": false,
       "values": {
-        "pdfplumber": 0.068878,
-        "opendataloader": 1.197002
+        "pdfplumber": 0.081674,
+        "opendataloader": 0.81645
       },
       "winner": "pdfplumber"
     }
   ],
   "kcs": {
     "pdfplumber": {
-      "value": 0.7096,
-      "clamped": 0.7096,
+      "value": 0.7346,
+      "clamped": 0.7346,
       "weights": {
         "canonical_rule_recall": 0.25,
         "knowledge_recall": 0.1,
@@ -10290,19 +10485,19 @@
         "premise_coverage": 0.71875,
         "retrieval_recall": 0.388883,
         "answer_accuracy": 1.0,
-        "deterministic_decision": 0.0,
+        "deterministic_decision": 0.5,
         "provenance": 1.0,
         "structural_fidelity": 0.8072,
         "false_rule_penalty": 0.176383,
         "contradiction_penalty": 0.0,
         "fragmentation_penalty": 0.0,
         "hallucination_penalty": 0.0,
-        "performance_score": 0.9356
+        "performance_score": 0.9245
       }
     },
     "opendataloader": {
-      "value": 0.7493,
-      "clamped": 0.7493,
+      "value": 0.7743,
+      "clamped": 0.7743,
       "weights": {
         "canonical_rule_recall": 0.25,
         "knowledge_recall": 0.1,
@@ -10328,20 +10523,20 @@
         "premise_coverage": 0.71875,
         "retrieval_recall": 0.472217,
         "answer_accuracy": 1.0,
-        "deterministic_decision": 0.0,
+        "deterministic_decision": 0.5,
         "provenance": 1.0,
         "structural_fidelity": 0.8462,
         "false_rule_penalty": 0.083333,
         "contradiction_penalty": 0.0,
         "fragmentation_penalty": 0.0,
         "hallucination_penalty": 0.0,
-        "performance_score": 0.4552
+        "performance_score": 0.5505
       }
     }
   },
   "zent_score": {
     "pdfplumber": {
-      "value": 0.7116,
+      "value": 0.7364,
       "weights": {
         "canonical_rule_precision": 0.3,
         "canonical_rule_recall": 0.2,
@@ -10357,7 +10552,7 @@
         "hallucination_penalty": -0.2
       },
       "performance_viable": true,
-      "performance_seconds_per_page": 0.068878,
+      "performance_seconds_per_page": 0.081674,
       "components": {
         "canonical_rule_recall": 0.888892,
         "canonical_rule_precision": 0.823617,
@@ -10367,18 +10562,18 @@
         "premise_coverage": 0.71875,
         "retrieval_recall": 0.388883,
         "answer_accuracy": 1.0,
-        "deterministic_decision": 0.0,
+        "deterministic_decision": 0.5,
         "provenance": 1.0,
         "structural_fidelity": 0.8072,
         "false_rule_penalty": 0.176383,
         "contradiction_penalty": 0.0,
         "fragmentation_penalty": 0.0,
         "hallucination_penalty": 0.0,
-        "performance_score": 0.9356
+        "performance_score": 0.9245
       }
     },
     "opendataloader": {
-      "value": 0.7617,
+      "value": 0.7887,
       "weights": {
         "canonical_rule_precision": 0.3,
         "canonical_rule_recall": 0.2,
@@ -10394,7 +10589,7 @@
         "hallucination_penalty": -0.2
       },
       "performance_viable": true,
-      "performance_seconds_per_page": 1.197002,
+      "performance_seconds_per_page": 0.81645,
       "components": {
         "canonical_rule_recall": 0.861108,
         "canonical_rule_precision": 0.916667,
@@ -10404,14 +10599,14 @@
         "premise_coverage": 0.71875,
         "retrieval_recall": 0.472217,
         "answer_accuracy": 1.0,
-        "deterministic_decision": 0.0,
+        "deterministic_decision": 0.5,
         "provenance": 1.0,
         "structural_fidelity": 0.8462,
         "false_rule_penalty": 0.083333,
         "contradiction_penalty": 0.0,
         "fragmentation_penalty": 0.0,
         "hallucination_penalty": 0.0,
-        "performance_score": 0.4552
+        "performance_score": 0.5505
       }
     }
   },
@@ -10426,13 +10621,13 @@
       "premise_coverage_not_reduced": true,
       "false_abstentions_reduced": false,
       "hallucinations_not_increased": true,
-      "consistency_maintained": false,
+      "consistency_maintained": true,
       "provenance_not_worse": true
     },
     "performance_viable": true,
     "zent_score": {
       "pdfplumber": {
-        "value": 0.7116,
+        "value": 0.7364,
         "weights": {
           "canonical_rule_precision": 0.3,
           "canonical_rule_recall": 0.2,
@@ -10448,7 +10643,7 @@
           "hallucination_penalty": -0.2
         },
         "performance_viable": true,
-        "performance_seconds_per_page": 0.068878,
+        "performance_seconds_per_page": 0.081674,
         "components": {
           "canonical_rule_recall": 0.888892,
           "canonical_rule_precision": 0.823617,
@@ -10458,18 +10653,18 @@
           "premise_coverage": 0.71875,
           "retrieval_recall": 0.388883,
           "answer_accuracy": 1.0,
-          "deterministic_decision": 0.0,
+          "deterministic_decision": 0.5,
           "provenance": 1.0,
           "structural_fidelity": 0.8072,
           "false_rule_penalty": 0.176383,
           "contradiction_penalty": 0.0,
           "fragmentation_penalty": 0.0,
           "hallucination_penalty": 0.0,
-          "performance_score": 0.9356
+          "performance_score": 0.9245
         }
       },
       "opendataloader": {
-        "value": 0.7617,
+        "value": 0.7887,
         "weights": {
           "canonical_rule_precision": 0.3,
           "canonical_rule_recall": 0.2,
@@ -10485,7 +10680,7 @@
           "hallucination_penalty": -0.2
         },
         "performance_viable": true,
-        "performance_seconds_per_page": 1.197002,
+        "performance_seconds_per_page": 0.81645,
         "components": {
           "canonical_rule_recall": 0.861108,
           "canonical_rule_precision": 0.916667,
@@ -10495,14 +10690,14 @@
           "premise_coverage": 0.71875,
           "retrieval_recall": 0.472217,
           "answer_accuracy": 1.0,
-          "deterministic_decision": 0.0,
+          "deterministic_decision": 0.5,
           "provenance": 1.0,
           "structural_fidelity": 0.8462,
           "false_rule_penalty": 0.083333,
           "contradiction_penalty": 0.0,
           "fragmentation_penalty": 0.0,
           "hallucination_penalty": 0.0,
-          "performance_score": 0.4552
+          "performance_score": 0.5505
         }
       }
     }
