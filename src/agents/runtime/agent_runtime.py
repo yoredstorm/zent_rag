@@ -2671,11 +2671,12 @@ class AgentRuntime:
                     result.decision_envelope = finalized.envelope.to_public_dict()
                     result.steps.append(
                         {
-                            "type": "finalize_authoritative_answer",
+                            "type": "final_authority_lock",
                             "authoritative": True,
                             "operation": finalized.envelope.operation,
                             "result": finalized.envelope.normalized_result,
                             "overridden": finalized.overridden,
+                            "lock_action": finalized.lock_action,
                             "detail": (
                                 "la decisión mostrada proviene del "
                                 "DecisionEnvelope inmutable"

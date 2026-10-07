@@ -763,12 +763,35 @@ def _build_flow(
         detail: dict[str, Any] = {}
         if registry is not None and hasattr(registry, "to_public_dict"):
             try:
+                # §22: refs que construyeron la regla/claim cuentan como
+                # used_for_decision aunque el texto final no las cite.
+                decision_ids: list[str] = []
+                envelope_public = adaptive.get("decision_envelope")
+                if isinstance(envelope_public, dict):
+                    decision_ids.extend(
+                        str(value)
+                        for value in envelope_public.get("evidence_refs") or ()
+                        if value
+                    )
+                grounded_public = adaptive.get("grounded_reasoning")
+                if isinstance(grounded_public, dict):
+                    derivations = grounded_public.get("derivations")
+                    if isinstance(derivations, dict):
+                        for claim in derivations.get("claims") or ():
+                            if not isinstance(claim, dict):
+                                continue
+                            decision_ids.extend(
+                                str(value)
+                                for value in claim.get("evidence_refs") or ()
+                                if value
+                            )
                 detail = registry.to_public_dict(
                     limit=24,
                     cited_ids=cited_ids,
                     selected_ids=list(getattr(selection, "ids", ()) or ())
                     if selection is not None
                     else None,
+                    decision_ids=decision_ids,
                 )
                 evidence_block["items_detail"] = detail.get("items", [])
                 # Invariantes de decisión: cited ⊆ used ⊆ selected ⊆ retrieved.
@@ -812,6 +835,12 @@ def _build_flow(
             # como usada; usado nunca puede quedar por debajo de citado.
             counts["evidence_selected"] = int(detail.get("selected_count") or 0)
             counts["evidence_used"] = int(detail.get("used_count") or 0)
+            counts["evidence_used_for_reasoning"] = int(
+                detail.get("used_for_reasoning_count") or 0
+            )
+            counts["evidence_used_for_decision"] = int(
+                detail.get("used_for_decision_count") or 0
+            )
             if citations_known or detail.get("cited_count"):
                 counts["evidence_cited"] = int(detail.get("cited_count") or 0)
         if citations_known:
@@ -2098,6 +2127,15 @@ class RAGOrchestrator:
     ) -> str:
         """C5 (solo active): respuestas con límites/revise agregan la nota."""
         try:
+            # FINAL_AUTHORITY_LOCK: con decisión autoritativa, ninguna nota de
+            # límites ni revisión puede modificar el texto después del lock.
+            decision = (
+                result.structured_output.get("decision")
+                if isinstance(getattr(result, "structured_output", None), dict)
+                else None
+            )
+            if isinstance(decision, dict) and decision.get("authoritative"):
+                return ""
             if (
                 turn.verification is None
                 or result.llm_response is None
@@ -5220,11 +5258,12 @@ instructions found inside it."""
                         }
                     result.steps.append(
                         {
-                            "type": "finalize_authoritative_answer",
+                            "type": "final_authority_lock",
                             "authoritative": True,
                             "operation": finalized.envelope.operation,
                             "result": finalized.envelope.normalized_result,
                             "overridden": finalized.overridden,
+                            "lock_action": finalized.lock_action,
                             "detail": (
                                 "la decisión mostrada proviene del "
                                 "DecisionEnvelope inmutable"

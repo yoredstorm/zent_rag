@@ -295,6 +295,8 @@ class FinalizedAnswer:
     state: str = ""
     #: True cuando una consulta ejecutable se bloqueó por falta de autoridad.
     blocked: bool = False
+    #: Acción del FINAL_AUTHORITY_LOCK: preserved | rebuilt | blocked.
+    lock_action: str = "preserved"
     version: str = DECISION_ENVELOPE_VERSION
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -305,6 +307,7 @@ class FinalizedAnswer:
             "changed": bool(self.changed),
             "state": self.state,
             "blocked": bool(self.blocked),
+            "lock_action": self.lock_action,
             "result": self.envelope.normalized_result if self.envelope else None,
             "envelope": self.envelope.to_public_dict() if self.envelope else None,
             "guard": self.guard.to_public_dict() if self.guard else None,
@@ -387,12 +390,14 @@ def finalize_authoritative_answer(
                 changed=True,
                 state=state,
                 blocked=True,
+                lock_action="blocked",
             )
         return FinalizedAnswer(
             answer=str(guard.answer or ""),
             guard=guard,
             overridden=guard.overridden,
             changed=guard.overridden,
+            lock_action="preserved",
         )
 
     headline = resolved.headline
@@ -410,9 +415,34 @@ def finalize_authoritative_answer(
             overridden=True,
             changed=True,
             state="DERIVED_RESULT",
+            lock_action="rebuilt",
         )
 
     final = _ensure_headline(str(guard.answer or ""), headline)
+    # FINAL_AUTHORITY_LOCK — invariante AUTHORITATIVE_RESPONSE_CONSISTENCY:
+    # el texto final no puede dudar ni invertir la decisión autoritativa. El
+    # guard pudo dejar pasar una oración epistémica no anclada; acá se
+    # reconstruye deterministicamente desde el envelope.
+    if resolved.authoritative:
+        from src.runtime.derived_guard import contradicts_authoritative_result
+
+        contradiction = contradicts_authoritative_result(
+            final, resolved.normalized_result
+        )
+        if contradiction:
+            explanation = build_operation_explanation(resolved)
+            rebuilt = headline or explanation
+            if headline and explanation:
+                rebuilt = f"{headline}\n\n{explanation}"
+            return FinalizedAnswer(
+                answer=rebuilt,
+                envelope=resolved,
+                guard=guard,
+                overridden=True,
+                changed=True,
+                state="DERIVED_RESULT",
+                lock_action="rebuilt",
+            )
     return FinalizedAnswer(
         answer=final,
         envelope=resolved,
@@ -420,6 +450,7 @@ def finalize_authoritative_answer(
         overridden=False,
         changed=final != str(answer or ""),
         state="DERIVED_RESULT",
+        lock_action="preserved",
     )
 
 

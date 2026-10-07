@@ -64,6 +64,46 @@ _NEGATIVE_PHRASES: tuple[str, ...] = (
     "fuera del",
 )
 
+#: Incertidumbre epistémica ES/EN. Con autoridad determinista, dudar de la
+#: MISMA decisión (requiere otra premisa, falta evidencia, no es evaluable)
+#: contradice el resultado tanto como un NO_MATCH explícito.
+_EPISTEMIC_UNCERTAINTY_PHRASES: tuple[str, ...] = (
+    "no se puede determinar",
+    "no puedo determinar",
+    "no se puede determinarlo",
+    "no puedo determinarlo",
+    "no es posible determinar",
+    "no puedo concluir",
+    "no se puede concluir",
+    "no es evaluable",
+    "no se puede evaluar",
+    "evidencia insuficiente",
+    "información insuficiente",
+    "informacion insuficiente",
+    "falta evidencia",
+    "falta una premisa",
+    "falta la premisa",
+    "faltan premisas",
+    "falta la regla",
+    "falta la definición",
+    "falta la definicion",
+    "no hay una regla documental",
+    "las fuentes no permiten determinar",
+    "no alcanza para determinar",
+    "cannot determine",
+    "can not determine",
+    "unable to determine",
+    "cannot be determined",
+    "insufficient evidence",
+    "missing premise",
+    "missing premises",
+    "not enough information",
+    "cannot conclude",
+    "cannot be concluded",
+    "not evaluable",
+    "unable to conclude",
+)
+
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+|\n+")
 _VALUE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-&*#%?.]{2,}")
 _NUMBER_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
@@ -150,8 +190,24 @@ def _sentence_has_anchor(sentence: str, anchors: Sequence[str]) -> bool:
     return any(anchor in lowered for anchor in anchors if anchor)
 
 
+def contains_epistemic_uncertainty(sentence: str) -> str:
+    """Frase de incertidumbre epistémica en la oración ('' si no hay)."""
+    lowered = str(sentence or "").lower()
+    return next(
+        (phrase for phrase in _EPISTEMIC_UNCERTAINTY_PHRASES if phrase in lowered),
+        "",
+    )
+
+
 def _detect_contradiction(sentence: str, polarity: str, anchors: Sequence[str]) -> str:
-    lowered = sentence.lower()
+    # «NO_MATCH»/«no_match» no debe leerse como señal positiva «match».
+    lowered = sentence.lower().replace("_", " ")
+    # Prioridad 1: incertidumbre epistémica. «no se puede determinar si cumple»
+    # NO es una señal positiva: con autoridad determinista, dudar de la misma
+    # decisión la contradice.
+    if contains_epistemic_uncertainty(sentence):
+        return sentence
+    # Prioridad 2: negación explícita. Prioridad 3: afirmación explícita.
     positive_hit = next((phrase for phrase in _POSITIVE_PHRASES if phrase in lowered), "")
     negative_hit = next((phrase for phrase in _NEGATIVE_PHRASES if phrase in lowered), "")
     if not positive_hit and not negative_hit:
@@ -290,9 +346,39 @@ def deterministic_claims(claims: Iterable[Any]) -> list[dict]:
     return found
 
 
+def contradicts_authoritative_result(answer: str, result: Any) -> str:
+    """Primera oración que contradice el resultado autoritativo ('' si no hay).
+
+    Invariante AUTHORITATIVE_RESPONSE_CONSISTENCY: con autoridad determinista,
+    el texto final no puede dudar (incertidumbre epistémica) ni invertir la
+    polaridad del resultado. Genérico: no conoce dominios.
+    """
+    polarity = _claim_result_polarity(result)
+    for sentence in _sentences(answer):
+        # «NO_MATCH»/«no_match» no debe leerse como señal positiva «match».
+        lowered = sentence.lower().replace("_", " ")
+        if contains_epistemic_uncertainty(sentence):
+            return sentence
+        if not polarity:
+            continue
+        negative_hit = next(
+            (phrase for phrase in _NEGATIVE_PHRASES if phrase in lowered), ""
+        )
+        positive_hit = next(
+            (phrase for phrase in _POSITIVE_PHRASES if phrase in lowered), ""
+        )
+        if polarity == "positive" and negative_hit:
+            return sentence
+        if polarity == "negative" and positive_hit and not negative_hit:
+            return sentence
+    return ""
+
+
 __all__ = [
     "DERIVED_GUARD_VERSION",
     "DerivedGuardOutcome",
+    "contains_epistemic_uncertainty",
+    "contradicts_authoritative_result",
     "deterministic_claims",
     "enforce_derived_result",
 ]
