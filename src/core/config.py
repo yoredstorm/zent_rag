@@ -1386,6 +1386,13 @@ class Settings(BaseSettings):
             "finalizar (una revision maximo). shadow = solo observa."
         ),
     )
+    RUNTIME_NARRATIVE_FAST_PATH: Literal["off", "on"] = Field(
+        default="on",
+        description=(
+            "on = consultas informacionales puras usan una busqueda por codigo "
+            "y una generacion (sin loop ReAct). off = loop normal con tools."
+        ),
+    )
     # -------------------------------------------------------------------------
     # Turn intent (capa conversacional: docs/architecture/turn-intent.md)
     # -------------------------------------------------------------------------

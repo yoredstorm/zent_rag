@@ -28,6 +28,15 @@ _FOOTER_RE = re.compile(
 _META_RE = re.compile(
     r"(?im)^(?:parser_engine|parser_version|bbox|chunk_id|evidence_id)\s*[:=].*$"
 )
+# Cortesía al arranque («buenas, ¿qué significa X?»): el mensaje completo no es
+# la consulta. El modelo reformula la pregunta material antes de buscar.
+_CONVERSATIONAL_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"hola|buenas(?:\s+(?:tardes|noches|d[ií]as))?|buenos\s+d[ií]as|"
+    r"hey|hi|hello|saludos|qu[eé]\s+tal|gracias"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _SOURCE_IDENTITY_KEYS = (
     "organization_id",
@@ -84,6 +93,19 @@ def narrative_route(question: str) -> NarrativeRoute:
         and not classification.scenario_payload
         and not classification.is_complex
     ):
+        if _CONVERSATIONAL_PREFIX_RE.search(question or ""):
+            # La cortesía no es la consulta: sin ruta narrativa, el agente
+            # decide la query material (la intención material manda).
+            return NarrativeRoute(
+                route=ROUTE_AGENT,
+                eligible=False,
+                query_mode="INFORMATIONAL",
+                shape=shape,
+                blueprint="conversational_knowledge",
+                reason="conversational_prefix",
+                jev="skip",
+                llm_calls=0,
+            )
         blueprint = (
             "definition_explanation"
             if re.search(r"\bqu[eé]\s+(?:es|significa)\b", question or "", re.I)

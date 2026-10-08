@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from src.runtime.narrative_fast_path import (
     NARRATIVE_FAST_PATH,
+    ROUTE_AGENT,
     ROUTE_DETERMINISTIC,
     ROUTE_SCENARIO,
     completeness_for_finish,
@@ -49,6 +50,15 @@ def test_scenario_and_executable_are_not_narrative() -> None:
 def test_dates_do_not_force_jev() -> None:
     assert jev_needed() is False
     assert jev_needed(conflicts=1) is True
+
+
+def test_conversational_prefix_keeps_agent_route() -> None:
+    route = narrative_route("buenas, qué significa byte 105?")
+    assert route.eligible is False
+    assert route.route == ROUTE_AGENT
+    assert route.reason == "conversational_prefix"
+    plain = narrative_route("qué significa byte 105?")
+    assert plain.eligible is True
 
 
 def test_context_drops_footer_and_duplicate_heading() -> None:

@@ -194,6 +194,9 @@ def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "RUNTIME_AGENT_JEV_LOOP", "off")
     monkeypatch.setattr(settings, "RUNTIME_ANSWER_GATE", "on")
     monkeypatch.setattr(settings, "RUNTIME_TURN_INTENT", "on")
+    # Este archivo fija el contrato del loop ReAct (la query la decide el LLM);
+    # la ruta narrativa tiene su propio archivo de tests.
+    monkeypatch.setattr(settings, "RUNTIME_NARRATIVE_FAST_PATH", "off")
 
 
 async def _run(
