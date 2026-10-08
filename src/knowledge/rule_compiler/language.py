@@ -531,7 +531,7 @@ def analyze_statement(statement: str, *, evidence_id: str) -> StatementAnalysis:
     # caracteres de cita NUNCA son símbolo (evita capturar `”` como símbolo).
     symbol_definitions = list(
         re.finditer(
-            r"[\"'«“(\[]?\s*(?P<symbol>[&*?%#$@!~^]|[A-Z])\s*[\"'»”) \]]?\s*"
+            r"[\"'«“(\[]?\s*(?P<symbol>[^\w\s\"'«»“”()\[\]]|[A-Z])\s*[\"'»”) \]]?\s*"
             r"(?P<verb>"
             r"can\s+be\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
             r"may\s+be\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
