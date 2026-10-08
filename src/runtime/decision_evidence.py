@@ -107,7 +107,7 @@ class DecisionEvidenceResolver:
         if self._store is not None:
             return self._store
         try:
-            from src.api import deps as deps_module
+            from src.runtime import dependencies as deps_module
 
             self._store = deps_module.get_vector_store()
         except Exception as exc:  # noqa: BLE001 — sin store se declara unresolved

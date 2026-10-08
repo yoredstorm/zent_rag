@@ -27,17 +27,14 @@ from src.core.ports import (
     ConnectorRepository,
     DeploymentRepository,
     DocumentRegistryRepository,
-    EmbeddingProvider,
     IngestionJobRepository,
     KnowledgeBaseRepository,
-    LLMProvider,
     MembershipRepository,
     OrganizationRepository,
     ProjectRepository,
     SourceRepository,
     SyncStateRepository,
     UserRepository,
-    VectorStore,
     WorkspaceRepository,
 )
 from src.infrastructure.observability.logging_config import get_logger
@@ -61,8 +58,15 @@ from src.infrastructure.postgres.relational_db import (
     PostgresUserRepository,
     PostgresWorkspaceRepository,
 )
-from src.infrastructure.qdrant.vector_store import QdrantVectorStore
 from src.infrastructure.redis.cache import RedisCache
+
+# Factories compartidas con runtime (las capas nuevas no importan src.api).
+from src.runtime.dependencies import (  # noqa: F401 (re-export FastAPI)
+    get_embedding_provider,
+    get_knowledge_retriever,
+    get_llm_provider,
+    get_vector_store,
+)
 
 logger = get_logger(__name__)
 
@@ -88,9 +92,6 @@ _job_repo: IngestionJobRepository | None = None
 _sync_state_repo: SyncStateRepository | None = None
 _doc_registry_repo: DocumentRegistryRepository | None = None
 _workspace_repo: WorkspaceRepository | None = None
-_vector_store: VectorStore | None = None
-_llm_provider: LLMProvider | None = None
-_embedding_provider: EmbeddingProvider | None = None
 _cache_provider: CacheProvider | None = None
 _orchestrator: RAGOrchestrator | None = None
 _decision_engine = None
@@ -566,31 +567,6 @@ def get_tabular_query_service():
     return _tabular_query_service
 
 
-def get_vector_store() -> VectorStore:
-    global _vector_store
-    if _vector_store is None:
-        _vector_store = QdrantVectorStore()
-    return _vector_store
-
-
-def get_llm_provider() -> LLMProvider:
-    global _llm_provider
-    if _llm_provider is None:
-        from src.infrastructure.llm.provider import LiteLLMProvider
-
-        _llm_provider = LiteLLMProvider()
-    return _llm_provider
-
-
-def get_embedding_provider() -> EmbeddingProvider:
-    global _embedding_provider
-    if _embedding_provider is None:
-        from src.infrastructure.llm.provider import LiteLLMProvider
-
-        _embedding_provider = LiteLLMProvider()
-    return _embedding_provider
-
-
 def get_cache_provider() -> CacheProvider:
     global _cache_provider
     if _cache_provider is None:
@@ -599,41 +575,6 @@ def get_cache_provider() -> CacheProvider:
 
 
 _retriever: object | None = None
-_structured_retriever: object | None = None
-
-
-def get_knowledge_retriever():
-    """Retriever canónico del Knowledge OS.
-
-    Búsqueda multi-representación sobre el MISMO índice (denso + léxico +
-    híbrido) con reranker y ensamblado parent/child desde el árbol
-    estructurado. Es el único camino de retrieval productivo.
-    """
-    global _structured_retriever
-    if _structured_retriever is None:
-        from src.rag.retrieval.builders import ContextBuilder
-        from src.rag.retrieval.structured import StructuredRetriever
-
-        settings = get_settings()
-        vector_store = get_vector_store()
-        reranker = None
-        if settings.RAG_RERANK_ENABLED:
-            from src.rag.reranking import base as rerank_base
-            from src.rag.reranking.cross_encoder import CrossEncoderReranker  # noqa: F401 (register)
-            from src.rag.reranking.reranker import LLMReranker  # noqa: F401 (register)
-
-            reranker = rerank_base.get_reranker(
-                settings.RAG_RERANKER or "llm",
-                llm_provider=get_llm_provider(),
-            )
-        _structured_retriever = StructuredRetriever(
-            vector_store=vector_store,
-            lexical_store=vector_store,
-            hybrid_store=vector_store,
-            reranker=reranker,
-            context_builder=ContextBuilder(max_context_tokens=8000),
-        )
-    return _structured_retriever
 
 
 def get_retriever():

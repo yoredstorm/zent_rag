@@ -470,7 +470,7 @@ def test_exact_needles_keep_symbols() -> None:
 
 
 def test_factory_returns_none_without_deps(monkeypatch) -> None:
-    import src.api.deps as deps
+    from src.runtime import dependencies as deps
 
     monkeypatch.setattr(deps, "get_knowledge_retriever", lambda: (_ for _ in ()).throw(RuntimeError("no deps")))
     assert build_premise_evidence_search(ORG) is None

@@ -31,7 +31,7 @@ def test_build_parity_detects_sha_mismatch() -> None:
 
 
 def test_factory_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.api import deps
+    from src.runtime import dependencies as deps
 
     def _boom() -> object:
         raise RuntimeError("retriever no disponible")
@@ -47,7 +47,7 @@ def test_factory_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_healthy_deps_build_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.api import deps
+    from src.runtime import dependencies as deps
 
     class _Fake:
         pass

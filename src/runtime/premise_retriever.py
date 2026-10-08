@@ -513,7 +513,7 @@ def build_premise_evidence_search_result(
         if components[key] is not None:
             continue
         try:
-            from src.api import deps as deps_module
+            from src.runtime import dependencies as deps_module
 
             components[key] = getattr(deps_module, getter_name)()
         except Exception as exc:  # noqa: BLE001 — se reporta, no se oculta
