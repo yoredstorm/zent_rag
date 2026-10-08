@@ -91,6 +91,162 @@ def _fake_retrieval():
 
 class TestPremiseClosureStage:
     @pytest.mark.asyncio
+    async def test_pattern_premises_recover_grammar_missing_from_evidence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Caso vivo: reglas persistidas no ejecutables (EXAMPLE) + evidencia del
+        turno SIN gramática `&`. El grounding solo reporta `rule:*` (no
+        buscable); las premisas del patrón siembran la closure dirigida y la
+        gramática se recupera: POSITIONAL_MATCH/MATCH."""
+        from src.core.domain.rule_semantics import MatchOperator, VerificationState
+        from src.knowledge.rule_compiler.model import CanonicalRule, RuleProperty
+
+        rule = CanonicalRule(
+            rule_id="rule:example-fare-family",
+            statement="Example 1: W&C&M can be used to match WBCDM (no definition).",
+            properties={
+                "matching.symbol.&": RuleProperty(
+                    name="matching.symbol.&",
+                    value="example text",
+                    state=VerificationState.SUPPORTED.value,
+                    evidence=["ev:ex"],
+                ),
+                "matching.operator": RuleProperty(
+                    name="matching.operator",
+                    value=MatchOperator.POSITIONAL.value,
+                    state=VerificationState.SUPPORTED.value,
+                    evidence=["ev:ex"],
+                ),
+            },
+            verification_state=VerificationState.SUPPORTED.value,
+            executable=False,
+        )
+
+        async def fake_retrieve(organization_id, question, evidence_items=(), **kwargs):
+            del organization_id, question, evidence_items, kwargs
+            return rule_retrieval.RuleRetrievalResult(
+                strategy="canonical_first",
+                compatibility_applied=True,
+                compatible_rules=[rule],
+                supported_rules=[rule],
+            )
+
+        monkeypatch.setattr(
+            rule_retrieval, "retrieve_canonical_rules", fake_retrieve
+        )
+
+        calls: list[str] = []
+
+        async def evidence_search(query, scope, limit):
+            del scope, limit
+            calls.append(query)
+            lowered = query.lower()
+            if "length" in lowered or "longitud" in lowered:
+                return [_Item(LENGTH_SENTENCE, "ev:length")]
+            if "&" in query or "symbol" in lowered or "definition" in lowered:
+                return [_Item(SYMBOL_SENTENCE, "ev:symbol")]
+            return []
+
+        footnote = _Item(
+            "The matching of the footnote field on the Footnote Record 2 is "
+            "done against the Fare and is an exact match.",
+            "ev:footnote",
+        )
+
+        prep = await prepare_derived_authority(
+            organization_id=ORG,
+            question=QUESTION,
+            evidence_items=[footnote],
+            enable_premise_closure=True,
+            premise_evidence_search=evidence_search,
+        )
+
+        assert prep.premise_closure is not None, (
+            "las premisas del patrón deben sembrar la closure aunque el "
+            "grounding solo reporte rule:*"
+        )
+        assert prep.premise_closure.termination == "SATISFIED"
+        assert prep.has_authority
+        assert prep.authoritative_envelope is not None
+        assert prep.authoritative_envelope.operation == "POSITIONAL_MATCH"
+        assert prep.authoritative_envelope.normalized_result == "MATCH"
+        assert prep.missing_premises == ()
+        # La búsqueda dirigida usó las premisas del patrón, no repitió la pregunta.
+        assert calls
+        assert all(QUESTION not in query for query in calls)
+        assert any("&" in query for query in calls)
+        assert any("length" in query.lower() for query in calls)
+
+    @pytest.mark.asyncio
+    async def test_pattern_premises_without_recoverable_evidence_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sin gramática recuperable se mantiene el fail-closed (nunca MATCH)."""
+        from src.core.domain.rule_semantics import MatchOperator, VerificationState
+        from src.knowledge.rule_compiler.model import CanonicalRule, RuleProperty
+
+        rule = CanonicalRule(
+            rule_id="rule:example-fare-family",
+            statement="Example 1: W&C&M can be used to match WBCDM (no definition).",
+            properties={
+                "matching.symbol.&": RuleProperty(
+                    name="matching.symbol.&",
+                    value="example text",
+                    state=VerificationState.SUPPORTED.value,
+                    evidence=["ev:ex"],
+                ),
+                "matching.operator": RuleProperty(
+                    name="matching.operator",
+                    value=MatchOperator.POSITIONAL.value,
+                    state=VerificationState.SUPPORTED.value,
+                    evidence=["ev:ex"],
+                ),
+            },
+            verification_state=VerificationState.SUPPORTED.value,
+            executable=False,
+        )
+
+        async def fake_retrieve(organization_id, question, evidence_items=(), **kwargs):
+            del organization_id, question, evidence_items, kwargs
+            return rule_retrieval.RuleRetrievalResult(
+                strategy="canonical_first",
+                compatibility_applied=True,
+                compatible_rules=[rule],
+                supported_rules=[rule],
+            )
+
+        monkeypatch.setattr(
+            rule_retrieval, "retrieve_canonical_rules", fake_retrieve
+        )
+
+        async def empty_search(query, scope, limit):
+            del query, scope, limit
+            return []
+
+        footnote = _Item(
+            "Ticket on/before 01Jan 99 Match the IF and apply the THEN.",
+            "ev:footnote",
+        )
+        prep = await prepare_derived_authority(
+            organization_id=ORG,
+            question=QUESTION,
+            evidence_items=[footnote],
+            enable_premise_closure=True,
+            premise_evidence_search=empty_search,
+        )
+
+        assert not prep.has_authority
+        assert prep.premise_closure is not None
+        assert prep.premise_closure.termination in (
+            "NO_INFORMATION_GAIN",
+            "BUDGET_EXHAUSTED",
+        )
+        state, message = prep.answer_state()
+        assert state != "DERIVED"
+        assert "No puedo determinarlo" in message
+        assert "MATCH" not in message
+
+    @pytest.mark.asyncio
     async def test_targeted_search_closes_premises_and_authorizes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -674,6 +674,28 @@ def _split_searchable_premises(
     return tuple(searchable), tuple(diagnostics)
 
 
+def _pattern_closure_premises(runtime_pattern: str) -> tuple[str, ...]:
+    """Premisas semánticas que un patrón runtime exige, en claves de closure.
+
+    `pattern_semantic_requirements` devuelve tokens de QuerySemantics
+    (symbol/definition/matching/literal/length); acá se normalizan a las
+    claves canónicas de Premise Closure (`definition:symbol:&`,
+    `matching:positional`, `matching:literal`, `length_policy`) para que la
+    búsqueda dirigida recupere la gramática aunque el grounding solo reporte
+    diagnósticos `rule:*` no buscables.
+    """
+    text = str(runtime_pattern or "").strip()
+    if not text:
+        return ()
+    try:
+        from src.intelligence.query_semantics import pattern_semantic_requirements
+        from src.runtime.premise_closure import normalize_premises
+
+        return normalize_premises(pattern_semantic_requirements(text))
+    except Exception:  # noqa: BLE001 — sin requisitos no se fuerza closure
+        return ()
+
+
 async def _run_premise_closure_stage(
     *,
     organization_id: Any,
@@ -757,6 +779,7 @@ async def _run_premise_closure_stage(
     #    las reglas persistidas pueden ser no ejecutables (kind=EXAMPLE) y el
     #    missing REAL de esa evaluación (p.ej. length_semantics) es el que la
     #    closure dirigida debe buscar. El diagnóstico `rule:*` no es buscable.
+    regrounded: Any = None
     if initial_local.rules:
         try:
             reground = reason_fn
@@ -773,29 +796,38 @@ async def _run_premise_closure_stage(
             )
             if _has_deterministic_claim(regrounded):
                 return None, regrounded, local_stats
-            regrounded_missing = normalize_premises(
+            grounded = regrounded
+            missing = normalize_premises(
                 getattr(regrounded, "missing_premises", ()) or ()
             )
-            if not regrounded_missing or rounds_left <= 0:
-                return None, regrounded, local_stats
-            grounded = regrounded
-            missing = regrounded_missing
         except Exception as exc:  # noqa: BLE001 — fail-soft
             logger.warning("query-local authority failed", error=str(exc)[:160])
-            if not missing or rounds_left <= 0:
-                return None, grounded, local_stats
-    elif not missing or rounds_left <= 0:
-        return None, grounded, local_stats
+            regrounded = None
+
+    # 1b) Premisas del PATRÓN de runtime: si el grounding solo reportó
+    #     diagnósticos `rule:*` (normalizan a vacío), la closure quedaría sin
+    #     nada que buscar y la gramática del patrón jamás se recuperaría. Un
+    #     patrón runtime exige, por semántica: definición de símbolo, matching
+    #     posicional/literal y política de longitud. Se siembran como premisas
+    #     buscables para la búsqueda dirigida (scope acotado, sin ampliar nada).
+    if runtime_pattern and rounds_left > 0:
+        pattern_premises = _pattern_closure_premises(runtime_pattern)
+        if pattern_premises:
+            missing = tuple(dict.fromkeys([*missing, *pattern_premises]))
+    if not missing or rounds_left <= 0:
+        return None, (regrounded if regrounded is not None else grounded), local_stats
 
     # La cobertura estructural NO debe contar reglas de ingesta que no deciden
-    # (PARTIALLY_SUPPORTED / missing premises): si cubrieran, la closure se
-    # declararía satisfecha sin buscar la evidencia y el caso quedaría
-    # UNDETERMINED. Solo las decisorias cubren premisas.
+    # (PARTIALLY_SUPPORTED / missing premises / NO ejecutables: los ejemplos
+    # kind=EXAMPLE quedan SUPPORTED pero executable=False y no pueden cubrir la
+    # gramática): si cubrieran, la closure se declararía satisfecha sin buscar
+    # la evidencia y el caso quedaría UNDETERMINED. Solo las decisorias cubren.
     decisive = [
         rule
         for rule in rules
         if str(getattr(rule, "verification_state", "")) == "SUPPORTED"
         and not getattr(rule, "missing_premises", None)
+        and bool(getattr(rule, "executable", False))
     ]
     candidates = [*decisive, *initial_local.rules]
 
