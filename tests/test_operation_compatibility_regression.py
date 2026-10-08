@@ -25,6 +25,7 @@
 # =============================================================================
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -312,7 +313,7 @@ class TestFinalDecision:
         assert build_decision_envelope(grounded) is None
 
     def test_execution_safety_no_lexical_comparison(self) -> None:
-        """Aun sin gate, COMPARISON con máscara falla por tipo de operando."""
+        """Aun sin gate, COMPARISON con máscara falla por tipo/operando."""
         outcome = evaluate_rule(
             _CANDIDATE_A[0], {"value": "ABCFGEGE", "pattern": "&&&F"}
         )
@@ -327,8 +328,11 @@ class TestFinalDecision:
         )
         assert comparison is not None
         assert comparison.status == RuleEvaluationStatus.UNDETERMINED.value
-        assert OPERAND_TYPE_INCOMPATIBLE in comparison.missing_premises
-        assert ">= &&&f" not in (comparison.detail or "").lower()
+        assert (
+            OPERAND_TYPE_INCOMPATIBLE in comparison.missing_premises
+            or "operand:right" in comparison.missing_premises
+        )
+        assert "&&&f" not in (comparison.detail or "").lower()
 
     def test_comparison_never_receives_runtime_mask(self) -> None:
         from src.intelligence.reasoning.operations import run_comparison
@@ -414,9 +418,131 @@ class TestRealComparisonsStillWork:
 
 
 # -----------------------------------------------------------------------------
-# 4 — Invariante del envelope sin depender del engine
+# 4 — Regla híbrida: comparación artefacto NO envenena el matching (caso vivo)
 # -----------------------------------------------------------------------------
 
+
+def _hybrid_rule() -> CanonicalRule:
+    """Regla productiva real: matching posicional + GTE artefacto de compilación."""
+    from src.core.domain.rule_semantics import MatchOperator
+    from src.knowledge.rule_compiler.model import RuleProperty
+
+    def _prop(name: str, value: Any) -> RuleProperty:
+        return RuleProperty(
+            name=name,
+            value=value,
+            state=VerificationState.SUPPORTED.value,
+            evidence=[f"ev:{name}"],
+        )
+
+    return CanonicalRule(
+        rule_id="rule:hybrid-live",
+        statement=(
+            "The symbol & represents one alphanumeric position. Matching is "
+            "positional, left to right. ATPCO edits require at least one "
+            "alphanumeric character in the fare basis."
+        ),
+        operator=MatchOperator.POSITIONAL.value,
+        properties={
+            "matching.symbol.&": _prop(
+                "matching.symbol.&", "one alphanumeric position"
+            ),
+            "matching.symbol.&.alphabet": _prop(
+                "matching.symbol.&.alphabet", "alphanumeric"
+            ),
+            "matching.operator": _prop(
+                "matching.operator", MatchOperator.POSITIONAL.value
+            ),
+            "length.policy": _prop("length.policy", "VALUE_MAY_BE_LONGER"),
+            "comparison.operator": _prop("comparison.operator", "GTE"),
+            "comparison.left": _prop("comparison.left", "ATPCO edits require"),
+            "comparison.right": _prop(
+                "comparison.right", "one alphanumeric character in the fare"
+            ),
+            "comparison.boundary": _prop("comparison.boundary", "INCLUSIVE"),
+        },
+        verification_state=VerificationState.SUPPORTED.value,
+        executable=True,
+    )
+
+
+class TestHybridRuleDoesNotPoisonMatching:
+    def test_hybrid_rule_decides_positional_match(self) -> None:
+        outcome = evaluate_rule(
+            _hybrid_rule(), {"value": "ABCFGEGE", "pattern": "&&&F"}
+        )
+        assert outcome.status == RuleEvaluationStatus.MATCH.value
+        assert outcome.operation == "POSITIONAL_MATCH"
+        assert outcome.result is True
+        # La comparación artefacto no produce check ni missing premise.
+        assert not any(check.name == "comparison" for check in outcome.checks)
+        assert OPERAND_TYPE_INCOMPATIBLE not in outcome.missing_premises
+
+    def test_hybrid_rule_produces_authoritative_envelope(self) -> None:
+        grounded = reason_over_evidence(
+            question=PRODUCTION_QUESTION,
+            evidence_items=[],
+            canonical_rules=[_hybrid_rule()],
+        )
+        assert grounded.answerability == ANSWERABLE_DERIVED
+        assert "OPERAND_TYPE_INCOMPATIBLE" not in grounded.missing_premises
+        envelope = build_decision_envelope(grounded)
+        assert envelope is not None
+        assert envelope.operation == "POSITIONAL_MATCH"
+        assert envelope.normalized_result == "MATCH"
+
+    def test_comparison_only_rule_still_fails_closed(self) -> None:
+        """Sin otra dimensión, la comparación incomparable queda UNDETERMINED."""
+        mention = _comparison_fixture(
+            "rule:mention-live",
+            statement=(
+                "ATPCO edits require at least one alphanumeric character in the "
+                "fare basis (&&&F)."
+            ),
+        )
+        outcome = evaluate_rule(mention, {"value": "ABCFGEGE", "pattern": "&&&F"})
+        assert outcome.status == RuleEvaluationStatus.UNDETERMINED.value
+        assert OPERAND_TYPE_INCOMPATIBLE in outcome.missing_premises
+
+    def test_hybrid_comparison_still_decides_numeric_scenario(self) -> None:
+        """Con operando numerico real, la comparación de la regla híbrida vive."""
+        from src.core.domain.rule_semantics import MatchOperator
+        from src.knowledge.rule_compiler.model import RuleProperty
+
+        def _prop(name: str, value: Any) -> RuleProperty:
+            return RuleProperty(
+                name=name,
+                value=value,
+                state=VerificationState.SUPPORTED.value,
+                evidence=[f"ev:{name}"],
+            )
+
+        rule = CanonicalRule(
+            rule_id="rule:hybrid-numeric",
+            statement="Positional mask & plus minimum 100.",
+            operator=MatchOperator.POSITIONAL.value,
+            properties={
+                "matching.symbol.&": _prop("matching.symbol.&", "digit"),
+                "matching.operator": _prop(
+                    "matching.operator", MatchOperator.POSITIONAL.value
+                ),
+                "comparison.operator": _prop("comparison.operator", "GTE"),
+                "comparison.left": _prop("comparison.left", "value"),
+                "comparison.right": _prop("comparison.right", "100"),
+                "comparison.boundary": _prop("comparison.boundary", "INCLUSIVE"),
+            },
+            verification_state=VerificationState.SUPPORTED.value,
+            executable=True,
+        )
+        good = evaluate_rule(rule, {"value": "150", "pattern": "1&&"})
+        assert good.status == RuleEvaluationStatus.MATCH.value
+        bad = evaluate_rule(rule, {"value": "50", "pattern": "1&&"})
+        assert bad.status == RuleEvaluationStatus.NO_MATCH.value
+
+
+# -----------------------------------------------------------------------------
+# 5 — Invariante del envelope sin depender del engine
+# -----------------------------------------------------------------------------
 
 class TestEnvelopeInvariant:
     def _grounded(

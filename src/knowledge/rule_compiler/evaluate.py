@@ -275,7 +275,12 @@ def _comparison_check(
     check_value: Any = None,
     bounds: Sequence[float] = (),
     registry: OperationRegistry,
-) -> RuleCheck:
+    scenario_optional: bool = False,
+) -> RuleCheck | None:
+    """Check de comparación. `scenario_optional` skipea (None) cuando la
+    comparación no aterriza en el escenario pero la regla decide por otra
+    dimensión (matching/length/quantity): una comparación artefacto NO puede
+    envenenar con UNDETERMINED al match pedido."""
     if operator in (ComparisonOperator.BETWEEN.value, ComparisonOperator.OUTSIDE_RANGE.value):
         if len(bounds) < 2:
             return RuleCheck(
@@ -296,6 +301,8 @@ def _comparison_check(
                 evidence=evidence,
             )
         if check_value is None:
+            if scenario_optional:
+                return None
             return RuleCheck(
                 name="comparison",
                 operation="RANGE_CHECK",
@@ -337,6 +344,10 @@ def _comparison_check(
         if right is None:
             missing.append("operand:right")
         if missing:
+            if scenario_optional:
+                # La comparación no aterriza en el escenario y la regla decide
+                # por matching/length/quantity: no es una dimensión de la query.
+                return None
             return RuleCheck(
                 name="comparison",
                 operation="COMPARISON",
@@ -349,6 +360,8 @@ def _comparison_check(
         # ordenable. `ABCFGEGE >= &&&F` JAMÁS se evalúa lexicalmente.
         validation = _validate_comparison(left, right, comparison_op)
         if not validation.valid:
+            if scenario_optional:
+                return None
             return RuleCheck(
                 name="comparison",
                 operation="COMPARISON",
@@ -381,6 +394,42 @@ def _comparison_check(
     )
 
 
+def _has_other_executable_semantics(rule: CanonicalRule) -> bool:
+    """¿La regla puede decidir por una dimensión distinta de ESTA comparación?
+
+    Matching posicional, longitud, cantidad, temporal, enumeración o fórmula.
+    Si existe, una comparación que no aterriza en el escenario se OMITE en vez
+    de convertir la evaluación en UNDETERMINED (fail-closed sigue aplicando a
+    reglas cuya única semántica es la comparación).
+    """
+    temporal_relation = str(
+        getattr(getattr(rule, "temporal", None), "relation", "") or ""
+    ).upper()
+    if temporal_relation not in ("", "UNKNOWN"):
+        return True
+    if str(getattr(getattr(rule, "formula", None), "expression", "") or "").strip():
+        return True
+    enumeration = getattr(rule, "enumeration", None)
+    if list(getattr(enumeration, "allowed", ()) or ()) or list(
+        getattr(enumeration, "prohibited", ()) or ()
+    ):
+        return True
+    for name, prop in rule.properties.items():
+        if not getattr(prop, "known", False):
+            continue
+        if name == "matching.operator":
+            return True
+        if name.startswith("matching.symbol.") and not name.endswith(
+            (".alphabet", ".unmerged", ".superseded")
+        ):
+            return True
+        if name == "logic.operators":
+            return True
+        if name.endswith(".minimum") or name.endswith(".maximum"):
+            return True
+    return False
+
+
 def _check_comparisons(
     rule: CanonicalRule,
     values: Mapping[str, Any],
@@ -411,6 +460,9 @@ def _check_comparisons(
     )
     if not has_comparison_operands and has_matching:
         return checks
+    # Si la regla decide por matching/length/quantity, una comparación que no
+    # aterriza en el escenario se OMITE (no envenena con UNDETERMINED).
+    scenario_optional = _has_other_executable_semantics(rule)
     for name in sorted(operators):
         prop = operators[name]
         suffix = name[len('comparison.operator') :]
@@ -455,10 +507,10 @@ def _check_comparisons(
                 numbers = _extract_numbers(right_prop.value)
                 if len(numbers) == 1:
                     right = numbers[0]
-            if right is None:
-                right = values.get('pattern')
-            if right is None and has_quantity:
-                # La dimensión de cantidad ya cubre el límite declarado.
+            # NUNCA fallback a values['pattern']: una máscara runtime no es un
+            # operando de COMPARISON (era el bug `ABCFGEGE >= &&&F`).
+            if right is None and (scenario_optional or has_quantity):
+                # La otra dimensión (matching/length/quantity) decide.
                 continue
             if left is None and right is None and has_quantity:
                 continue
@@ -474,18 +526,19 @@ def _check_comparisons(
                 # longitud ya define el conteo (12 characters): la longitud
                 # decide; la comparación no envenena con UNDETERMINED.
                 continue
-        checks.append(
-            _comparison_check(
-                operator=operator,
-                left=left,
-                right=right,
-                boundary=str(boundary_prop.value) if boundary_prop is not None and boundary_prop.known else '',
-                evidence=evidence,
-                check_value=values.get('value'),
-                bounds=bounds,
-                registry=registry,
-            )
+        check = _comparison_check(
+            operator=operator,
+            left=left,
+            right=right,
+            boundary=str(boundary_prop.value) if boundary_prop is not None and boundary_prop.known else '',
+            evidence=evidence,
+            check_value=values.get('value'),
+            bounds=bounds,
+            registry=registry,
+            scenario_optional=scenario_optional,
         )
+        if check is not None:
+            checks.append(check)
     return checks
 
 
