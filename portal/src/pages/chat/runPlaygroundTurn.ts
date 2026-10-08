@@ -46,6 +46,16 @@ type Auth = { token: string; organizationId: string };
 
 type TimelineStep = { name: string; status: string; ms: number; detail: string };
 
+//: La conversación del backend es un UUID REAL. Un id local de persistencia
+//: (uid) no debe viajar como `conversation_id`: el API valida UUID y devolvía
+//: 422 en el follow-up. El portal solo envía ids con forma de UUID.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string | null | undefined): value is string {
+  return !!value && UUID_RE.test(value.trim());
+}
+
 const AGENT_STEP_LABEL: Record<string, string> = {
   llm: "LLM (razonamiento)",
   tool_call: "Herramienta",
@@ -221,7 +231,7 @@ export async function runKnowledgeTurn(input: {
   hooks?: StreamHooks;
 }): Promise<PlaygroundTurnResult> {
   const body: Record<string, unknown> = { query: input.query, role: input.role };
-  if (input.conversationId) body.conversation_id = input.conversationId;
+  if (isUuid(input.conversationId)) body.conversation_id = input.conversationId;
 
   const res = await fetch("/api/v1/rag/query/stream", {
     method: "POST",
@@ -316,7 +326,7 @@ export async function runKnowledgeTurn(input: {
           flow?: Record<string, unknown> | null;
         };
         queryId = payload.query_id;
-        conversationId = payload.conversation_id;
+        conversationId = payload.conversation_id ?? conversationId;
         latencyMs = payload.latency_ms ?? 0;
         ragTrace = payload.rag_trace ?? null;
         flow = payload.flow ?? null;
@@ -355,7 +365,7 @@ export async function runAgentTurn(input: {
 }): Promise<PlaygroundTurnResult> {
   input.hooks?.onPhase?.("Ejecutando agente…");
   const body: Record<string, unknown> = { message: input.message };
-  if (input.conversationId) body.conversation_id = input.conversationId;
+  if (isUuid(input.conversationId)) body.conversation_id = input.conversationId;
 
   const res = await fetch(`/api/v1/agents/${input.agentId}/run/stream`, {
     method: "POST",
@@ -380,6 +390,7 @@ export async function runAgentTurn(input: {
   let totalTokens: number | null = null;
   let runId: string | null = null;
   let backendFlow: Record<string, unknown> | null = null;
+  let conversationId: string | null = input.conversationId ?? null;
 
   await readSse(
     res,
@@ -392,6 +403,7 @@ export async function runAgentTurn(input: {
         message?: string;
         steps?: unknown;
         run_id?: string;
+        conversation_id?: string | null;
         flow?: Record<string, unknown> | null;
         total_latency_ms?: number;
         total_tokens?: number;
@@ -413,6 +425,8 @@ export async function runAgentTurn(input: {
         cost = typeof payload.cost === "number" ? payload.cost : null;
         totalTokens = typeof payload.total_tokens === "number" ? payload.total_tokens : null;
         runId = payload.run_id ?? null;
+        // UUID real del backend: continuidad de conversación en el follow-up.
+        conversationId = payload.conversation_id ?? conversationId;
         // El backend es la autoridad: si manda flow canónico, se usa tal cual.
         backendFlow =
           payload.flow && typeof payload.flow === "object" ? payload.flow : null;
@@ -432,7 +446,7 @@ export async function runAgentTurn(input: {
       (used.length > 0 ? used.map((id) => ({ text: id })) : undefined),
     method: "agent",
     runId: runId ?? undefined,
-    conversationId: input.conversationId ?? undefined,
+    conversationId: isUuid(conversationId) ? conversationId : undefined,
     latencyMs,
     error: errors[0],
     flow:

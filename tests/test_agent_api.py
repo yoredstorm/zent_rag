@@ -100,6 +100,58 @@ async def test_run_agent_returns_answer(async_client: AsyncClient) -> None:
         assert data["steps"]
         assert data["total_tokens"] == 30
         assert fake.last_request.agent.organization_id is not None
+        # La conversación es un UUID REAL del backend: el portal la persiste y
+        # la reenvía en el follow-up (antes generaba un id local y rompía).
+        conversation_id = data["conversation_id"]
+        assert conversation_id is not None
+        UUID(conversation_id)
+        follow = await async_client.post(
+            f"/api/v1/agents/{agent_id}/run",
+            json={
+                "message": "cuentame sobre el record 2",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        assert follow.status_code == 200, follow.text
+        assert follow.json()["conversation_id"] == conversation_id
+        assert str(fake.last_request.conversation_id) == conversation_id
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_rejects_non_uuid_conversation_id(
+    async_client: AsyncClient,
+) -> None:
+    from src.api.deps import get_agent_runtime
+    from src.api.main import app
+
+    org = await _create_org(async_client, "Agent API Org UUID")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    fake = _FakeRuntime()
+    app.dependency_overrides[get_agent_runtime] = lambda: fake
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={"name": f"agent-{uuid4().hex[:8]}", "tools": ["search_knowledge"]},
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    agent_id = create.json()["id"]
+
+    try:
+        resp = await async_client.post(
+            f"/api/v1/agents/{agent_id}/run",
+            json={"message": "hola", "conversation_id": "m9k2j3localuid16x"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert body.get("error_code") == "VALIDATION_ERROR"
+        assert "UUID" in str(body.get("message") or "")
     finally:
         app.dependency_overrides.clear()
 

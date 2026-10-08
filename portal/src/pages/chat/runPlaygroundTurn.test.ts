@@ -146,6 +146,61 @@ afterEach(() => {
 });
 
 describe("runAgentTurn", () => {
+  it("no envía conversation_id local: solo UUID del backend", async () => {
+    let captured: Record<string, unknown> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        captured = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return sseResponse(
+          'event: done\ndata: {"run_id":"r","status":"completed","answer":"ok","steps":[]}\n\n',
+        );
+      }),
+    );
+
+    const result = await runAgentTurn({
+      agentId: "a-1",
+      message: "cuentame sobre el record 2",
+      // Id local de persistencia (uid) del portal viejo: NO es UUID.
+      conversationId: "m9k2j3localuid16x",
+      auth: { token: "t", organizationId: "o" },
+    });
+
+    expect(captured.conversation_id).toBeUndefined();
+    expect(result.conversationId).toBeUndefined();
+  });
+
+  it("reenvía el UUID y adopta el conversation_id del backend", async () => {
+    const inputUuid = "b617f15d-35e4-4c67-bcce-ad9bf552b611";
+    const backendUuid = "eae83f6c-ec1f-4e31-90fe-eb9681800e3e";
+    let captured: Record<string, unknown> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        captured = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return sseResponse(
+          `event: done\ndata: ${JSON.stringify({
+            run_id: "r",
+            status: "completed",
+            answer: "ok",
+            steps: [],
+            conversation_id: backendUuid,
+          })}\n\n`,
+        );
+      }),
+    );
+
+    const result = await runAgentTurn({
+      agentId: "a-1",
+      message: "hola",
+      conversationId: inputUuid,
+      auth: { token: "t", organizationId: "o" },
+    });
+
+    expect(captured.conversation_id).toBe(inputUuid);
+    expect(result.conversationId).toBe(backendUuid);
+  });
+
   it("usa el flow canónico del backend y conserva el run_id", async () => {
     const body =
       "event: status\ndata: {\"phase\":\"running\"}\n\n" +

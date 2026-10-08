@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -85,10 +85,13 @@ def build_agent_run_flow(*, result, agent, question: str = "") -> dict:
         return {}
 
 
-def _run_payload(result, flow: dict) -> dict:
+def _run_payload(
+    result, flow: dict, conversation_id: UUID | None = None
+) -> dict:
     """Contrato del run para el portal: flow + métricas reales (§3, §13)."""
     payload: dict = {
         "run_id": str(result.run_id),
+        "conversation_id": str(conversation_id) if conversation_id else None,
         "status": result.status,
         "answer": result.answer,
         "steps": result.steps,
@@ -142,6 +145,10 @@ async def run_agent(
     user_id = await resolve_user_id(request, x_user_id)
     ctx = _tenant_context(request)
     org_config = await _org_config(request, organization_id)
+    # La conversación del agente es un UUID REAL del backend: el portal la
+    # persiste y la reenvía para continuidad. Sin él, el portal guardaba un id
+    # local y el follow-up rompía la validación de UUID.
+    conversation_id = body.conversation_id or uuid4()
 
     result = await runtime.run(
         AgentRunRequest(
@@ -149,7 +156,7 @@ async def run_agent(
             message=body.message,
             user_id=user_id,
             role=body.role,
-            conversation_id=body.conversation_id,
+            conversation_id=conversation_id,
             permissions=ctx.permissions,
             org_config=org_config,
             trace_id=request.headers.get("X-Trace-Id"),
@@ -168,7 +175,7 @@ async def run_agent(
     except Exception:  # noqa: BLE001
         pass
 
-    return _run_payload(result, flow)
+    return _run_payload(result, flow, conversation_id)
 
 
 @router.post("/{agent_id}/run/stream", summary="Ejecutar agente (SSE)")
@@ -188,6 +195,8 @@ async def run_agent_stream(
     user_id = await resolve_user_id(request, x_user_id)
     ctx = _tenant_context(request)
     org_config = await _org_config(request, organization_id)
+    # UUID REAL del backend: el portal lo persiste y lo reenvía (continuidad).
+    conversation_id = body.conversation_id or uuid4()
 
     queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
 
@@ -201,7 +210,7 @@ async def run_agent_stream(
                 message=body.message,
                 user_id=user_id,
                 role=body.role,
-                conversation_id=body.conversation_id,
+                conversation_id=conversation_id,
                 permissions=ctx.permissions,
                 org_config=org_config,
                 on_delta=on_delta,
@@ -215,7 +224,7 @@ async def run_agent_stream(
         except Exception:
             pass
         await save_run(result, flow=flow or None)
-        await queue.put(("done", _run_payload(result, flow)))
+        await queue.put(("done", _run_payload(result, flow, conversation_id)))
 
     async def event_stream():
         await queue.put(("status", {"phase": "running"}))
