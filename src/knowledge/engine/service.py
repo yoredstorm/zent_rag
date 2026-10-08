@@ -1323,7 +1323,7 @@ class KnowledgeIngestionEngine:
         record_format = str(record.format or "").strip().lower().lstrip(".")
         parser = get_parser(record_format) if record_format else None
         if parser is not None and getattr(parser, "kind", None) == "pdf":
-            # PDF Parser Engine: pdfplumber (default) | opendataloader | shadow.
+            # PDF Parser Engine: opendataloader (default) | pdfplumber | shadow.
             # En shadow, el parser de producción no cambia y la variante de
             # evaluación nunca escribe Knowledge Objects.
             from src.knowledge.structure.pdf_engine import (

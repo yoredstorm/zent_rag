@@ -1,13 +1,12 @@
 # =============================================================================
-# PDF Parser Engine — selección pdfplumber | opendataloader | shadow A/B
+# PDF Parser Engine — selección opendataloader (productivo) | pdfplumber | shadow
 # =============================================================================
-# Punto único donde se decide qué parser PDF ve la ingesta. `shadow` ejecuta
-# dos StructuredDocuments sobre el mismo PDF: el de producción sigue el camino
+# Punto único donde se decide qué parser PDF ve la ingesta. OpenDataLoader es
+# el motor productivo por defecto; pdfplumber queda como motor de comparación
+# en shadow y como implementación legacy. `shadow` ejecuta dos
+# StructuredDocuments sobre el mismo PDF: el de producción sigue el camino
 # normal (persistencia, compilación, indexado) y el de evaluación se guarda
 # como artefacto JSON + comparación estructural, jamás como Knowledge Objects.
-#
-# pdfplumber NO se elimina: sigue siendo default y el camino de producción del
-# experimento. OpenDataLoader se integra en paralelo hasta la Fase 2.
 # =============================================================================
 from __future__ import annotations
 
@@ -70,16 +69,23 @@ def _build_engine_parser(engine: str, settings: object | None) -> StructuredPars
 
 
 def resolve_production_pdf_parser(settings: object | None = None) -> StructuredParser:
-    """Parser PDF que usará la ingesta productiva según PDF_PARSER_MODE."""
-    mode = str(getattr(settings, "PDF_PARSER_MODE", "pdfplumber") or "pdfplumber")
-    if mode == "opendataloader":
-        return _build_engine_parser("opendataloader", settings)
+    """Parser PDF que usará la ingesta productiva según PDF_PARSER_MODE.
+
+    Default productivo: OpenDataLoader. pdfplumber sólo si se configura
+    explícitamente (o como motor de evaluación en shadow).
+    """
+    mode = str(
+        getattr(settings, "PDF_PARSER_MODE", "opendataloader") or "opendataloader"
+    )
+    if mode == "pdfplumber":
+        return PdfParser()
     if mode == "shadow":
         production_engine = str(
-            getattr(settings, "PDF_SHADOW_PRODUCTION", "pdfplumber") or "pdfplumber"
+            getattr(settings, "PDF_SHADOW_PRODUCTION", "opendataloader")
+            or "opendataloader"
         )
         if production_engine not in ENGINES:
-            production_engine = "pdfplumber"
+            production_engine = "opendataloader"
         evaluation_engine = (
             "opendataloader" if production_engine == "pdfplumber" else "pdfplumber"
         )
@@ -92,7 +98,7 @@ def resolve_production_pdf_parser(settings: object | None = None) -> StructuredP
             artifact_dir=artifact_dir,
             artifacts=bool(getattr(settings, "PDF_SHADOW_ARTIFACTS", True)),
         )
-    return PdfParser()
+    return _build_engine_parser("opendataloader", settings)
 
 
 def _shadow_dir(settings: object | None) -> str | None:
@@ -122,7 +128,7 @@ def _pdfplumber_version() -> str:
 def parser_engine_label(parser: StructuredParser) -> str:
     """Etiqueta del motor REAL que parseó (no la configurada)."""
     if isinstance(parser, ShadowPdfParser):
-        return str(parser.production_label or "pdfplumber")
+        return str(parser.production_label or parser_engine_label(parser.production))
     if isinstance(parser, OpenDataLoaderPdfParser):
         return "opendataloader"
     if isinstance(parser, PdfParser):
@@ -177,7 +183,7 @@ def parser_provenance(
     else:
         provenance["version"] = _pdfplumber_version()
         provenance["mode"] = str(
-            getattr(settings, "PDF_PARSER_MODE", "pdfplumber") or "pdfplumber"
+            getattr(settings, "PDF_PARSER_MODE", "opendataloader") or "opendataloader"
         )
         provenance["structure_source"] = (
             existing_parser.get("structure_source") or "text_layout"

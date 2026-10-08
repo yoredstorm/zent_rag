@@ -7,7 +7,7 @@
 # =============================================================================
 
 SCHEMA_VERSION = "2"
-PARSER_VERSION = "pdfplumber-text-1.1"
+PARSER_VERSION = "opendataloader-text-1"
 UNDERSTANDING_SCHEMA_VERSION = "1.1"
 SEMANTIC_UNIT_VERSION = "1"
 CHUNKING_VERSION = "semantic-units-1"

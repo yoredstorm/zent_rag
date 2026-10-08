@@ -240,7 +240,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-      target: api
+      # Worker target: la API también necesita JVM + OpenDataLoader para la
+      # ingesta in-process (OpenDataLoader es el parser PDF productivo).
+      target: worker
     env_file:
       - path: .env
         required: false

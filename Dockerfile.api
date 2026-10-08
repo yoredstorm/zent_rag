@@ -124,7 +124,8 @@ USER rag
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 
 # =============================================================================
-# Stage API (default): sin JVM. Si RAG_BACKGROUND_INGESTION=true y
-# RAG_PDF_PARSER_MODE != pdfplumber, la API in-process necesita --target worker.
+# Stage API (sin JVM): sólo para despliegues que no parseen PDF. El parser PDF
+# productivo es OpenDataLoader: docker-compose usa `target: worker` también para
+# la API porque la ingesta in-process necesita JVM.
 # =============================================================================
 FROM runtime AS api

@@ -733,22 +733,20 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
-    # PDF Parser Engine — pdfplumber | opendataloader | shadow (A/B)
+    # PDF Parser Engine — opendataloader (productivo) | pdfplumber | shadow (A/B)
     # -------------------------------------------------------------------------
-    # El parser PDF productivo se elige acá. pdfplumber sigue siendo el
-    # default: OpenDataLoader se integra en paralelo y solo pasa a producción
-    # cuando la Fase 2 lo decida. En shadow, el parser de producción no
-    # cambia, y la variante de evaluación se guarda como artefacto, nunca
-    # como Knowledge Objects.
+    # El parser PDF productivo es OpenDataLoader. pdfplumber queda disponible
+    # como motor de comparación/shadow y como implementación legacy; ya no es
+    # el default de producción.
     PDF_PARSER_MODE: Literal["pdfplumber", "opendataloader", "shadow"] = Field(
-        default="pdfplumber",
+        default="opendataloader",
         description=(
             "Motor PDF productivo. shadow ejecuta dos parsers sobre el mismo "
             "PDF: uno continúa a producción y el otro se usa para evaluación."
         ),
     )
     PDF_SHADOW_PRODUCTION: Literal["pdfplumber", "opendataloader"] = Field(
-        default="pdfplumber",
+        default="opendataloader",
         description=(
             "En modo shadow, motor cuyo StructuredDocument continúa a "
             "producción. El otro se evalúa offline."
