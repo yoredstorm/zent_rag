@@ -89,6 +89,10 @@ _RULE_MISSING_MESSAGES: dict[str, str] = {
         "la pregunta exige una regla ejecutable y no hay una CanonicalRule "
         "soportada que la resuelva"
     ),
+    "operation_incompatible": (
+        "las reglas disponibles no ejecutan la operación que exige la consulta "
+        "(compatibilidad semántica de operación)"
+    ),
     "load_failed": "la regla documental no pudo cargarse",
 }
 
@@ -1137,9 +1141,38 @@ def reason_over_evidence(
     compiled_rules = list(canonical_rules or ())
     if not compiled_rules:
         compiled_rules = _canonical_rules_from_items(items)
+    # Gate de compatibilidad OPERACIÓN↔QUERY: las candidatas se fusionan (la
+    # gramática puede estar distribuida) y RECIÉN se rankean/ejecutan las
+    # compatibles. Una regla que solo menciona el símbolo o cuya operación final
+    # es de otra familia (p.ej. COMPARISON para una máscara runtime) no entra al
+    # pass decisivo: no es un conflicto documental, es un candidato incompatible.
+    from src.runtime.operation_compatibility import (
+        derive_query_operation_requirements,
+        gate_rules_for_requirements,
+    )
+
+    raw_rules = list(compiled_rules)
+    if raw_rules:
+        try:
+            from src.knowledge.rule_compiler.merge import merge_distributed_rules
+
+            raw_rules = list(merge_distributed_rules(raw_rules))
+        except Exception:  # noqa: BLE001 — el merge jamás rompe el motor
+            raw_rules = list(compiled_rules)
+    operation_requirements = derive_query_operation_requirements(
+        question=question, semantics=semantics
+    )
+    compatibility_gate = gate_rules_for_requirements(
+        raw_rules, operation_requirements
+    )
+    compiled_rules = list(compatibility_gate.compatible)
     # Señal documental de regla: si la evidencia referencia reglas pero no se
     # pudo cargar una CanonicalRule soportada, NO se improvisa desde texto bruto.
-    rule_signal = "" if compiled_rules else _rule_signal_from_evidence(items)
+    rule_signal = "" if raw_rules else _rule_signal_from_evidence(items)
+    # Candidatas existentes pero NINGUNA semánticamente compatible: fail closed
+    # explícito (nunca reinterpretar el texto bruto ni elegir «la más cercana»).
+    if raw_rules and not compiled_rules:
+        missing.append("rule:operation_incompatible")
     # Cobertura de excepciones: si la evidencia recuperada declara nodos de
     # excepción (fabric) y la regla compilada no las tiene, la cobertura queda
     # INCOMPLETA: no se afirma una conclusión sin la excepción.
@@ -1154,11 +1187,9 @@ def reason_over_evidence(
             evaluate_rule,
             rule_premises,
         )
-        from src.knowledge.rule_compiler.merge import merge_distributed_rules
 
-        # Regla distribuida: símbolo + matching + longitud viven en reglas
-        # separadas; se unen SOLO si son compatibles. Conflicto -> no se une.
-        compiled_rules = merge_distributed_rules(compiled_rules)
+        # La fusión distribuida (símbolo + matching + longitud) ya corrió ANTES
+        # del gate de compatibilidad: acá solo se ejecutan las compatibles.
 
         runtime_values: dict[str, Any] = dict(params)
         pattern_value = (
@@ -1187,6 +1218,10 @@ def reason_over_evidence(
                 )
                 continue
             evaluation = evaluate_rule(rule, runtime_values)
+            compatibility = compatibility_gate.result_for(rule)
+            if compatibility is not None:
+                evaluation.compatible = bool(compatibility.compatible)
+                evaluation.operation_compatibility = compatibility.to_public_dict()
             rule_evaluations.append(evaluation)
             if evaluation.status == RuleEvaluationStatus.UNDETERMINED.value:
                 missing.extend(
@@ -1242,9 +1277,10 @@ def reason_over_evidence(
     # ------------------------------------------------------------------
     # 1. Patrón de runtime: la instancia no exige match literal; su gramática sí.
     # ------------------------------------------------------------------
-    if compiled_rules:
-        # El conocimiento compilado ya decidió (o declaró premisas faltantes).
-        # No se reinterpreta el documento con heurísticas por regex.
+    if raw_rules:
+        # Ya existía conocimiento compilado (compatible o no): el documento NO
+        # se reinterpreta con heurísticas por regex. Sin candidatas compatibles
+        # el estado es fail-closed (`rule:operation_incompatible`).
         pass
     elif (
         intent in _DETERMINISTIC_INTENTS

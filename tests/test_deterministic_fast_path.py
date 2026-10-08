@@ -612,9 +612,11 @@ async def test_e2e_runtime_no_llama_al_modelo(monkeypatch: pytest.MonkeyPatch) -
 
     assert llm.calls == 0
     assert result.status == "completed"
-    assert result.execution_mode == EXECUTION_MODE_FAST_PATH
+    assert result.execution_mode is not None
+    assert result.execution_mode.startswith(EXECUTION_MODE_FAST_PATH)
     assert result.fast_path is not None
     assert result.fast_path["llm_calls"] == 0
+    assert result.fast_path["llm_decision_calls"] == 0
     assert result.fast_path["llm_calls_avoided"] == 2
     assert result.decision_envelope is not None
     assert result.decision_envelope["result"] == "MATCH"

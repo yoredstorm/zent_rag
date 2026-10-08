@@ -838,6 +838,37 @@ class Settings(BaseSettings):
         le=3600,
         description="Timeout del subproceso JVM de OpenDataLoader por documento.",
     )
+    ODL_LLM_MARKDOWN: bool = Field(
+        default=True,
+        description=(
+            "Representacion dual en UNA sola conversion ODL: JSON (autoridad "
+            "estructural) + Markdown (representacion LLM-ready). El Markdown "
+            "nunca es autoridad independiente; si falla, el JSON sigue igual."
+        ),
+    )
+    ODL_MARKDOWN_WITH_HTML: bool = Field(
+        default=False,
+        description=(
+            "Permitir HTML dentro del Markdown para tablas con spans complejos. "
+            "La autoridad estructural sigue siendo el JSON."
+        ),
+    )
+    ODL_MARKDOWN_PAGE_SEPARATOR: str = Field(
+        default="<!-- page:%%page-number%% -->",
+        description=(
+            "Separador de pagina del Markdown (%%page-number%% se sustituye). "
+            "Es una ayuda de navegacion: la cita final vuelve al JSON crosswalk."
+        ),
+    )
+    BUNDLE_CROSSWALK_MIN_COVERAGE: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Cobertura minima del crosswalk Markdown->JSON para promover la "
+            "representacion LLM. Por debajo, el Markdown no se usa como contexto."
+        ),
+    )
     # -------------------------------------------------------------------------
     # Knowledge Tabular (Excel/CSV como DATOS, no como texto)
     # -------------------------------------------------------------------------
@@ -1460,7 +1491,36 @@ class Settings(BaseSettings):
         description=(
             "Fast path con UNA llamada pequena de estilo opcional. El modelo "
             "recibe headline, resultado, checks y citas; no puede cambiar la "
-            "decision y el texto vuelve a pasar por FINAL_AUTHORITY_LOCK."
+            "decision y el texto vuelve a pasar por FINAL_AUTHORITY_LOCK. "
+            "Legacy: si RUNTIME_DETERMINISTIC_RENDER_MODE=adaptive y este flag "
+            "es true, se fuerza polish."
+        ),
+    )
+    RUNTIME_DETERMINISTIC_RENDER_MODE: Literal["strict", "polish", "adaptive"] = Field(
+        default="adaptive",
+        description=(
+            "Modo de redaccion de presentacion del fast path determinista: "
+            "strict=0 llamadas LLM; polish=1 llamada pequena cuando el agente "
+            "tiene personalidad; adaptive (default)=0 para respuestas triviales "
+            "y 1 cuando la personalidad y el caso lo piden. La decision SIEMPRE "
+            "la calcula el codigo (LLM_DECISION_CALLS=0)."
+        ),
+    )
+    RUNTIME_COMPOSER_MODEL: str = Field(
+        default="",
+        description=(
+            "Modelo barato para la redaccion de presentacion. Vacio = usa "
+            "GATEWAY_FAST_MODEL / GATEWAY_CHEAP_MODEL; si no hay, el modelo del "
+            "agente. Nunca se usa un reasoning model caro si hay fast/cheap."
+        ),
+    )
+    RUNTIME_COMPOSER_MAX_TOKENS: int = Field(
+        default=400,
+        ge=64,
+        le=1200,
+        description=(
+            "Tope de tokens de salida de la llamada de redaccion (presentacion). "
+            "Target 100-400: no es una respuesta completa de pipeline."
         ),
     )
     RUNTIME_FAST_PATH_ESTIMATED_TOKENS: int = Field(

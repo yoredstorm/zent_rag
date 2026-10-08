@@ -273,6 +273,24 @@ def run_comparison(
     case_sensitive: bool = False,
 ) -> OperationResult:
     operation = OperationType.COMPARISON.value
+    # OperationInputValidator: sin esto, dos strings no numéricos caían en una
+    # comparación LEXICAL (p.ej. `ABCFGEGE >= &&&F` is True). Una máscara de
+    # runtime no es un escalar ordenable; el orden entre strings no numéricos
+    # no es una operación documental válida.
+    from src.runtime.operation_compatibility import validate_operation_inputs
+
+    validation = validate_operation_inputs(
+        "COMPARISON", operands={"a": a, "b": b, "op": op}
+    )
+    if not validation.valid:
+        return OperationResult(
+            operation=operation,
+            status=OperationStatus.ERROR.value,
+            error=", ".join(validation.reasons) or "incomparable operands",
+            value=None,
+            explanation=validation.detail,
+            inputs=(str(a), str(b)),
+        )
     left, right = _coerce_number(a), _coerce_number(b)
     if left is None or right is None:
         if not isinstance(a, str) or not isinstance(b, str):

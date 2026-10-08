@@ -83,6 +83,7 @@ DETERMINISTIC_OPERATION_NAMES: frozenset[str] = frozenset(
 #: Fases deterministas (telemetría obligatoria, incluso al fallar).
 STAGE_QUERY_SEMANTICS = "query_semantics"
 STAGE_RULE_RETRIEVAL = "rule_retrieval"
+STAGE_OPERATION_COMPATIBILITY = "operation_compatibility"
 STAGE_RULE_EVALUATION = "rule_evaluation"
 STAGE_GROUNDING = "grounding"
 STAGE_DERIVATION = "derivation"
@@ -96,6 +97,7 @@ ERROR_RULE_EVALUATION_FAILED = "RULE_EVALUATION_FAILED"
 ERROR_GROUNDING_ENGINE_FAILED = "GROUNDING_ENGINE_FAILED"
 ERROR_DERIVATION_FAILED = "DERIVATION_FAILED"
 ERROR_UNDETERMINED_RULE = "UNDETERMINED_RULE"
+ERROR_OPERATION_MISMATCH = "UNDETERMINED_OPERATION_MISMATCH"
 ERROR_CONFLICTING_RULE = "CONFLICTING_RULE"
 ERROR_DERIVED_RESULT = "DERIVED_RESULT"
 
@@ -376,6 +378,11 @@ class DerivedPreparationResult:
     scope_excluded_rules: list[dict] = field(default_factory=list)
     #: Scope autorizado publicado (sin secretos) para «Ver flujo».
     authorized_scope: dict = field(default_factory=dict)
+    #: Gate OPERACIÓN↔QUERY: vistas públicas (conteos, rechazos, ganador).
+    operation_compatibility: dict = field(default_factory=dict)
+    #: True cuando existían reglas soportadas pero NINGUNA compatible con la
+    #: operación que exige la consulta (fail closed: UNDETERMINED_OPERATION_MISMATCH).
+    operation_mismatch: bool = False
     duration_ms: float = 0.0
     version: str = DETERMINISTIC_AUTHORITY_VERSION
 
@@ -412,6 +419,13 @@ class DerivedPreparationResult:
                 "Las reglas recuperadas se contradicen entre sí para esta "
                 "consulta, así que no hay una única conclusión respaldada."
             )
+        if self.operation_mismatch:
+            return ERROR_OPERATION_MISMATCH, (
+                "Las reglas recuperadas existen, pero ninguna ejecuta la "
+                "operación que exige esta consulta (máscara/patrón posicional "
+                "vs comparación, rango u otra familia). No se eligió «la más "
+                "cercana»: el resultado queda indeterminado."
+            )
         if self.missing_premises:
             # La abstención humanizada del motor grounded (nombra la premisa
             # faltante) manda sobre el volcado técnico de claves.
@@ -440,6 +454,8 @@ class DerivedPreparationResult:
             "error_message": self.error_message[:240],
             "missing_premises": list(self.missing_premises[:12]),
             "conflicts": list(self.conflicts[:8]),
+            "operation_mismatch": bool(self.operation_mismatch),
+            "operation_compatibility": dict(self.operation_compatibility),
             "steps": list(self.steps),
             "premise_closure": (
                 self.premise_closure.to_public_dict()
@@ -452,12 +468,32 @@ class DerivedPreparationResult:
 
 
 def _rules_for_grounding(retrieval: Any) -> list[Any]:
+    """Reglas que pueden entrar al grounded engine.
+
+    Con el gate aplicado solo entran compatibles (+ diferidas por capacidad
+    incompleta: el merge distribuido/closure puede completarlas). Sin gate
+    (dobles de test) se conserva el comportamiento histórico.
+    """
     if retrieval is None:
         return []
+    if bool(getattr(retrieval, "compatibility_applied", False)):
+        compatible = list(getattr(retrieval, "compatible_rules", ()) or ())
+        supported = [rule for rule in compatible if _is_supported(rule)]
+        deferred = list(getattr(retrieval, "deferred_rules", ()) or ())
+        if supported:
+            return [*supported, *deferred]
+        return [*compatible, *deferred]
     supported = list(getattr(retrieval, "supported_rules", ()) or ())
     if supported:
         return supported
     return list(getattr(retrieval, "candidate_rules", ()) or ())
+
+
+def _is_supported(rule: Any) -> bool:
+    try:
+        return bool(getattr(rule, "supported", False))
+    except Exception:  # noqa: BLE001
+        return str(getattr(rule, "verification_state", "")) == "SUPPORTED"
 
 
 def _first_deterministic_claim(grounded: Any) -> dict[str, Any] | None:
@@ -755,48 +791,69 @@ async def _run_premise_closure_stage(
     final_grounded: dict[str, Any] = {"value": grounded}
 
     def _decisive_pass(items: Sequence[Any], rules_list: Sequence[Any]) -> Any | None:
-        """Pass decisivo: la mejor regla query-local EJECUTABLE decide.
+        """Pass decisivo: la mejor regla query-local COMPATIBLE y EJECUTABLE decide.
 
         El re-merge global del engine puede contaminar una regla autocontenida
         con reglas ruidosas de otras secciones. Si una regla query-local ya
         ejecutable declara los símbolos del patrón, se evalúa SOLA y su claim
-        determinista manda.
+        determinista manda. Prioridad: capacidad exacta de operación > símbolos
+        ejecutables > gramática ejecutable > verificada > provenance > léxico.
+        Una regla incompatible NO entra al pass decisivo (jamás «la más cercana»).
         """
         try:
+            from src.runtime.operation_compatibility import (
+                FAMILY_MATCHING,
+                derive_query_operation_requirements,
+                evaluate_operation_compatibility,
+            )
             from src.runtime.query_local_rules import rules_are_query_local
 
-            symbols = {char for char in runtime_pattern if char in "&*?%#$@!~^"}
-            if not symbols:
+            requirements = derive_query_operation_requirements(
+                question=question,
+                semantics=semantics,
+                runtime_patterns=(runtime_pattern,) if runtime_pattern else (),
+            )
+            if not requirements.symbols:
+                # El pass decisivo aplica a patrones/máscaras aplicados a valores.
                 return None
-            # Una regla sin la definición de los símbolos del patrón no puede
-            # decidir el match: jamás un NO_MATCH incidental sin semántica.
-            decisive = [
-                rule
-                for rule in rules_list or ()
-                if rules_are_query_local([rule])
-                and getattr(rule, "executable", False)
-                and any(
-                    f"matching.symbol.{symbol}" in (getattr(rule, "properties", {}) or {})
-                    for symbol in symbols
+            decisive: list[tuple[tuple[int, ...], Any]] = []
+            for rule in rules_list or ():
+                if not rules_are_query_local([rule]):
+                    continue
+                if not getattr(rule, "executable", False):
+                    continue
+                compatibility = evaluate_operation_compatibility(
+                    rule, requirements
                 )
-            ]
-            if not decisive:
-                return None
-
-            def _score(rule: Any) -> tuple[int, int, int, int]:
+                if not compatibility.compatible:
+                    continue
+                if requirements.operation_family != FAMILY_MATCHING:
+                    continue
+                # Una regla sin la definición de los símbolos del patrón no puede
+                # decidir el match: jamás un NO_MATCH incidental sin semántica.
+                if not (
+                    compatibility.symbol_executable
+                    or compatibility.symbol_defined
+                ):
+                    continue
                 properties = getattr(rule, "properties", {}) or {}
-                symbol_hit = any(
-                    f"matching.symbol.{symbol}" in properties for symbol in symbols
-                )
                 operator_prop = properties.get("matching.operator")
                 operator = (
                     str(getattr(operator_prop, "value", "") or "").upper()
                     if operator_prop is not None
                     else ""
                 )
-                mask_hit = 1 if operator in _MASK_MATCH_OPERATORS else 0
-                operator_hit = 1 if "matching.operator" in properties else 0
-                return (symbol_hit, mask_hit, operator_hit, len(properties))
+                capability_rank = (
+                    1 if compatibility.symbol_executable else 0,
+                    1 if operator in _MASK_MATCH_OPERATORS else 0,
+                    1 if operator else 0,
+                    1 if getattr(rule, "supported", False) else 0,
+                    1 if getattr(rule, "provenance", ()) else 0,
+                    len(properties),
+                )
+                decisive.append((capability_rank, rule))
+            if not decisive:
+                return None
 
             reason = reason_fn
             if reason is None:
@@ -808,7 +865,15 @@ async def _run_premise_closure_stage(
             # La mejor regla por score puede no poder decidir (p.ej. un modo de
             # matching que exige datos ausentes). Se prueban en orden: la
             # primera que produzca un claim determinista SUPPORTED manda.
-            for best in sorted(decisive, key=_score, reverse=True):
+            ordered = sorted(
+                decisive,
+                key=lambda item: (
+                    item[0],
+                    str(getattr(item[1], "rule_id", "") or ""),
+                ),
+                reverse=True,
+            )
+            for _rank, best in ordered:
                 grounded_now = reason(
                     question=question,
                     evidence_items=list(items),
@@ -1066,6 +1131,36 @@ async def prepare_derived_authority(
                 public = to_public() or {}
                 step["why_no_rule"] = list(public.get("why_no_rule") or [])[:4]
         prep.steps.append(step)
+
+        # Gate OPERACIÓN↔QUERY: telemetría del score ANTES y DESPUÉS del gate.
+        compatibility = dict(
+            getattr(retrieval, "operation_compatibility", {}) or {}
+        )
+        if compatibility:
+            prep.operation_compatibility = compatibility
+            compatible_count = int(compatibility.get("compatible") or 0)
+            rejected_count = int(compatibility.get("rejected") or 0)
+            mismatch = bool(
+                compatibility.get("applied")
+                and compatible_count == 0
+                and rejected_count > 0
+            ) or "operation_mismatch" in reasons
+            if mismatch:
+                prep.operation_mismatch = True
+            prep.steps.append(
+                stage_step(
+                    STAGE_OPERATION_COMPATIBILITY,
+                    "warn" if mismatch else "ok",
+                    query_operation=compatibility.get("query_operation"),
+                    expected_operations=compatibility.get("expected_operations"),
+                    candidates=compatibility.get("candidates"),
+                    compatible=compatible_count,
+                    rejected=rejected_count,
+                    top_rejected_reasons=compatibility.get("top_rejected_reasons"),
+                    winner_rule_id=compatibility.get("winner_rule_id"),
+                    scores=compatibility.get("scores"),
+                )
+            )
 
     rules = _rules_for_grounding(retrieval)
     # P0.2/P0.3: provenance de la regla candidata DENTRO del scope autorizado y
@@ -1417,6 +1512,7 @@ __all__ = [
     "ERROR_CONFLICTING_RULE",
     "ERROR_DERIVATION_FAILED",
     "ERROR_DERIVED_RESULT",
+    "ERROR_OPERATION_MISMATCH",
     "ERROR_GROUNDING_ENGINE_FAILED",
     "ERROR_RULE_EVALUATION_FAILED",
     "ERROR_RULE_RETRIEVAL_UNAVAILABLE",
@@ -1424,6 +1520,7 @@ __all__ = [
     "STAGE_DECISION_ENVELOPE",
     "STAGE_DERIVATION",
     "STAGE_GROUNDING",
+    "STAGE_OPERATION_COMPATIBILITY",
     "STAGE_PREMISE_CLOSURE",
     "STAGE_QUERY_SEMANTICS",
     "STAGE_REQUIREMENT_GRAPH",

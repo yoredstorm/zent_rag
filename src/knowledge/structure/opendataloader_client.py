@@ -34,6 +34,12 @@ _VERSION_RE = re.compile(r'version "(\d+)(?:\.(\d+))?')
 
 _DEFAULT_TIMEOUT_SECONDS = 180
 
+#: Formatos soportados por el CLI (comma-separated en una sola JVM).
+SUPPORTED_FORMATS: tuple[str, ...] = ("json", "markdown", "html", "text", "pdf", "tagged-pdf")
+
+#: Separador de página por defecto del Markdown LLM-ready (rastreable).
+DEFAULT_MARKDOWN_PAGE_SEPARATOR = "<!-- page:%%page-number%% -->"
+
 
 @dataclass(frozen=True, kw_only=True)
 class OpenDataLoaderOptions:
@@ -53,6 +59,14 @@ class OpenDataLoaderOptions:
     threads: int = 1
     timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS
     extra_args: tuple[str, ...] = ()
+    #: Formatos de UNA sola conversión (comma-separated dentro del CLI).
+    #: Default histórico: solo JSON (StructuredDocument). Con "markdown" nace
+    #: la representación LLM-ready del mismo run.
+    formats: tuple[str, ...] = ("json",)
+    #: Separador de página del Markdown (%%page-number%% se sustituye).
+    markdown_page_separator: str = DEFAULT_MARKDOWN_PAGE_SEPARATOR
+    #: HTML dentro del Markdown para tablas con spans complejos (opcional).
+    markdown_with_html: bool = False
 
     def fingerprint(self) -> dict[str, Any]:
         """Metadata serializable de la corrida (provenance del parser)."""
@@ -67,19 +81,52 @@ class OpenDataLoaderOptions:
             "reading_order": self.reading_order,
             "include_header_footer": self.include_header_footer,
             "threads": self.threads,
+            "formats": list(self.formats),
+            "markdown_with_html": bool(self.markdown_with_html),
+            "markdown_page_separator": (
+                self.markdown_page_separator if "markdown" in self.formats else None
+            ),
         }
+
+    @property
+    def wants_markdown(self) -> bool:
+        return "markdown" in {str(item).strip().lower() for item in self.formats}
+
+    def resolved_formats(self) -> tuple[str, ...]:
+        """Formatos válidos y ordenados; JSON primero (canónico)."""
+        requested = [
+            str(item).strip().lower()
+            for item in self.formats
+            if str(item).strip().lower() in SUPPORTED_FORMATS
+        ]
+        if not requested:
+            requested = ["json"]
+        ordered = ["json", *[item for item in requested if item != "json"]]
+        return tuple(dict.fromkeys(ordered))
 
 
 @dataclass(frozen=True)
 class OpenDataLoaderConversion:
-    """Resultado crudo de una corrida: JSON + métricas de la conversión."""
+    """Resultado crudo de UNA corrida ODL: JSON canónico + representaciones."""
 
     data: dict[str, Any]
     output_json_bytes: int = 0
+    #: Proyección LLM-ready del MISMO run (vacío si no se pidió markdown).
+    markdown: str = ""
+    output_markdown_bytes: int = 0
+    #: HTML opcional (mismo run); nunca es autoridad estructural.
+    html: str = ""
+    output_html_bytes: int = 0
     elapsed_seconds: float = 0.0
     java: str = ""
     command: tuple[str, ...] = ()
     output_path: str | None = None
+    output_markdown_path: str | None = None
+    output_html_path: str | None = None
+
+    @property
+    def has_markdown(self) -> bool:
+        return bool(self.markdown.strip())
 
     @classmethod
     def from_payload(
@@ -88,6 +135,15 @@ class OpenDataLoaderConversion:
         if isinstance(payload, OpenDataLoaderConversion):
             return payload
         return cls(data=payload)
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "json_bytes": int(self.output_json_bytes),
+            "markdown_bytes": int(self.output_markdown_bytes),
+            "html_bytes": int(self.output_html_bytes),
+            "elapsed_seconds": round(float(self.elapsed_seconds or 0.0), 3),
+            "java": self.java,
+        }
 
 
 #: Firma del runner inyectable en tests/benchmarks.
@@ -192,13 +248,14 @@ def _build_command(
     options: OpenDataLoaderOptions,
     use_struct_tree: bool,
 ) -> list[str]:
+    formats = options.resolved_formats()
     command = [
         java,
         "-Djava.awt.headless=true",
         "-jar",
         jar,
         "--format",
-        "json",
+        ",".join(formats),
         "--quiet",
         "--image-output",
         "off",
@@ -211,6 +268,15 @@ def _build_command(
         "--threads",
         str(max(int(options.threads), 1)),
     ]
+    # Una sola JVM produce JSON + Markdown: el Markdown nace de la misma
+    # conversión (no es un segundo parseo ni una segunda fuente).
+    if "markdown" in formats:
+        if options.markdown_page_separator:
+            command.extend(
+                ["--markdown-page-separator", options.markdown_page_separator]
+            )
+        if options.markdown_with_html:
+            command.append("--markdown-with-html")
     if use_struct_tree:
         command.append("--use-struct-tree")
     if options.include_header_footer:
@@ -226,17 +292,32 @@ def _build_command(
     return command
 
 
-def _read_output_json(output_dir: Path, pdf_path: Path) -> tuple[dict[str, Any], int, str]:
-    candidate = output_dir / f"{pdf_path.stem}.json"
-    if not candidate.is_file():
-        found = sorted(output_dir.glob("*.json"))
-        if not found:
-            raise StructuredParserError(
-                f"OpenDataLoader no produjo JSON para {pdf_path.name} "
-                f"(output_dir={output_dir})"
-            )
-        candidate = found[0]
-    raw = candidate.read_bytes()
+def _pick_artifact(output_dir: Path, pdf_path: Path, suffix: str) -> Path | None:
+    candidate = output_dir / f"{pdf_path.stem}{suffix}"
+    if candidate.is_file():
+        return candidate
+    found = sorted(output_dir.glob(f"*{suffix}"))
+    return found[0] if found else None
+
+
+def _read_output_artifacts(
+    output_dir: Path, pdf_path: Path
+) -> tuple[dict[str, Any], int, str, str, int, str | None, str, int, str | None]:
+    """Lee TODOS los artefactos de UNA conversión (JSON canónico + extras).
+
+    Devuelve:
+      payload, json_bytes, json_path, markdown, markdown_bytes, markdown_path,
+      html, html_bytes, html_path
+    El JSON es obligatorio (contrato estructural); markdown/html son opcionales
+    y su ausencia no invalida la conversión (quality gate decide después).
+    """
+    json_path = _pick_artifact(output_dir, pdf_path, ".json")
+    if json_path is None:
+        raise StructuredParserError(
+            f"OpenDataLoader no produjo JSON para {pdf_path.name} "
+            f"(output_dir={output_dir})"
+        )
+    raw = json_path.read_bytes()
     try:
         payload = json.loads(raw.decode("utf-8", errors="replace"))
     except ValueError as exc:
@@ -247,17 +328,52 @@ def _read_output_json(output_dir: Path, pdf_path: Path) -> tuple[dict[str, Any],
         raise StructuredParserError(
             f"OpenDataLoader devolvió un JSON no-objeto para {pdf_path.name}"
         )
-    return payload, len(raw), str(candidate)
+
+    markdown = ""
+    markdown_bytes = 0
+    markdown_path: str | None = None
+    md_file = _pick_artifact(output_dir, pdf_path, ".md")
+    if md_file is not None:
+        md_raw = md_file.read_bytes()
+        markdown = md_raw.decode("utf-8", errors="replace")
+        markdown_bytes = len(md_raw)
+        markdown_path = str(md_file)
+
+    html = ""
+    html_bytes = 0
+    html_path: str | None = None
+    html_file = _pick_artifact(output_dir, pdf_path, ".html")
+    if html_file is not None:
+        html_raw = html_file.read_bytes()
+        html = html_raw.decode("utf-8", errors="replace")
+        html_bytes = len(html_raw)
+        html_path = str(html_file)
+
+    return (
+        payload,
+        len(raw),
+        str(json_path),
+        markdown,
+        markdown_bytes,
+        markdown_path,
+        html,
+        html_bytes,
+        html_path,
+    )
 
 
-def convert_pdf_to_json(
+def convert_pdf(
     data: bytes,
     *,
     options: OpenDataLoaderOptions,
     use_struct_tree: bool = False,
     workdir: str | Path | None = None,
 ) -> OpenDataLoaderConversion:
-    """Ejecuta el CLI oficial sobre bytes PDF y devuelve el JSON raíz.
+    """UNA ejecución ODL -> JSON canónico + representaciones pedidas.
+
+    `options.formats` decide los artefactos (p.ej. ("json", "markdown")): el
+    CLI los produce en la MISMA JVM. El JSON sigue siendo la representación
+    estructural canónica; markdown/html son proyecciones.
 
     Todo el I/O ocurre en un directorio aislado por documento; con `workdir`
     explícito no se borra (diagnóstico/benchmark).
@@ -325,25 +441,63 @@ def convert_pdf_to_json(
                 raise StructuredParserError(
                     f"OpenDataLoader falló (rc={result.returncode}): {detail}"
                 )
-            payload, json_bytes, output_path = _read_output_json(output_dir, pdf_path)
+            (
+                payload,
+                json_bytes,
+                output_path,
+                markdown,
+                markdown_bytes,
+                markdown_path,
+                html,
+                html_bytes,
+                html_path,
+            ) = _read_output_artifacts(output_dir, pdf_path)
         return OpenDataLoaderConversion(
             data=payload,
             output_json_bytes=json_bytes,
+            markdown=markdown,
+            output_markdown_bytes=markdown_bytes,
+            html=html,
+            output_html_bytes=html_bytes,
             elapsed_seconds=elapsed,
             java=java,
             command=tuple(command),
             output_path=output_path if keep else None,
+            output_markdown_path=markdown_path if keep else None,
+            output_html_path=html_path if keep else None,
         )
     finally:
         if temp_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def convert_pdf_to_json(
+    data: bytes,
+    *,
+    options: OpenDataLoaderOptions,
+    use_struct_tree: bool = False,
+    workdir: str | Path | None = None,
+) -> OpenDataLoaderConversion:
+    """Compat histórica: misma conversión forzada a JSON-only."""
+    from dataclasses import replace
+
+    json_only = replace(options, formats=("json",))
+    return convert_pdf(
+        data,
+        options=json_only,
+        use_struct_tree=use_struct_tree,
+        workdir=workdir,
+    )
+
+
 __all__ = [
     "ConversionRunner",
+    "DEFAULT_MARKDOWN_PAGE_SEPARATOR",
     "OpenDataLoaderConversion",
     "OpenDataLoaderOptions",
+    "SUPPORTED_FORMATS",
     "availability",
+    "convert_pdf",
     "convert_pdf_to_json",
     "java_major_version",
     "odl_library_version",

@@ -105,6 +105,84 @@ def rule_symbols(rule: Any) -> tuple[str, ...]:
     return tuple(sorted(symbols))
 
 
+#: Niveles de uso de símbolo (mencionar != definir != ejecutar).
+SYMBOL_MENTIONED = "mentioned"
+SYMBOL_DEFINED = "defined"
+SYMBOL_EXECUTABLE = "executable"
+
+_SYMBOL_LEVEL_ORDER: dict[str, int] = {
+    SYMBOL_MENTIONED: 0,
+    SYMBOL_DEFINED: 1,
+    SYMBOL_EXECUTABLE: 2,
+}
+
+#: Sufijos de propiedad que NO son la definición canónica del símbolo.
+_NON_DEFINITION_SUFFIXES = (".alphabet", ".unmerged", ".superseded")
+
+
+def _max_symbol_level(current: str | None, candidate: str) -> str:
+    if current is None:
+        return candidate
+    if _SYMBOL_LEVEL_ORDER[candidate] > _SYMBOL_LEVEL_ORDER[current]:
+        return candidate
+    return current
+
+
+def rule_symbol_usage(rule: Any) -> dict[str, str]:
+    """Símbolo -> nivel de uso semántico por parte de la regla.
+
+    - executable: `matching.symbol.X` definido Y con `matching.operator`/mode
+      (la regla puede EJECUTAR el símbolo, no solo nombrarlo);
+    - defined: `matching.symbol.X` definido sin operador de matching;
+    - mentioned: el símbolo solo aparece en statement/subject/props/conditions.
+
+    El ranking NUNCA debe tratar `mentioned` como `executable`.
+    """
+    properties = getattr(rule, "properties", {}) or {}
+    has_matching_operator = False
+    has_matching_mode = False
+    for name, prop in properties.items():
+        if not getattr(prop, "known", False):
+            continue
+        text_name = str(name)
+        if text_name == "matching.operator":
+            has_matching_operator = True
+        elif text_name.startswith("matching.mode"):
+            has_matching_mode = True
+    executable_level = has_matching_operator or has_matching_mode
+
+    usage: dict[str, str] = {}
+    for name, prop in properties.items():
+        text_name = str(name)
+        if not text_name.startswith("matching.symbol."):
+            continue
+        if not getattr(prop, "known", False):
+            continue
+        suffix = text_name[len("matching.symbol.") :]
+        if not suffix or suffix.endswith(_NON_DEFINITION_SUFFIXES):
+            continue
+        level = SYMBOL_EXECUTABLE if executable_level else SYMBOL_DEFINED
+        usage[suffix] = _max_symbol_level(usage.get(suffix), level)
+
+    texts: list[str] = [
+        str(getattr(rule, "statement", "") or ""),
+        str(getattr(rule, "subject", "") or ""),
+    ]
+    for argument in getattr(rule, "arguments", ()) or ():
+        texts.append(str(getattr(argument, "value", "") or ""))
+    for item in getattr(rule, "conditions", ()) or ():
+        texts.append(str(item))
+    for prop in properties.values():
+        value = getattr(prop, "value", None)
+        if isinstance(value, (str, int, float)):
+            texts.append(str(value))
+    for text in texts:
+        for symbol in _SYMBOL_RE.findall(text):
+            if symbol not in usage:
+                usage[symbol] = SYMBOL_MENTIONED
+    return {name: usage[name] for name in sorted(usage)}
+
+
 def _known_properties(rule: Any) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     for name in sorted((getattr(rule, "properties", {}) or {}).keys()):
@@ -279,7 +357,7 @@ def rank_rule(
     statement = normalize_text(getattr(rule, "statement", ""))
     search_text = rule_search_text(rule)
     properties = _known_properties(rule)
-    rule_symbol_set = set(rule_symbols(rule))
+    symbol_usage = rule_symbol_usage(rule)
     score = 0.0
     reasons: list[str] = []
 
@@ -309,13 +387,22 @@ def rank_rule(
             score += 5.0
             reasons.append(f"anchor:{text[:40]}")
 
+    # Símbolo: MENCIONARLO no vale lo mismo que DEFINIRLO ni que EJECUTARLO.
+    # Un statement que nombra `&` no puede competir con la gramática que lo
+    # ejecuta (`matching.symbol.&` + `matching.operator`).
     for symbol in symbols:
-        if symbol in rule_symbol_set:
-            score += 8.0
-            reasons.append(f"symbol:{symbol}")
-        prop_name = f"matching.symbol.{symbol}"
-        if prop_name in (getattr(rule, "properties", {}) or {}):
-            score += 2.0
+        if not symbol:
+            continue
+        level = symbol_usage.get(symbol)
+        if level == SYMBOL_EXECUTABLE:
+            score += 10.0
+            reasons.append(f"symbol:{symbol}:executable")
+        elif level == SYMBOL_DEFINED:
+            score += 4.0
+            reasons.append(f"symbol:{symbol}:defined")
+        elif level == SYMBOL_MENTIONED:
+            score += 1.5
+            reasons.append(f"symbol:{symbol}:mentioned")
 
     for entity in entities:
         text = normalize_text(entity)
@@ -393,6 +480,9 @@ def query_symbols(question: Any, patterns: Iterable[Any] = ()) -> tuple[str, ...
 
 __all__ = [
     "RULE_INDEX_VERSION",
+    "SYMBOL_DEFINED",
+    "SYMBOL_EXECUTABLE",
+    "SYMBOL_MENTIONED",
     "merge_rule_candidates",
     "normalize_text",
     "query_symbols",
@@ -401,6 +491,7 @@ __all__ = [
     "rule_fingerprint",
     "rule_index_document",
     "rule_search_text",
+    "rule_symbol_usage",
     "rule_symbols",
     "rule_tokens",
 ]

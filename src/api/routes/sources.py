@@ -413,7 +413,7 @@ async def list_source_documents(
     }
 
 
-def _parser_payload(metadata: object) -> dict[str, str | None] | None:
+def _parser_payload(metadata: object) -> dict[str, object] | None:
     """§16: parser real de un documento (engine/version/mode/structure)."""
     import json as _json
 
@@ -430,13 +430,64 @@ def _parser_payload(metadata: object) -> dict[str, str | None] | None:
     version = parser.get("version") or metadata.get("parser_version")
     mode = parser.get("mode") or metadata.get("parser_mode")
     structure = parser.get("structure_source") or metadata.get("structure_source")
-    if not any((engine, version, mode, structure)):
+    representations = _representations_payload(metadata)
+    if not any((engine, version, mode, structure, representations)):
         return None
     return {
         "engine": str(engine) if engine else None,
         "version": str(version) if version else None,
         "mode": str(mode) if mode else None,
         "structure_source": str(structure) if structure else None,
+        "representations": representations,
+    }
+
+
+def _representations_payload(metadata: dict) -> dict[str, object] | None:
+    """Representaciones del documento para UI: original, JSON canónico, Markdown.
+
+    - Original PDF = source (el archivo subido).
+    - Structured JSON = representación canónica parseada.
+    - Markdown = representación LLM-ready (proyección, no autoridad).
+    """
+    document_parser = metadata.get("document_parser")
+    summary = (
+        document_parser.get("representations")
+        if isinstance(document_parser, dict)
+        and isinstance(document_parser.get("representations"), dict)
+        else None
+    )
+    bundle = metadata.get("representations")
+    bundle_block = (
+        bundle
+        if isinstance(bundle, dict)
+        and bundle.get("schema_version") == "parsed-document-bundle-1"
+        else None
+    )
+    if summary is None and bundle_block is None:
+        return None
+    source = summary or {}
+    llm_markdown = bool(source.get("llm_markdown")) or bool(
+        isinstance(bundle_block, dict) and bundle_block.get("llm_markdown")
+    )
+    markdown_artifact = (
+        bundle_block.get("llm_markdown") if isinstance(bundle_block, dict) else None
+    )
+    return {
+        "canonical": "structured_json",
+        "structured_json": True,
+        "llm_markdown": llm_markdown,
+        "markdown_ref": (
+            source.get("markdown_ref")
+            or (
+                markdown_artifact.get("ref")
+                if isinstance(markdown_artifact, dict)
+                else None
+            )
+        ),
+        "markdown_sections": source.get("markdown_sections"),
+        "crosswalk_coverage": source.get("crosswalk_coverage"),
+        "quality_promoted": source.get("quality_promoted"),
+        "original_pdf": True,
     }
 
 

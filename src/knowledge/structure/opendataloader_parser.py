@@ -1,17 +1,22 @@
 # =============================================================================
 # OpenDataLoader PDF — parser nativo de ZENT (StructuredParser)
 # =============================================================================
-# PDF -> OpenDataLoader (JVM, JSON) -> adapter -> StructuredDocument.
+# PDF -> OpenDataLoader (JVM) -> adapter -> StructuredDocument.
 # El resto de Knowledge OS no sabe que OpenDataLoader existe: consume el
 # mismo contrato que PdfParser (pdfplumber).
 #
-# Fase 1: experimental en paralelo. No reemplaza a pdfplumber en producción.
+# Document Intelligence Layer: UNA ejecución produce JSON (autoridad
+# estructural) + Markdown (representación LLM-ready) + crosswalk. El
+# StructuredDocument sigue siendo el contrato principal de Knowledge OS.
+#
+# El probe de PDF (alturas de página, StructTreeRoot, metadata) usa pdfminer
+# (ya presente vía pdfplumber) y NO importa pdfplumber: ese motor queda como
+# shadow/fallback temporal (ver src/knowledge/structure/PDFPLUMBER_DEPRECATION.md).
 # =============================================================================
 from __future__ import annotations
 
-import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 from uuid import UUID
@@ -21,11 +26,17 @@ from src.knowledge.structure.base import (
     StructuredParser,
     StructuredParserError,
 )
+from src.knowledge.structure.document_bundle import (
+    ParsedDocumentBundle,
+    build_parsed_document_bundle,
+    canonical_json_text,
+    place_bundle_artifacts,
+)
 from src.knowledge.structure.opendataloader_client import (
     ConversionRunner,
     OpenDataLoaderConversion,
     OpenDataLoaderOptions,
-    convert_pdf_to_json,
+    convert_pdf,
     odl_library_version,
 )
 from src.knowledge.structure.opendataloader_mapping import (
@@ -45,37 +56,55 @@ class PdfProbe:
 
 
 def probe_pdf(path: Path) -> PdfProbe:
-    """Alturas de página y presencia de structure tree (pdfminer, barato).
+    """Alturas de página y presence de structure tree (pdfminer, sin pdfplumber).
 
     OpenDataLoader entrega bboxes con origen abajo-izquierda; ZENT usa el
     mismo origen que pdfplumber (arriba-izquierda). También decide si
     corresponde --use-struct-tree en modo auto.
+
+    pdfminer.six es dependencia transitiva de pdfplumber y se mantiene incluso
+    si pdfplumber se retira del runtime productivo (Stage C de la deprecación).
     """
     try:
-        import pdfplumber
-    except ImportError:
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfparser import PDFParser
+    except ImportError:  # pragma: no cover — pdfminer no instalado
         return PdfProbe()
     try:
-        with pdfplumber.open(path) as pdf:
-            heights = tuple(
-                float(getattr(page, "height", 0) or 0.0) for page in pdf.pages
-            )
-            catalog = getattr(getattr(pdf, "doc", None), "catalog", None) or {}
+        with open(path, "rb") as handle:
+            parser = PDFParser(handle)
+            document = PDFDocument(parser)
+            heights: list[float] = []
+            for page in PDFPage.create_pages(document):
+                box = getattr(page, "mediabox", None)
+                if not box or len(box) < 4:
+                    continue
+                try:
+                    heights.append(abs(float(box[3]) - float(box[1])))
+                except (TypeError, ValueError):
+                    continue
+            catalog = getattr(document, "catalog", None) or {}
             tagged = any(
-                str(key).lstrip("/") == "StructTreeRoot" for key in catalog
+                str(key).lstrip("/").replace("b'", "").replace("'", "")
+                == "StructTreeRoot"
+                for key in catalog
             )
-            metadata = {
-                str(key): str(value) for key, value in (pdf.metadata or {}).items()
-            }
+            metadata: dict[str, str] = {}
+            for info in getattr(document, "info", ()) or ():
+                if not isinstance(info, dict):
+                    continue
+                for key, value in info.items():
+                    metadata[str(key)] = str(value)
         return PdfProbe(
-            page_heights=heights, has_structure_tree=tagged, metadata=metadata
+            page_heights=tuple(heights), has_structure_tree=tagged, metadata=metadata
         )
     except Exception:  # noqa: BLE001 — el probe nunca tumba el parseo
         return PdfProbe()
 
 
 class OpenDataLoaderPdfParser(StructuredParser):
-    """PDF -> StructuredDocument usando OpenDataLoader (JSON estructurado)."""
+    """PDF -> StructuredDocument / ParsedDocumentBundle vía OpenDataLoader."""
 
     kind = "pdf"
     mime_type = "application/pdf"
@@ -86,10 +115,12 @@ class OpenDataLoaderPdfParser(StructuredParser):
         options: OpenDataLoaderOptions | None = None,
         runner: ConversionRunner | None = None,
         page_probe: Callable[[Path], PdfProbe] | None = None,
+        artifact_root: str | Path | None = None,
     ) -> None:
         self._options = options or OpenDataLoaderOptions()
-        self._runner = runner or convert_pdf_to_json
+        self._runner = runner or convert_pdf
         self._page_probe = page_probe or probe_pdf
+        self._artifact_root = artifact_root
 
     @property
     def options(self) -> OpenDataLoaderOptions:
@@ -104,7 +135,21 @@ class OpenDataLoaderPdfParser(StructuredParser):
             return "ocr" if force_ocr else "hybrid"
         return "inferred_layout"
 
-    def parse(
+    def _resolve_artifact_root(self) -> Path | None:
+        """Root de artefactos: explícito > UPLOAD_DIR del runtime."""
+        if self._artifact_root:
+            return Path(str(self._artifact_root))
+        try:
+            from src.core.config import get_settings
+
+            raw = getattr(get_settings(), "UPLOAD_DIR", None)
+            if raw:
+                return Path(str(raw))
+        except Exception:  # noqa: BLE001 — sin root no se persisten artefactos
+            return None
+        return None
+
+    def parse_document(
         self,
         data: bytes,
         *,
@@ -115,7 +160,9 @@ class OpenDataLoaderPdfParser(StructuredParser):
         source_name: str = "document",
         mime_type: str | None = None,
         options: PdfParseOptions | None = None,
-    ) -> StructuredDocument:
+        place_artifacts: bool = True,
+    ) -> ParsedDocumentBundle:
+        """UNA conversión ODL -> bundle dual (JSON canónico + Markdown LLM)."""
         options = options or PdfParseOptions()
         options_fp = self._options
         root = Path(tempfile.mkdtemp(prefix="zent_odl_parse_"))
@@ -177,6 +224,7 @@ class OpenDataLoaderPdfParser(StructuredParser):
                 "java": conversion.java,
                 "requested_columns": bool(getattr(options, "column_detection", False)),
                 "options": options_fp.fingerprint(),
+                "formats": list(options_fp.resolved_formats()),
             }
             context = OpenDataLoaderMappingContext(
                 organization_id=organization_id,
@@ -191,9 +239,61 @@ class OpenDataLoaderPdfParser(StructuredParser):
                 conversion=conversion,
                 extra_warnings=tuple(fallback_warnings),
             )
-            return map_opendataloader_document(conversion.data, context=context)
+            document = map_opendataloader_document(conversion.data, context=context)
+            bundle = build_parsed_document_bundle(
+                document,
+                conversion=conversion,
+                parser_info=parser_info,
+                fallback_warnings=fallback_warnings,
+            )
+            if place_artifacts and bundle.markdown.strip():
+                artifact_root = self._resolve_artifact_root()
+                if artifact_root is not None:
+                    bundle = place_bundle_artifacts(
+                        bundle,
+                        root=artifact_root,
+                        organization_id=str(organization_id),
+                        canonical_json_text_value=canonical_json_text(conversion.data),
+                    )
+            # Metadata LIVIANA en el contrato principal: refs/hashes/métricas,
+            # nunca el Markdown gigante (Qdrant recibe section-level aparte).
+            document = replace(
+                document,
+                metadata={
+                    **(document.metadata or {}),
+                    "representations": bundle.metadata_block(),
+                },
+            )
+            return replace(bundle, structured_document=document)
         finally:
+            import shutil
+
             shutil.rmtree(root, ignore_errors=True)
+
+    def parse(
+        self,
+        data: bytes,
+        *,
+        organization_id: UUID,
+        external_id: str,
+        source_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        source_name: str = "document",
+        mime_type: str | None = None,
+        options: PdfParseOptions | None = None,
+    ) -> StructuredDocument:
+        """Contrato histórico: StructuredDocument (con metadata representations)."""
+        bundle = self.parse_document(
+            data,
+            organization_id=organization_id,
+            external_id=external_id,
+            source_id=source_id,
+            workspace_id=workspace_id,
+            source_name=source_name,
+            mime_type=mime_type,
+            options=options,
+        )
+        return bundle.structured_document
 
 
 __all__ = ["OpenDataLoaderPdfParser", "PdfProbe", "probe_pdf"]

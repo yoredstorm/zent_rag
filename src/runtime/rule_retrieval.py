@@ -36,10 +36,16 @@ from src.knowledge.rule_compiler.index import (
     rank_rule,
 )
 from src.knowledge.rule_compiler.model import CanonicalRule
+from src.runtime.operation_compatibility import (
+    MISSING_RUNTIME_SYMBOL_SEMANTICS,
+    QueryOperationRequirements,
+    derive_query_operation_requirements,
+    gate_rules_for_requirements,
+)
 
 logger = get_logger(__name__)
 
-RULE_RETRIEVAL_VERSION = "rule-retrieval-3"
+RULE_RETRIEVAL_VERSION = "rule-retrieval-4"
 #: Kind REAL con el que el compilador persiste las reglas canónicas.
 #: El Rule Lane DEBE usar este valor: persistir `business_rule` y consultar
 #: `BUSINESS_RULE` fue un miss total de retrieval (0 candidatas siempre).
@@ -69,6 +75,10 @@ WHY_NO_RULE: dict[str, str] = {
     "stale_document": "el documento fue compilado antes del Semantic Rule Compiler (requiere backfill)",
     "retrieval_failure": "el retrieval de reglas falló (operativo)",
     "conflict": "las reglas candidatas están en conflicto y no hay una soportada",
+    "operation_mismatch": (
+        "hay reglas soportadas pero ninguna es semánticamente compatible con la "
+        "operación que exige la consulta"
+    ),
 }
 
 
@@ -325,6 +335,8 @@ class RuleSearchRequest:
     symbols: tuple[str, ...] = ()
     required_semantics: tuple[str, ...] = ()
     operation_intent: str = ""
+    #: Requisitos de operación derivados de QuerySemantics (gate de compatibilidad).
+    operation_requirements: QueryOperationRequirements | None = None
     max_results: int = MAX_RULES_PER_QUERY
 
     def to_public_dict(self) -> dict:
@@ -337,6 +349,11 @@ class RuleSearchRequest:
             "operation_intent": self.operation_intent,
             "required_semantics": list(self.required_semantics[:12]),
             "scoped": bool(self.workspace_id or self.source_ids or self.document_ids),
+            "operation_requirements": (
+                self.operation_requirements.to_public_dict()
+                if self.operation_requirements is not None
+                else None
+            ),
         }
 
 
@@ -515,6 +532,20 @@ class RuleRetrievalResult:
     candidate_rules: list[CanonicalRule] = field(default_factory=list)
     supported_rules: list[CanonicalRule] = field(default_factory=list)
     executable_rules: list[CanonicalRule] = field(default_factory=list)
+    #: Candidatas que pasaron el gate de compatibilidad OPERACIÓN↔QUERY,
+    #: rankeadas DESPUÉS del gate (score_after). Es la lista que entra al
+    #: pass decisivo; `candidate_rules` conserva todo para telemetría.
+    compatible_rules: list[CanonicalRule] = field(default_factory=list)
+    #: Familia compatible pero capacidad incompleta (p.ej. matching sin la
+    #: definición del símbolo): Premise Closure / el merge distribuido puede
+    #: completarla. No entra directamente al pass decisivo.
+    deferred_rules: list[CanonicalRule] = field(default_factory=list)
+    #: True cuando el retriever aplicó el gate (no cuando un doble de test
+    #: construyó el resultado a mano).
+    compatibility_applied: bool = False
+    #: Vista pública del stage `operation_compatibility` (conteos, rechazos,
+    #: score antes/después, ganador).
+    operation_compatibility: dict = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
     evidence_signal: str = ""
     errors: list[str] = field(default_factory=list)
@@ -529,6 +560,14 @@ class RuleRetrievalResult:
     def supported_ids(self) -> list[str]:
         return [str(rule.rule_id) for rule in self.supported_rules]
 
+    @property
+    def compatible_ids(self) -> list[str]:
+        return [str(rule.rule_id) for rule in self.compatible_rules]
+
+    @property
+    def deferred_ids(self) -> list[str]:
+        return [str(rule.rule_id) for rule in self.deferred_rules]
+
     def to_public_dict(self) -> dict:
         why = [WHY_NO_RULE.get(reason, reason) for reason in self.reasons]
         if self.evidence_signal in ("rule_index_missing", "stale_document") and not self.supported_rules:
@@ -538,13 +577,18 @@ class RuleRetrievalResult:
             "strategy": self.strategy,
             "candidates_found": len(self.candidates),
             "supported_rules": len(self.supported_rules),
+            "compatible_rules": len(self.compatible_rules),
+            "deferred_rules": len(self.deferred_rules),
             "rule_ids": self.supported_ids[:12] or self.candidate_ids[:12],
             "supported_rule_ids": self.supported_ids[:12],
             "candidate_rule_ids": self.candidate_ids[:12],
+            "compatible_rule_ids": self.compatible_ids[:12],
+            "deferred_rule_ids": self.deferred_ids[:12],
             "reasons": list(dict.fromkeys(self.reasons))[:6],
             "why_no_rule": why[:4],
             "evidence_signal": self.evidence_signal,
             "errors": list(self.errors[:4]),
+            "operation_compatibility": dict(self.operation_compatibility),
             "request": self.request.to_public_dict() if self.request else None,
         }
 
@@ -610,8 +654,24 @@ class CanonicalRuleRetriever:
         merged_rules = merge_rule_candidates(hits, max_rules=self._max_rules)
         result.candidate_rules = merged_rules
         result.candidates = self._hits_for_rules(merged_rules, hits)
+
+        # Gate de compatibilidad OPERACIÓN↔QUERY ANTES del ranking decisivo:
+        # las incompatibles quedan excluidas con razón auditable; solo las
+        # compatibles se rankean (score_after) y alimentan el pass decisivo.
+        requirements = _requirements_for_request(request)
+        scores = _best_scores(hits)
+        gate = gate_rules_for_requirements(merged_rules, requirements, scores=scores)
+        result.compatibility_applied = True
+        result.operation_compatibility = gate.to_public_dict()
+        result.compatible_rules = gate.ranked_compatible()
+        result.deferred_rules = [
+            rule
+            for rule in gate.rejected
+            if (result_for := gate.result_for(rule)) is not None
+            and result_for.eligibility == MISSING_RUNTIME_SYMBOL_SEMANTICS
+        ]
         result.supported_rules = [
-            rule for rule in merged_rules if _is_supported(rule)
+            rule for rule in result.compatible_rules if _is_supported(rule)
         ]
         result.executable_rules = [
             rule for rule in result.supported_rules if _is_executable(rule)
@@ -628,6 +688,12 @@ class CanonicalRuleRetriever:
             result.reasons.append(
                 "retrieval_failure" if result.errors else "no_candidate"
             )
+        elif not result.compatible_rules and gate.rejected:
+            # Candidatas existentes pero NINGUNA compatible: no es un conflicto
+            # documental ni un «casi match»; es incompatibilidad de operación.
+            result.reasons.append("operation_mismatch")
+            if not any(_is_supported(rule) for rule in result.candidate_rules):
+                result.reasons.append("unsupported")
         elif not result.supported_rules:
             if any(_is_conflicting(rule) for rule in result.candidate_rules):
                 result.reasons.append("conflict")
@@ -651,6 +717,34 @@ class CanonicalRuleRetriever:
                     rule=rule, score=float(score), source=source
                 )
         return [by_id[str(rule.rule_id)] for rule in rules if str(rule.rule_id) in by_id]
+
+
+def _best_scores(hits: Sequence[tuple[CanonicalRule, float, str]]) -> dict[str, float]:
+    """Mejor score por regla (antes del gate), determinista."""
+    scores: dict[str, float] = {}
+    for rule, score, _source in hits or ():
+        rule_id = str(getattr(rule, "rule_id", "") or "")
+        if not rule_id:
+            continue
+        current = scores.get(rule_id)
+        if current is None or float(score) > current:
+            scores[rule_id] = float(score)
+    return scores
+
+
+def _requirements_for_request(
+    request: RuleSearchRequest,
+) -> QueryOperationRequirements:
+    """Requisitos de operación: los del request o derivados de sus señales."""
+    if request.operation_requirements is not None:
+        return request.operation_requirements
+    return derive_query_operation_requirements(
+        question=request.query,
+        symbols=request.symbols,
+        runtime_patterns=request.anchors,
+        intent=request.operation_intent,
+        required_semantics=request.required_semantics,
+    )
 
 
 def _is_supported(rule: CanonicalRule) -> bool:
@@ -756,6 +850,15 @@ def build_rule_search_request(
         document_ids = derived_docs
         source_ids = derived_sources
 
+    operation_requirements = derive_query_operation_requirements(
+        question=question,
+        semantics=sem,
+        symbols=tuple(symbols),
+        runtime_patterns=tuple(patterns),
+        intent=intent,
+        required_semantics=required_semantics,
+    )
+
     return RuleSearchRequest(
         organization_id=organization_id,
         query=question,
@@ -769,6 +872,7 @@ def build_rule_search_request(
         symbols=symbols[:8],
         required_semantics=required_semantics,
         operation_intent=intent,
+        operation_requirements=operation_requirements,
         max_results=max_results,
     )
 

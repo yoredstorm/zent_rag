@@ -1,0 +1,62 @@
+{
+  "file name": "atpco_ampersand_record2.pdf",
+  "number of pages": 1,
+  "author": "ATPCO",
+  "title": "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "Doctitle",
+      "page number": 1,
+      "bounding box": [72.0, 700.0, 540.0, 730.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 24.0,
+      "text color": "[0.0]",
+      "content": "DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL"
+    },
+    {
+      "type": "paragraph",
+      "id": 2,
+      "page number": 1,
+      "bounding box": [72.0, 660.0, 540.0, 690.0],
+      "font": "Helvetica",
+      "font size": 12.0,
+      "text color": "[0.0]",
+      "content": "The Exclamation Point (!) or Ampersand (&) is used in conjunction with alphanumeric characters in the fare family match process to positionally match fare class characters."
+    },
+    {
+      "type": "paragraph",
+      "id": 3,
+      "page number": 1,
+      "bounding box": [72.0, 630.0, 540.0, 660.0],
+      "font": "Helvetica",
+      "font size": 12.0,
+      "text color": "[0.0]",
+      "content": "The “!” or “&” indicate a match to any alphanumeric character in that position of the fare class (following the business rules outlined below)."
+    },
+    {
+      "type": "paragraph",
+      "id": 4,
+      "page number": 1,
+      "bounding box": [72.0, 600.0, 540.0, 630.0],
+      "font": "Helvetica",
+      "font size": 12.0,
+      "text color": "[0.0]",
+      "content": "Matching is positional, left to right."
+    },
+    {
+      "type": "paragraph",
+      "id": 5,
+      "page number": 1,
+      "bounding box": [72.0, 570.0, 540.0, 600.0],
+      "font": "Helvetica",
+      "font size": 12.0,
+      "text color": "[0.0]",
+      "content": "When using special characters “!” or “&”, a fare class must contain at least the number of characters referenced in the fare class field (additional characters may follow)."
+    }
+  ]
+}

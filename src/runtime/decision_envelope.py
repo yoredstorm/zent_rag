@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping as MappingABC
 from collections.abc import Sequence as SequenceABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from src.runtime.derived_guard import DerivedGuardOutcome, enforce_derived_result
@@ -103,6 +103,11 @@ class DecisionEnvelope:
     statement: str = ""
     confidence: float = 0.0
     rule_version: str = ""
+    #: Gate OPERACIÓN↔QUERY de la regla decisiva (OperationCompatibilityResult
+    #: público). Invariante AUTHORITATIVE_OPERATION_COMPATIBILITY: con
+    #: compatible=False (o familia de operación no permitida) el envelope NO
+    #: se construye: sin autoridad.
+    operation_compatibility: dict[str, Any] = field(default_factory=dict)
     version: str = DECISION_ENVELOPE_VERSION
     authoritative: bool = True
 
@@ -130,6 +135,7 @@ class DecisionEnvelope:
             "statement": self.statement[:300],
             "confidence": round(float(self.confidence), 4),
             "rule_version": self.rule_version,
+            "operation_compatibility": dict(self.operation_compatibility),
         }
 
 
@@ -187,6 +193,11 @@ def _rule_evaluation_for(
 def build_decision_envelope(grounded: Any) -> DecisionEnvelope | None:
     """Construye el envelope desde el resultado del grounded engine.
 
+    Invariante AUTHORITATIVE_OPERATION_COMPATIBILITY: si la operación de la
+    regla decisiva no es semánticamente compatible con la consulta (p.ej.
+    COMPARISON para un patrón de runtime aplicado a un valor), NO se construye
+    envelope: sin autoridad, fail closed.
+
     Devuelve None si no hay DerivedClaim determinista SUPPORTED.
     """
     grounded_public = _public(grounded)
@@ -200,6 +211,41 @@ def build_decision_envelope(grounded: Any) -> DecisionEnvelope | None:
         str(value) for value in claim.get("canonical_rule_ids") or () if value
     )
     evaluation = _rule_evaluation_for(grounded_public, rule_ids) or {}
+
+    # --- Gate OPERACIÓN↔QUERY (invariante de autoridad) ---------------------
+    from src.runtime.operation_compatibility import (
+        derive_query_operation_requirements,
+        envelope_operation_compatible,
+    )
+
+    semantics_public = (
+        grounded_public.get("semantics")
+        if isinstance(grounded_public.get("semantics"), MappingABC)
+        else None
+    )
+    requirements = derive_query_operation_requirements(
+        question=str(
+            getattr(grounded, "question", "") or grounded_public.get("question") or ""
+        ),
+        semantics=getattr(grounded, "semantics", None),
+        semantics_public=semantics_public,
+        runtime_patterns=tuple(
+            str(item) for item in grounded_public.get("runtime_patterns") or ()
+        ),
+    )
+    compatibility = dict(evaluation.get("operation_compatibility") or {})
+    operation = str(claim.get("operation") or evaluation.get("operation") or "")
+    operation_compatible = envelope_operation_compatible(
+        operation, requirements
+    )[0]
+    if compatibility.get("compatible") is False:
+        operation_compatible = False
+    if not operation_compatible:
+        # La operación no pertenece a ninguna familia compatible con la query:
+        # no hay autoridad. (La razón queda en `canonical_rule_flow` y en la
+        # telemetría del stage operation_compatibility.)
+        return None
+
     checks: list[dict] = []
     for check in evaluation.get("checks") or ():
         if isinstance(check, MappingABC):
@@ -234,6 +280,7 @@ def build_decision_envelope(grounded: Any) -> DecisionEnvelope | None:
         statement=statement,
         confidence=float(claim.get("confidence") or 0.0),
         rule_version=str(claim.get("version") or ""),
+        operation_compatibility=compatibility,
     )
 
 

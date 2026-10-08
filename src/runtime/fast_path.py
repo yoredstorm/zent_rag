@@ -39,6 +39,7 @@ UNRESOLVED_EVALUATION = "UNRESOLVED_EVALUATION"
 AMBIGUOUS_RULES = "AMBIGUOUS_RULES"
 MISSING_RUNTIME_INPUTS = "MISSING_RUNTIME_INPUTS"
 UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
+OPERATION_INCOMPATIBLE = "OPERATION_INCOMPATIBLE"
 NO_RESULT = "NO_RESULT"
 SOURCE_SCOPE_UNRESOLVED = "SOURCE_SCOPE_UNRESOLVED"
 OUT_OF_SCOPE_RULE = "OUT_OF_SCOPE_RULE"
@@ -143,6 +144,11 @@ def evaluate_deterministic_fast_path(
     env = _payload(envelope)
     if env.get("authoritative") is not True:
         return _fail(NO_AUTHORITY)
+    # Invariante AUTHORITATIVE_OPERATION_COMPATIBILITY: una operación
+    # incompatible con la query no habilita el fast path.
+    compatibility = env.get("operation_compatibility")
+    if isinstance(compatibility, Mapping) and compatibility.get("compatible") is False:
+        return _fail(OPERATION_INCOMPATIBLE)
     excluded = {str(value) for value in out_of_scope_rule_ids if str(value or "").strip()}
     if excluded:
         winning = set(_texts(env.get("canonical_rule_ids")))
@@ -627,6 +633,7 @@ __all__ = [
     "MISSING_PREMISES",
     "NO_AUTHORITY",
     "NOT_EXECUTABLE",
+    "OPERATION_INCOMPATIBLE",
     "OUT_OF_SCOPE_RULE",
     "SOURCE_SCOPE_UNRESOLVED",
     "build_user_deterministic_explanation",

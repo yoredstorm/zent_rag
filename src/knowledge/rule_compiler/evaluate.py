@@ -126,6 +126,10 @@ class RuleEvaluation:
     condition_results: list[dict] = field(default_factory=list)
     logic: str = "AND"
     exceptions_applied: list[str] = field(default_factory=list)
+    #: Compatibilidad OPERACIÓN↔QUERY de la regla (OperationCompatibilityResult
+    #: público). La completa el caller (grounded engine) antes de decidir.
+    compatible: bool = True
+    operation_compatibility: dict = field(default_factory=dict)
     version: str = EVALUATION_VERSION
 
     @property
@@ -152,6 +156,8 @@ class RuleEvaluation:
             "condition_results": [dict(item) for item in self.condition_results[:12]],
             "logic": self.logic,
             "exceptions_applied": list(self.exceptions_applied[:6]),
+            "compatible": bool(self.compatible),
+            "operation_compatibility": dict(self.operation_compatibility),
         }
 
 
@@ -252,6 +258,13 @@ def _extract_numbers(text: Any) -> list[float]:
     ]
 
 
+def _validate_comparison(left: Any, right: Any, op: str) -> Any:
+    """OperationInputValidator antes del registry (import perezoso)."""
+    from src.runtime.operation_compatibility import validate_comparison_operands
+
+    return validate_comparison_operands(left, right, op=op)
+
+
 def _comparison_check(
     *,
     operator: str,
@@ -330,6 +343,18 @@ def _comparison_check(
                 status=RuleEvaluationStatus.UNDETERMINED.value,
                 missing_premises=missing,
                 detail="faltan operandos de comparacion",
+                evidence=evidence,
+            )
+        # OperationInputValidator: una máscara de runtime no es un escalar
+        # ordenable. `ABCFGEGE >= &&&F` JAMÁS se evalúa lexicalmente.
+        validation = _validate_comparison(left, right, comparison_op)
+        if not validation.valid:
+            return RuleCheck(
+                name="comparison",
+                operation="COMPARISON",
+                status=RuleEvaluationStatus.UNDETERMINED.value,
+                missing_premises=list(validation.reasons),
+                detail=validation.detail,
                 evidence=evidence,
             )
         outcome = registry.run("COMPARISON", a=left, b=right, op=comparison_op)
@@ -1194,6 +1219,16 @@ def _check_scoped_condition(
             status=RuleEvaluationStatus.UNDETERMINED.value,
             missing_premises=[f"condition_operator:{operator}"],
             detail=f"operador de condición no soportado: {operator}",
+            evidence=evidence,
+        )
+    validation = _validate_comparison(left, right, comparison_op)
+    if not validation.valid:
+        return RuleCheck(
+            name=label,
+            operation="COMPARISON",
+            status=RuleEvaluationStatus.UNDETERMINED.value,
+            missing_premises=list(validation.reasons),
+            detail=validation.detail,
             evidence=evidence,
         )
     outcome = registry.run("COMPARISON", a=left, b=right, op=comparison_op)

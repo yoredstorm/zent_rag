@@ -18,6 +18,7 @@ from src.core.domain.knowledge_v2 import StructuredDocument
 from src.infrastructure.observability.logging_config import get_logger
 from src.knowledge.structure.base import StructuredParser
 from src.knowledge.structure.opendataloader_client import (
+    DEFAULT_MARKDOWN_PAGE_SEPARATOR,
     OpenDataLoaderOptions,
     odl_library_version,
 )
@@ -41,6 +42,13 @@ def options_from_settings(settings: object) -> OpenDataLoaderOptions:
         use_struct_tree = False
     else:
         use_struct_tree = None
+    # Representación dual en UNA conversión: JSON canónico + Markdown LLM-ready.
+    llm_markdown = bool(getattr(settings, "ODL_LLM_MARKDOWN", True))
+    formats = ("json", "markdown") if llm_markdown else ("json",)
+    separator = str(
+        getattr(settings, "ODL_MARKDOWN_PAGE_SEPARATOR", "")
+        or DEFAULT_MARKDOWN_PAGE_SEPARATOR
+    )
     return OpenDataLoaderOptions(
         java=str(getattr(settings, "ODL_JAVA", "") or ""),
         java_home=str(getattr(settings, "ODL_JAVA_HOME", "") or ""),
@@ -59,6 +67,11 @@ def options_from_settings(settings: object) -> OpenDataLoaderOptions:
         ),
         threads=int(getattr(settings, "ODL_THREADS", 1) or 1),
         timeout_seconds=int(getattr(settings, "ODL_TIMEOUT_SECONDS", 180) or 180),
+        formats=formats,
+        markdown_page_separator=separator,
+        markdown_with_html=bool(
+            getattr(settings, "ODL_MARKDOWN_WITH_HTML", False)
+        ),
     )
 
 
@@ -227,6 +240,33 @@ def stamp_parser_provenance(
         "tables": len(document.tables),
         "status": "ok",
     }
+    # Representación dual (JSON canónico + Markdown LLM-ready): resumen liviano
+    # para «Ver flujo»/UI, nunca el markdown completo.
+    representations = metadata.get("representations")
+    if isinstance(representations, dict):
+        crosswalk = representations.get("crosswalk")
+        quality = representations.get("quality")
+        llm_markdown = representations.get("llm_markdown")
+        metadata["document_parser"]["representations"] = {
+            "canonical": "structured_json",
+            "llm_markdown": bool(llm_markdown),
+            "markdown_storage": (
+                llm_markdown.get("storage") if isinstance(llm_markdown, dict) else None
+            ),
+            "markdown_ref": (
+                llm_markdown.get("ref") if isinstance(llm_markdown, dict) else None
+            ),
+            "markdown_sections": (
+                crosswalk.get("sections") if isinstance(crosswalk, dict) else None
+            ),
+            "crosswalk_coverage": (
+                crosswalk.get("coverage") if isinstance(crosswalk, dict) else None
+            ),
+            "quality_promoted": (
+                quality.get("promoted") if isinstance(quality, dict) else None
+            ),
+            "fingerprint": representations.get("fingerprint"),
+        }
     return replace(document, metadata=metadata)
 
 

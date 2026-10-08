@@ -1514,9 +1514,10 @@ def build_journey(
         )
     answer_calls = _int_or_none(generation.get("answer_calls")) or 0
     if outcome.get("answer_delivered"):
-        # P2.1: con fast path no hubo generación LLM: la respuesta se construyó
-        # desde el DecisionEnvelope y los checks estructurados.
-        if _text(execution_mode) == "DETERMINISTIC_FAST_PATH":
+        # P2.1: con fast path no hubo generación LLM para DECIDIR: la respuesta
+        # se construyó desde el DecisionEnvelope y los checks estructurados.
+        # El modo puede ser STRICT o POLISHED (1 llamada de presentación).
+        if _text(execution_mode).startswith("DETERMINISTIC_FAST_PATH"):
             emit(
                 "DETERMINISTIC_ANSWER_BUILT",
                 {"llm_calls": 0, "checks": len(decision.get("checks") or ())},
