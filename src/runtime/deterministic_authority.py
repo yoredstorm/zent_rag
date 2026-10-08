@@ -512,6 +512,18 @@ def _first_deterministic_claim(grounded: Any) -> dict[str, Any] | None:
     return None
 
 
+def _has_deterministic_claim(grounded: Any) -> bool:
+    """¿El grounded trae al menos un DerivedClaim determinista SUPPORTED?"""
+    if grounded is None:
+        return False
+    derivations = getattr(grounded, "derivations", None)
+    return any(
+        bool(getattr(claim, "deterministic", False))
+        and str(getattr(claim, "verification_status", "")) == "SUPPORTED"
+        for claim in (getattr(derivations, "claims", ()) or ())
+    )
+
+
 class _ClosureEvidenceItem:
     """Evidencia recuperada -> item consumible por el grounded engine."""
 
@@ -741,24 +753,38 @@ async def _run_premise_closure_stage(
     local_stats["supported"] += int(initial_local.supported or 0)
     local_stats["executable"] += int(initial_local.executable or 0)
 
-    if not missing or rounds_left <= 0:
-        if initial_local.rules:
-            try:
-                reground = reason_fn
-                if reground is None:
-                    from src.intelligence.reasoning.grounded_engine import (
-                        reason_over_evidence,
-                    )
-
-                    reground = reason_over_evidence
-                regrounded = reground(
-                    question=question,
-                    evidence_items=list(evidence_items),
-                    canonical_rules=list(initial_local.rules),
+    # 1) Si la evidencia ya contiene gramática query-local, evaluarla PRIMERO:
+    #    las reglas persistidas pueden ser no ejecutables (kind=EXAMPLE) y el
+    #    missing REAL de esa evaluación (p.ej. length_semantics) es el que la
+    #    closure dirigida debe buscar. El diagnóstico `rule:*` no es buscable.
+    if initial_local.rules:
+        try:
+            reground = reason_fn
+            if reground is None:
+                from src.intelligence.reasoning.grounded_engine import (
+                    reason_over_evidence,
                 )
+
+                reground = reason_over_evidence
+            regrounded = reground(
+                question=question,
+                evidence_items=list(evidence_items),
+                canonical_rules=list(initial_local.rules),
+            )
+            if _has_deterministic_claim(regrounded):
                 return None, regrounded, local_stats
-            except Exception as exc:  # noqa: BLE001 — fail-soft
-                logger.warning("query-local authority failed", error=str(exc)[:160])
+            regrounded_missing = normalize_premises(
+                getattr(regrounded, "missing_premises", ()) or ()
+            )
+            if not regrounded_missing or rounds_left <= 0:
+                return None, regrounded, local_stats
+            grounded = regrounded
+            missing = regrounded_missing
+        except Exception as exc:  # noqa: BLE001 — fail-soft
+            logger.warning("query-local authority failed", error=str(exc)[:160])
+            if not missing or rounds_left <= 0:
+                return None, grounded, local_stats
+    elif not missing or rounds_left <= 0:
         return None, grounded, local_stats
 
     # La cobertura estructural NO debe contar reglas de ingesta que no deciden
