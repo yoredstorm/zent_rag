@@ -25,8 +25,8 @@ def test_build_parity_detects_sha_mismatch() -> None:
     api = {"git_sha": "aaaa", "build_timestamp": "t1"}
     worker = {"git_sha": "bbbb", "build_timestamp": "t2"}
     parity = build_parity(api, worker)
-    assert parity["status"] == "BUILD_MISMATCH"
-    assert build_parity(api, {"git_sha": "aaaa"})["status"] == "ok"
+    assert parity["status"] == "MISMATCH"
+    assert build_parity(api, {"git_sha": "aaaa"})["status"] == "MATCH"
     assert build_parity(api, None)["status"] == "UNKNOWN"
 
 

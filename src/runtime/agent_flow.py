@@ -175,13 +175,28 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "source_conflict",
         "candidates",
         "uncertain",
+        "query_mode",
+        "reasoning_shape",
+        "scenario_payload",
+        "routing_reason",
+        "complex_reasoning_activated",
+        "query_route",
     ),
     "guardrail": ("detail", "tool"),
     "error": ("detail",),
     "final": ("answer", "detail"),
     "context": ("sections",),
     # Razonamiento estructurado (reasoning_step.reasoning_steps_detailed).
-    "reasoning_classification": ("reasoning", "detail", "latency_ms"),
+    "reasoning_classification": (
+        "reasoning",
+        "detail",
+        "latency_ms",
+        "query_mode",
+        "scenario_payload",
+        "routing_reason",
+        "complex_reasoning_activated",
+        "query_route",
+    ),
     "company_context": ("company_context", "detail", "latency_ms"),
     "reasoning_plan": ("plan", "detail", "latency_ms"),
     "scenario_parse": ("scenario", "detail", "latency_ms"),
@@ -216,6 +231,33 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "pid",
         "python",
         "detail",
+    ),
+    "narrative_fast_path": (
+        "detail",
+        "route",
+        "query_mode",
+        "reasoning_shape",
+        "blueprint",
+        "retrieval_rounds",
+        "jev_calls",
+        "jev_avoided",
+        "llm_calls",
+        "reasoning_steps_avoided",
+        "narrative_input_tokens",
+        "narrative_output_tokens",
+        "narrative_context_chars",
+        "evidence_package_size",
+        "completeness",
+        "verification",
+    ),
+    "narrative_evidence": (
+        "detail",
+        "narrative_verification",
+        "grounding",
+        "invalid_doc_numbers",
+        "citation_trace",
+        "decision_evidence",
+        "query_mode",
     ),
     "evidence_selection": (
         "selected",
@@ -361,6 +403,8 @@ STEP_LABEL: dict[str, str] = {
     "jev_retrieval": "JEV pidió otra búsqueda",
     "embedding": "Embeddings",
     "evidence_sufficiency": "Evidencia suficiente",
+    "narrative_evidence": "Evidencia narrativa",
+    "narrative_fast_path": "Narrative fast path",
     "response_presentation": "Ritmo de la respuesta",
     "final": "Respuesta final",
     "guardrail": "Límite",
@@ -1299,7 +1343,13 @@ def build_agent_flow(
             "evidence_retrieved": int(block.get("retrieved_count") or block.get("count") or len(public_items)),
             "documents_consulted": len(
                 {
-                    str(item.get("document_id") or item.get("source_id") or "")
+                    str(
+                        item.get("document_id")
+                        or item.get("source_id")
+                        or item.get("title")
+                        or item.get("display_label")
+                        or ""
+                    )
                     for item in document_pool
                 }
                 - {""}
@@ -1318,7 +1368,9 @@ def build_agent_flow(
             ("evidence_decision", "decision_evidence_count", None),
             ("main_retrieval_hits", "main_retrieval_count", None),
             ("evidence_cited", "cited_count", "evidence_cited_count"),
+            ("narrative_evidence_used", "narrative_evidence_used_count", None),
             ("documents_retrieved", "documents_retrieved_count", None),
+            ("documents_used", "documents_used_count", None),
             ("documents_selected", "documents_selected_count", None),
             ("documents_used_for_decision", "documents_used_for_decision_count", None),
             ("documents_cited", "documents_cited_count", None),

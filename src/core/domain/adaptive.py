@@ -157,6 +157,14 @@ IDENTITY_METADATA_KEYS: tuple[str, ...] = (
     "file_hash",
     "external_id",
     "document_version",
+    "organization_id",
+    "workspace_id",
+    "parser_engine",
+    "parser_version",
+    "representation_kind",
+    "canonical_evidence_id",
+    "page_start",
+    "page_end",
 )
 
 

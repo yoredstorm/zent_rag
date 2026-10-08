@@ -24,10 +24,25 @@ def _env(*names: str) -> str:
     return ""
 
 
+def _in_image() -> bool:
+    """Imagen o cluster: sin SHA de build no se lee un git montado o viejo."""
+    return bool(_env("RAG_IMAGE_ID", "IMAGE_ID")) or bool(
+        os.environ.get("KUBERNETES_SERVICE_HOST")
+    )
+
+
 def _git_sha() -> str:
-    from_env = _env("RAG_GIT_SHA", "GIT_SHA", "SOURCE_COMMIT", "GIT_COMMIT")
+    from_env = _env(
+        "RAG_GIT_SHA",
+        "RUNTIME_BUILD_GIT_SHA",
+        "GIT_SHA",
+        "SOURCE_COMMIT",
+        "GIT_COMMIT",
+    )
     if from_env:
         return from_env[:40]
+    if _in_image():
+        return "unknown"
     try:
         result = subprocess.run(  # noqa: S603 — comando fijo, sin shell
             ["git", "rev-parse", "HEAD"],  # noqa: S607 — git del PATH en dev
@@ -51,7 +66,8 @@ def runtime_identity() -> dict[str, str]:
     return {
         "git_sha": _git_sha(),
         "build_timestamp": _build_timestamp(),
-        "image_id": _env("RAG_IMAGE_ID", "IMAGE_ID", "HOSTNAME") or "unknown",
+        "image_id": _env("RAG_IMAGE_ID", "IMAGE_ID") or "unknown",
+        "service_name": _env("RAG_SERVICE_NAME") or "api",
         "hostname": socket.gethostname(),
         "process_started_at": _PROCESS_STARTED_AT,
         "pid": str(os.getpid()),
@@ -59,20 +75,40 @@ def runtime_identity() -> dict[str, str]:
     }
 
 
-def build_parity(api: dict[str, str], worker: dict[str, str] | None) -> dict[str, object]:
-    """Paridad API/worker. SHA distinto conocido => BUILD_MISMATCH."""
+def _same_sha(left: str, right: str) -> bool:
+    if not left or not right or left == "unknown" or right == "unknown":
+        return False
+    return left == right or left.startswith(right) or right.startswith(left)
+
+
+def build_parity(
+    api: dict[str, str],
+    worker: dict[str, str] | None,
+    *,
+    portal: dict[str, str] | None = None,
+    expected_sha: str = "",
+) -> dict[str, object]:
+    """Paridad de builds. Sin metadata no se reutiliza un SHA anterior."""
     api_sha = str((api or {}).get("git_sha") or "unknown")
     worker_sha = str((worker or {}).get("git_sha") or "unknown")
-    if worker is None or worker_sha == "unknown":
+    portal_sha = str((portal or {}).get("git_sha") or "")
+    expected = str(expected_sha or _env("RAG_EXPECTED_GIT_SHA") or "")
+    if worker is None or worker_sha == "unknown" or api_sha == "unknown":
         status = "UNKNOWN"
-    elif api_sha == "unknown":
-        status = "UNKNOWN"
-    elif api_sha == worker_sha:
-        status = "ok"
+    elif _same_sha(api_sha, worker_sha):
+        status = "MATCH"
     else:
-        status = "BUILD_MISMATCH"
+        status = "MISMATCH"
+    if expected and api_sha != "unknown" and not _same_sha(api_sha, expected):
+        status = "METADATA_INCONSISTENT"
+    elif expected and api_sha == "unknown":
+        status = "UNKNOWN"
     return {
         "status": status,
+        "api_sha": api_sha,
+        "worker_sha": worker_sha,
+        "portal_sha": portal_sha or None,
+        "expected_sha": expected or None,
         "api_git_sha": api_sha,
         "worker_git_sha": worker_sha,
         "api_build_timestamp": str((api or {}).get("build_timestamp") or "unknown"),

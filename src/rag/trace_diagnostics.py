@@ -112,6 +112,14 @@ DIAGNOSTIC_DEFINITIONS: dict[str, tuple[str, str, bool, str, str, str | None]] =
         "possible_unsupported_claim",
         "align_citations",
     ),
+    "ANSWER_CITATION_TRACE_CONSISTENCY": (
+        "ERROR",
+        "consistency",
+        True,
+        "answer_citations_missing_from_trace",
+        "answer_cites_documents_trace_shows_zero",
+        "bind_citations_to_final_package",
+    ),
     "AUTHORITATIVE_RESPONSE_CONSISTENCY": (
         "ERROR",
         "consistency",

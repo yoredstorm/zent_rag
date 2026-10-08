@@ -52,6 +52,20 @@ class ReasoningShape(StrEnum):
     GRAPH_REASONING = "GRAPH_REASONING"
 
 
+class QueryMode(StrEnum):
+    """Qué tipo de consulta es este turno. Eje aparte de intent y ReasoningShape.
+
+    Se recalcula por mensaje. Un turno ejecutable no convierte el siguiente
+    en ejecutable.
+    """
+
+    INFORMATIONAL = "INFORMATIONAL"
+    EXECUTABLE = "EXECUTABLE"
+    SCENARIO = "SCENARIO"
+    DIAGNOSTIC = "DIAGNOSTIC"
+    PROCEDURAL = "PROCEDURAL"
+
+
 #: Formas que exigen plan, workspace y gate de completitud.
 COMPLEX_SHAPES = frozenset(
     {
@@ -93,9 +107,16 @@ class ReasoningClassification:
     source: ReasoningClassificationSource = ReasoningClassificationSource.DETERMINISTIC
     signals: tuple[str, ...] = ()
     uncertain: bool = False
+    query_mode: QueryMode | None = None
+    scenario_payload: bool = False
+    routing_reason: str = ""
 
     @property
     def is_complex(self) -> bool:
+        # Una explicación o un procedimiento no reconstruyen escenario,
+        # aunque el tópico mencione cierre, fecha o secuencia.
+        if self.query_mode in {QueryMode.INFORMATIONAL, QueryMode.PROCEDURAL}:
+            return False
         return self.shape in COMPLEX_SHAPES
 
     def to_dict(self) -> dict:
@@ -107,6 +128,10 @@ class ReasoningClassification:
             "signals": list(self.signals),
             "uncertain": self.uncertain,
             "is_complex": self.is_complex,
+            "query_mode": self.query_mode.value if self.query_mode else "",
+            "scenario_payload": self.scenario_payload,
+            "routing_reason": self.routing_reason,
+            "complex_reasoning_activated": self.is_complex,
         }
 
 
@@ -806,10 +831,25 @@ class ReasoningOutcome:
     def public_trace(self) -> dict:
         """Traza operacional mostrable (§46). Nunca razonamiento privado."""
         if not self.activated or self.workspace is None:
+            reason = "simple_lookup_fast_path"
+            if self.classification.shape is not ReasoningShape.SIMPLE_LOOKUP:
+                reason = (
+                    "informational_fast_path"
+                    if self.classification.query_mode is QueryMode.INFORMATIONAL
+                    else "non_complex_fast_path"
+                )
             return {
                 "activated": False,
                 "shape": self.classification.shape.value,
-                "reason": "simple_lookup_fast_path",
+                "reason": reason,
+                "query_mode": (
+                    self.classification.query_mode.value
+                    if self.classification.query_mode
+                    else ""
+                ),
+                "scenario_payload": self.classification.scenario_payload,
+                "routing_reason": self.classification.routing_reason,
+                "complex_reasoning_activated": False,
             }
         workspace = self.workspace
         scenario = workspace.scenario
@@ -833,6 +873,14 @@ class ReasoningOutcome:
             "critical_unknowns": len(workspace.unknowns),
             "analysis_complete": bool(self.completion.complete) if self.completion else False,
             "retrieval_rounds": workspace.retrieval_rounds,
+            "query_mode": (
+                self.classification.query_mode.value
+                if self.classification.query_mode
+                else ""
+            ),
+            "scenario_payload": self.classification.scenario_payload,
+            "routing_reason": self.classification.routing_reason,
+            "complex_reasoning_activated": self.classification.is_complex,
         }
 
 

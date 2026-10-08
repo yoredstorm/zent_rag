@@ -66,7 +66,15 @@ RUN pip install --no-cache-dir \
 # =============================================================================
 FROM python:3.11-slim AS runtime
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+# SHA del commit que construyó la imagen. Vacío => unknown, no un git viejo.
+ARG GIT_SHA=
+ARG BUILD_TIMESTAMP=
+ARG IMAGE_ID=
+ENV RAG_GIT_SHA=${GIT_SHA} \
+    RAG_BUILD_TIMESTAMP=${BUILD_TIMESTAMP} \
+    RAG_IMAGE_ID=${IMAGE_ID} \
+    RAG_SERVICE_NAME=api \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -111,6 +119,8 @@ CMD ["sh", "-c", "alembic upgrade head && uvicorn src.api.main:app --host 0.0.0.
 # Compose: servicio ingestion-worker con build.target=worker.
 # =============================================================================
 FROM runtime AS worker
+
+ENV RAG_SERVICE_NAME=ingestion-worker
 
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \

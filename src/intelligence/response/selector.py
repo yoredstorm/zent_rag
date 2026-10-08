@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.core.domain.reasoning import ReasoningShape
+from src.intelligence.reasoning.classifier import (
+    REASON_INFORMATIONAL,
+    has_concrete_scenario_payload,
+    is_informational_request,
+)
 from src.intelligence.response.blueprints import (
     COMPARISON,
     DATA_INTERPRETATION,
@@ -71,6 +76,14 @@ _DIRECT_FACT_RE = re.compile(
     re.IGNORECASE,
 )
 _TABLE_RE = re.compile(r"\b(tabla|table)\b", re.IGNORECASE)
+_WHY_INSTANCE_RE = re.compile(
+    r"\b(por\s+qu[eé]|why\s+did|why\s+does|why\s+was)\b",
+    re.IGNORECASE,
+)
+_TUTORIAL_RE = re.compile(
+    r"\b(ense[nñ]ame|expl[ií]came (?:todo|desde cero)|tutorial)\b",
+    re.IGNORECASE,
+)
 
 #: Umbral de margen para considerar que dos formas están empatadas (§10 del
 #: diseño de JEV: un ganador técnico no es un veredicto).
@@ -142,16 +155,25 @@ def deterministic_candidates(
         add(PROCEDURE)
     if _DIAGNOSTIC_RE.search(text):
         add(DIAGNOSTIC)
-    if normalized_shape == ReasoningShape.STATE_TRANSITION.value or has_records:
+    concrete_scenario = bool(has_records) or has_concrete_scenario_payload(text)
+    # Explicación de un tópico: «record»/«cierre» no abren análisis de escenario.
+    explanation = is_informational_request(text) and not concrete_scenario
+    if not explanation and (
+        normalized_shape == ReasoningShape.STATE_TRANSITION.value or has_records
+    ):
         add(SCENARIO_ANALYSIS)
     if normalized_shape == ReasoningShape.HYPOTHESIS_TEST.value:
         add(DIAGNOSTIC)
         add(SCENARIO_ANALYSIS)
-    if normalized_shape in {
+    if not explanation and concrete_scenario and normalized_shape in {
         ReasoningShape.TEMPORAL_SEQUENCE.value,
         ReasoningShape.CONSISTENCY_CHECK.value,
     }:
         add(SCENARIO_ANALYSIS)
+    if not explanation and concrete_scenario and _WHY_INSTANCE_RE.search(text):
+        if SCENARIO_ANALYSIS in candidates:
+            candidates.remove(SCENARIO_ANALYSIS)
+        candidates.insert(0, SCENARIO_ANALYSIS)
     if normalized_shape in {
         ReasoningShape.MULTI_EVIDENCE.value,
         ReasoningShape.COMPARATIVE_REASONING.value,
@@ -170,7 +192,7 @@ def deterministic_candidates(
         add(DEFINITION_EXPLANATION)
     if has_data_rows and DATA_INTERPRETATION not in candidates:
         add(DATA_INTERPRETATION)
-    if re.search(r"\b(ense[nñ]ame|expl[ií]came (?:todo|desde cero)|tutorial)\b", text, re.I):
+    if _TUTORIAL_RE.search(text):
         add(TUTORIAL)
     if _DIRECT_FACT_RE.search(text):
         add(DIRECT_FACT)
@@ -181,6 +203,17 @@ def deterministic_candidates(
         add(TECHNICAL_EXPLANATION)
     elif TECHNICAL_EXPLANATION not in candidates and len(candidates) == 1:
         add(TECHNICAL_EXPLANATION)
+    if (
+        explanation
+        and not _DEFINITION_RE.search(text)
+        and not _PROCEDURE_RE.search(text)
+        and not _EXECUTIVE_RE.search(text)
+        and not _COMPARISON_RE.search(text)
+        and not _TUTORIAL_RE.search(text)
+        and TECHNICAL_EXPLANATION in candidates
+    ):
+        candidates.remove(TECHNICAL_EXPLANATION)
+        candidates.insert(0, TECHNICAL_EXPLANATION)
     if is_followup and candidates and candidates[0] == DIRECT_FACT and len(candidates) > 1:
         # Un seguimiento sobre un dato puntual suele pedir algo de explicación.
         candidates = [candidates[0], *candidates[1:]]
@@ -226,6 +259,22 @@ def select_blueprint(
     confidence = 0.85 if not ambiguous else 0.5
     if len(candidates) == 1:
         confidence = 0.9
+    concrete_scenario = bool(has_records) or has_concrete_scenario_payload(question)
+    explanation = is_informational_request(question) and not concrete_scenario
+    reasons: tuple[str, ...] = ()
+    if explanation:
+        reasons = (REASON_INFORMATIONAL,)
+    # Instancia concreta: el blueprint de escenario no se lo deja a JEV.
+    if concrete_scenario and chosen == SCENARIO_ANALYSIS:
+        ambiguous = False
+        confidence = 0.9
+    if (
+        explanation
+        and chosen == TECHNICAL_EXPLANATION
+        and not (_FIELD_VALUE_RE.search(question) and _DEFINITION_RE.search(question))
+    ):
+        ambiguous = False
+        confidence = max(confidence, 0.9)
     return BlueprintSelection(
         blueprint=chosen,
         decided_by=DECIDED_BY_RULES,
@@ -234,6 +283,7 @@ def select_blueprint(
         runner_up=second if ambiguous else "",
         candidates=candidates,
         signals=candidates,
+        reasons=reasons,
     )
 
 

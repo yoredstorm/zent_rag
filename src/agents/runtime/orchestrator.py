@@ -914,7 +914,8 @@ def _build_flow(
             {
                 "type": "response_planning",
                 "status": "warn" if contract.get("ambiguous") else "ok",
-                "detail": f"{contract.get('blueprint')} · {contract.get('detail')}",
+                "detail": str(response_plan.get("query_route") or "")
+                or f"{contract.get('blueprint')} · {contract.get('detail')}",
                 "blueprint": contract.get("blueprint"),
                 "detail_level": contract.get("detail"),
                 "decided_by": contract.get("decided_by"),
@@ -923,6 +924,14 @@ def _build_flow(
                 "citations_required": bool((contract.get("evidence") or {}).get("citations_required")),
                 "hedging_required": bool(contract.get("hedging_required")),
                 "uncertain": list(contract.get("uncertainty_notes") or [])[:6],
+                "query_mode": response_plan.get("query_mode") or "",
+                "reasoning_shape": response_plan.get("reasoning_shape") or "",
+                "scenario_payload": response_plan.get("scenario_payload"),
+                "routing_reason": response_plan.get("routing_reason") or "",
+                "complex_reasoning_activated": response_plan.get(
+                    "complex_reasoning_activated"
+                ),
+                "query_route": response_plan.get("query_route") or "",
             }
         )
     if embedding_block is not None:

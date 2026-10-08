@@ -1095,8 +1095,58 @@ def markdown_first_recommended(question: str) -> bool:
         return False
     if _EXPLANATORY_QUERY_RE.search(text):
         return True
-    # Con valores concretos (patrón/valor pareja) manda el carril canónico.
-    return False
+    try:
+        from src.intelligence.reasoning.classifier import (
+            has_concrete_scenario_payload,
+            is_informational_request,
+        )
+    except Exception:  # noqa: BLE001 — sin clasificador, queda el regex de arriba
+        return False
+    return is_informational_request(text) and not has_concrete_scenario_payload(text)
+
+
+def _markdown_from_metadata(metadata: Mapping[str, Any] | None) -> str:
+    """Texto Markdown ya proyectado. Vacío si el chunk no lo trae."""
+    meta = metadata if isinstance(metadata, Mapping) else {}
+    for key in ("llm_markdown_text", "markdown_text"):
+        value = meta.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raw = meta.get("llm_markdown")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if isinstance(raw, Mapping):
+        nested = str(raw.get("text") or raw.get("content") or "")
+        if nested.strip():
+            return nested.strip()
+    representations = meta.get("representations")
+    if isinstance(representations, Mapping):
+        markdown = representations.get(REPRESENTATION_MARKDOWN)
+        if isinstance(markdown, str) and markdown.strip():
+            return markdown.strip()
+        if isinstance(markdown, Mapping):
+            nested = str(markdown.get("text") or markdown.get("content") or "")
+            if nested.strip():
+                return nested.strip()
+    return ""
+
+
+def narrative_context_text(
+    *,
+    question: str,
+    canonical: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> str:
+    """Contexto que lee el LLM. Las citas siguen en el texto canónico.
+
+    En una consulta informativa, si existe la proyección ``llm_markdown``,
+    el modelo lee esa sección. El Markdown no es una fuente nueva.
+    """
+    canonical_text = str(canonical or "")
+    if not markdown_first_recommended(question):
+        return canonical_text
+    markdown = _markdown_from_metadata(metadata)
+    return markdown or canonical_text
 
 
 def select_markdown_context(
@@ -1217,6 +1267,7 @@ __all__ = [
     "citation_from_markdown_offset",
     "evaluate_bundle_quality",
     "markdown_first_recommended",
+    "narrative_context_text",
     "markdown_chunk_qdrant_payload",
     "place_bundle_artifacts",
     "representation_stale",

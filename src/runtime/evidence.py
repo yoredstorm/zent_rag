@@ -398,6 +398,7 @@ class EvidenceRegistry:
         decision_ids: Iterable[str] = (),
         rule_compilation_ids: Iterable[str] = (),
         premise_closure_ids: Iterable[str] = (),
+        narrative_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
         """Bloque para «Ver flujo»: SOURCE != EVIDENCE, y uso explícito por eje.
 
@@ -428,11 +429,18 @@ class EvidenceRegistry:
         premise_closure_all = {
             value for value in premise_closure_ids if value in all_ids
         }
-        used_all = set(selected_all)
+        narrative_all = {value for value in narrative_ids if value in all_ids}
+        # Con paquete narrativo, «usada» es la que aportó a la explicación
+        # (o a una decisión), no todo lo seleccionado.
+        if narrative_all:
+            used_all = set(narrative_all)
+        else:
+            used_all = set(selected_all)
         used_all.update(reasoning_all)
         used_all.update(decision_all)
         used_all.update(rule_compilation_all)
         used_all.update(premise_closure_all)
+        used_all.update(cited_all)
         order = {
             evidence_id: index + 1
             for index, evidence_id in enumerate(selected_ids or ())
@@ -443,6 +451,7 @@ class EvidenceRegistry:
                 payload.get("document_id")
                 or payload.get("source_id")
                 or payload.get("title")
+                or payload.get("document_name")
                 or ""
             )
 
@@ -450,18 +459,25 @@ class EvidenceRegistry:
         # evidencias, no sólo las publicadas), nunca de un contador paralelo.
         documents_retrieved: set[str] = set()
         documents_selected: set[str] = set()
+        documents_used: set[str] = set()
         documents_decision: set[str] = set()
         documents_cited: set[str] = set()
+        weak_used = 0
         for item in self.items:
-            document = _document_key(item.to_public_dict())
-            if not document:
-                continue
-            documents_retrieved.add(document)
-            if item.evidence_id in selected_all:
+            public_item = item.to_public_dict()
+            document = _document_key(public_item)
+            if document:
+                documents_retrieved.add(document)
+            if item.evidence_id in selected_all and document:
                 documents_selected.add(document)
-            if item.evidence_id in decision_all:
+            if item.evidence_id in used_all:
+                if document:
+                    documents_used.add(document)
+                elif not (item.document_id or item.source_id):
+                    weak_used += 1
+            if item.evidence_id in decision_all and document:
                 documents_decision.add(document)
-            if item.evidence_id in cited_all:
+            if item.evidence_id in cited_all and document:
                 documents_cited.add(document)
 
         # Evidencia de decisión hidratada (fast path) vs retrieval principal:
@@ -490,6 +506,11 @@ class EvidenceRegistry:
             payload["used"] = is_used
             payload["retrieved"] = True
             payload["used_for_reasoning"] = is_reasoning
+            payload["used_for_narrative_generation"] = item.evidence_id in narrative_all
+            payload["identity_status"] = (
+                "OK" if (item.document_id or item.source_id) else "WEAK"
+            )
+            payload["display_label"] = item.title or item.document_id or ""
             payload["used_for_rule_compilation"] = is_rule
             payload["used_for_premise_closure"] = is_closure
             payload["used_for_decision"] = is_decision
@@ -516,6 +537,9 @@ class EvidenceRegistry:
             "used_for_premise_closure_count": len(premise_closure_all),
             "used_for_decision_count": len(decision_all),
             "cited_count": len(cited_all),
+            "narrative_evidence_used_count": len(narrative_all),
+            "documents_used_count": len(documents_used),
+            "weak_source_identity_count": weak_used,
             "decision_evidence_count": len(decision_evidence_all),
             "main_retrieval_count": max(0, len(all_ids) - len(decision_evidence_all)),
             "documents_retrieved_count": len(documents_retrieved),

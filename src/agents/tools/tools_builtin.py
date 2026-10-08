@@ -626,6 +626,7 @@ class SearchKnowledgeTool(Tool):
             from src.runtime.evidence import question_needles, relevance_window
 
             needles = question_needles(query_text)
+            from src.knowledge.structure.document_bundle import narrative_context_text
             if exact_block:
                 lines.append(exact_block)
             full_tabular_left = _TABULAR_FULL_CHUNKS
@@ -646,6 +647,17 @@ class SearchKnowledgeTool(Tool):
                 # por relevancia ocurre al armar el prompt, no acá.
                 document_id = str(getattr(chunk, "document_id", "") or "")
                 ref = document_id or source_id or f"chunk-{i}"
+                canonical_text = str(getattr(chunk, "content", "") or "")
+                narrative_text = (
+                    canonical_text
+                    if is_tabular
+                    else narrative_context_text(
+                        question=query_text,
+                        canonical=canonical_text,
+                        metadata=metadata,
+                    )
+                )
+                used_markdown = narrative_text != canonical_text
                 if ref not in seen_refs:
                     seen_refs.add(ref)
                     section_path = metadata.get("section_path")
@@ -683,7 +695,7 @@ class SearchKnowledgeTool(Tool):
                         "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
                         "status": status,
                         "knowledge_type": knowledge_type or None,
-                        "content": str(getattr(chunk, "content", "") or "")[
+                        "content": canonical_text[
                             : (
                                 _EVIDENCE_SECTION_CHARS
                                 if es_pineado
@@ -704,6 +716,14 @@ class SearchKnowledgeTool(Tool):
                     authority = str(metadata.get("authority") or "")
                     if authority:
                         item["authority"] = authority[:32]
+                    if used_markdown:
+                        item["context_representation"] = "llm_markdown"
+                        item["canonical_representation"] = "structured_json"
+                        item["representation_kind"] = "llm_markdown"
+                    from src.runtime.narrative_fast_path import source_identity
+
+                    for key, value in source_identity(metadata).items():
+                        item.setdefault(key, value)
                     if is_tabular and metadata.get("table_name"):
                         item["table"] = str(metadata["table_name"])[:120]
                     evidence.append(item)
@@ -719,7 +739,7 @@ class SearchKnowledgeTool(Tool):
                     # El pin y las secciones traen más contexto que un fragmento
                     # suelto; el resto se queda en el presupuesto corto.
                     budget = _EVIDENCE_CONTENT_CHARS if es_pineado else _TEXT_CHARS
-                    texto = relevance_window(chunk.content or "", needles, budget=budget)
+                    texto = relevance_window(narrative_text, needles, budget=budget)
                 tag = f"[Doc {i + 1}"
                 if source_id:
                     tag += f" | source:{source_id}"

@@ -53,6 +53,11 @@ class ReasoningRunState:
     mode: str = "off"
     shape: str = "SIMPLE_LOOKUP"
     is_complex: bool = False
+    query_mode: str = ""
+    scenario_payload: bool = False
+    routing_reason: str = ""
+    blueprint: str = ""
+    question: str = ""
     outcome: Any | None = None
     analysis_complete: bool = False
     blocked_direct_answers: int = 0
@@ -74,6 +79,10 @@ class ReasoningRunState:
             "mode": self.mode,
             "shape": self.shape,
             "is_complex": self.is_complex,
+            "query_mode": self.query_mode,
+            "scenario_payload": self.scenario_payload,
+            "routing_reason": self.routing_reason,
+            "blueprint": self.blueprint,
             "analysis_complete": self.analysis_complete,
             "company_context_used": self.company_context_used,
             "company_context_sections": list(self.company_context_sections),
@@ -199,6 +208,25 @@ def abstention_answer(state: ReasoningRunState | None) -> str:
     return " ".join(lines)
 
 
+def _route_fields(state: ReasoningRunState) -> dict:
+    from src.intelligence.reasoning.classifier import format_query_route
+
+    return {
+        "query_mode": state.query_mode,
+        "scenario_payload": state.scenario_payload,
+        "routing_reason": state.routing_reason,
+        "complex_reasoning_activated": state.is_complex,
+        "query_route": format_query_route(
+            query_mode=state.query_mode,
+            shape=state.shape,
+            blueprint=state.blueprint,
+            scenario_payload=state.scenario_payload,
+            complex_reasoning_activated=state.is_complex,
+            routing_reason=state.routing_reason,
+        ),
+    }
+
+
 def reasoning_steps(state: ReasoningRunState | None) -> list[dict]:
     """§47: pasos observables para "Ver flujo". Nunca razonamiento privado."""
     if state is None or not state.enabled:
@@ -209,6 +237,7 @@ def reasoning_steps(state: ReasoningRunState | None) -> list[dict]:
             "shape": state.shape,
             "is_complex": state.is_complex,
             "mode": state.mode,
+            **_route_fields(state),
         }
     ]
     if state.company_context_used:
@@ -286,7 +315,14 @@ def reasoning_steps_detailed(state: ReasoningRunState | None) -> list[dict]:
                 "shape": state.shape,
                 "is_complex": state.is_complex,
                 "mode": state.mode,
+                "query_mode": state.query_mode,
+                "scenario_payload": state.scenario_payload,
+                "routing_reason": state.routing_reason,
+                "blueprint": state.blueprint,
+                "complex_reasoning_activated": state.is_complex,
             },
+            "detail": _route_fields(state)["query_route"],
+            **_route_fields(state),
         }
     ]
     if state.company_context_used:
@@ -473,6 +509,26 @@ def reasoning_steps_detailed(state: ReasoningRunState | None) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _stamp_classification(state: ReasoningRunState, classification: object, message: str) -> None:
+    """Copia QueryMode del turno. No hereda el modo del mensaje anterior."""
+    from src.intelligence.response.selector import select_blueprint
+
+    state.question = message
+    state.shape = str(getattr(getattr(classification, "shape", None), "value", "") or "SIMPLE_LOOKUP")
+    state.query_mode = str(
+        getattr(getattr(classification, "query_mode", None), "value", "") or ""
+    )
+    state.scenario_payload = bool(getattr(classification, "scenario_payload", False))
+    state.routing_reason = str(getattr(classification, "routing_reason", "") or "")
+    state.is_complex = bool(getattr(classification, "is_complex", False))
+    selection = select_blueprint(
+        question=message,
+        shape=state.shape,
+        has_records=state.query_mode == "SCENARIO" and state.scenario_payload,
+    )
+    state.blueprint = selection.blueprint
+
+
 async def prepare_reasoning_state(
     *,
     organization_id: UUID | None,
@@ -505,8 +561,7 @@ async def prepare_reasoning_state(
     state = ReasoningRunState(enabled=True, mode=mode.value)
     try:
         classification = await engine.classifier.classify(message)
-        state.shape = classification.shape.value
-        state.is_complex = classification.is_complex
+        _stamp_classification(state, classification, message)
         if not classification.is_complex:
             # Fast path: no se compila contexto ni se razona (§10).
             return state

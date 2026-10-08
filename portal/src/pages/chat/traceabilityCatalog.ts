@@ -860,6 +860,13 @@ export const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
     impact: () => "Una cita podría no estar respaldada por el detalle recuperado.",
     fix: () => "Alinear los ids de cita con los del registro de evidencia.",
   },
+  ANSWER_CITATION_TRACE_CONSISTENCY: {
+    title: "Citas de la respuesta fuera de la traza",
+    meaning: (p) =>
+      `La respuesta cita documentos (${String(p.count ?? "")}) y la traza no marca esas evidencias como citadas.`,
+    impact: () => "La respuesta y el flujo no describen la misma evidencia.",
+    fix: () => "Resolver Doc:N contra el paquete final y marcar cited en esas evidencias.",
+  },
   CITATION_EVIDENCE_REFERENTIAL_INTEGRITY: {
     title: "Cita con referencia inexistente",
     meaning: (p) => {

@@ -993,6 +993,27 @@ def build_evidence_section(
                 "collapsed": references_collapsed,
             }
         )
+    answer_text = str(flow.get("answer") or "")
+    if not answer_text:
+        for step in flow.get("steps") or []:
+            if not isinstance(step, Mapping):
+                continue
+            if str(step.get("type") or "") in {"final", "finalization"} and step.get("answer"):
+                answer_text = str(step.get("answer") or "")
+                break
+    if answer_text:
+        from src.runtime.narrative_package import parse_doc_numbers
+
+        doc_numbers = parse_doc_numbers(answer_text)
+        if doc_numbers and not cited_ids:
+            diagnostics.append(
+                {
+                    "code": "ANSWER_CITATION_TRACE_CONSISTENCY",
+                    "severity": "ERROR",
+                    "count": len(doc_numbers),
+                    "doc_numbers": list(doc_numbers[:8]),
+                }
+            )
 
     return {
         "counts": counts,

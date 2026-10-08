@@ -278,12 +278,21 @@ def requires_deterministic_decision(subject: Any) -> bool:
     Única fuente de verdad, genérica. Acepta pregunta (str), intención u
     operación (str) o `QuerySemantics`.
     """
-    intent = _normalized_intent(subject)
     text = (
         subject
         if isinstance(subject, str)
         else str(getattr(subject, "question", "") or "")
     )
+    # «¿Por qué terminó aplicando la 3000?» es diagnóstico de instancia,
+    # no un veredicto binario. Un patrón o un «cumple» fuerte siguen adentro.
+    if text and text.strip().upper() not in DETERMINISTIC_DECISION_INTENTS | DETERMINISTIC_OPERATION_NAMES:
+        from src.intelligence.reasoning.classifier import (
+            instance_diagnosis_not_executable,
+        )
+
+        if instance_diagnosis_not_executable(text):
+            return False
+    intent = _normalized_intent(subject)
     # Pregunta de DATO (temporal/ubicación/autor): no es una comprobación, por
     # más que el verbo «aplica» haya disparado el clasificador.
     if (

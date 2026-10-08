@@ -110,6 +110,8 @@ STEP_KIND_PHASES: dict[str, str] = {
     # Evidence Sufficiency: la evidencia recuperada (y su cobertura de entidades)
     # es un paso de la fase de evidencia, antes de generar.
     "evidence_sufficiency": PHASE_EVIDENCE,
+    "narrative_evidence": PHASE_EVIDENCE,
+    "narrative_fast_path": PHASE_PLANNING,
     # Adaptive Long-Context: expansiones progresivas, gain y stop reason.
     "long_context": PHASE_EVIDENCE,
     # Roles de anchor: qué es regla/campo documentable y qué es valor de ejemplo.

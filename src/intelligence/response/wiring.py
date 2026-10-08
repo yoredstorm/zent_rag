@@ -88,6 +88,12 @@ class ResponsePlan:
     answers: CompositionAnswers | None = None
     error: str = ""
     uncertain: list[str] = field(default_factory=list)
+    query_mode: str = ""
+    reasoning_shape: str = ""
+    scenario_payload: bool = False
+    routing_reason: str = ""
+    complex_reasoning_activated: bool = False
+    query_route: str = ""
 
     @property
     def active(self) -> bool:
@@ -130,6 +136,16 @@ class ResponsePlan:
             payload["uncertain"] = list(self.uncertain)[:6]
         if self.error:
             payload["error"] = self.error[:120]
+        if self.query_mode:
+            payload["query_mode"] = self.query_mode
+        if self.reasoning_shape:
+            payload["reasoning_shape"] = self.reasoning_shape
+        if self.routing_reason:
+            payload["routing_reason"] = self.routing_reason
+            payload["scenario_payload"] = self.scenario_payload
+            payload["complex_reasoning_activated"] = self.complex_reasoning_activated
+        if self.query_route:
+            payload["query_route"] = self.query_route
         return payload
 
 
@@ -211,6 +227,12 @@ async def compose_for_request(
     if active_mode == MODE_OFF:
         return ResponsePlan(mode=active_mode, source=SOURCE_OFF)
     resolved_profile = profile or profile_from_config(config_json)
+    from src.intelligence.reasoning.classifier import (
+        deterministic_shape,
+        format_query_route,
+    )
+
+    route = deterministic_shape(question, intent=intent or "general")
     selection = select_blueprint(
         question=question,
         intent=intent,
@@ -247,6 +269,41 @@ async def compose_for_request(
                 )
                 plan.selection = selection
             plan.uncertain = list(answers.uncertain)
+    plan.query_mode = route.query_mode.value if route.query_mode else ""
+    plan.reasoning_shape = route.shape.value
+    plan.scenario_payload = route.scenario_payload
+    plan.routing_reason = route.routing_reason
+    plan.complex_reasoning_activated = route.is_complex
+    plan.query_route = format_query_route(
+        query_mode=plan.query_mode,
+        shape=plan.reasoning_shape,
+        blueprint=selection.blueprint,
+        scenario_payload=plan.scenario_payload,
+        complex_reasoning_activated=plan.complex_reasoning_activated,
+        routing_reason=plan.routing_reason,
+    )
+    # JEV no reclasifica una explicación clara como análisis de escenario.
+    if route.query_mode is not None and route.query_mode.value == "INFORMATIONAL":
+        if selection.blueprint == "scenario_analysis" and not route.scenario_payload:
+            from src.intelligence.response.blueprints import TECHNICAL_EXPLANATION
+
+            selection = BlueprintSelection(
+                blueprint=TECHNICAL_EXPLANATION,
+                decided_by=selection.decided_by,
+                confidence=0.9,
+                candidates=selection.candidates,
+                signals=selection.signals,
+                reasons=selection.reasons or (route.routing_reason,),
+            )
+            plan.selection = selection
+            plan.query_route = format_query_route(
+                query_mode=plan.query_mode,
+                shape=plan.reasoning_shape,
+                blueprint=selection.blueprint,
+                scenario_payload=False,
+                complex_reasoning_activated=False,
+                routing_reason=plan.routing_reason,
+            )
     plan.contract = compose_contract(
         question=question,
         profile=resolved_profile,
