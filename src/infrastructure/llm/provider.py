@@ -246,7 +246,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         start = time.perf_counter()
         try:
             response = await _circuit_breaker.call(
-                "generate",
+                f"generate:{model_name}",
                 _call_generate,
                 model_name=model_name,
                 messages=messages,
@@ -326,7 +326,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
             emitted = False
             try:
                 response = await _circuit_breaker.call(
-                    "generate",
+                    f"generate:{model_name}",
                     acompletion,
                     model=model_name,
                     messages=messages,

@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -15,6 +16,22 @@ logger = get_logger(__name__)
 ROUTE_ALIASES = ("zent-fast", "zent-cheap", "zent-default", "zent-quality")
 
 GenerateFn = Callable[..., Awaitable[LLMResponse]]
+
+#: Retry corto para errores transitorios del proveedor (429 / overloaded).
+_TRANSIENT_RETRY_SECONDS = 1.5
+
+
+def _retryable_provider_error(exc: Exception) -> bool:
+    """429/overloaded transitorio. Un circuit breaker abierto no se reintenta."""
+    name = type(exc).__name__.lower()
+    if "circuitbreaker" in name:
+        return False
+    if "ratelimit" in name or "overloaded" in name or "timeout" in name:
+        return True
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    message = str(exc).lower()
+    return "429" in message or "model busy" in message or "overloaded" in message
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -99,25 +116,36 @@ async def generate_routed(
     temperature: float = 0.3,
     system_prompt: str | None = None,
 ) -> LLMResponse:
-    """Try primary, then one fallback. Usage of the HTTP request is the success."""
+    """Try primary, then one fallback. Usage of the HTTP request is the success.
+
+    Un 429/overloaded transitorio reintenta UNA vez el mismo modelo tras una
+    pausa corta; si sigue fallando, pasa al fallback. El circuit breaker es por
+    modelo: un primario caído no bloquea al fallback.
+    """
     last_error: Exception | None = None
     for index, model in enumerate(route.candidates()):
-        try:
-            return await generate(
-                prompt,
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system_prompt=system_prompt,
-            )
-        except Exception as exc:
-            last_error = exc
-            logger.warning(
-                "Gateway model attempt failed",
-                model=model,
-                attempt=index + 1,
-                has_fallback=index == 0 and len(route.candidates()) > 1,
-                error=str(exc),
-            )
+        for retry in range(2):
+            try:
+                return await generate(
+                    prompt,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system_prompt=system_prompt,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Gateway model attempt failed",
+                    model=model,
+                    attempt=index + 1,
+                    retry=retry,
+                    has_fallback=index == 0 and len(route.candidates()) > 1,
+                    error=str(exc),
+                )
+                if retry == 0 and _retryable_provider_error(exc):
+                    await asyncio.sleep(_TRANSIENT_RETRY_SECONDS)
+                    continue
+                break
     assert last_error is not None
     raise last_error

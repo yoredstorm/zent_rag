@@ -124,7 +124,8 @@ async def test_live_summary_and_timeseries(async_client: AsyncClient) -> None:
     assert ts.status_code == 200, ts.text
     points = ts.json()["points"]
     assert len(points) >= 1
-    assert points[-1]["requests"] >= 5
+    # La suma cruza buckets: el borde de hora del runner no es un fallo del dato.
+    assert sum(int(point["requests"]) for point in points) >= 5
 
     csv_resp = await async_client.get(
         "/api/v1/platform/realtime/timeseries?hours=24&format=csv", headers=plat

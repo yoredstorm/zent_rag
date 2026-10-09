@@ -322,11 +322,29 @@ def _decision_engine_or_none():
         return None
 
 
+def _is_provider_failure(reason: str) -> bool:
+    """Fallo del proveedor de modelos, no un límite del agente."""
+    text = str(reason or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "todos los modelos del router fallaron",
+            "circuit breaker is open",
+            "ratelimiterror",
+            "notfounderror",
+            "model not found",
+            "engine_overloaded",
+            "model busy",
+        )
+    )
+
+
 def _budget_answer(history: list[str], reason: str) -> str:
     """Respuesta de cierre cuando el presupuesto se agotó: nunca vacía.
 
     Determinista: junta EVIDENCIA real de las observaciones (las que traen
-    documentos), sin instrucciones internas ni inventos.
+    documentos), sin instrucciones internas ni inventos. Un fallo del
+    proveedor de modelos no se disfraza de límite del agente.
     """
     fragmentos: list[str] = []
     for item in reversed(history):
@@ -342,6 +360,19 @@ def _budget_answer(history: list[str], reason: str) -> str:
             fragmentos.append(cuerpo[:1200])
         if len(fragmentos) >= 2:
             break
+    if _is_provider_failure(reason):
+        if not fragmentos:
+            return (
+                "No pude completar la respuesta: el proveedor de modelos no está "
+                "disponible (los modelos del router fallaron). Reintentá en unos "
+                "segundos."
+            )
+        evidencia = "\n\n".join(fragmentos)
+        return (
+            "No pude cerrar la explicación completa: el proveedor de modelos no "
+            "está disponible. Esto es lo que quedó reunido de las fuentes (sin "
+            f"agregar nada):\n\n{evidencia}"
+        )
     motivo = {
         "max_tokens exceeded": "el presupuesto de tokens del agente",
         "max_execution_seconds exceeded": "el tiempo máximo de ejecución del agente",

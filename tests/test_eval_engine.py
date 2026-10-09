@@ -169,10 +169,10 @@ class TestJudgeModel:
         settings = get_settings()
         monkeypatch.setattr(settings, "EVAL_JUDGE_MODEL", "")
         monkeypatch.setattr(
-            settings, "LITELLM_DEFAULT_MODEL", "openai/deepseek/deepseek-v4-flash"
+            settings, "LITELLM_DEFAULT_MODEL", "openai/deepseek/deepseek-v4.1-flash"
         )
         judge = LLMJudge(llm_provider=None)  # type: ignore[arg-type]
-        assert judge.model == "openai/deepseek/deepseek-v4-flash"
+        assert judge.model == "openai/deepseek/deepseek-v4.1-flash"
 
     def test_override_explicito_gana(self, monkeypatch) -> None:
         from src.core.config import get_settings

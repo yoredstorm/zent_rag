@@ -19,8 +19,8 @@ from src.infrastructure.llm import router as router_module
 
 NOVITA_BASE = "https://api.novita.ai/openai"
 DEEPINFRA_BASE = "https://api.deepinfra.com/v1/openai"
-PRIMARY = "openai/deepseek/deepseek-v4-flash"
-FALLBACK = "openai/deepseek-ai/DeepSeek-V4-Flash"
+PRIMARY = "openai/deepseek/deepseek-v4.1-flash"
+FALLBACK = "openai/deepseek-ai/DeepSeek-V4.1-Flash"
 
 
 def _install_settings(monkeypatch: pytest.MonkeyPatch, **extra: Any) -> None:

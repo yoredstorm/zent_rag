@@ -97,6 +97,24 @@ class TestRespuestaDeCierre:
         assert result.answer.strip()
         assert any(p.get("detail", "").startswith("cierre determinista") for p in result.steps)
 
+    def test_fallo_de_proveedor_no_se_disfraza_de_limite(self) -> None:
+        texto = _budget_answer(
+            ["USER QUESTION: hola"],
+            "error: Todos los modelos del router fallaron",
+        )
+
+        assert "proveedor de modelos no está disponible" in texto
+        assert "límite del agente" not in texto
+        assert "Reintentá en unos segundos" in texto
+
+    def test_circuit_breaker_abierto_tambien_es_proveedor(self) -> None:
+        texto = _budget_answer(
+            [],
+            "error: Circuit breaker is OPEN for 'generate:model'. Retry in 29.1s.",
+        )
+
+        assert "proveedor de modelos no está disponible" in texto
+
 
 class TestPresupuestoPorLlamada:
     """`limits.max_tokens` es el techo del RUN; cada llamada tiene el suyo.
