@@ -1346,6 +1346,14 @@ class Settings(BaseSettings):
             "build.build_timestamp de la traza del run."
         ),
     )
+    SERVICE_NAME: str = Field(
+        default="api",
+        max_length=64,
+        description=(
+            "Nombre del servicio en la imagen (api | ingestion-worker). Se "
+            "publica en runtime_identity para la paridad de builds."
+        ),
+    )
     RUNTIME_TOOL_ROUTING_MODE: Literal["off", "experimental"] = Field(
         default="off",
         description="experimental = JEV Choice selects a subset of agent tools.",
