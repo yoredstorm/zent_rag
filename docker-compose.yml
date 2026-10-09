@@ -373,6 +373,9 @@ services:
       - .env
     environment:
       <<: *common-env
+      # Identidad de servicio para runtime_identity / build_parity: el target
+      # worker de la imagen pisa el ENV con ingestion-worker.
+      RAG_SERVICE_NAME: api
       # SDK in-container (docker compose exec api …). Desde el host usa localhost.
       ZENT_BASE_URL: http://127.0.0.1:8000/api/v1
       # Borrado total self-service en Ajustes (CSV de emails; vacío = off).
@@ -430,6 +433,7 @@ services:
       - .env
     environment:
       <<: *common-env
+      RAG_SERVICE_NAME: ingestion-worker
     depends_on:
       postgres:
         condition: service_healthy
