@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -163,6 +164,14 @@ class TestConvertPdf:
             (output_dir / "input.md").write_text("# Título\n\nCuerpo.", encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
+        # El test es unitario: el jar empaquetado (extra pdf-odl) no es necesario.
+        fake_resources = SimpleNamespace(
+            files=lambda package: SimpleNamespace(
+                joinpath=lambda *parts: Path("odl.jar")
+            ),
+            as_file=lambda ref: nullcontext(Path("odl.jar")),
+        )
+        monkeypatch.setattr(client_module, "resources", fake_resources)
         monkeypatch.setattr(client_module, "resolve_java", lambda options: ("java", 17))
         monkeypatch.setattr(client_module.subprocess, "run", fake_run)
 
