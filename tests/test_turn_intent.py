@@ -33,6 +33,7 @@ from src.runtime.turn_intent import (
     capability_answer_block,
     decide_route,
     decision_from_jev,
+    fallback_turn_intent,
     resolve_turn_intent,
     rules_turn_intent,
 )
@@ -375,6 +376,15 @@ def test_bloque_de_capacidad_usa_configuracion_real() -> None:
     assert "Resolver consultas ATPCO" in bloque
     assert "search_knowledge" in bloque
     assert "fuentes configuradas: 3" in bloque
+
+
+def test_fallback_ejecutable_no_es_charla() -> None:
+    """Sin JEV, «¿X cumple Y?» no puede caer en social_conversation: una
+    consulta ejecutable mantiene route knowledge y el fast path determinista."""
+    decision = fallback_turn_intent("¿ABCFGEGE cumple el patrón &&&F?")
+    assert decision.route == ROUTE_KNOWLEDGE
+    assert decision.needs_external_evidence is True
+    assert "consulta_ejecutable" in decision.reasons
 
 
 # ---------------------------------------------------------------------------

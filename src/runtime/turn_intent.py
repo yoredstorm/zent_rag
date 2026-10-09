@@ -661,6 +661,22 @@ def fallback_turn_intent(
         return rules
     señales = _signals(message or "")
     if not any(s in señales for s in ("entity", "knowledge_verb", "question_word", "action")):
+        from src.runtime.deterministic_authority import requires_deterministic_decision
+
+        if requires_deterministic_decision(message or ""):
+            # «¿X cumple Y?» es material aunque no use el léxico de conocimiento:
+            # una consulta ejecutable jamás es charla.
+            return _decision(
+                intent="knowledge_question",
+                confidence=_RULES_FALLBACK_CONFIDENCE,
+                provider="rules_fallback",
+                route=ROUTE_KNOWLEDGE,
+                needs_external_evidence=True,
+                evidence_source="rules",
+                model_tier=MODEL_TIER_DEFAULT,
+                signals=señales,
+                reasons=("consulta_ejecutable",),
+            )
         tokens = [token for token in re.split(r"\s+", message or "") if token]
         if len(tokens) > 6:
             # Mensaje largo sin señal clara: conservador, no charla.
