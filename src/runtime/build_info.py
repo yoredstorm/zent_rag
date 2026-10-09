@@ -17,8 +17,12 @@ from typing import Any
 BUILD_INFO_VERSION = "build-info-1"
 
 _SHA_ENV_KEYS = (
+    # Inyectado por la imagen (Docker ARG GIT_SHA → ENV RAG_GIT_SHA): manda.
+    "RAG_GIT_SHA",
     "RUNTIME_BUILD_GIT_SHA",
     "RAG_RUNTIME_BUILD_GIT_SHA",
+    "SOURCE_COMMIT",
+    "GIT_COMMIT",
     "BUILD_GIT_SHA",
     "GIT_SHA",
     "GITHUB_SHA",
@@ -60,8 +64,17 @@ def _git_sha_from_repo() -> str:
     return ""
 
 
+def git_sha_from_env() -> str:
+    """SHA inyectado por build/deploy. Única lista de variables del proceso."""
+    return _env_first(_SHA_ENV_KEYS)
+
+
+def git_sha_from_repo() -> str:
+    return _git_sha_from_repo()
+
+
 def git_sha() -> str:
-    return _env_first(_SHA_ENV_KEYS) or _git_sha_from_repo()
+    return git_sha_from_env() or git_sha_from_repo()
 
 
 def build_timestamp() -> str:
@@ -136,4 +149,6 @@ __all__ = [
     "build_info",
     "build_timestamp",
     "git_sha",
+    "git_sha_from_env",
+    "git_sha_from_repo",
 ]

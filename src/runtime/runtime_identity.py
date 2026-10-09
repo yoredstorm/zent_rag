@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import os
 import socket
-import subprocess
 from datetime import datetime, timezone
 
 _PROCESS_STARTED_AT = datetime.now(timezone.utc).isoformat()
@@ -32,29 +31,25 @@ def _in_image() -> bool:
 
 
 def _git_sha() -> str:
-    from_env = _env(
-        "RAG_GIT_SHA",
-        "RUNTIME_BUILD_GIT_SHA",
-        "GIT_SHA",
-        "SOURCE_COMMIT",
-        "GIT_COMMIT",
-    )
+    """Una sola fuente con build_info: env de imagen → git local → unknown.
+
+    En imagen/cluster sin env de build NO se lee un git montado: un SHA viejo
+    es peor que `unknown`.
+    """
+    try:
+        from src.runtime.build_info import git_sha_from_env, git_sha_from_repo
+
+        from_env = git_sha_from_env()
+    except Exception:  # noqa: BLE001 — la identidad nunca rompe el proceso
+        from_env = ""
     if from_env:
         return from_env[:40]
     if _in_image():
         return "unknown"
     try:
-        result = subprocess.run(  # noqa: S603 — comando fijo, sin shell
-            ["git", "rev-parse", "HEAD"],  # noqa: S607 — git del PATH en dev
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()[:40]
-    except Exception:  # noqa: BLE001 — sin git no hay SHA local
-        pass
-    return "unknown"
+        return (git_sha_from_repo() or "unknown")[:40]
+    except Exception:  # noqa: BLE001
+        return "unknown"
 
 
 def _build_timestamp() -> str:

@@ -4,13 +4,18 @@
 from __future__ import annotations
 
 from src.runtime.narrative_fast_path import (
+    EVIDENCE_ONLY,
     NARRATIVE_FAST_PATH,
     ROUTE_AGENT,
     ROUTE_DETERMINISTIC,
     ROUTE_SCENARIO,
+    TIER_FAST_NARRATIVE,
+    TIER_STANDARD,
     completeness_for_finish,
     compress_narrative_context,
+    grounded_answer_policy,
     jev_needed,
+    narrative_model_for,
     narrative_route,
     output_token_budget,
     prompt_char_budget,
@@ -119,6 +124,29 @@ def test_build_parity_expected_sha_and_unknown_without_metadata() -> None:
     assert stale["status"] == "METADATA_INCONSISTENT"
     unknown = build_parity({"git_sha": "unknown"}, None, expected_sha="5c68bef")
     assert unknown["status"] == "UNKNOWN"
+
+
+def test_grounded_policy_forbids_external_domain_knowledge() -> None:
+    policy = grounded_answer_policy()
+    assert policy.mode == EVIDENCE_ONLY
+    assert policy.evidence_only is True
+    rules = policy.instructions().lower()
+    assert "no recomiendes categor" in rules
+    assert "implicación práctica" in rules
+    assert "no encontraste respaldo suficiente" in rules
+
+
+def test_narrative_model_policy_configurable_with_agent_fallback() -> None:
+    configured = narrative_model_for(
+        {"narrative_model": "openai/gpt-4o-mini"}, "big-model"
+    )
+    assert configured.model == "openai/gpt-4o-mini"
+    assert configured.tier == TIER_FAST_NARRATIVE
+    assert configured.source == "agent.config.narrative_model"
+    fallback = narrative_model_for({}, "big-model")
+    assert fallback.model == "big-model"
+    assert fallback.tier == TIER_STANDARD
+    assert fallback.source == "agent.model"
 
 
 def test_routing_benchmark() -> None:

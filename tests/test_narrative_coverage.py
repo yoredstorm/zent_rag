@@ -6,15 +6,20 @@ from __future__ import annotations
 from src.core.domain.adaptive import EvidenceItem
 from src.runtime.evidence import EvidenceRegistry
 from src.runtime.narrative_coverage import (
+    BUDGET,
     COVERED,
+    INITIAL_COMPLETE,
+    MAX_ROUNDS,
     MISSING,
     NOT_FOUND_AFTER_COVERAGE_SEARCH,
     NOT_FOUND_IN_CURRENT_RETRIEVAL,
     PARTIAL,
+    PARTIAL_MATERIAL,
     SUPPORTED,
     apply_coverage_limitation,
     build_coverage_query,
     coverage_needs_jev,
+    coverage_requires_search,
     decide_coverage_round,
     ensure_concept_representation,
     extract_narrative_concepts,
@@ -115,7 +120,7 @@ def test_single_concept_does_not_request_another_search() -> None:
         remaining_steps=4,
     )
     assert decision.search is False
-    assert decision.stop_reason == "initial_sufficient"
+    assert decision.stop_reason == INITIAL_COMPLETE
 
 
 def test_adversarial_one_round_asks_for_the_missing_topics() -> None:
@@ -143,7 +148,7 @@ def test_adversarial_one_round_asks_for_the_missing_topics() -> None:
         remaining_steps=4,
     )
     assert again.search is False
-    assert again.stop_reason == "max_rounds"
+    assert again.stop_reason == MAX_ROUNDS
 
 
 def test_budget_skips_the_coverage_search() -> None:
@@ -156,8 +161,8 @@ def test_budget_skips_the_coverage_search() -> None:
         remaining_steps=1,
     )
     assert decision.search is False
-    assert decision.coverage_search_skipped == "budget"
-    assert decision.stop_reason == "budget"
+    assert decision.coverage_search_skipped == BUDGET
+    assert decision.stop_reason == BUDGET
 
 
 def test_executable_query_is_out_of_scope() -> None:
@@ -207,3 +212,75 @@ def test_partial_token_overlap_is_not_covered() -> None:
     )
     date = next(item for item in measured if "fecha" in item.label.lower())
     assert date.status == PARTIAL
+
+
+# -----------------------------------------------------------------------------
+# Regresión del caso vivo: «cuentame sobre el cambio de fechas en el record 2»
+# -----------------------------------------------------------------------------
+REGRESSION_QUESTION = "cuentame sobre el cambio de fechas en el record 2"
+
+
+def test_entity_does_not_cover_aspect_in_same_frame() -> None:
+    plan = extract_narrative_concepts(REGRESSION_QUESTION, vocabulary=DATE_ALIASES)
+    assert len(plan.frames) == 1
+    frame = plan.frames[0]
+    assert frame.entity.lower() == "record 2"
+    assert frame.aspect.lower() == "cambio de fechas"
+    assert frame.relation == "aspect_of"
+    measured = measure_coverage(plan, RECORD_ONLY, searched=False)
+    [coverage] = measured
+    assert coverage.entity_status == COVERED
+    assert coverage.aspect_status == MISSING
+    assert coverage.status == PARTIAL_MATERIAL
+    assert coverage.material_gap is True
+    assert coverage_requires_search(coverage, coverage.role) is True
+    decision = decide_coverage_round(
+        measured,
+        rounds_done=0,
+        max_rounds=1,
+        remaining_steps=4,
+        headings=("Footnote", "Fare Class"),
+    )
+    assert decision.search is True
+    assert decision.query.strip() != REGRESSION_QUESTION
+    assert "record 2" in decision.query.lower()
+    assert "effective date" in decision.query.lower()
+    assert "cuentame" not in decision.query.lower()
+
+
+def test_partial_material_aspect_coverage_triggers_search() -> None:
+    plan = extract_narrative_concepts(REGRESSION_QUESTION, vocabulary=DATE_ALIASES)
+    measured = measure_coverage(
+        plan,
+        ("Record 2 menciona fechas del calendario.",),
+        searched=False,
+    )
+    [coverage] = measured
+    assert coverage.status == PARTIAL_MATERIAL
+    assert coverage.aspect_status == PARTIAL
+    assert coverage_requires_search(coverage, coverage.role) is True
+
+
+def test_multitopic_decomposes_entity_and_effective_dates() -> None:
+    plan = extract_narrative_concepts(
+        "cuentame sobre record 2 y las fechas de efectividad",
+        vocabulary=DATE_ALIASES,
+    )
+    entities = [frame for frame in plan.frames if frame.entity]
+    assert [frame.entity.lower() for frame in entities] == ["record 2"]
+    aspects = " ".join(frame.aspect for frame in plan.frames).lower()
+    assert "efectividad" in aspects
+
+
+def test_simple_query_does_not_open_a_coverage_round() -> None:
+    plan = extract_narrative_concepts("qué significa & en Record 2")
+    assert len(plan.frames) == 1
+    measured = measure_coverage(plan, ("Record 2 byte uses &.",), searched=False)
+    decision = decide_coverage_round(
+        measured,
+        rounds_done=0,
+        max_rounds=1,
+        remaining_steps=4,
+    )
+    assert decision.search is False
+    assert decision.stop_reason == INITIAL_COMPLETE

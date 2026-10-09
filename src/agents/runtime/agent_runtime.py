@@ -2399,6 +2399,18 @@ class AgentRuntime:
         # ¿La consulta exige una decisión determinista? Si sí, no puede salir
         # una respuesta binaria del LLM sin DecisionEnvelope autoritativo.
         query_executable = requires_deterministic_decision(request.message)
+        # Identidad del runtime en el flujo. En consultas ejecutables la cadena
+        # determinista publica su propio stage `runtime_identity`; acá cubre la
+        # ruta narrativa y el loop, que no preparan autoridad. Con una sola
+        # fuente de SHA, build y runtime no pueden divergir; si no se conoce,
+        # queda UNKNOWN (nunca un SHA stale).
+        if not query_executable:
+            try:
+                from src.runtime.runtime_identity import runtime_identity
+
+                result.steps.append({"type": "runtime_identity", **runtime_identity()})
+            except Exception as exc:  # noqa: BLE001 — telemetría, nunca rompe el run
+                logger.warning("runtime identity failed", error=str(exc)[:150])
         # La autoridad se preparó (aunque no haya dado envelope): a partir de
         # acá `_apply_derived_guard` puede bloquear una decisión libre.
         authority_prepared = False
@@ -2435,6 +2447,7 @@ class AgentRuntime:
         narrative_package = None
         narrative_version = 0
         narrative_bound = False
+        external_claims_removed = 0
         evidence_budget = int(
             getattr(settings, "RUNTIME_EVIDENCE_BUDGET_CHARS", 0) or 0
         ) or 12_000
@@ -2476,7 +2489,7 @@ class AgentRuntime:
 
         def _bind_narrative_answer() -> None:
             """Citas de la respuesta contra el paquete final, no contra otro índice."""
-            nonlocal narrative_bound
+            nonlocal narrative_bound, external_claims_removed
             if narrative_bound or query_executable or narrative_package is None:
                 return
             answer = str(result.answer or "")
@@ -2491,6 +2504,7 @@ class AgentRuntime:
 
             binding = bind_narrative_answer(answer, narrative_package)
             narrative_bound = True
+            external_claims_removed = len(binding.external_claims)
             result.answer = binding.answer
             result.citations = _citations_from_evidence(binding.answer, selection)
             cited = set(binding.cited_evidence_ids)
@@ -2510,11 +2524,13 @@ class AgentRuntime:
                         cited=int(public.get("cited_count") or len(cited)),
                         documents_used=int(public.get("documents_used_count") or 0),
                         decision_evidence=int(public.get("decision_evidence_count") or 0),
+                        external_claims=external_claims_removed,
                     ),
                     "narrative_verification": binding.verification,
                     "grounding": binding.grounding,
                     "invalid_doc_numbers": list(binding.invalid_doc_numbers),
                     "citation_trace": status,
+                    "external_claims_removed": external_claims_removed,
                     "decision_evidence": int(public.get("decision_evidence_count") or 0),
                     "verification_input": narrative_input_from_binding(
                         binding,
@@ -3750,7 +3766,9 @@ class AgentRuntime:
                 NARRATIVE_FAST_PATH,
                 completeness_for_finish,
                 compress_narrative_context,
+                grounded_answer_policy,
                 jev_needed,
+                narrative_model_for,
                 narrative_route,
                 personality_instruction,
                 prompt_char_budget,
@@ -3813,8 +3831,13 @@ class AgentRuntime:
             ledger.charge_tool_step()
             from src.runtime.evidence import assess_sufficiency, select_evidence
             from src.runtime.narrative_coverage import (
+                COVERAGE_COMPLETE,
+                COVERAGE_PARTIAL,
                 COVERED,
                 MISSING,
+                NO_TARGET_QUERY,
+                PARTIAL_MATERIAL,
+                QUALIFIER,
                 apply_coverage_limitation,
                 coverage_needs_jev,
                 decide_coverage_round,
@@ -3873,12 +3896,21 @@ class AgentRuntime:
             coverage_rounds = 0
             coverage_queries: list[str] = []
             coverage_added = 0
+            # PARTIAL_MATERIAL ya no es "suficiente": decide_coverage_round lo
+            # trata como gap material y pide una búsqueda dirigida al aspecto.
             coverage_stop = decision.stop_reason
             coverage_skipped = decision.coverage_search_skipped
+            if decision.search and (
+                not decision.query.strip()
+                or decision.query.strip() == request.message.strip()
+            ):
+                # Nunca repetir la pregunta original como búsqueda dirigida.
+                coverage_stop = NO_TARGET_QUERY
+                coverage_skipped = NO_TARGET_QUERY
             if (
                 decision.search
+                and coverage_stop != NO_TARGET_QUERY
                 and decision.query.strip()
-                and decision.query.strip() != request.message.strip()
             ):
                 before_size = registry.size
                 follow_started = time.perf_counter()
@@ -3916,10 +3948,13 @@ class AgentRuntime:
                 searched=coverage_rounds > 0,
             )
             if coverage_rounds:
-                if all(item.status != MISSING for item in final_coverage):
-                    coverage_stop = "COVERAGE_COMPLETE"
+                if all(
+                    item.status not in {MISSING, PARTIAL_MATERIAL}
+                    for item in final_coverage
+                ):
+                    coverage_stop = COVERAGE_COMPLETE
                 else:
-                    coverage_stop = "COVERAGE_PARTIAL"
+                    coverage_stop = COVERAGE_PARTIAL
             active = _refresh_selection()
             represented = ensure_concept_representation(
                 list(active.items),
@@ -3966,19 +4001,18 @@ class AgentRuntime:
             )
             signals = signals_from_plan(run_plan)
             coverage_limit = limitation_sentence(final_coverage)
-            system_prompt = (
-                f"{agent_instructions}\n\n{style}\n"
-                "Responde solo con la evidencia. Cita con [Doc: N]. "
-                "No inventes documentos. "
-                "Si un concepto pedido no está en los fragmentos, di que no "
-                "encontraste respaldo suficiente en las fuentes disponibles "
-                "para este agente. No digas que el documento o el corpus no "
-                "contiene ese tema."
+            policy = grounded_answer_policy()
+            model_policy = narrative_model_for(
+                getattr(request.agent, "config_json", None),
+                str(config.get("model") or ""),
             )
+            system_prompt = (
+                f"{agent_instructions}\n\n{style}\n{policy.instructions()}"
+            ).strip()
             if coverage_limit:
                 system_prompt = f"{system_prompt}\n{coverage_limit}"
             user_prompt = f"Pregunta:\n{request.message}\n\nEvidencia:\n{context}"
-            rates = await lookup_token_rates(str(config.get("model") or ""))
+            rates = await lookup_token_rates(model_policy.model)
             call_plan = plan_response_budget(
                 ledger,
                 estimated_prompt_tokens=estimate_prompt_tokens(
@@ -4043,22 +4077,75 @@ class AgentRuntime:
                 return True
             if call_plan.compact_instruction:
                 system_prompt = f"{system_prompt}\n{call_plan.compact_instruction}"
-            model_started = time.perf_counter()
-            response = await self._llm.generate(
-                prompt=user_prompt,
-                model=str(config.get("model") or ""),
-                max_tokens=call_plan.allowed_completion_tokens,
-                temperature=0.2,
-                system_prompt=system_prompt,
+            narrative_timeout = float(
+                getattr(settings, "RUNTIME_NARRATIVE_GENERATION_TIMEOUT_SECONDS", 0)
+                or 0
             )
+            provider_fallback = False
+            primary_latency_ms = 0.0
+            fallback_latency_ms = 0.0
+            model_started = time.perf_counter()
+            if narrative_timeout > 0:
+                try:
+                    response = await asyncio.wait_for(
+                        self._llm.generate(
+                            prompt=user_prompt,
+                            model=model_policy.model,
+                            max_tokens=call_plan.allowed_completion_tokens,
+                            temperature=0.2,
+                            system_prompt=system_prompt,
+                        ),
+                        timeout=narrative_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    primary_latency_ms = (time.perf_counter() - model_started) * 1000
+                    fallback_model = str(
+                        getattr(settings, "GATEWAY_FALLBACK_MODEL", "") or ""
+                    ).strip()
+                    if not fallback_model or fallback_model == model_policy.model:
+                        logger.warning(
+                            "narrative generation timeout without fallback",
+                            timeout_seconds=narrative_timeout,
+                            model=model_policy.model,
+                        )
+                        return False
+                    provider_fallback = True
+                    fallback_started = time.perf_counter()
+                    response = await self._llm.generate(
+                        prompt=user_prompt,
+                        model=fallback_model,
+                        max_tokens=call_plan.allowed_completion_tokens,
+                        temperature=0.2,
+                        system_prompt=system_prompt,
+                    )
+                    fallback_latency_ms = (
+                        time.perf_counter() - fallback_started
+                    ) * 1000
+            else:
+                response = await self._llm.generate(
+                    prompt=user_prompt,
+                    model=model_policy.model,
+                    max_tokens=call_plan.allowed_completion_tokens,
+                    temperature=0.2,
+                    system_prompt=system_prompt,
+                )
             model_ms = (time.perf_counter() - model_started) * 1000
             await record_llm_call(
                 result,
                 ledger,
                 response,
                 purpose="narrative_generation",
-                model=str(config.get("model") or ""),
+                model=model_policy.model,
                 latency_ms=model_ms,
+                extra=(
+                    {
+                        "provider_fallback": True,
+                        "primary_latency_ms": round(primary_latency_ms, 2),
+                        "fallback_latency_ms": round(fallback_latency_ms, 2),
+                    }
+                    if provider_fallback
+                    else None
+                ),
             )
             if (
                 ledger.max_cost_usd is not None
@@ -4092,21 +4179,26 @@ class AgentRuntime:
                     recorded["completeness"] = completeness
                     recorded["truncated"] = finish_reason.lower() in {"length", "max_tokens"}
                 break
-            covered_count = sum(1 for item in final_coverage if item.status == COVERED)
-            missing_count = sum(1 for item in final_coverage if item.status == MISSING)
-            if covered_count and missing_count:
+            gap_items = [
+                item
+                for item in final_coverage
+                if item.status in {MISSING, PARTIAL_MATERIAL}
+            ]
+            any_grounded = any(
+                item.status == COVERED or item.entity_status == COVERED
+                for item in final_coverage
+            )
+            if any_grounded and gap_items:
                 overall = "PARTIAL_GROUNDED"
                 for step in reversed(result.steps):
                     recorded = step.get("verification_input") if step.get("type") == "narrative_evidence" else None
                     if not isinstance(recorded, dict):
                         continue
                     supports = list(recorded.get("supports") or [])
-                    for item in final_coverage:
-                        if item.status != MISSING:
-                            continue
+                    for item in gap_items:
                         supports.append(
                             {
-                                "claim": item.label,
+                                "claim": item.aspect or item.label,
                                 "status": "UNSUPPORTED",
                                 "doc_number": None,
                                 "evidence_id": "",
@@ -4152,11 +4244,47 @@ class AgentRuntime:
                         }
                         for item in final_coverage
                     ],
+                    "narrative_frames": [
+                        {
+                            "id": frame.frame_id,
+                            "entity": frame.entity,
+                            "aspect": frame.aspect,
+                            "relation": frame.relation,
+                        }
+                        for frame in concept_plan.frames
+                    ],
+                    "entity_coverage": [
+                        {
+                            "label": item.entity,
+                            "status": item.entity_status,
+                            "role": QUALIFIER if item.aspect else item.role,
+                        }
+                        for item in final_coverage
+                        if item.entity
+                    ],
+                    "aspect_coverage": [
+                        {
+                            "label": item.aspect or item.label,
+                            "status": item.aspect_status or item.status,
+                            "role": item.role,
+                        }
+                        for item in final_coverage
+                    ],
+                    "coverage_decision_reason": decision.stop_reason,
+                    "final_aspect_coverage": [
+                        item.aspect_status or item.status
+                        for item in final_coverage
+                    ],
                     "coverage_rounds": coverage_rounds,
                     "coverage_queries": coverage_queries,
                     "coverage_evidence_added": coverage_added,
                     "coverage_stop_reason": coverage_stop,
                     "coverage_search_skipped": coverage_skipped,
+                    "external_claims_removed": external_claims_removed,
+                    "provider_fallback": provider_fallback,
+                    "primary_latency_ms": round(primary_latency_ms, 2),
+                    "fallback_latency_ms": round(fallback_latency_ms, 2),
+                    **model_policy.to_public_dict(),
                     "jev_calls": 0,
                     "jev_avoided": 1,
                     "llm_calls": 1,

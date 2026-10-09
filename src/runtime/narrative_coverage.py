@@ -2,6 +2,12 @@
 # Narrative Coverage Closure — cobertura explicativa, no autoridad.
 # Un miss de top-k no prueba que el corpus no tenga el tema.
 # Premise Closure no entra acá.
+#
+# La cobertura se mide por FRAME, no por bag of words:
+#   entity  = entidad que restringe la pregunta («Record 2»)
+#   aspect  = lo que se pregunta sobre esa entidad («cambio de fechas»)
+# Encontrar la entidad NO cubre el aspecto. Un aspecto material faltante
+# (MISSING o PARTIAL_MATERIAL) dispara búsqueda dirigida.
 # =============================================================================
 from __future__ import annotations
 
@@ -13,7 +19,23 @@ from src.intelligence.response.entities import asked_entities
 
 COVERED = "COVERED"
 PARTIAL = "PARTIAL"
+PARTIAL_MATERIAL = "PARTIAL_MATERIAL"
 MISSING = "MISSING"
+
+#: Roles de un concepto. El aspecto es PRIMARY; la entidad que lo restringe,
+#: QUALIFIER. CONTEXT y RELATION describen estructura, nunca material por sí.
+PRIMARY = "PRIMARY"
+QUALIFIER = "QUALIFIER"
+CONTEXT = "CONTEXT"
+RELATION = "RELATION"
+
+#: Stop reasons del cierre de cobertura.
+INITIAL_COMPLETE = "INITIAL_COMPLETE"
+COVERAGE_COMPLETE = "COVERAGE_COMPLETE"
+COVERAGE_PARTIAL = "COVERAGE_PARTIAL"
+MAX_ROUNDS = "MAX_ROUNDS"
+BUDGET = "BUDGET"
+NO_TARGET_QUERY = "NO_TARGET_QUERY"
 
 SUPPORTED = "SUPPORTED"
 NOT_FOUND_IN_CURRENT_RETRIEVAL = "NOT_FOUND_IN_CURRENT_RETRIEVAL"
@@ -32,10 +54,16 @@ _ABSENCE = re.compile(
     r"el\s+corpus\s+no\s+contiene|el\s+manual\s+no\s+contiene)\b[^.?!]*[.?!]?",
     re.IGNORECASE,
 )
+#: Conectores que quedan al quitar la entidad de una cláusula.
+_EDGE_FILLER = (
+    r"(?:en|el|la|los|las|del|de|al|sobre|para|con|por|un|una|"
+    r"cuanto|respecto)"
+)
+_EDGE_RE = re.compile(rf"{_EDGE_FILLER}", re.IGNORECASE)
 _STOP = frozenset(
     "de del la el los las en por para con una uno que sobre general".split()
 )
-_RANK = {MISSING: 0, PARTIAL: 1, COVERED: 2}
+_RANK = {MISSING: 0, PARTIAL: 1, PARTIAL_MATERIAL: 2, COVERED: 3}
 
 
 @dataclass(frozen=True)
@@ -46,8 +74,27 @@ class NarrativeConcept:
 
 
 @dataclass(frozen=True)
+class NarrativeConceptFrame:
+    """Entidad + aspecto + relación. No es un saco de palabras."""
+
+    frame_id: str
+    entity: str = ""
+    aspect: str = ""
+    qualifiers: tuple[str, ...] = ()
+    relation: str = ""
+    aliases: tuple[str, ...] = ()
+    material_terms: tuple[str, ...] = ()
+    role: str = PRIMARY
+
+    @property
+    def label(self) -> str:
+        return self.aspect or self.entity
+
+
+@dataclass(frozen=True)
 class NarrativeConceptPlan:
     concepts: tuple[NarrativeConcept, ...] = ()
+    frames: tuple[NarrativeConceptFrame, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -57,6 +104,13 @@ class ConceptCoverage:
     status: str
     epistemic: str
     aliases: tuple[str, ...] = ()
+    role: str = PRIMARY
+    entity: str = ""
+    aspect: str = ""
+    entity_status: str = ""
+    aspect_status: str = ""
+    material_gap: bool = False
+    material_terms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,34 +180,120 @@ def _label_for(clause: str) -> str:
     return cleaned
 
 
+def _aspect_from_clause(cleaned: str, entity) -> str:
+    """Aspecto de la cláusula: el texto sin la mención de la entidad.
+
+    «cambio de fechas en el record 2» + entidad «record 2» → «cambio de fechas».
+    """
+    entity_words = set(_norm(getattr(entity, "label", "")).split())
+    entity_words.add(_norm(getattr(entity, "value", "")))
+    kept: list[str] = []
+    for token in (cleaned or "").split():
+        norm_token = _norm(token).strip(" .,:;¿?")
+        if not norm_token:
+            continue
+        if norm_token in entity_words:
+            continue
+        kept.append(token)
+    text = " ".join(kept)
+    for _ in range(4):
+        updated = re.sub(rf"^{_EDGE_RE.pattern}\s+", "", text).strip()
+        updated = re.sub(rf"\s+{_EDGE_RE.pattern}$", "", updated).strip()
+        if updated == text:
+            break
+        text = updated
+    return text.strip(" .,:;¿?")
+
+
+def _frame_for_clause(
+    clause: str,
+    index: int,
+    *,
+    vocabulary: dict | None,
+) -> NarrativeConceptFrame | None:
+    cleaned = _clean_clause(clause)
+    if not cleaned:
+        return None
+    entities = asked_entities(cleaned)
+    if len(entities) == 1:
+        entity = entities[0]
+        aspect = _aspect_from_clause(cleaned, entity)
+        if aspect:
+            aliases = _aliases_for(aspect, vocabulary)
+            return NarrativeConceptFrame(
+                frame_id=f"F{index}",
+                entity=entity.label,
+                aspect=aspect,
+                relation="aspect_of",
+                aliases=aliases,
+                material_terms=aliases,
+                role=PRIMARY,
+            )
+        return NarrativeConceptFrame(
+            frame_id=f"F{index}",
+            entity=entity.label,
+            role=PRIMARY,
+        )
+    label = _label_for(clause)
+    if not label:
+        return None
+    aliases = _aliases_for(label, vocabulary)
+    return NarrativeConceptFrame(
+        frame_id=f"F{index}",
+        aspect=label,
+        aliases=aliases,
+        material_terms=aliases,
+        role=PRIMARY,
+    )
+
+
 def extract_narrative_concepts(
     question: str,
     *,
     vocabulary: dict | None = None,
 ) -> NarrativeConceptPlan:
-    """Temas que la pregunta pide explicar. La conjunción separa conceptos."""
+    """Temas que la pregunta pide explicar, con entidad y aspecto separados.
+
+    La conjunción separa cláusulas. Una cláusula con una sola entidad y texto
+    adicional se vuelve un frame entidad+aspecto: la entidad no cubre el
+    aspecto. Los aliases vienen sólo de vocabulario documental; acá no se
+    inventa terminología de dominio.
+    """
     clauses = [part.strip() for part in _SPLIT.split(question or "") if part.strip()]
-    labels: list[str] = []
+    frames: list[NarrativeConceptFrame] = []
+    seen: set[tuple[str, str]] = set()
     for clause in clauses:
-        label = _label_for(clause)
-        if not label:
+        frame = _frame_for_clause(clause, len(frames) + 1, vocabulary=vocabulary)
+        if frame is None:
             continue
-        if any(_norm(label) == _norm(existing) for existing in labels):
+        key = (_norm(frame.entity), _norm(frame.aspect))
+        if key in seen:
             continue
-        labels.append(label)
-    if not labels:
+        seen.add(key)
+        frames.append(frame)
+    if not frames:
         fallback = _clean_clause(question or "")
         if fallback:
-            labels.append(fallback)
+            aliases = _aliases_for(fallback, vocabulary)
+            frames.append(
+                NarrativeConceptFrame(
+                    frame_id="F1",
+                    aspect=fallback,
+                    aliases=aliases,
+                    material_terms=aliases,
+                )
+            )
+    frames = frames[:6]
     concepts = tuple(
         NarrativeConcept(
-            concept_id=f"C{index}",
-            label=label,
-            aliases=_aliases_for(label, vocabulary),
+            concept_id=frame.frame_id,
+            label=frame.label,
+            aliases=frame.aliases,
         )
-        for index, label in enumerate(labels[:6], start=1)
+        for frame in frames
+        if frame.label
     )
-    return NarrativeConceptPlan(concepts=concepts)
+    return NarrativeConceptPlan(concepts=concepts, frames=tuple(frames))
 
 
 def _status_on_text(concept: NarrativeConcept, text: str) -> str:
@@ -184,6 +324,38 @@ def _status_on_text(concept: NarrativeConcept, text: str) -> str:
     return MISSING
 
 
+def _aggregate_status(concept: NarrativeConcept, blobs: list[str]) -> str:
+    status = MISSING
+    for blob in blobs:
+        found = _status_on_text(concept, blob)
+        if _RANK[found] > _RANK[status]:
+            status = found
+        if status == COVERED:
+            break
+    return status
+
+
+def _overall_for_frame(
+    entity_status: str,
+    aspect_status: str,
+) -> tuple[str, bool]:
+    """(status, material_gap) de un frame entidad+aspecto."""
+    if aspect_status == COVERED and entity_status == COVERED:
+        return COVERED, False
+    if entity_status == COVERED and aspect_status == MISSING:
+        # El caso reportado: hay Record 2 pero no el cambio de fechas.
+        return PARTIAL_MATERIAL, True
+    if entity_status == COVERED and aspect_status == PARTIAL:
+        return PARTIAL_MATERIAL, True
+    if aspect_status == COVERED and entity_status != COVERED:
+        # El aspecto está, la restricción de entidad no: no es cobertura plena.
+        return PARTIAL, True
+    if aspect_status == MISSING:
+        return MISSING, True
+    material = aspect_status != COVERED or entity_status != COVERED
+    return PARTIAL, material
+
+
 def _epistemic(status: str, *, searched: bool) -> str:
     if status == COVERED:
         return SUPPORTED
@@ -200,23 +372,90 @@ def _as_text(item: object) -> str:
     return f"{getattr(item, 'content', '')}\n{title}\n{section}"
 
 
+def _coverage_for_frame(
+    frame: NarrativeConceptFrame,
+    blobs: list[str],
+    *,
+    searched: bool,
+) -> ConceptCoverage:
+    if frame.entity and frame.aspect:
+        entity_status = _aggregate_status(
+            NarrativeConcept(frame.frame_id, frame.entity), blobs
+        )
+        aspect_terms = tuple(frame.aliases) + tuple(frame.material_terms)
+        aspect_status = _aggregate_status(
+            NarrativeConcept(frame.frame_id, frame.aspect, aspect_terms), blobs
+        )
+        status, material_gap = _overall_for_frame(entity_status, aspect_status)
+        return ConceptCoverage(
+            concept_id=frame.frame_id,
+            label=frame.label,
+            status=status,
+            epistemic=_epistemic(status, searched=searched),
+            aliases=frame.aliases,
+            role=frame.role,
+            entity=frame.entity,
+            aspect=frame.aspect,
+            entity_status=entity_status,
+            aspect_status=aspect_status,
+            material_gap=material_gap,
+            material_terms=frame.material_terms,
+        )
+    if frame.entity:
+        entity_status = _aggregate_status(
+            NarrativeConcept(frame.frame_id, frame.entity), blobs
+        )
+        return ConceptCoverage(
+            concept_id=frame.frame_id,
+            label=frame.entity,
+            status=entity_status,
+            epistemic=_epistemic(entity_status, searched=searched),
+            aliases=frame.aliases,
+            role=frame.role,
+            entity=frame.entity,
+            entity_status=entity_status,
+            material_gap=entity_status != COVERED,
+            material_terms=frame.material_terms,
+        )
+    aspect_terms = tuple(frame.aliases) + tuple(frame.material_terms)
+    aspect_status = _aggregate_status(
+        NarrativeConcept(frame.frame_id, frame.aspect or frame.label, aspect_terms),
+        blobs,
+    )
+    return ConceptCoverage(
+        concept_id=frame.frame_id,
+        label=frame.aspect or frame.label,
+        status=aspect_status,
+        epistemic=_epistemic(aspect_status, searched=searched),
+        aliases=frame.aliases,
+        role=frame.role,
+        aspect=frame.aspect,
+        aspect_status=aspect_status,
+        material_gap=aspect_status != COVERED,
+        material_terms=frame.material_terms,
+    )
+
+
 def measure_coverage(
     plan: NarrativeConceptPlan,
     texts: object,
     *,
     searched: bool = False,
 ) -> tuple[ConceptCoverage, ...]:
-    """Cobertura del paquete recuperado. No afirma nada sobre el corpus entero."""
+    """Cobertura del paquete recuperado. No afirma nada sobre el corpus entero.
+
+    Devuelve una medición por frame: la entidad y el aspecto se miden por
+    separado, y `status` es la cobertura material del frame.
+    """
     blobs = [_as_text(item) for item in (texts or ())]
+    if plan.frames:
+        return tuple(
+            _coverage_for_frame(frame, blobs, searched=searched)
+            for frame in plan.frames
+        )
     measured: list[ConceptCoverage] = []
     for concept in plan.concepts:
-        status = MISSING
-        for blob in blobs:
-            found = _status_on_text(concept, blob)
-            if _RANK[found] > _RANK[status]:
-                status = found
-            if status == COVERED:
-                break
+        status = _aggregate_status(concept, blobs)
         measured.append(
             ConceptCoverage(
                 concept_id=concept.concept_id,
@@ -224,28 +463,64 @@ def measure_coverage(
                 status=status,
                 epistemic=_epistemic(status, searched=searched),
                 aliases=concept.aliases,
+                material_gap=status != COVERED,
             )
         )
     return tuple(measured)
 
 
-def _shares_term(heading: str, concept: NarrativeConcept) -> bool:
+def coverage_requires_search(
+    concept_coverage: ConceptCoverage | object,
+    concept_role: str = "",
+) -> bool:
+    """Un gap material dispara búsqueda dirigida.
+
+    COVERED no busca. MISSING y PARTIAL_MATERIAL sí. PARTIAL sólo si es
+    material para el rol (PRIMARY/RELATION) y hay gap de tokens.
+    """
+    role = str(concept_role or getattr(concept_coverage, "role", "") or PRIMARY)
+    status = str(getattr(concept_coverage, "status", "") or "")
+    if status == COVERED:
+        return False
+    if status == MISSING:
+        return True
+    if status == PARTIAL_MATERIAL:
+        return True
+    if status == PARTIAL:
+        if role == QUALIFIER and not bool(
+            getattr(concept_coverage, "material_gap", False)
+        ):
+            return False
+        return bool(getattr(concept_coverage, "material_gap", False))
+    return False
+
+
+def _shares_term(heading: str, concept: object) -> bool:
     heading_tokens = set(_tokens(heading))
     if not heading_tokens:
         return False
-    concept_tokens = set(_tokens(concept.label))
-    for alias in concept.aliases:
-        concept_tokens.update(_tokens(alias))
+    concept_tokens: set[str] = set()
+    for field in ("label", "aspect", "entity"):
+        concept_tokens.update(_tokens(str(getattr(concept, field, "") or "")))
+    for alias in getattr(concept, "aliases", ()) or ():
+        concept_tokens.update(_tokens(str(alias)))
+    for term in getattr(concept, "material_terms", ()) or ():
+        concept_tokens.update(_tokens(str(term)))
     return bool(heading_tokens & concept_tokens)
 
 
 def build_coverage_query(
-    concept: NarrativeConcept,
+    concept: object,
     *,
     anchors: tuple[str, ...] = (),
     headings: tuple[str, ...] = (),
 ) -> str:
-    """Query dirigida. Terminología exacta, después aliases, después headings."""
+    """Query dirigida al aspecto faltante, con la entidad como restricción.
+
+    Nunca repite la pregunta original. Terminología exacta del aspecto, sus
+    aliases documentales y, después, los headings recuperados que comparten
+    términos. No inventa secciones.
+    """
     parts: list[str] = []
     seen: set[str] = set()
 
@@ -256,11 +531,20 @@ def build_coverage_query(
             seen.add(folded)
             parts.append(text)
 
+    entity = " ".join(str(getattr(concept, "entity", "") or "").split())
+    aspect = " ".join(str(getattr(concept, "aspect", "") or "").split())
+    label = " ".join(str(getattr(concept, "label", "") or "").split())
+    if not aspect and not entity:
+        aspect = label
+
     for anchor in anchors:
         add(anchor)
-    add(concept.label)
-    for alias in concept.aliases:
-        add(alias)
+    add(entity)
+    add(aspect)
+    for alias in getattr(concept, "aliases", ()) or ():
+        add(str(alias))
+    for term in getattr(concept, "material_terms", ()) or ():
+        add(str(term))
     for heading in headings:
         if _shares_term(heading, concept):
             add(heading)
@@ -277,21 +561,25 @@ def decide_coverage_round(
     headings: tuple[str, ...] = (),
     over_budget: bool = False,
 ) -> CoverageRoundDecision:
-    """Como máximo una ronda extra, y solo si queda paso para buscar y generar."""
-    missing = [item for item in measured if item.status == MISSING]
-    if not missing:
-        return CoverageRoundDecision(False, "", "initial_sufficient")
+    """Como máximo una ronda extra, y solo si queda paso para buscar y generar.
+
+    MISSING y PARTIAL_MATERIAL son material. PARTIAL sólo si su rol lo hace
+    material. COVERED nunca busca.
+    """
+    needs_search = [
+        item
+        for item in measured
+        if coverage_requires_search(item, getattr(item, "role", ""))
+    ]
+    if not needs_search:
+        return CoverageRoundDecision(False, "", INITIAL_COMPLETE)
     if int(rounds_done) >= int(max_rounds):
-        return CoverageRoundDecision(False, "", "max_rounds")
+        return CoverageRoundDecision(False, "", MAX_ROUNDS)
     if over_budget or int(remaining_steps) < 2:
-        return CoverageRoundDecision(False, "", "budget", "budget")
+        return CoverageRoundDecision(False, "", BUDGET, BUDGET)
     chunks = [
-        build_coverage_query(
-            NarrativeConcept(item.concept_id, item.label, item.aliases),
-            anchors=anchors,
-            headings=headings,
-        )
-        for item in missing
+        build_coverage_query(item, anchors=anchors, headings=headings)
+        for item in needs_search
     ]
     words: list[str] = []
     seen: set[str] = set()
@@ -301,21 +589,43 @@ def decide_coverage_round(
             if folded not in seen:
                 seen.add(folded)
                 words.append(word)
-    return CoverageRoundDecision(True, " ".join(words), "coverage_retrieval")
+    query = " ".join(words)
+    if not query.strip():
+        return CoverageRoundDecision(False, "", NO_TARGET_QUERY, NO_TARGET_QUERY)
+    reason = (
+        PARTIAL_MATERIAL
+        if any(
+            item.status == PARTIAL_MATERIAL
+            or (item.status == PARTIAL and item.material_gap)
+            for item in needs_search
+        )
+        else COVERAGE_PARTIAL
+    )
+    return CoverageRoundDecision(True, query, reason)
 
 
 def limitation_sentence(measured: tuple[ConceptCoverage, ...] | list[ConceptCoverage]) -> str:
-    missing = [item.label for item in measured if item.status == MISSING]
-    if not missing:
+    gaps = [
+        item
+        for item in measured
+        if item.status in {MISSING, PARTIAL_MATERIAL}
+    ]
+    if not gaps:
         return ""
-    covered = [item.label for item in measured if item.status == COVERED]
-    if len(covered) == 1 and len(missing) == 1:
+    if len(gaps) == 1:
+        item = gaps[0]
+        aspect = item.aspect or item.label
+        if item.entity and item.entity_status == COVERED:
+            return (
+                f"Encontré respaldo suficiente sobre {item.entity}, "
+                f"pero no encontré evidencia suficiente sobre {aspect} "
+                "en las fuentes disponibles para este agente."
+            )
         return (
-            f"Encontré respaldo suficiente para explicar {covered[0]}, "
-            f"pero no encontré evidencia suficiente sobre {missing[0]} "
+            f"No encontré evidencia suficiente sobre {aspect} "
             "en las fuentes disponibles para este agente."
         )
-    listed = ", ".join(missing)
+    listed = ", ".join(item.aspect or item.label for item in gaps)
     return (
         "No encontré respaldo suficiente en las fuentes disponibles "
         f"sobre {listed}."

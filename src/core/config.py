@@ -1410,6 +1410,16 @@ class Settings(BaseSettings):
             "1 = como maximo una busqueda dirigida a conceptos faltantes. 0 = no."
         ),
     )
+    RUNTIME_NARRATIVE_GENERATION_TIMEOUT_SECONDS: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=600.0,
+        description=(
+            "Timeout opcional de la generacion narrativa (0 = sin timeout). Si el "
+            "proveedor primario no entrega a tiempo, se intenta GATEWAY_FALLBACK_MODEL "
+            "y se registra provider_fallback/primary_latency/fallback_latency."
+        ),
+    )
     # -------------------------------------------------------------------------
     # Turn intent (capa conversacional: docs/architecture/turn-intent.md)
     # -------------------------------------------------------------------------

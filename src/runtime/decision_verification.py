@@ -54,6 +54,8 @@ PREMISE_CONFLICTING = "CONFLICTING"
 PREMISE_UNKNOWN = "UNKNOWN"
 
 _SUPPORTED = "SUPPORTED"
+_OUT_OF_PACKAGE = "OUT_OF_PACKAGE_CLAIM"
+_EXTERNAL_UNGROUNDED = "EXTERNAL_UNGROUNDED_CLAIM"
 _CONFLICT_STATUSES = frozenset(
     {"CONFLICTING", "CONTRADICTED", "REFUTED", "UNSUPPORTED"}
 )
@@ -390,6 +392,7 @@ class NarrativeVerificationInput:
     citation_trace: str = ""
     invalid_doc_numbers: tuple[int, ...] = ()
     supports: tuple[dict[str, Any], ...] = ()
+    external_claims: tuple[dict[str, Any], ...] = ()
     completeness: str = ""
     finish_reason: str = ""
     truncated: bool = False
@@ -406,6 +409,7 @@ class NarrativeVerificationInput:
             "citation_trace": self.citation_trace,
             "invalid_doc_numbers": list(self.invalid_doc_numbers[:8]),
             "supports": [dict(item) for item in self.supports[:8]],
+            "external_claims": [dict(item) for item in self.external_claims[:8]],
             "completeness": self.completeness,
             "finish_reason": self.finish_reason,
             "truncated": bool(self.truncated),
@@ -420,6 +424,11 @@ class NarrativeVerificationInput:
         supports = tuple(
             dict(item) for item in (raw.get("supports") or ()) if isinstance(item, Mapping)
         )
+        external = tuple(
+            dict(item)
+            for item in (raw.get("external_claims") or ())
+            if isinstance(item, Mapping)
+        )
         invalid = tuple(
             int(number)
             for number in (raw.get("invalid_doc_numbers") or ())
@@ -432,6 +441,7 @@ class NarrativeVerificationInput:
             citation_trace=str(raw.get("citation_trace") or ""),
             invalid_doc_numbers=invalid,
             supports=supports,
+            external_claims=external,
             completeness=str(raw.get("completeness") or ""),
             finish_reason=str(raw.get("finish_reason") or ""),
             truncated=bool(raw.get("truncated")),
@@ -456,6 +466,11 @@ def narrative_input_from_binding(
     supports = tuple(
         dict(item) for item in (getattr(binding, "supports", ()) or ()) if isinstance(item, Mapping)
     )
+    external = tuple(
+        dict(item)
+        for item in (getattr(binding, "external_claims", ()) or ())
+        if isinstance(item, Mapping)
+    )
     reason = str(finish_reason or "")
     truncated = reason.lower() in _TRUNCATION_REASONS or str(completeness or "").upper() == "TRUNCATED"
     return NarrativeVerificationInput(
@@ -465,6 +480,7 @@ def narrative_input_from_binding(
         citation_trace=citation_trace,
         invalid_doc_numbers=invalid,
         supports=supports,
+        external_claims=external,
         completeness=str(completeness or ""),
         finish_reason=reason,
         truncated=truncated,
@@ -502,6 +518,9 @@ def _apply_narrative_input(
     cited = [item for item in supports if str(item.get("status") or "") != "UNCITED"]
     uncited = [item for item in supports if str(item.get("status") or "") == "UNCITED"]
     unsupported = [item for item in cited if str(item.get("status") or "") == "UNSUPPORTED"]
+    out_of_package = [
+        item for item in supports if str(item.get("status") or "") == _OUT_OF_PACKAGE
+    ]
     partial = [item for item in cited if str(item.get("status") or "") == "PARTIAL"]
     supported = [item for item in cited if str(item.get("status") or "") == "SUPPORTED"]
     verified_name = narrative_input.verification.upper()
@@ -523,6 +542,14 @@ def _apply_narrative_input(
         warnings.append("CITATION_ERROR")
         citations_valid: bool | None = False
         explanation_complete: bool | None = not truncated
+    elif out_of_package or narrative_input.external_claims:
+        # El claim externo se removió (trimming determinista) o sigue presente:
+        # en ambos casos el run tocó conocimiento fuera del paquete.
+        status = NARRATIVE_PARTIAL
+        grounding = GROUNDING_PARTIAL
+        warnings.append(_EXTERNAL_UNGROUNDED)
+        citations_valid = True if narrative_input.citations_valid is None else narrative_input.citations_valid
+        explanation_complete = not truncated
     elif unsupported:
         status = NARRATIVE_PARTIAL
         grounding = GROUNDING_PARTIAL

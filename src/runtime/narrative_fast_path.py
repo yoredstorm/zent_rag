@@ -15,6 +15,16 @@ ROUTE_DETERMINISTIC = "DETERMINISTIC_FAST_PATH"
 ROUTE_SCENARIO = "SCENARIO_ANALYSIS"
 ROUTE_AGENT = "AGENT"
 
+#: Tiers de modelo. El código decide; el modelo no elige su propio tier.
+TIER_FAST = "FAST"
+TIER_STANDARD = "STANDARD"
+TIER_REASONING = "REASONING"
+#: Narrative Fast Path con modelo dedicado de baja latencia.
+TIER_FAST_NARRATIVE = TIER_FAST
+
+#: Modo de respuesta documental: sólo evidencia del paquete final.
+EVIDENCE_ONLY = "EVIDENCE_ONLY"
+
 VERIFIED_GROUNDED = "VERIFIED_GROUNDED"
 PARTIALLY_GROUNDED = "PARTIALLY_GROUNDED"
 UNSUPPORTED = "UNSUPPORTED"
@@ -167,6 +177,96 @@ def narrative_route(question: str) -> NarrativeRoute:
         shape=shape,
         blueprint="",
         reason=classification.routing_reason or "not_informational",
+    )
+
+
+@dataclass(frozen=True)
+class GroundedAnswerPolicy:
+    """Firewall de conocimiento externo para respuestas documentales.
+
+    En EVIDENCE_ONLY el modelo sólo explica el paquete final de evidencia,
+    aplica personalidad, organiza/formatea y declara limitaciones. No agrega
+    categorías, reglas ni documentación que la evidencia no contenga.
+    """
+
+    mode: str = EVIDENCE_ONLY
+
+    @property
+    def evidence_only(self) -> bool:
+        return self.mode == EVIDENCE_ONLY
+
+    def instructions(self) -> str:
+        if not self.evidence_only:
+            return ""
+        return _EVIDENCE_ONLY_RULES
+
+
+def grounded_answer_policy(*, knowledge_question: bool = True) -> GroundedAnswerPolicy:
+    """Pregunta documental de conocimiento → EVIDENCE_ONLY. El código decide."""
+    return GroundedAnswerPolicy(mode=EVIDENCE_ONLY if knowledge_question else "STANDARD")
+
+
+_EVIDENCE_ONLY_RULES = (
+    "Reglas de grounding documental (obligatorias):\n"
+    "- Responde sólo con la información contenida en la evidencia recuperada. "
+    "Cita con [Doc: N].\n"
+    "- Podés aplicar la personalidad del agente, organizar y formatear, y "
+    "declarar limitaciones.\n"
+    "- No recomiendes categorías, records, tablas, reglas ni documentos que no "
+    "aparezcan en la evidencia.\n"
+    "- No sugieras documentación, organismos o proveedores específicos que la "
+    "evidencia no mencione; sólo si el usuario pidió consejo general, presentalo "
+    "explícitamente como recomendación general.\n"
+    "- No agregues reglas de conocimiento propio ni completes huecos con "
+    "entrenamiento general.\n"
+    "- Si falta un concepto, decí que no encontraste respaldo suficiente en las "
+    "fuentes disponibles para esta ejecución. Nunca afirmes que el documento o "
+    "el corpus no contiene el tema.\n"
+    "- La sección \"Implicación práctica\" sólo puede aparecer si se deriva "
+    "directamente de la evidencia; si es una inferencia, presentala como "
+    "\"Inferencia práctica basada en las reglas anteriores…\" y debe ser "
+    "sostenible con la evidencia. Sin recomendaciones arbitrarias."
+)
+
+
+@dataclass(frozen=True)
+class NarrativeModelPolicy:
+    """Modelo de la generación narrativa. Configurable, no silencioso."""
+
+    tier: str
+    model: str
+    source: str
+
+    def to_public_dict(self) -> dict[str, str]:
+        return {
+            "narrative_model": self.model,
+            "narrative_model_tier": self.tier,
+            "narrative_model_source": self.source,
+        }
+
+
+def narrative_model_for(
+    agent_config: object,
+    fallback_model: str = "",
+) -> NarrativeModelPolicy:
+    """agent.config.narrative_model > modelo del agente.
+
+    No cambia el modelo por su cuenta: si el agente no configura uno, usa el
+    modelo elegido por el agente.
+    """
+    config = agent_config if isinstance(agent_config, dict) else {}
+    explicit = str(config.get("narrative_model") or "").strip()
+    fallback = str(fallback_model or "").strip()
+    if explicit:
+        return NarrativeModelPolicy(
+            tier=TIER_FAST_NARRATIVE,
+            model=explicit,
+            source="agent.config.narrative_model",
+        )
+    return NarrativeModelPolicy(
+        tier=TIER_STANDARD,
+        model=fallback,
+        source="agent.model",
     )
 
 

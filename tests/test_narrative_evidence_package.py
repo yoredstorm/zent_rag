@@ -10,9 +10,12 @@ from src.runtime.evidence import (
     EvidenceSelection,
 )
 from src.runtime.narrative_package import (
+    OUT_OF_PACKAGE_CLAIM,
+    UNCITED_BUT_SUPPORTED,
     bind_narrative_answer,
     citation_trace_status,
     freeze_narrative_package,
+    narrative_claim_support,
 )
 
 QUESTION = "cuentame sobre el record 2 en general sobre el cierre de fechas"
@@ -193,3 +196,33 @@ def test_uncited_claims_are_used_but_not_cited() -> None:
     assert binding.used_evidence_ids == ("E1",)
     assert binding.verification == "PARTIAL"
     assert binding.grounding == "PARTIAL"
+    assert UNCITED_BUT_SUPPORTED == "UNCITED"
+
+
+def test_external_category_claim_is_out_of_package_and_removed() -> None:
+    registry = EvidenceRegistry()
+    registry.add(
+        [
+            _item("E1", "Record 2 Footnote fare class usa & y guion."),
+            _item("E2", "Record 2 fare family footnote del manual."),
+        ]
+    )
+    package = freeze_narrative_package(
+        _selection(list(registry.all_items())),
+        version=1,
+        registry_version=registry.fingerprint(),
+    )
+    answer = (
+        "Record 2 usa Footnote y fare class segun el manual [Doc: 1].\n\n"
+        "## Implicacion practica\n"
+        "Category 15 is Seasonality: conviene revisar la categoria 15."
+    )
+    supports = narrative_claim_support(answer, package)
+    assert any(item["status"] == OUT_OF_PACKAGE_CLAIM for item in supports)
+    binding = bind_narrative_answer(answer, package)
+    assert "category 15" not in binding.answer.lower()
+    assert "implicacion practica" not in binding.answer.lower()
+    assert binding.external_claims
+    assert binding.cited_evidence_ids == ("E1",)
+    # El texto entregado queda limpio: el claim externo no llega al lector.
+    assert binding.verification == "VERIFIED_GROUNDED"

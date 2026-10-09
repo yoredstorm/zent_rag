@@ -194,3 +194,64 @@ def test_table_row_is_a_claim() -> None:
     assert supports
     assert supports[0]["status"] == "SUPPORTED"
     assert supports[0]["evidence_id"] == "E1"
+
+
+def test_external_ungrounded_claim_marks_verification_partial() -> None:
+    package = _package()
+    answer = (
+        "La regla de Record 2 describe el cierre de la vigencia publicada [Doc: 1].\n\n"
+        "## Implicacion practica\n"
+        "Category 15 is Seasonality."
+    )
+    binding = bind_narrative_answer(answer, package)
+    assert binding.external_claims
+    assert "Category 15" not in binding.answer
+    recorded = narrative_input_from_binding(binding, query_mode="INFORMATIONAL")
+    assert recorded.external_claims
+    split = compose_verification_split(
+        narrative_input=recorded, query_mode="INFORMATIONAL"
+    )
+    assert split["narrative_verification"]["status"] == NARRATIVE_PARTIAL
+    assert "EXTERNAL_UNGROUNDED_CLAIM" in split["narrative_verification"]["warnings"]
+
+
+def test_stale_build_identity_is_flagged() -> None:
+    found = run_invariants(
+        evidence={},
+        jev={},
+        generation={},
+        controls={},
+        verification={},
+        timeline=[
+            {"type": "build", "git_sha": "52cdaa466c56222123d9b22afc45e0537509ecd6"},
+            {"type": "runtime_identity", "git_sha": "b70028c6c121d1995691558a93203d41f9776b40"},
+        ],
+    )
+    assert any(item["code"] == "BUILD_IDENTITY_STALE" for item in found)
+
+
+def test_same_or_unknown_build_identity_is_not_flagged() -> None:
+    same = run_invariants(
+        evidence={},
+        jev={},
+        generation={},
+        controls={},
+        verification={},
+        timeline=[
+            {"type": "build", "git_sha": "b70028c6c121d1995691558a93203d41f9776b40"},
+            {"type": "runtime_identity", "git_sha": "b70028c6c121d1995691558a93203d41f9776b40"},
+        ],
+    )
+    assert not any(item["code"] == "BUILD_IDENTITY_STALE" for item in same)
+    unknown = run_invariants(
+        evidence={},
+        jev={},
+        generation={},
+        controls={},
+        verification={},
+        timeline=[
+            {"type": "build", "git_sha": ""},
+            {"type": "runtime_identity", "git_sha": "unknown"},
+        ],
+    )
+    assert not any(item["code"] == "BUILD_IDENTITY_STALE" for item in unknown)

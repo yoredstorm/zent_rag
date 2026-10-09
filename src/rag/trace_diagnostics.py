@@ -160,6 +160,14 @@ DIAGNOSTIC_DEFINITIONS: dict[str, tuple[str, str, bool, str, str, str | None]] =
         "flow_shows_unverified",
         "pass_narrative_binding_to_verification",
     ),
+    "BUILD_IDENTITY_STALE": (
+        "ERROR",
+        "execution",
+        True,
+        "build_sha_differs_from_runtime_sha",
+        "flow_shows_stale_build",
+        "single_sha_source",
+    ),
     "DECISION_NARRATIVE_SEPARATION": (
         "ERROR",
         "verification",
@@ -428,6 +436,18 @@ def _number(value: Any) -> float | None:
     return number if number == number else None
 
 
+def _known_sha(value: Any) -> str:
+    """SHA real o "". `unknown`/placeholder no cuentan como identidad."""
+    text = str(value or "").strip()
+    if not text or text.lower() in {"unknown", "build_sha_unavailable", "none"}:
+        return ""
+    return text
+
+
+def _shas_compatible(left: str, right: str) -> bool:
+    return left == right or left.startswith(right) or right.startswith(left)
+
+
 def diagnostic_item(
     code: str,
     *,
@@ -629,6 +649,29 @@ def run_invariants(
                 },
             )
         )
+    # BUILD_IDENTITY_STALE: el SHA que la traza publica como build no puede
+    # diferir del runtime real. Si alguno no se conoce, no se inventa.
+    build_step = next(
+        (step for step in timeline if str(step.get("type") or "") == "build"),
+        None,
+    )
+    identity_step = next(
+        (step for step in timeline if str(step.get("type") or "") == "runtime_identity"),
+        None,
+    )
+    if isinstance(build_step, Mapping) and isinstance(identity_step, Mapping):
+        build_sha = _known_sha(build_step.get("git_sha"))
+        runtime_sha = _known_sha(identity_step.get("git_sha"))
+        if build_sha and runtime_sha and not _shas_compatible(build_sha, runtime_sha):
+            found.append(
+                diagnostic_item(
+                    "BUILD_IDENTITY_STALE",
+                    params={
+                        "build_sha": build_sha[:12],
+                        "runtime_sha": runtime_sha[:12],
+                    },
+                )
+            )
     if unique is not None and selected is not None and selected > unique:
         found.append(
             diagnostic_item(
