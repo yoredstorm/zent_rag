@@ -64,6 +64,18 @@ _STOP = frozenset(
     "de del la el los las en por para con una uno que sobre general".split()
 )
 _RANK = {MISSING: 0, PARTIAL: 1, PARTIAL_MATERIAL: 2, COVERED: 3}
+#: Puente de idioma, no de dominio. La pregunta dice «fechas»; el manual
+#: nombra estos campos. Sin esto, Eff Date queda MISSING y el prompt obliga
+#: a declarar ausencia.
+_DATE_CUE = re.compile(r"\b(?:fechas?|dates?|vigencia|efectividad)\b")
+_DATE_DOC_ALIASES = (
+    "effective date",
+    "eff date",
+    "discontinue date",
+    "disc date",
+    "date processing",
+    "date change",
+)
 
 
 @dataclass(frozen=True)
@@ -145,6 +157,24 @@ def _clean_clause(clause: str) -> str:
     return text
 
 
+def _documentary_aliases(label: str) -> tuple[str, ...]:
+    if not _DATE_CUE.search(_norm(label)):
+        return ()
+    return _DATE_DOC_ALIASES
+
+
+def _alias_set(label: str, vocabulary: dict | None) -> tuple[str, ...]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for alias in (*_aliases_for(label, vocabulary), *_documentary_aliases(label)):
+        text = " ".join(str(alias or "").split())
+        folded = text.lower()
+        if text and folded not in seen:
+            seen.add(folded)
+            merged.append(text)
+    return tuple(merged)
+
+
 def _aliases_for(label: str, vocabulary: dict | None) -> tuple[str, ...]:
     if not vocabulary:
         return ()
@@ -219,7 +249,7 @@ def _frame_for_clause(
         entity = entities[0]
         aspect = _aspect_from_clause(cleaned, entity)
         if aspect:
-            aliases = _aliases_for(aspect, vocabulary)
+            aliases = _alias_set(aspect, vocabulary)
             return NarrativeConceptFrame(
                 frame_id=f"F{index}",
                 entity=entity.label,
@@ -237,7 +267,7 @@ def _frame_for_clause(
     label = _label_for(clause)
     if not label:
         return None
-    aliases = _aliases_for(label, vocabulary)
+    aliases = _alias_set(label, vocabulary)
     return NarrativeConceptFrame(
         frame_id=f"F{index}",
         aspect=label,
@@ -256,8 +286,9 @@ def extract_narrative_concepts(
 
     La conjunción separa cláusulas. Una cláusula con una sola entidad y texto
     adicional se vuelve un frame entidad+aspecto: la entidad no cubre el
-    aspecto. Los aliases vienen sólo de vocabulario documental; acá no se
-    inventa terminología de dominio.
+    aspecto. Los aliases salen del vocabulario documental. Un aspecto de
+    fechas también usa los nombres de campo del manual (effective date,
+    discontinue date): si no, el texto en inglés se lee como ausencia.
     """
     clauses = [part.strip() for part in _SPLIT.split(question or "") if part.strip()]
     frames: list[NarrativeConceptFrame] = []
@@ -274,7 +305,7 @@ def extract_narrative_concepts(
     if not frames:
         fallback = _clean_clause(question or "")
         if fallback:
-            aliases = _aliases_for(fallback, vocabulary)
+            aliases = _alias_set(fallback, vocabulary)
             frames.append(
                 NarrativeConceptFrame(
                     frame_id="F1",
@@ -669,6 +700,29 @@ def ensure_concept_representation(selected, all_items, concepts) -> list:
         if all(getattr(best, "evidence_id", id(best)) != getattr(item, "evidence_id", id(item)) for item in chosen):
             chosen.append(best)
     return chosen
+
+
+def prefer_aspect_items(selected, concepts, *, keep_uncovered: int = 2) -> list:
+    """El aspecto pedido va primero. El resto del documento no llena la respuesta.
+
+    Sin un ítem que cubra el aspecto, no recorta: la búsqueda dirigida todavía
+    puede traerlo.
+    """
+    chosen = list(selected or [])
+    watched = [concept for concept in concepts or () if getattr(concept, "aliases", ())]
+    if not chosen or not watched:
+        return chosen
+    front: list = []
+    back: list = []
+    for item in chosen:
+        text = _as_text(item)
+        if any(_status_on_text(concept, text) == COVERED for concept in watched):
+            front.append(item)
+        else:
+            back.append(item)
+    if not front:
+        return chosen
+    return front + back[: max(0, int(keep_uncovered))]
 
 
 def narrative_coverage_applies(question: str) -> bool:

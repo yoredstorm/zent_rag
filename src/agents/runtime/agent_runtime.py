@@ -3878,6 +3878,7 @@ class AgentRuntime:
                 limitation_sentence,
                 measure_coverage,
                 narrative_coverage_applies,
+                prefer_aspect_items,
                 vocabulary_from_items,
             )
             from src.runtime.narrative_package import freeze_narrative_package
@@ -3987,9 +3988,12 @@ class AgentRuntime:
                 else:
                     coverage_stop = COVERAGE_PARTIAL
             active = _refresh_selection()
-            represented = ensure_concept_representation(
-                list(active.items),
-                registry.all_items(),
+            represented = prefer_aspect_items(
+                ensure_concept_representation(
+                    list(active.items),
+                    registry.all_items(),
+                    concept_plan.concepts,
+                ),
                 concept_plan.concepts,
             )
             if [item.evidence_id for item in represented] != [
