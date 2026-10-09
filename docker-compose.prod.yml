@@ -243,8 +243,8 @@ services:
       # SHA del build: la imagen publica el SHA realmente construido y el run
       # lo reporta. Vacío = unknown, nunca un SHA stale del .env.
       args:
-        GIT_SHA: ${RAG_BUILD_GIT_SHA:-${GIT_SHA:-}}
-        BUILD_TIMESTAMP: ${RAG_BUILD_TIMESTAMP:-${BUILD_TIMESTAMP:-}}
+        GIT_SHA: ${RAG_RUNTIME_BUILD_GIT_SHA:-}
+        BUILD_TIMESTAMP: ${RAG_RUNTIME_BUILD_TIMESTAMP:-}
       # Worker target: la API también necesita JVM + OpenDataLoader para la
       # ingesta in-process (OpenDataLoader es el parser PDF productivo).
       target: worker
@@ -268,8 +268,8 @@ services:
       # SHA del build: la imagen publica el SHA realmente construido y el run
       # lo reporta. Vacío = unknown, nunca un SHA stale del .env.
       args:
-        GIT_SHA: ${RAG_BUILD_GIT_SHA:-${GIT_SHA:-}}
-        BUILD_TIMESTAMP: ${RAG_BUILD_TIMESTAMP:-${BUILD_TIMESTAMP:-}}
+        GIT_SHA: ${RAG_RUNTIME_BUILD_GIT_SHA:-}
+        BUILD_TIMESTAMP: ${RAG_RUNTIME_BUILD_TIMESTAMP:-}
       # Con JVM (OpenDataLoader PDF). La API default queda sin JVM.
       target: worker
     command: ["python", "worker_entry.py"]
@@ -302,8 +302,8 @@ services:
       # SHA del build: la imagen publica el SHA realmente construido y el run
       # lo reporta. Vacío = unknown, nunca un SHA stale del .env.
       args:
-        GIT_SHA: ${RAG_BUILD_GIT_SHA:-${GIT_SHA:-}}
-        BUILD_TIMESTAMP: ${RAG_BUILD_TIMESTAMP:-${BUILD_TIMESTAMP:-}}
+        GIT_SHA: ${RAG_RUNTIME_BUILD_GIT_SHA:-}
+        BUILD_TIMESTAMP: ${RAG_RUNTIME_BUILD_TIMESTAMP:-}
       target: worker
     profiles: ["parser-lab"]
     command:
