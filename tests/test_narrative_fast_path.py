@@ -75,10 +75,10 @@ def test_context_drops_footer_and_duplicate_heading() -> None:
     assert "vigencia" in text
 
 
-def test_budgets_stay_under_the_general_explanation_ceiling() -> None:
+def test_desired_output_is_a_target_not_a_hard_cap() -> None:
     assert prompt_char_budget(CASE_INFO, evidence_items=5) <= 8_000
-    assert output_token_budget("technical_explanation") <= 1000
-    assert output_token_budget("direct_fact") <= 300
+    assert output_token_budget("technical_explanation") > 800
+    assert 200 <= output_token_budget("direct_fact") <= 400
 
 
 def test_truncation_does_not_erase_grounding() -> None:

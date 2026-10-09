@@ -1401,6 +1401,15 @@ class Settings(BaseSettings):
             "y una generacion (sin loop ReAct). off = loop normal con tools."
         ),
     )
+    NARRATIVE_MAX_COVERAGE_ROUNDS: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description=(
+            "Rondas extra de Narrative Coverage Closure despues del top-k inicial. "
+            "1 = como maximo una busqueda dirigida a conceptos faltantes. 0 = no."
+        ),
+    )
     # -------------------------------------------------------------------------
     # Turn intent (capa conversacional: docs/architecture/turn-intent.md)
     # -------------------------------------------------------------------------

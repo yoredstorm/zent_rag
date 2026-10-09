@@ -373,6 +373,264 @@ def narrative_grounding_for(
     return GROUNDING_UNKNOWN
 
 
+NARRATIVE_VERIFIED_WITHOUT_CITATIONS = "VERIFIED_WITHOUT_CITATIONS"
+OVERALL_CONFIRMED = "RESPALDO_CONFIRMADO"
+OVERALL_PARTIAL_COMPLETE = "PARTIALLY_COMPLETE_BUT_GROUNDED"
+OVERALL_PARTIAL_GROUNDED = "PARTIALLY_GROUNDED"
+_TRUNCATION_REASONS = frozenset({"length", "max_tokens"})
+
+
+@dataclass(frozen=True, kw_only=True)
+class NarrativeVerificationInput:
+    """Lo que bind_narrative_answer ya decidió. No se reinfiere desde steps sueltos."""
+
+    verification: str = ""
+    grounding: str = ""
+    citations_valid: bool | None = None
+    citation_trace: str = ""
+    invalid_doc_numbers: tuple[int, ...] = ()
+    supports: tuple[dict[str, Any], ...] = ()
+    completeness: str = ""
+    finish_reason: str = ""
+    truncated: bool = False
+    used_evidence_ids: tuple[str, ...] = ()
+    cited_evidence_ids: tuple[str, ...] = ()
+    citations_required: bool = True
+    query_mode: str = ""
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "verification": self.verification,
+            "grounding": self.grounding,
+            "citations_valid": self.citations_valid,
+            "citation_trace": self.citation_trace,
+            "invalid_doc_numbers": list(self.invalid_doc_numbers[:8]),
+            "supports": [dict(item) for item in self.supports[:8]],
+            "completeness": self.completeness,
+            "finish_reason": self.finish_reason,
+            "truncated": bool(self.truncated),
+            "used_evidence_ids": list(self.used_evidence_ids[:12]),
+            "cited_evidence_ids": list(self.cited_evidence_ids[:12]),
+            "citations_required": bool(self.citations_required),
+            "query_mode": self.query_mode,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> NarrativeVerificationInput:
+        supports = tuple(
+            dict(item) for item in (raw.get("supports") or ()) if isinstance(item, Mapping)
+        )
+        invalid = tuple(
+            int(number)
+            for number in (raw.get("invalid_doc_numbers") or ())
+            if str(number).isdigit()
+        )
+        return cls(
+            verification=str(raw.get("verification") or ""),
+            grounding=str(raw.get("grounding") or ""),
+            citations_valid=raw.get("citations_valid") if isinstance(raw.get("citations_valid"), bool) else None,
+            citation_trace=str(raw.get("citation_trace") or ""),
+            invalid_doc_numbers=invalid,
+            supports=supports,
+            completeness=str(raw.get("completeness") or ""),
+            finish_reason=str(raw.get("finish_reason") or ""),
+            truncated=bool(raw.get("truncated")),
+            used_evidence_ids=_texts(raw.get("used_evidence_ids")),
+            cited_evidence_ids=_texts(raw.get("cited_evidence_ids")),
+            citations_required=raw.get("citations_required") is not False,
+            query_mode=str(raw.get("query_mode") or ""),
+        )
+
+
+def narrative_input_from_binding(
+    binding: Any,
+    *,
+    finish_reason: str = "",
+    completeness: str = "",
+    citations_required: bool = True,
+    query_mode: str = "",
+    citation_trace: str = "",
+) -> NarrativeVerificationInput:
+    """Puente explícito. El binding ya usó el FinalNarrativeEvidencePackage."""
+    invalid = tuple(int(number) for number in (getattr(binding, "invalid_doc_numbers", ()) or ()))
+    supports = tuple(
+        dict(item) for item in (getattr(binding, "supports", ()) or ()) if isinstance(item, Mapping)
+    )
+    reason = str(finish_reason or "")
+    truncated = reason.lower() in _TRUNCATION_REASONS or str(completeness or "").upper() == "TRUNCATED"
+    return NarrativeVerificationInput(
+        verification=str(getattr(binding, "verification", "") or ""),
+        grounding=str(getattr(binding, "grounding", "") or ""),
+        citations_valid=not invalid,
+        citation_trace=citation_trace,
+        invalid_doc_numbers=invalid,
+        supports=supports,
+        completeness=str(completeness or ""),
+        finish_reason=reason,
+        truncated=truncated,
+        used_evidence_ids=_texts(getattr(binding, "used_evidence_ids", ())),
+        cited_evidence_ids=_texts(getattr(binding, "cited_evidence_ids", ())),
+        citations_required=citations_required,
+        query_mode=query_mode,
+    )
+
+
+def narrative_input_from_steps(steps: Any) -> NarrativeVerificationInput | None:
+    """El objeto estructurado manda. No se reconstruye si está en el paso."""
+    for step in reversed(_steps(steps)):
+        if str(step.get("type") or "") != "narrative_evidence":
+            continue
+        raw = step.get("verification_input")
+        if isinstance(raw, Mapping) and raw:
+            return NarrativeVerificationInput.from_dict(raw)
+    return None
+
+
+def _input_is_truncated(narrative_input: NarrativeVerificationInput) -> bool:
+    if narrative_input.truncated:
+        return True
+    if narrative_input.finish_reason.lower() in _TRUNCATION_REASONS:
+        return True
+    return narrative_input.completeness.upper() == "TRUNCATED"
+
+
+def _apply_narrative_input(
+    narrative_input: NarrativeVerificationInput,
+) -> tuple[NarrativeVerification, str, str, str]:
+    """Traduce el binding a estados canónicos. Grounding y completeness no se pisan."""
+    supports = [item for item in narrative_input.supports if isinstance(item, Mapping)]
+    cited = [item for item in supports if str(item.get("status") or "") != "UNCITED"]
+    uncited = [item for item in supports if str(item.get("status") or "") == "UNCITED"]
+    unsupported = [item for item in cited if str(item.get("status") or "") == "UNSUPPORTED"]
+    partial = [item for item in cited if str(item.get("status") or "") == "PARTIAL"]
+    supported = [item for item in cited if str(item.get("status") or "") == "SUPPORTED"]
+    verified_name = narrative_input.verification.upper()
+    repaired_clean = verified_name in {"VERIFIED_GROUNDED", "VERIFIED"} and narrative_input.citations_valid is not False
+    citation_error = (
+        not repaired_clean
+        and (
+            narrative_input.citations_valid is False
+            or bool(narrative_input.invalid_doc_numbers)
+            or verified_name in {"CITATION_INVALID", "CITATION_ERROR"}
+            or narrative_input.citation_trace.upper() == "ERROR"
+        )
+    )
+    truncated = _input_is_truncated(narrative_input)
+    warnings: list[str] = []
+    if citation_error:
+        status = NARRATIVE_PARTIAL
+        grounding = GROUNDING_PARTIAL
+        warnings.append("CITATION_ERROR")
+        citations_valid: bool | None = False
+        explanation_complete: bool | None = not truncated
+    elif unsupported:
+        status = NARRATIVE_PARTIAL
+        grounding = GROUNDING_PARTIAL
+        citations_valid = True if narrative_input.citations_valid is None else narrative_input.citations_valid
+        explanation_complete = not truncated
+    elif truncated and supported and not partial:
+        status = NARRATIVE_TRUNCATED
+        grounding = GROUNDING_COMPLETE
+        warnings.extend(["MAX_TOKENS_REACHED", "NARRATIVE_TRUNCATED"])
+        citations_valid = True
+        explanation_complete = False
+    elif truncated:
+        status = NARRATIVE_TRUNCATED
+        grounding = GROUNDING_PARTIAL if (partial or supported or uncited) else GROUNDING_UNKNOWN
+        warnings.append("MAX_TOKENS_REACHED")
+        citations_valid = narrative_input.citations_valid
+        explanation_complete = False
+    elif supported and not partial and not (uncited and not cited and narrative_input.citations_required):
+        status = NARRATIVE_VERIFIED
+        grounding = GROUNDING_COMPLETE
+        citations_valid = True
+        explanation_complete = True
+    elif uncited and not cited:
+        if narrative_input.citations_required:
+            status = NARRATIVE_PARTIAL
+            grounding = GROUNDING_PARTIAL
+            warnings.append("UNCITED_SUPPORTED_CLAIMS")
+        else:
+            status = NARRATIVE_VERIFIED_WITHOUT_CITATIONS
+            grounding = GROUNDING_COMPLETE
+        citations_valid = True
+        explanation_complete = True
+    elif partial or supported:
+        status = NARRATIVE_PARTIAL
+        grounding = GROUNDING_PARTIAL
+        citations_valid = True if narrative_input.citations_valid is None else narrative_input.citations_valid
+        explanation_complete = True
+    else:
+        status = NARRATIVE_UNVERIFIED
+        grounding = GROUNDING_UNKNOWN
+        citations_valid = narrative_input.citations_valid
+        explanation_complete = None
+    if truncated and "NARRATIVE_TRUNCATED" not in warnings and status == NARRATIVE_TRUNCATED:
+        warnings.append("NARRATIVE_TRUNCATED")
+    completeness = "TRUNCATED" if truncated else "COMPLETE"
+    if status == NARRATIVE_VERIFIED and grounding == GROUNDING_COMPLETE and completeness == "COMPLETE":
+        overall = OVERALL_CONFIRMED
+    elif status == NARRATIVE_TRUNCATED and grounding == GROUNDING_COMPLETE:
+        overall = OVERALL_PARTIAL_COMPLETE
+    elif status in {NARRATIVE_PARTIAL, NARRATIVE_VERIFIED_WITHOUT_CITATIONS} or grounding == GROUNDING_PARTIAL:
+        overall = OVERALL_PARTIAL_GROUNDED
+    else:
+        overall = ""
+    narrative = NarrativeVerification(
+        status=status,
+        citations_valid=citations_valid,
+        explanation_complete=explanation_complete,
+        grounding_complete=grounding == GROUNDING_COMPLETE if grounding != GROUNDING_UNKNOWN else None,
+        truncated=status == NARRATIVE_TRUNCATED,
+        warnings=tuple(dict.fromkeys(warnings)),
+    )
+    return narrative, grounding, completeness, overall
+
+
+def _verification_presentation(
+    *,
+    decision_applies: bool,
+    narrative: NarrativeVerification,
+    narrative_grounding: str,
+    completeness: str,
+    overall: str,
+    cited_count: int,
+) -> dict[str, str]:
+    """Texto que el portal renderiza. No lo infiere."""
+    presentation: dict[str, str] = {}
+    if not decision_applies:
+        presentation["decision"] = "No aplica para esta consulta"
+    if narrative_grounding == GROUNDING_COMPLETE and narrative.status in {
+        NARRATIVE_VERIFIED,
+        NARRATIVE_TRUNCATED,
+        NARRATIVE_VERIFIED_WITHOUT_CITATIONS,
+    }:
+        presentation["explanation"] = "Verificada documentalmente"
+    elif narrative.status == NARRATIVE_PARTIAL:
+        presentation["explanation"] = "Parcialmente verificada"
+    elif narrative.status == NARRATIVE_VERIFIED_WITHOUT_CITATIONS:
+        presentation["explanation"] = "Verificada sin citas"
+    if narrative_grounding == GROUNDING_COMPLETE:
+        presentation["grounding"] = "Completo"
+    elif narrative_grounding == GROUNDING_PARTIAL:
+        presentation["grounding"] = "Parcial"
+    if narrative.citations_valid is False:
+        presentation["citations"] = "con referencias inválidas"
+    elif cited_count:
+        presentation["citations"] = f"{cited_count} válidas" if cited_count != 1 else "1 válida"
+    if completeness == "TRUNCATED":
+        presentation["completeness"] = "Truncada por límite de salida"
+    elif completeness == "COMPLETE":
+        presentation["completeness"] = "Completa"
+    if overall == OVERALL_CONFIRMED:
+        presentation["summary"] = "Respaldo confirmado"
+    elif overall == OVERALL_PARTIAL_COMPLETE:
+        presentation["summary"] = "Respaldo confirmado · respuesta incompleta"
+    elif overall == OVERALL_PARTIAL_GROUNDED:
+        presentation["summary"] = "Respaldo parcial"
+    return presentation
+
+
 def compose_verification_split(
     *,
     envelope: Any = None,
@@ -384,6 +642,8 @@ def compose_verification_split(
     generation_warnings: Sequence[Any] = (),
     grounding_verdict: str = "",
     deterministic_verified: bool = False,
+    narrative_input: NarrativeVerificationInput | None = None,
+    query_mode: str = "",
 ) -> dict[str, Any]:
     """Compone decisión + narrativa + groundings sin mezclarlos."""
     decision = build_decision_verification(
@@ -406,24 +666,56 @@ def compose_verification_split(
         elif impact == _POSSIBLY_INCOMPLETE or not impact:
             truncated = True
             explanation_complete = False
-    narrative = build_narrative_verification(
-        grounded=grounded,
-        citations_valid=citations_valid,
-        explanation_complete=explanation_complete,
-        truncated=truncated,
-        warnings=warnings,
-        checks=checks,
-        decision_status=decision.status,
-        grounding_verdict=grounding_verdict,
-        material_error=material_error,
-        deterministic_verified=deterministic_verified,
+    mode = str(query_mode or (narrative_input.query_mode if narrative_input else "") or "")
+    completeness = ""
+    overall = ""
+    if narrative_input is not None:
+        narrative, narrative_grounding, completeness, overall = _apply_narrative_input(
+            narrative_input
+        )
+    else:
+        narrative = build_narrative_verification(
+            grounded=grounded,
+            citations_valid=citations_valid,
+            explanation_complete=explanation_complete,
+            truncated=truncated,
+            warnings=warnings,
+            checks=checks,
+            decision_status=decision.status,
+            grounding_verdict=grounding_verdict,
+            material_error=material_error,
+            deterministic_verified=deterministic_verified,
+        )
+        narrative_grounding = narrative_grounding_for(narrative, grounded=grounded)
+    decision_public = decision.to_public_dict()
+    decision_applies = not (
+        mode.upper() == "INFORMATIONAL" and decision.status == DECISION_UNDETERMINED
     )
-    return {
-        "decision_verification": decision.to_public_dict(),
+    decision_public["applies"] = decision_applies
+    cited_count = len(narrative_input.cited_evidence_ids) if narrative_input else 0
+    presentation = _verification_presentation(
+        decision_applies=decision_applies,
+        narrative=narrative,
+        narrative_grounding=narrative_grounding,
+        completeness=completeness,
+        overall=overall,
+        cited_count=cited_count,
+    )
+    payload = {
+        "decision_verification": decision_public,
         "narrative_verification": narrative.to_public_dict(),
         "decision_grounding": decision_grounding_for(decision),
-        "narrative_grounding": narrative_grounding_for(narrative, grounded=grounded),
+        "narrative_grounding": narrative_grounding,
     }
+    if completeness:
+        payload["completeness"] = completeness
+    if overall:
+        payload["overall_verification"] = overall
+    if presentation:
+        payload["presentation"] = presentation
+    if narrative_input is not None:
+        payload["cited_count"] = cited_count
+    return payload
 
 
 def _steps(value: Any) -> list[dict[str, Any]]:
@@ -530,7 +822,13 @@ __all__ = [
     "build_narrative_verification",
     "claim_view",
     "claims_from_steps",
+    "OVERALL_CONFIRMED",
+    "OVERALL_PARTIAL_COMPLETE",
+    "OVERALL_PARTIAL_GROUNDED",
+    "NarrativeVerificationInput",
     "compose_verification_split",
+    "narrative_input_from_binding",
+    "narrative_input_from_steps",
     "decision_grounding_for",
     "envelope_from_steps",
     "envelope_view",

@@ -50,6 +50,7 @@ from src.rag.trace_jev import (
 from src.rag.trace_metrics import GLOSSARY_TERMS, metric_refs_for_trace
 from src.runtime.decision_verification import (
     DECISION_NOT_VERIFIED,
+    DECISION_UNDETERMINED,
     DECISION_VERIFIED,
     NARRATIVE_PARTIAL,
     NARRATIVE_TRUNCATED,
@@ -60,6 +61,7 @@ from src.runtime.decision_verification import (
     claims_from_steps,
     compose_verification_split,
     envelope_from_steps,
+    narrative_input_from_steps,
 )
 
 TRACEABILITY_SCHEMA_VERSION = 2
@@ -256,7 +258,11 @@ def _call_purpose(step: Mapping[str, Any], index: int, total: int) -> str:
     mapping = {
         "ANALYSIS": "reasoning",
         "REASONING": "reasoning",
+        "NARRATIVE_GENERATION": "answer_generation",
+        "GENERATION": "answer_generation",
+        "PERSONALITY_POLISH": "answer_generation",
         "ANSWER": "answer_generation",
+        "ANSWER_REVISION": "revision",
         "REVISION": "revision",
         "VERIFICATION": "verification",
         "TOOL_DECISION": "tool_decision",
@@ -386,6 +392,8 @@ def build_generation_section(
         "tokens": tokens,
         "duration_ms": _number(block.get("ms")),
         "cost_usd": _number(block.get("cost")),
+        "cost_status": _text(block.get("cost_status")) or None,
+        "cost_reason": _text(block.get("cost_reason")) or None,
         "finish_reason": _text(block.get("finish_reason")) or None,
         "warnings": [],
     }
@@ -632,6 +640,7 @@ def build_verification_section(
         and step.get("verified") is True
         for step in steps
     )
+    narrative_input = narrative_input_from_steps(steps)
     split = compose_verification_split(
         envelope=envelope,
         claims=claims,
@@ -642,6 +651,8 @@ def build_verification_section(
         generation_warnings=_records(controls.get("generation_warnings")),
         grounding_verdict=grounding_verdict,
         deterministic_verified=deterministic_verified,
+        narrative_input=narrative_input,
+        query_mode=str((narrative_input.query_mode if narrative_input else "") or ""),
     )
     decision_verification = split["decision_verification"]
     narrative_verification = split["narrative_verification"]
@@ -721,6 +732,24 @@ def build_verification_section(
                 "conflicts": list(decision_verification.get("conflicts") or ())[:4],
             },
         )
+    elif narrative_input is not None and decision_status == DECISION_UNDETERMINED:
+        # Informational: no hay decisión determinista y eso no es un fallo.
+        explanation = [
+            item
+            for item in explanation
+            if item.get("code") not in {"NO_VERIFICATION_RECORDED", "SUPPORT_NOT_CONFIRMED"}
+        ]
+        overall_code = _text(split.get("overall_verification"))
+        if overall_code == "RESPALDO_CONFIRMADO":
+            status = V_VERIFIED
+            explanation.insert(0, {"code": "DOCUMENTARY_SUPPORT_CONFIRMED"})
+        elif overall_code == "PARTIALLY_COMPLETE_BUT_GROUNDED":
+            status = V_PARTIALLY
+            explanation.insert(0, {"code": "DOCUMENTARY_SUPPORT_CONFIRMED"})
+            explanation.insert(1, {"code": "NARRATIVE_TRUNCATED"})
+        elif overall_code == "PARTIALLY_GROUNDED":
+            status = V_PARTIALLY
+            explanation.insert(0, {"code": "NARRATIVE_PARTIAL"})
     elif envelope and decision_status:
         explanation.append({"code": "DECISION_UNDETERMINED"})
 
@@ -743,6 +772,10 @@ def build_verification_section(
         "narrative_verification": narrative_verification,
         "decision_grounding": split["decision_grounding"],
         "narrative_grounding": split["narrative_grounding"],
+        "overall_verification": split.get("overall_verification"),
+        "completeness": split.get("completeness"),
+        "presentation": split.get("presentation"),
+        "cited_count": split.get("cited_count"),
         "decision_envelope": envelope or None,
         "derived_claims": claims[:6],
         "answer_state": answer_state or None,

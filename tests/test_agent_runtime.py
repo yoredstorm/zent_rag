@@ -344,8 +344,13 @@ class TestFactCheck:
         agent = _agent(config_json={"max_tokens": 80})
         runtime = AgentRuntime(llm_provider=llm)
         result = await runtime.run(_request(agent, "quien es el gerente"))
-        assert result.status == "completed"
-        assert "Miguel" in result.answer
+        # La primera llamada cabe. La siguiente no: no se pide un completion
+        # que el run no puede pagar, y el cierre no vuelve a llamar al modelo.
+        assert result.status == "limit_reached"
+        assert result.answer.strip()
+        assert "presupuesto de tokens" in result.answer
+        assert llm.calls == 1
+        assert any(s.get("type") == "tool_call" for s in result.steps)
         assert any(s.get("detail") == "max_tokens exceeded" for s in result.steps)
 
 

@@ -136,6 +136,30 @@ DIAGNOSTIC_DEFINITIONS: dict[str, tuple[str, str, bool, str, str, str | None]] =
         "decision_verified_invalidated_by_narrative",
         "separate_decision_from_narrative",
     ),
+    "NARRATIVE_LLM_CALL_TRACE_CONSISTENCY": (
+        "ERROR",
+        "verification",
+        True,
+        "narrative_llm_call_missing_from_generation",
+        "generation_under_counts_llm",
+        "record_llm_call",
+    ),
+    "NARRATIVE_TOOL_TRACE_CONSISTENCY": (
+        "ERROR",
+        "verification",
+        True,
+        "narrative_retrieval_without_tool_trace",
+        "tools_hidden",
+        "record_search_call",
+    ),
+    "NARRATIVE_FAST_PATH_VERIFICATION_MISSING": (
+        "ERROR",
+        "verification",
+        True,
+        "narrative_fast_path_without_verifier",
+        "flow_shows_unverified",
+        "pass_narrative_binding_to_verification",
+    ),
     "DECISION_NARRATIVE_SEPARATION": (
         "ERROR",
         "verification",
@@ -541,6 +565,59 @@ def run_invariants(
     # decisión (ni el estado global cuando la decisión está verificada).
     narrative_verification = _record(verification.get("narrative_verification"))
     narrative_status = str(narrative_verification.get("status") or "")
+    fast_steps = [
+        step
+        for step in timeline
+        if str(step.get("type") or "") == "narrative_fast_path"
+        or str(step.get("route") or "") == "NARRATIVE_FAST_PATH"
+    ]
+    fast_narrative = bool(fast_steps)
+    declared_llm = sum(int(step.get("llm_calls") or 0) for step in fast_steps)
+    recorded_llm = sum(
+        1
+        for step in timeline
+        if str(step.get("type") or "") == "llm"
+        and str(step.get("purpose") or "") == "narrative_generation"
+    )
+    if declared_llm > recorded_llm:
+        found.append(
+            diagnostic_item(
+                "NARRATIVE_LLM_CALL_TRACE_CONSISTENCY",
+                params={"declared": declared_llm, "recorded": recorded_llm},
+            )
+        )
+    retrieval_rounds = sum(int(step.get("retrieval_rounds") or 0) for step in fast_steps)
+    tool_traces = [
+        step
+        for step in timeline
+        if str(step.get("type") or "") in {"tool_call", "jev_retrieval"}
+        and "search" in str(step.get("tool") or "").lower()
+    ]
+    if retrieval_rounds > 0 and not tool_traces:
+        found.append(
+            diagnostic_item(
+                "NARRATIVE_TOOL_TRACE_CONSISTENCY",
+                params={"retrieval_rounds": retrieval_rounds},
+            )
+        )
+    narrative_warnings = [str(item) for item in narrative_verification.get("warnings") or ()]
+    if fast_narrative and (
+        "NO_VERIFICATION_RECORDED" in narrative_warnings
+        or (
+            narrative_status in {"", "UNVERIFIED"}
+            and not any(
+                isinstance(step.get("verification_input"), Mapping)
+                for step in timeline
+                if str(step.get("type") or "") == "narrative_evidence"
+            )
+        )
+    ):
+        found.append(
+            diagnostic_item(
+                "NARRATIVE_FAST_PATH_VERIFICATION_MISSING",
+                params={"narrative_status": narrative_status or "UNVERIFIED"},
+            )
+        )
     if decision_status == "VERIFIED" and str(verification.get("status") or "") == "UNVERIFIED":
         found.append(
             diagnostic_item(

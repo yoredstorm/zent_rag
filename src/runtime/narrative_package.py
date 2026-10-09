@@ -136,13 +136,44 @@ def _sentences(answer: str) -> list[str]:
     return [part.strip() for part in parts if len(part.strip()) >= 24]
 
 
+def _claim_units(answer: str) -> list[str]:
+    """Oraciones, filas de tabla y ítems de lista. El corte por punto no ve una tabla."""
+    units: list[str] = []
+    seen: set[str] = set()
+
+    def add(text: str) -> None:
+        cleaned = " ".join((text or "").split()).strip(" |")
+        if len(cleaned) < 8 or cleaned in seen:
+            return
+        if set(cleaned) <= set("-:| "):
+            return
+        seen.add(cleaned)
+        units.append(cleaned[:240])
+
+    for raw in (answer or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("|"):
+            add(line.strip("|"))
+            continue
+        item = re.match(r"^(?:[-*+]|\d+[.)])\s+(.*)$", line)
+        if item:
+            add(item.group(1))
+    prose = re.sub(r"(?m)^\s*\|.*$", " ", answer or "")
+    prose = re.sub(r"(?m)^\s*(?:[-*+]|\d+[.)])\s+.*$", " ", prose)
+    for sentence in _sentences(prose):
+        add(sentence)
+    return units
+
+
 def narrative_claim_support(
     answer: str,
     package: FinalNarrativeEvidencePackage,
 ) -> tuple[dict, ...]:
     """Soporte léxico de cada afirmación contra el paquete que vio el modelo."""
     supports: list[dict] = []
-    for sentence in _sentences(answer):
+    for sentence in _claim_units(answer):
         numbers = parse_doc_numbers(sentence)
         claim_tokens = _tokens(sentence)
         if numbers:

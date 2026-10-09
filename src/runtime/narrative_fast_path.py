@@ -225,12 +225,10 @@ def prompt_char_budget(question: str, *, evidence_items: int, detail: str = "") 
 
 
 def output_token_budget(blueprint: str, *, detail: str = "") -> int:
-    kind = f"{blueprint or ''} {detail or ''}".lower()
-    if "direct" in kind or "fact" in kind:
-        return 280
-    if "tutorial" in kind or "deep" in kind or "en profundidad" in kind:
-        return 1600
-    return 800
+    """Target de salida. No es el `max_tokens` de la llamada: eso lo corta el ledger."""
+    from src.runtime.run_budget import desired_output_token_budget
+
+    return desired_output_token_budget(blueprint, detail=detail)
 
 
 def completeness_for_finish(finish_reason: str, verification: str) -> tuple[str, str]:

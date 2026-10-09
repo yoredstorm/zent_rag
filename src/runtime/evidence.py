@@ -29,6 +29,17 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from src.core.domain.adaptive import IDENTITY_METADATA_KEYS, EvidenceItem
 
+#: Markdown y anclas que el fast path narrativo lee sin perder la cita canónica.
+_REPRESENTATION_META_KEYS = (
+    "llm_markdown_text",
+    "markdown_text",
+    "llm_markdown",
+    "representations",
+    "canonical_element_ids",
+    "bbox",
+    "aliases",
+)
+
 #: Presupuesto por defecto del contexto de evidencia (chars) y topes por ítem.
 DEFAULT_BUDGET_CHARS = 12_000
 MIN_ITEM_CHARS = 400
@@ -312,6 +323,11 @@ class EvidenceRegistry:
                         **{
                             key: raw[key]
                             for key in IDENTITY_METADATA_KEYS
+                            if raw.get(key) not in (None, "", [], {})
+                        },
+                        **{
+                            key: raw[key]
+                            for key in _REPRESENTATION_META_KEYS
                             if raw.get(key) not in (None, "", [], {})
                         },
                     },

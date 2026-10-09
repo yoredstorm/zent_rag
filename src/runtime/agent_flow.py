@@ -24,13 +24,39 @@ from typing import Any
 
 #: Tipos de step → campos que se copian VERBATIM al flow (nunca se inventan).
 _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
-    "llm": ("step", "model", "action", "tokens", "latency_ms"),
+    "llm": (
+        "step",
+        "purpose",
+        "model",
+        "provider",
+        "action",
+        "tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "latency_ms",
+        "finish_reason",
+        "cost",
+        "cost_status",
+        "cost_reason",
+        "agent_max_tokens",
+        "tokens_consumed_before_call",
+        "estimated_prompt_tokens",
+        "desired_completion_tokens",
+        "allowed_completion_tokens",
+        "safety_reserve_tokens",
+        "remaining_tokens_after_call",
+        "budget_pressure",
+        "budget_reason",
+    ),
     "tool_call": (
         "tool",
+        "query",
         "output",
         "error",
         "meta",
         "latency_ms",
+        "result_count",
+        "evidence_added",
         "coverage_gap",
         "new_evidence",
         "evidence",
@@ -182,7 +208,19 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "complex_reasoning_activated",
         "query_route",
     ),
-    "guardrail": ("detail", "tool"),
+    "guardrail": (
+        "detail",
+        "tool",
+        "agent_max_tokens",
+        "tokens_consumed_before_call",
+        "estimated_prompt_tokens",
+        "desired_completion_tokens",
+        "allowed_completion_tokens",
+        "safety_reserve_tokens",
+        "remaining_tokens_after_call",
+        "budget_pressure",
+        "budget_reason",
+    ),
     "error": ("detail",),
     "final": ("answer", "detail"),
     "context": ("sections",),
@@ -239,6 +277,10 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "reasoning_shape",
         "blueprint",
         "retrieval_rounds",
+        "retrieval_latency_ms",
+        "model_latency_ms",
+        "verification_latency_ms",
+        "fast_path_latency_ms",
         "jev_calls",
         "jev_avoided",
         "llm_calls",
@@ -249,6 +291,24 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "evidence_package_size",
         "completeness",
         "verification",
+        "agent_max_tokens",
+        "tokens_consumed_before_call",
+        "estimated_prompt_tokens",
+        "desired_completion_tokens",
+        "allowed_completion_tokens",
+        "safety_reserve_tokens",
+        "remaining_tokens_after_call",
+        "budget_pressure",
+        "budget_reason",
+        "token_overrun",
+        "cost_overrun_usd",
+        "narrative_concepts",
+        "concept_coverage",
+        "coverage_rounds",
+        "coverage_queries",
+        "coverage_evidence_added",
+        "coverage_stop_reason",
+        "coverage_search_skipped",
     ),
     "narrative_evidence": (
         "detail",
@@ -258,6 +318,7 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "citation_trace",
         "decision_evidence",
         "query_mode",
+        "verification_input",
     ),
     "evidence_selection": (
         "selected",
@@ -823,11 +884,17 @@ def generation_summary(
     llm_ms = 0.0
     for step in llm_steps:
         action = step.get("action") if isinstance(step.get("action"), dict) else {}
+        purpose = str(step.get("purpose") or "")
         llm_ms += _num(step.get("latency_ms"))
-        if action.get("answer"):
-            answer_calls += 1
-        elif action.get("tool"):
+        if purpose == "reasoning" or (not purpose and action.get("tool")):
             reasoning_calls += 1
+        elif purpose in {
+            "narrative_generation",
+            "generation",
+            "personality_polish",
+            "answer_revision",
+        } or action.get("answer"):
+            answer_calls += 1
     payload: dict[str, Any] = {}
     if getattr(result, "model", None):
         payload["model"] = str(result.model)
@@ -841,16 +908,40 @@ def generation_summary(
         payload["completion_tokens"] = completion_tokens
         payload["total_tokens"] = total_tokens
     cost = _num(getattr(result, "cost", 0.0))
-    if cost > 0:
+    cost_status = str(getattr(result, "cost_status", "") or "")
+    if cost_status == "unknown":
+        payload["cost_status"] = "unknown"
+        reason = str(getattr(result, "cost_reason", "") or "")
+        if reason:
+            payload["cost_reason"] = reason
+    elif cost > 0 or (cost_status == "known" and llm_steps):
         payload["cost"] = round(cost, 6)
-    if llm_steps:
-        payload["calls"] = len(llm_steps)
-        if answer_calls:
-            payload["answer_calls"] = answer_calls
-        if reasoning_calls:
-            payload["reasoning_calls"] = reasoning_calls
+        payload["cost_status"] = "known"
+    declared_narrative = sum(
+        int(step.get("llm_calls") or 0)
+        for step in steps
+        if str(step.get("type") or "") == "narrative_fast_path"
+    )
+    recorded_narrative = sum(
+        1 for step in llm_steps if str(step.get("purpose") or "") == "narrative_generation"
+    )
+    calls = len(llm_steps) + max(0, declared_narrative - recorded_narrative)
+    if calls:
+        payload["calls"] = calls
+        payload["answer_calls"] = answer_calls + max(0, declared_narrative - recorded_narrative)
+        payload["reasoning_calls"] = reasoning_calls
         if llm_ms > 0:
             payload["ms"] = round(llm_ms, 1)
+        finish = next(
+            (
+                str(step.get("finish_reason") or "")
+                for step in reversed(llm_steps)
+                if step.get("finish_reason")
+            ),
+            "",
+        )
+        if finish:
+            payload["finish_reason"] = finish
         payload["skipped"] = False
     return payload
 
@@ -945,6 +1036,7 @@ def verification_summary(steps: list[dict[str, Any]], flow: dict[str, Any]) -> d
         claims_from_steps,
         compose_verification_split,
         envelope_from_steps,
+        narrative_input_from_steps,
     )
 
     envelope = envelope_from_steps(steps)
@@ -954,6 +1046,15 @@ def verification_summary(steps: list[dict[str, Any]], flow: dict[str, Any]) -> d
         and step.get("verified") is True
         for step in steps
     )
+    narrative_input = narrative_input_from_steps(steps)
+    query_mode = next(
+        (
+            str(step.get("query_mode") or "")
+            for step in steps
+            if str(step.get("type") or "") == "narrative_evidence" and step.get("query_mode")
+        ),
+        "",
+    )
     split = compose_verification_split(
         envelope=envelope,
         claims=claims,
@@ -962,6 +1063,8 @@ def verification_summary(steps: list[dict[str, Any]], flow: dict[str, Any]) -> d
         checks=checks,
         grounding_verdict=grounding_verdict,
         deterministic_verified=deterministic_verified,
+        narrative_input=narrative_input,
+        query_mode=query_mode,
     )
     overall = _verification_overall(
         checks,
@@ -1106,7 +1209,13 @@ def telemetry_completeness(
         "verification": "observed"
         if verification.get("checks")
         else ("not_available" if not jev_configured else "not_applicable"),
-        "cost": "observed" if cost > 0 else "not_available",
+        "cost": (
+            "unknown"
+            if str(generation.get("cost_status") or "") == "unknown"
+            else "observed"
+            if cost > 0 or str(generation.get("cost_status") or "") == "known"
+            else "not_available"
+        ),
         "timings": "observed" if timings.get("span_stages") else "not_available",
         # La memoria se resuelve contra Memory Events por run: el flow no la ve.
         "memory": "not_observed",

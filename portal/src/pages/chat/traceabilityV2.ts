@@ -218,6 +218,7 @@ export interface TraceV2DecisionVerification {
   evidenceRefs: string[];
   ruleVerification: string | null;
   conflicts: string[];
+  applies: boolean | null;
 }
 
 export interface TraceV2NarrativeVerification {
@@ -383,6 +384,7 @@ export interface TraceV2 {
     tokens: { input: number | null; output: number | null; total: number | null };
     durationMs: number | null;
     costUsd: number | null;
+    costStatus: string | null;
     finishReason: string | null;
   };
   controls: TraceV2Control[];
@@ -405,6 +407,17 @@ export interface TraceV2 {
     narrativeVerification: TraceV2NarrativeVerification | null;
     decisionGrounding: string | null;
     narrativeGrounding: string | null;
+    overallVerification: string | null;
+    completeness: string | null;
+    citedCount: number | null;
+    presentation: {
+      decision: string | null;
+      explanation: string | null;
+      grounding: string | null;
+      citations: string | null;
+      completeness: string | null;
+      summary: string | null;
+    } | null;
   };
   memory: {
     observed: boolean;
@@ -670,6 +683,7 @@ function parseDecisionVerification(raw: unknown): TraceV2DecisionVerification | 
     evidenceRefs: strings(block.evidence_refs),
     ruleVerification: str(block.rule_verification),
     conflicts: strings(block.conflicts),
+    applies: typeof block.applies === "boolean" ? block.applies : null,
   };
 }
 
@@ -898,6 +912,7 @@ export function parseTraceabilityV2(value: unknown): TraceV2 | null {
       },
       durationMs: num(generation.duration_ms),
       costUsd: num(generation.cost_usd),
+      costStatus: str(generation.cost_status),
       finishReason: str(generation.finish_reason),
     },
     controls: records(controls.controls).map(parseControl),
@@ -943,6 +958,10 @@ export function parseTraceabilityV2(value: unknown): TraceV2 | null {
       narrativeVerification: parseNarrativeVerification(verification.narrative_verification),
       decisionGrounding: str(verification.decision_grounding) ?? str(record(verification.signals).decision_grounding),
       narrativeGrounding: str(verification.narrative_grounding) ?? str(record(verification.signals).narrative_grounding),
+      overallVerification: str(verification.overall_verification),
+      completeness: str(verification.completeness),
+      citedCount: num(verification.cited_count),
+      presentation: parseVerificationPresentation(verification.presentation),
     },
     memory: {
       observed: memory.observed === true,
@@ -1094,7 +1113,22 @@ export function evidenceUsageSummary(trace: TraceV2): string {
   return parts.join(" · ");
 }
 
+function parseVerificationPresentation(raw: unknown): TraceV2["verification"]["presentation"] {
+  const block = record(raw);
+  if (!Object.keys(block).length) return null;
+  return {
+    decision: str(block.decision),
+    explanation: str(block.explanation),
+    grounding: str(block.grounding),
+    citations: str(block.citations),
+    completeness: str(block.completeness),
+    summary: str(block.summary),
+  };
+}
+
 export function verificationSummary(trace: TraceV2): string {
+  const summary = trace.verification.presentation?.summary;
+  if (summary) return summary;
   const decision = trace.verification.decisionVerification;
   const narrative = trace.verification.narrativeVerification;
   if (decision && decision.status === "VERIFIED") {
@@ -1113,7 +1147,8 @@ export function verificationSummary(trace: TraceV2): string {
   return "Sin respaldo confirmado";
 }
 
-export function decisionStatusLabel(status: string): string {
+export function decisionStatusLabel(status: string, applies?: boolean | null): string {
+  if (applies === false) return "No aplica para esta consulta";
   if (status === "VERIFIED") return "Verificada determinísticamente";
   if (status === "NOT_VERIFIED") return "No verificada";
   if (status === "UNDETERMINED") return "Sin decisión determinista";
@@ -1121,7 +1156,7 @@ export function decisionStatusLabel(status: string): string {
 }
 
 export function narrativeStatusLabel(status: string): string {
-  if (status === "VERIFIED") return "Verificada";
+  if (status === "VERIFIED") return "Verificada documentalmente";
   if (status === "PARTIAL") return "Parcialmente verificada";
   if (status === "TRUNCATED") return "Truncada por límite de generación";
   if (status === "UNVERIFIED") return "Sin verificar";

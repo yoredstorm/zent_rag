@@ -339,7 +339,12 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
           }
         />
         <Row label="Tiempo del modelo" value={fmtMs(trace.generation.durationMs)} />
-        <Row label="Costo" value={fmtUsd(trace.generation.costUsd)} />
+        <Row
+          label="Costo"
+          value={
+            trace.generation.costStatus === "unknown" ? "UNKNOWN" : fmtUsd(trace.generation.costUsd)
+          }
+        />
         {trace.generation.finishReason ? (
           <Row label="finish_reason" value={trace.generation.finishReason} mono />
         ) : null}
@@ -364,7 +369,13 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
           <>
             <Row
               label="Decisión"
-              value={decisionStatusLabel(trace.verification.decisionVerification.status)}
+              value={
+                trace.verification.presentation?.decision ??
+                decisionStatusLabel(
+                  trace.verification.decisionVerification.status,
+                  trace.verification.decisionVerification.applies,
+                )
+              }
               help="Estado de la decisión determinista; no lo degrada la narrativa generada."
             />
             {trace.verification.decisionVerification.operation ? (
@@ -383,15 +394,26 @@ export function TraceV2Technical({ trace }: { trace: TraceV2 }) {
           <>
             <Row
               label="Narrativa"
-              value={narrativeStatusLabel(trace.verification.narrativeVerification.status)}
+              value={
+                trace.verification.presentation?.explanation ??
+                narrativeStatusLabel(trace.verification.narrativeVerification.status)
+              }
               help="Estado de la explicación generada; no modifica la decisión."
             />
             <Row
               label="Grounding de la narrativa"
-              value={groundingLabel(trace.verification.narrativeGrounding)}
+              value={
+                trace.verification.presentation?.grounding ??
+                groundingLabel(trace.verification.narrativeGrounding)
+              }
             />
-            {trace.verification.narrativeVerification.truncated ? (
+            {trace.verification.presentation?.completeness ? (
+              <Row label="Completeness" value={trace.verification.presentation.completeness} />
+            ) : trace.verification.narrativeVerification.truncated ? (
               <Row label="Explicación truncada" value="Sí" />
+            ) : null}
+            {trace.verification.presentation?.citations ? (
+              <Row label="Citas" value={trace.verification.presentation.citations} />
             ) : null}
           </>
         ) : null}

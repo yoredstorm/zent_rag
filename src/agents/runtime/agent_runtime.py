@@ -477,6 +477,9 @@ class AgentRunResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost: float = 0.0
+    #: known | unknown | "". Vacío = el run no midió costo. unknown no es cero.
+    cost_status: str = ""
+    cost_reason: str = ""
     injection_detected: bool = False
     trace_id: str | None = None
     model: str | None = None
@@ -510,6 +513,11 @@ class AgentRunResult:
     execution_mode: str | None = None
     #: Telemetría del fast path (elegibilidad, latencia, llamadas/tokens evitados).
     fast_path: dict | None = None
+    #: Pasos lógicos del presupuesto (retrieval = tool, generación = llm).
+    #: El ledger lee estos campos; no lleva un contador aparte.
+    llm_calls: int = 0
+    tool_calls: int = 0
+    logical_steps: int = 0
 
 
 _ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
@@ -1382,13 +1390,8 @@ class AgentRuntime:
             sufficiency if sufficiency is not None else getattr(self, "_last_sufficiency", None)
         )
         # La respuesta final necesita su propio presupuesto: el del loop (o 512)
-        # cortaba explicaciones técnicas y dejaba el JSON abierto.
-        configured_max_tokens = int(
-            getattr(get_settings(), "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0
-        )
-        finalize_max_tokens = configured_max_tokens or min(
-            int(config["max_tokens"]), _answer_max_tokens()
-        )
+        # cortaba explicaciones técnicas y dejaba el JSON abierto. El techo del
+        # run sigue siendo `config["max_tokens"]`; acá solo cabe lo que queda.
         prompt = _FINALIZE_TEMPLATE.format(
             question=request.message,
             history="\n".join(history[-10:]),
@@ -1397,6 +1400,37 @@ class AgentRuntime:
             ),
             response_shape=_response_shape_block(run_plan),
         )
+        from src.runtime.run_budget import (
+            EXHAUSTED,
+            RunBudgetLedger,
+            estimate_prompt_tokens,
+            lookup_token_rates,
+            plan_response_budget,
+        )
+
+        configured_max_tokens = int(
+            getattr(get_settings(), "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0
+        )
+        per_call = configured_max_tokens or _answer_max_tokens()
+        model_limit = _answer_max_tokens()
+        ledger = RunBudgetLedger.from_config(result, config)
+        rates = await lookup_token_rates(str(config.get("model") or ""))
+        call_plan = plan_response_budget(
+            ledger,
+            estimated_prompt_tokens=estimate_prompt_tokens(prompt),
+            desired_completion_tokens=min(per_call, model_limit),
+            model_output_limit=model_limit,
+            question=request.message,
+            followup_llm=False,
+            input_cost_per_1k=None if rates is None else rates[0],
+            output_cost_per_1k=None if rates is None else rates[1],
+        )
+        if (
+            call_plan.budget_pressure == EXHAUSTED
+            or call_plan.allowed_completion_tokens <= 0
+        ):
+            return False
+        finalize_max_tokens = call_plan.allowed_completion_tokens
         try:
             if request.on_delta is not None and not requires_deterministic_decision(
                 request.message
@@ -1422,9 +1456,16 @@ class AgentRuntime:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Finalize answer failed", error=str(exc)[:200])
             return False
-        result.total_tokens += resp.total_tokens
-        result.prompt_tokens += int(getattr(resp, "prompt_tokens", 0) or 0)
-        result.completion_tokens += int(getattr(resp, "completion_tokens", 0) or 0)
+        from src.runtime.run_accounting import record_llm_call
+
+        await record_llm_call(
+            result,
+            ledger,
+            resp,
+            purpose="answer_revision" if "figuras" in str(reason or "") else "generation",
+            model=str(config.get("model") or ""),
+            latency_ms=float(getattr(resp, "latency_ms", 0.0) or 0.0),
+        )
         action = _parse_action(resp.content)
         answer = _direct_answer(action)
         if answer is None:
@@ -2310,7 +2351,6 @@ class AgentRuntime:
         max_tool_calls = int(config["max_tool_calls"])
         max_tokens = int(config["max_tokens"])
         max_cost = float(config["max_cost"])
-        from src.platform.billing.pricing import estimate_cost
         from src.runtime.agent_step import (
             ACTION_ABSTAIN,
             ACTION_RETRIEVE,
@@ -2337,6 +2377,18 @@ class AgentRuntime:
         result.jev_mode = jev_loop_mode
         max_retrieval_rounds = int(getattr(settings, "RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS", 2) or 0)
         retrieval_rounds = 0
+        budget_step = -1
+
+        def _steps_left() -> int:
+            return max(0, max_steps - budget_step - 1)
+
+        def _rounds_left() -> int:
+            from src.runtime.run_budget import retrieval_rounds_allowed
+
+            return retrieval_rounds_allowed(
+                rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
+                steps_left=_steps_left(),
+            )
         revision_used = False
         pending_step_judgment = None
         # Claims deterministas vistos por el gate: el texto final no puede
@@ -2430,6 +2482,7 @@ class AgentRuntime:
             answer = str(result.answer or "")
             if not answer.strip():
                 return
+            from src.runtime.decision_verification import narrative_input_from_binding
             from src.runtime.narrative_package import (
                 bind_narrative_answer,
                 citation_trace_status,
@@ -2463,6 +2516,11 @@ class AgentRuntime:
                     "invalid_doc_numbers": list(binding.invalid_doc_numbers),
                     "citation_trace": status,
                     "decision_evidence": int(public.get("decision_evidence_count") or 0),
+                    "verification_input": narrative_input_from_binding(
+                        binding,
+                        citation_trace=status,
+                        query_mode="INFORMATIONAL" if not query_executable else "",
+                    ).to_public_dict(),
                 }
             )
 
@@ -2872,7 +2930,7 @@ class AgentRuntime:
             sufficiency = assess_sufficiency(
                 selection.items,
                 request.message,
-                retrieval_rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
+                retrieval_rounds_left=_rounds_left(),
             )
             _refresh_presentation()
             from src.runtime.narrative_package import freeze_narrative_package
@@ -2982,7 +3040,7 @@ class AgentRuntime:
                     noul_yes=settings.DECISION_NOUL_YES,
                     approve_at=settings.RUNTIME_JEV_ANSWER_APPROVE,
                     revise_at=settings.RUNTIME_JEV_ANSWER_REVISE,
-                    retrieval_rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
+                    retrieval_rounds_left=_rounds_left(),
                     evidence_budget_chars=evidence_budget,
                     grounded_reasoning=grounded_reasoning,
                     context=JudgmentContext(
@@ -3155,7 +3213,7 @@ class AgentRuntime:
                 action = executable_gate_action(
                     verdict=gate.verdict,
                     has_authority=bool(result.decision_envelope),
-                    rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
+                    rounds_left=_rounds_left(),
                     final=final,
                     exhausted=retrieval_exhausted,
                 )
@@ -3203,6 +3261,7 @@ class AgentRuntime:
                 # busca otra vez (si queda presupuesto) antes de reescribir.
                 if (
                     not final
+                    and _steps_left() > 0
                     and retrieval_rounds < max_retrieval_rounds
                     and not retrieval_exhausted
                 ):
@@ -3427,7 +3486,36 @@ class AgentRuntime:
                 render_mode_from_settings,
                 resolve_composer_model,
             )
+            from src.runtime.run_budget import (
+                EXHAUSTED,
+                RunBudgetLedger,
+                lookup_token_rates,
+                plan_response_budget,
+            )
 
+            # La decisión no gasta tokens. El polish, si cabe, pasa por el mismo ledger.
+            polish_ledger = RunBudgetLedger.from_config(result, config)
+            requested_polish = int(
+                getattr(settings, "RUNTIME_COMPOSER_MAX_TOKENS", 400) or 400
+            )
+            rates = await lookup_token_rates(str(config.get("model") or ""))
+            polish_plan = plan_response_budget(
+                polish_ledger,
+                estimated_prompt_tokens=256,
+                desired_completion_tokens=requested_polish,
+                model_output_limit=min(1200, _answer_max_tokens()),
+                question=request.message,
+                followup_llm=False,
+                blueprint="direct_fact",
+                input_cost_per_1k=None if rates is None else rates[0],
+                output_cost_per_1k=None if rates is None else rates[1],
+            )
+            polish_generate = (
+                None
+                if polish_plan.budget_pressure == EXHAUSTED
+                or polish_plan.allowed_completion_tokens <= 0
+                else self._llm.generate
+            )
             composed = await compose_fast_path_answer(
                 envelope=envelope,
                 grounded=grounded_public,
@@ -3439,31 +3527,27 @@ class AgentRuntime:
                 org_config=getattr(request, "org_config", None),
                 message=request.message,
                 mode=render_mode_from_settings(settings),
-                generate=self._llm.generate,
+                generate=polish_generate,
                 model=resolve_composer_model(
                     settings, str(config.get("model") or "")
                 ),
-                max_tokens=int(
-                    getattr(settings, "RUNTIME_COMPOSER_MAX_TOKENS", 400) or 400
-                ),
+                max_tokens=polish_plan.allowed_completion_tokens or requested_polish,
             )
             answer = _apply_derived_guard(composed.answer)
             if composed.prompt_tokens or composed.completion_tokens:
-                result.prompt_tokens += int(composed.prompt_tokens)
-                result.completion_tokens += int(composed.completion_tokens)
-                result.total_tokens += int(composed.prompt_tokens) + int(
-                    composed.completion_tokens
-                )
-                try:
-                    from src.platform.billing.pricing import estimate_cost
+                from src.runtime.run_accounting import record_llm_call
 
-                    result.cost += await estimate_cost(
-                        str(composed.composer_model or config.get("model") or ""),
-                        prompt_tokens=int(composed.prompt_tokens),
-                        completion_tokens=int(composed.completion_tokens),
-                    )
-                except Exception:  # noqa: BLE001 — el costo nunca rompe el run
-                    pass
+                await record_llm_call(
+                    result,
+                    polish_ledger,
+                    None,
+                    purpose="personality_polish",
+                    model=str(composed.composer_model or config.get("model") or ""),
+                    latency_ms=float(getattr(composed, "latency_ms", 0.0) or 0.0),
+                    prompt_tokens=int(composed.prompt_tokens),
+                    completion_tokens=int(composed.completion_tokens),
+                    total_tokens=int(composed.prompt_tokens) + int(composed.completion_tokens),
+                )
             verification = verify_deterministic_answer(
                 envelope=envelope,
                 grounded=grounded_public,
@@ -3568,6 +3652,7 @@ class AgentRuntime:
                         else "una llamada de estilo; decisión re-validada y re-bloqueada"
                     ),
                     **composed.to_public_dict(),
+                    **polish_plan.to_public_dict(),
                 }
             )
             # Costo evitado: sólo si hay estimación de tokens y precio real.
@@ -3658,7 +3743,8 @@ class AgentRuntime:
                     )
 
         async def _narrative_fast_path() -> bool:
-            """Una búsqueda por código y una generación. Sin JEV ni escenario."""
+            """Búsqueda inicial, cierre de cobertura y una generación. Sin ReAct."""
+            nonlocal selection, narrative_package, narrative_version
             from src.knowledge.structure.document_bundle import narrative_context_text
             from src.runtime.narrative_fast_path import (
                 NARRATIVE_FAST_PATH,
@@ -3666,38 +3752,191 @@ class AgentRuntime:
                 compress_narrative_context,
                 jev_needed,
                 narrative_route,
-                output_token_budget,
                 personality_instruction,
                 prompt_char_budget,
             )
             from src.runtime.response_composer import personality_for_agent
+            from src.runtime.run_budget import (
+                EXHAUSTED,
+                RunBudgetLedger,
+                budget_overrun,
+                estimate_prompt_tokens,
+                lookup_token_rates,
+                plan_response_budget,
+                signals_from_plan,
+            )
 
             route = narrative_route(request.message)
             if not route.eligible:
                 return False
+            from src.runtime.run_accounting import evidence_count, record_llm_call, record_search_call
+
+            ledger = RunBudgetLedger.from_config(result, config)
+            fast_started = time.perf_counter()
+            retrieval_ms = 0.0
+            model_ms = 0.0
+            verification_ms = 0.0
+            # Retrieval + generación son dos pasos lógicos. Con menos, el loop normal.
+            if ledger.remaining_steps < 2:
+                return False
             tool = get_tool("search_knowledge")
             if tool is None or not tool_allowed(tool, effective_tools, ctx):
                 return False
+            search_started = time.perf_counter()
             tool_result = await execute_tool_guarded(
                 tool,
                 ctx,
                 {"query": request.message, "top_k": 5},
                 self._rate_limiter,
             )
+            search_ms = (time.perf_counter() - search_started) * 1000
+            retrieval_ms += search_ms
+            before_evidence = registry.size
+            if not getattr(tool_result, "error", None):
+                registry.add_from_meta(
+                    tool_result.meta if isinstance(tool_result.meta, dict) else None
+                )
+            record_search_call(
+                result,
+                query=request.message,
+                latency_ms=search_ms,
+                evidence_added=max(0, registry.size - before_evidence),
+                result_count=evidence_count(
+                    tool_result.meta if isinstance(tool_result.meta, dict) else None
+                ),
+                error=str(getattr(tool_result, "error", "") or ""),
+            )
             if getattr(tool_result, "error", None):
                 return False
-            registry.add_from_meta(
-                tool_result.meta if isinstance(tool_result.meta, dict) else None
-            )
             if registry.is_empty():
                 return False
-            active = _refresh_selection()
-            if sufficiency is None or not getattr(sufficiency, "generate", False):
+            ledger.charge_tool_step()
+            from src.runtime.evidence import assess_sufficiency, select_evidence
+            from src.runtime.narrative_coverage import (
+                COVERED,
+                MISSING,
+                apply_coverage_limitation,
+                coverage_needs_jev,
+                decide_coverage_round,
+                ensure_concept_representation,
+                extract_narrative_concepts,
+                headings_from_items,
+                limitation_sentence,
+                measure_coverage,
+                narrative_coverage_applies,
+                vocabulary_from_items,
+            )
+            from src.runtime.narrative_package import freeze_narrative_package
+
+            if not narrative_coverage_applies(request.message):
                 return False
-            if jev_needed(
-                conflicts=int(getattr(sufficiency, "conflicting_chunks", 0) or 0)
+            probe = select_evidence(
+                registry.all_items(),
+                request.message,
+                budget_chars=evidence_budget,
+            )
+            probe_sufficiency = assess_sufficiency(
+                probe.items,
+                request.message,
+                retrieval_rounds_left=0,
+            )
+            conflicts = int(getattr(probe_sufficiency, "conflicting_chunks", 0) or 0)
+            if not getattr(probe_sufficiency, "generate", False):
+                return False
+            if jev_needed(conflicts=conflicts) or coverage_needs_jev(conflicts=conflicts):
+                return False
+            concept_plan = extract_narrative_concepts(
+                request.message,
+                vocabulary=vocabulary_from_items(registry.all_items()),
+            )
+            initial_coverage = measure_coverage(
+                concept_plan, registry.all_items(), searched=False
+            )
+            max_coverage_rounds = int(
+                getattr(settings, "NARRATIVE_MAX_COVERAGE_ROUNDS", 1) or 0
+            )
+            over_budget = ledger.remaining_tokens <= 0 or (
+                ledger.max_cost_usd is not None and ledger.remaining_cost_usd <= 0
+            )
+            anchors = tuple(
+                item.label for item in initial_coverage if item.status == COVERED
+            )
+            decision = decide_coverage_round(
+                initial_coverage,
+                rounds_done=0,
+                max_rounds=max_coverage_rounds,
+                remaining_steps=ledger.remaining_steps,
+                anchors=anchors,
+                headings=headings_from_items(registry.all_items()),
+                over_budget=over_budget,
+            )
+            coverage_rounds = 0
+            coverage_queries: list[str] = []
+            coverage_added = 0
+            coverage_stop = decision.stop_reason
+            coverage_skipped = decision.coverage_search_skipped
+            if (
+                decision.search
+                and decision.query.strip()
+                and decision.query.strip() != request.message.strip()
             ):
-                return False
+                before_size = registry.size
+                follow_started = time.perf_counter()
+                follow = await execute_tool_guarded(
+                    tool,
+                    ctx,
+                    {"query": decision.query, "top_k": 5},
+                    self._rate_limiter,
+                )
+                follow_ms = (time.perf_counter() - follow_started) * 1000
+                retrieval_ms += follow_ms
+                if getattr(follow, "error", None):
+                    coverage_stop = "search_error"
+                else:
+                    registry.add_from_meta(
+                        follow.meta if isinstance(follow.meta, dict) else None
+                    )
+                    coverage_added = max(0, registry.size - before_size)
+                    ledger.charge_tool_step()
+                    coverage_rounds = 1
+                    coverage_queries.append(decision.query)
+                record_search_call(
+                    result,
+                    query=decision.query,
+                    latency_ms=follow_ms,
+                    evidence_added=coverage_added,
+                    result_count=evidence_count(
+                        follow.meta if isinstance(follow.meta, dict) else None
+                    ),
+                    error=str(getattr(follow, "error", "") or ""),
+                )
+            final_coverage = measure_coverage(
+                concept_plan,
+                registry.all_items(),
+                searched=coverage_rounds > 0,
+            )
+            if coverage_rounds:
+                if all(item.status != MISSING for item in final_coverage):
+                    coverage_stop = "COVERAGE_COMPLETE"
+                else:
+                    coverage_stop = "COVERAGE_PARTIAL"
+            active = _refresh_selection()
+            represented = ensure_concept_representation(
+                list(active.items),
+                registry.all_items(),
+                concept_plan.concepts,
+            )
+            if [item.evidence_id for item in represented] != [
+                item.evidence_id for item in active.items
+            ]:
+                active.items = represented
+                narrative_version += 1
+                narrative_package = freeze_narrative_package(
+                    active,
+                    version=narrative_version,
+                    registry_version=registry.fingerprint(),
+                )
+                selection = active
             blocks: list[str] = []
             for index, (item, match) in enumerate(
                 zip(active.items, active.matches), start=1
@@ -3725,51 +3964,199 @@ class AgentRuntime:
                 getattr(persona, "tone", ""),
                 getattr(persona, "block", "") or getattr(persona, "custom_instructions", ""),
             )
-            response = await self._llm.generate(
-                prompt=f"Pregunta:\n{request.message}\n\nEvidencia:\n{context}",
-                model=str(config.get("model") or ""),
-                max_tokens=output_token_budget(route.blueprint),
-                temperature=0.2,
-                system_prompt=(
-                    f"{agent_instructions}\n\n{style}\n"
-                    "Responde solo con la evidencia. Cita con [Doc: N]. "
-                    "No inventes documentos."
-                ),
+            signals = signals_from_plan(run_plan)
+            coverage_limit = limitation_sentence(final_coverage)
+            system_prompt = (
+                f"{agent_instructions}\n\n{style}\n"
+                "Responde solo con la evidencia. Cita con [Doc: N]. "
+                "No inventes documentos. "
+                "Si un concepto pedido no está en los fragmentos, di que no "
+                "encontraste respaldo suficiente en las fuentes disponibles "
+                "para este agente. No digas que el documento o el corpus no "
+                "contiene ese tema."
             )
+            if coverage_limit:
+                system_prompt = f"{system_prompt}\n{coverage_limit}"
+            user_prompt = f"Pregunta:\n{request.message}\n\nEvidencia:\n{context}"
+            rates = await lookup_token_rates(str(config.get("model") or ""))
+            call_plan = plan_response_budget(
+                ledger,
+                estimated_prompt_tokens=estimate_prompt_tokens(
+                    f"{system_prompt}\n{user_prompt}"
+                ),
+                blueprint=str(signals.get("blueprint") or route.blueprint),
+                question=request.message,
+                detail_level=str(
+                    signals.get("detail_level") or getattr(persona, "detail", "") or ""
+                ),
+                concept_count=signals.get("concept_count"),
+                evidence_count=len(active.items),
+                needs_table=bool(signals.get("needs_table")),
+                needs_list=bool(signals.get("needs_list")),
+                needs_example=bool(signals.get("needs_example")),
+                needs_definition=bool(signals.get("needs_definition")),
+                personality=" ".join(
+                    part
+                    for part in (
+                        style,
+                        str(signals.get("personality") or ""),
+                        str(getattr(persona, "detail", "") or ""),
+                    )
+                    if part
+                ),
+                model_output_limit=_answer_max_tokens(),
+                followup_llm=False,
+                input_cost_per_1k=None if rates is None else rates[0],
+                output_cost_per_1k=None if rates is None else rates[1],
+            )
+            budget_public = call_plan.to_public_dict()
+            if (
+                call_plan.budget_pressure == EXHAUSTED
+                or call_plan.allowed_completion_tokens <= 0
+            ):
+                reason = (
+                    "max_cost exceeded"
+                    if "cost" in call_plan.budget_reason
+                    else "max_tokens exceeded"
+                )
+                result.status = "limit_reached"
+                result.answer = _budget_answer(
+                    [f"OBSERVATION: {context[:2000]}"],
+                    reason,
+                )
+                result.execution_mode = NARRATIVE_FAST_PATH
+                result.steps.append(
+                    {
+                        "type": "narrative_fast_path",
+                        "status": "warn",
+                        "detail": reason,
+                        **route.to_public_dict(),
+                        **budget_public,
+                        "retrieval_rounds": 1 + coverage_rounds,
+                        "narrative_concepts": len(concept_plan.concepts),
+                        "coverage_rounds": coverage_rounds,
+                        "coverage_stop_reason": coverage_stop,
+                        "coverage_search_skipped": coverage_skipped,
+                        "llm_calls": 0,
+                    }
+                )
+                return True
+            if call_plan.compact_instruction:
+                system_prompt = f"{system_prompt}\n{call_plan.compact_instruction}"
+            model_started = time.perf_counter()
+            response = await self._llm.generate(
+                prompt=user_prompt,
+                model=str(config.get("model") or ""),
+                max_tokens=call_plan.allowed_completion_tokens,
+                temperature=0.2,
+                system_prompt=system_prompt,
+            )
+            model_ms = (time.perf_counter() - model_started) * 1000
+            await record_llm_call(
+                result,
+                ledger,
+                response,
+                purpose="narrative_generation",
+                model=str(config.get("model") or ""),
+                latency_ms=model_ms,
+            )
+            if (
+                ledger.max_cost_usd is not None
+                and ledger.consumed_cost_usd > ledger.max_cost_usd
+            ):
+                result.status = "limit_reached"
+                result.steps.append({"type": "guardrail", "detail": "max_cost exceeded"})
             content = str(getattr(response, "content", "") or "")
             if not content.strip():
                 return False
-            result.answer = content
-            result.prompt_tokens += int(getattr(response, "prompt_tokens", 0) or 0)
-            result.completion_tokens += int(getattr(response, "completion_tokens", 0) or 0)
-            result.total_tokens += int(getattr(response, "total_tokens", 0) or 0)
+            result.answer = apply_coverage_limitation(content, final_coverage)
+            verify_started = time.perf_counter()
             _bind_narrative_answer()
+            verification_ms = (time.perf_counter() - verify_started) * 1000
             verification = ""
             for step in reversed(result.steps):
                 if step.get("type") == "narrative_evidence":
                     verification = str(step.get("narrative_verification") or "")
                     break
+            finish_reason = str(getattr(response, "finish_reason", "") or "")
             completeness, overall = completeness_for_finish(
-                str(getattr(response, "finish_reason", "") or ""),
+                finish_reason,
                 verification,
             )
+            for step in reversed(result.steps):
+                if step.get("type") != "narrative_evidence":
+                    continue
+                recorded = step.get("verification_input")
+                if isinstance(recorded, dict):
+                    recorded["finish_reason"] = finish_reason
+                    recorded["completeness"] = completeness
+                    recorded["truncated"] = finish_reason.lower() in {"length", "max_tokens"}
+                break
+            covered_count = sum(1 for item in final_coverage if item.status == COVERED)
+            missing_count = sum(1 for item in final_coverage if item.status == MISSING)
+            if covered_count and missing_count:
+                overall = "PARTIAL_GROUNDED"
+                for step in reversed(result.steps):
+                    recorded = step.get("verification_input") if step.get("type") == "narrative_evidence" else None
+                    if not isinstance(recorded, dict):
+                        continue
+                    supports = list(recorded.get("supports") or [])
+                    for item in final_coverage:
+                        if item.status != MISSING:
+                            continue
+                        supports.append(
+                            {
+                                "claim": item.label,
+                                "status": "UNSUPPORTED",
+                                "doc_number": None,
+                                "evidence_id": "",
+                            }
+                        )
+                    recorded["supports"] = supports
+                    recorded["verification"] = "PARTIAL"
+                    recorded["grounding"] = "PARTIAL"
+                    break
             result.execution_mode = NARRATIVE_FAST_PATH
-            result.status = "completed"
+            overrun = budget_overrun(ledger)
+            tolerance = max(128, ledger.max_tokens // 50)
+            large_overrun = int(overrun.get("token_overrun") or 0) > tolerance or float(
+                overrun.get("cost_overrun_usd") or 0
+            ) > 0.01
+            result.status = "limit_reached" if large_overrun else "completed"
             result.steps.append(
                 {
                     "type": "narrative_fast_path",
-                    "status": "ok",
+                    "status": "warn" if overrun else "ok",
                     "detail": (
                         "Ruta:\nDocumentos\n\n"
                         f"Modo:\n{NARRATIVE_FAST_PATH}\n\n"
                         "Query mode:\nINFORMATIONAL\n\n"
-                        "Retrieval:\n1 ronda\n\n"
+                        f"Retrieval:\n{1 + coverage_rounds} ronda(s)\n\n"
                         "JEV:\nNo necesario\n\n"
                         "LLM:\n1 llamada narrativa\n\n"
                         f"Verification:\n{overall}"
                     ),
                     **route.to_public_dict(),
-                    "retrieval_rounds": 1,
+                    "retrieval_rounds": 1 + coverage_rounds,
+                    "retrieval_latency_ms": round(retrieval_ms, 2),
+                    "model_latency_ms": round(model_ms, 2),
+                    "verification_latency_ms": round(verification_ms, 2),
+                    "fast_path_latency_ms": round((time.perf_counter() - fast_started) * 1000, 2),
+                    "narrative_concepts": len(concept_plan.concepts),
+                    "concept_coverage": [
+                        {
+                            "id": item.concept_id,
+                            "label": item.label,
+                            "status": item.status,
+                            "epistemic": item.epistemic,
+                        }
+                        for item in final_coverage
+                    ],
+                    "coverage_rounds": coverage_rounds,
+                    "coverage_queries": coverage_queries,
+                    "coverage_evidence_added": coverage_added,
+                    "coverage_stop_reason": coverage_stop,
+                    "coverage_search_skipped": coverage_skipped,
                     "jev_calls": 0,
                     "jev_avoided": 1,
                     "llm_calls": 1,
@@ -3789,6 +4176,8 @@ class AgentRuntime:
                     "evidence_package_size": len(active.items),
                     "completeness": completeness,
                     "verification": overall,
+                    **budget_public,
+                    **budget_overrun(ledger),
                 }
             )
             result.steps.append(
@@ -3814,6 +4203,7 @@ class AgentRuntime:
                 logger.warning("narrative fast path failed", error=str(exc)[:160])
 
         for step_index in range(max_steps):
+            budget_step = step_index
             from src.runtime.tool_routing import routing_enabled, select_relevant_tools
 
             if routing_enabled(settings, request.agent.config_json) and not turn_direct:
@@ -3878,6 +4268,56 @@ class AgentRuntime:
                 + (context_block + "\n\n" if context_block else "")
                 + _NEXT_STEP_TEMPLATE.format(history="\n".join(history[-10:]))
             )
+            from src.runtime.run_budget import (
+                EXHAUSTED,
+                MIN_USEFUL_COMPLETION,
+                RunBudgetLedger,
+                estimate_prompt_tokens,
+                lookup_token_rates,
+                plan_response_budget,
+            )
+
+            loop_ledger = RunBudgetLedger.from_config(result, config)
+            raw_estimate = estimate_prompt_tokens(prompt)
+            room_before = loop_ledger.remaining_tokens
+            # El provider cuenta el prompt real al responder. Una estimación por
+            # caracteres no cancela un paso al que todavía le queda completion.
+            # Narrative sí usa la estimación completa: esa llamada es la respuesta.
+            if raw_estimate + MIN_USEFUL_COMPLETION > room_before and room_before >= MIN_USEFUL_COMPLETION:
+                raw_estimate = max(0, room_before - MIN_USEFUL_COMPLETION)
+            rates = await lookup_token_rates(str(config.get("model") or ""))
+            call_plan = plan_response_budget(
+                loop_ledger,
+                estimated_prompt_tokens=raw_estimate,
+                desired_completion_tokens=_answer_max_tokens(),
+                model_output_limit=_answer_max_tokens(),
+                question=request.message,
+                followup_llm=False,
+                input_cost_per_1k=None if rates is None else rates[0],
+                output_cost_per_1k=None if rates is None else rates[1],
+            )
+            if (
+                call_plan.budget_pressure == EXHAUSTED
+                or call_plan.allowed_completion_tokens <= 0
+            ):
+                detail = (
+                    "max_cost exceeded"
+                    if "cost" in call_plan.budget_reason
+                    else "max_tokens exceeded"
+                )
+                result.status = "limit_reached"
+                result.steps.append(
+                    {
+                        "type": "guardrail",
+                        "detail": detail,
+                        **call_plan.to_public_dict(),
+                    }
+                )
+                await _finalize_with_authority(detail)
+                self._ensure_answer(result, history, reason=detail)
+                result.answer = _apply_derived_guard(result.answer)
+                return
+            call_max_tokens = call_plan.allowed_completion_tokens
             llm_start = time.perf_counter()
             candidates = config.get("_router_candidates") or [config["model"]]
             used_model = config["model"]
@@ -3897,7 +4337,7 @@ class AgentRuntime:
                         resp = await self._stream_response(
                             prompt=prompt,
                             model=candidate,
-                            max_tokens=_answer_max_tokens(),
+                            max_tokens=call_max_tokens,
                             temperature=config["temperature"],
                             on_delta=request.on_delta,
                         )
@@ -3905,7 +4345,7 @@ class AgentRuntime:
                         resp = await self._llm.generate(
                             prompt=prompt,
                             model=candidate,
-                            max_tokens=_answer_max_tokens(),
+                            max_tokens=call_max_tokens,
                             temperature=config["temperature"],
                         )
                     used_model = candidate
@@ -3929,41 +4369,21 @@ class AgentRuntime:
                 )
                 config["model"] = used_model
             llm_latency = (time.perf_counter() - llm_start) * 1000
-            result.total_tokens += resp.total_tokens
-            result.prompt_tokens += int(getattr(resp, "prompt_tokens", 0) or 0)
-            result.completion_tokens += int(getattr(resp, "completion_tokens", 0) or 0)
-            result.cost += await estimate_cost(
-                str(config["model"]),
-                prompt_tokens=resp.prompt_tokens,
-                completion_tokens=resp.completion_tokens,
-            )
-            result.model = used_model
-            result.spans.append(
-                {
-                    "stage": "llm",
-                    "name": f"llm:{used_model}",
-                    "duration_ms": round(llm_latency, 2),
-                    "tokens": resp.total_tokens,
-                    "started_ms": round(llm_start * 1000, 1),
-                    "metadata": {
-                        "prompt_tokens": int(getattr(resp, "prompt_tokens", 0) or 0),
-                        "completion_tokens": int(getattr(resp, "completion_tokens", 0) or 0),
-                    },
-                }
-            )
-
             action = _parse_action(resp.content)
-            result.steps.append(
-                {
-                    "type": "llm",
+            from src.runtime.run_accounting import record_llm_call
+
+            await record_llm_call(
+                result,
+                loop_ledger,
+                resp,
+                purpose="reasoning" if action.get("tool") else "generation",
+                model=str(used_model or ""),
+                latency_ms=llm_latency,
+                extra={
                     "step": step_index,
-                    "model": used_model,
-                    "action": {
-                        k: str(v)[:300] for k, v in action.items()
-                    },
-                    "tokens": resp.total_tokens,
-                    "latency_ms": round(llm_latency, 2),
-                }
+                    "action": {k: str(v)[:300] for k, v in action.items()},
+                    **call_plan.to_public_dict(),
+                },
             )
 
             if result.total_tokens > max_tokens:
@@ -4108,6 +4528,18 @@ class AgentRuntime:
                     result.status = "completed"
                     return
                 if gate_verdict == "retrieve_more":
+                    if _steps_left() <= 0:
+                        result.steps.append(
+                            {
+                                "type": "guardrail",
+                                "detail": "max_steps blocked retrieval",
+                            }
+                        )
+                        history.append(
+                            "OBSERVATION: no quedan pasos del agente para otra "
+                            "búsqueda. Responde con la evidencia que ya tienes."
+                        )
+                        continue
                     # JEV pidió evidencia antes de responder: se busca con la
                     # consulta refinada por las entidades que la pregunta nombra.
                     _refresh_selection()
@@ -4560,7 +4992,7 @@ class AgentRuntime:
                             if line.startswith("OBSERVATION")
                         )
                         gap_labels = _uncovered_labels(request.message, observation_text)
-                    rounds_left = max(0, max_retrieval_rounds - retrieval_rounds)
+                    rounds_left = _rounds_left()
                     # Evidencia usable = la pregunta puede responderse con lo
                     # recuperado. Con registry manda la suficiencia (entidades
                     # cubiertas); sin registry, la observación no vacía de siempre.
@@ -4631,6 +5063,18 @@ class AgentRuntime:
                                 )
                                 return
                             if verdict_action == ACTION_RETRIEVE:
+                                if _steps_left() <= 0:
+                                    result.steps.append(
+                                        {
+                                            "type": "guardrail",
+                                            "detail": "max_steps blocked retrieval",
+                                        }
+                                    )
+                                    history.append(
+                                        "OBSERVATION: no quedan pasos del agente para "
+                                        "otra búsqueda. Responde con la evidencia que ya tienes."
+                                    )
+                                    continue
                                 history.append(step_verdict_note(step_judgment))
                                 refined = _refined_retrieval_query(
                                     request.message, list(step_judgment.uncovered_entities)

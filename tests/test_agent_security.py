@@ -446,8 +446,14 @@ class TestAgentBuilderConfig:
         runtime = AgentRuntime(llm_provider=llm)
         result = await runtime.run(_request(agent, "loop"))
         assert result.status == "limit_reached"
-        llm_steps = [s for s in result.steps if s["type"] == "llm"]
-        assert len(llm_steps) <= 2
+        # El cierre (`_try_finalize_answer`) registra su llamada como step `llm`
+        # con purpose=generation: max_steps corta el loop, no la respuesta final.
+        loop_steps = [
+            s
+            for s in result.steps
+            if s["type"] == "llm" and s.get("purpose") == "reasoning"
+        ]
+        assert len(loop_steps) <= 2
 
     @pytest.mark.asyncio
     async def test_sql_disabled_in_security_blocks_query_database(self) -> None:
