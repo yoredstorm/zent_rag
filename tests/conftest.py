@@ -121,6 +121,16 @@ async def async_client(mock_orchestrator: MockRAGOrchestrator) -> AsyncGenerator
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def _disable_narrative_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """La ruta narrativa es una optimización de producción (una búsqueda por
+    código + una generación). La suite fija el flujo ReAct (tool calls del LLM);
+    la ruta tiene tests unitarios propios en test_narrative_fast_path.py."""
+    from src.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "RUNTIME_NARRATIVE_FAST_PATH", "off")
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_rate_limits() -> AsyncGenerator[None, None]:
     """Limpia contadores de rate-limit (Redis + in-memory) entre tests.
