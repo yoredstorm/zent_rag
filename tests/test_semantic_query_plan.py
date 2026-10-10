@@ -112,3 +112,36 @@ def test_empty_activation_stays_on_legacy_retrieval() -> None:
     plan = build_plan("qué es record 2", [])
     assert plan.knowledge_mode == LEGACY_RETRIEVAL
     assert plan.search_query == ""
+
+
+def test_symbol_masks_do_not_activate() -> None:
+    """&a&m&2 / *a son máscaras del manual, no vocabulario."""
+    nodes = [
+        {"id": "1", "label": "&a&m&2", "node_type": "Concept", "block_ids": ["b1"]},
+        {"id": "2", "label": "*a", "node_type": "Concept", "block_ids": ["b2"]},
+        {"id": "3", "label": "&&test", "node_type": "Concept", "block_ids": ["b3"]},
+    ]
+    activated = activate_nodes(
+        [1.0, 0.0],
+        nodes,
+        [[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]],
+        min_score=0.5,
+    )
+    assert activated == []
+
+
+def test_entity_without_aspect_stays_on_legacy_retrieval() -> None:
+    """Sin aspecto aprendido no hay puente de idioma que justifique el plan."""
+    plan = build_plan(
+        "cuentame sobre el cambio de fechas",
+        [
+            {
+                "id": "9",
+                "label": "Fare Record = PAR",
+                "node_type": "Concept",
+                "block_ids": [],
+            }
+        ],
+    )
+    assert plan.knowledge_mode == LEGACY_RETRIEVAL
+    assert plan.search_query == ""

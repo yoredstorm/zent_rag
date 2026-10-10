@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -33,6 +34,22 @@ _HOP_RELATIONS = frozenset(
 )
 _MAX_NODES = 80
 _MAX_HOPS = 8
+
+_LETTER = re.compile(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]")
+#: Un nodo del fabric puede ser una máscara del manual (&a&m&2, *a, &&test):
+#: no es vocabulario, no puede activar ni reemplazar la pregunta.
+_SYMBOL_START = re.compile(r"^[&*!#$%^~|<>]")
+
+
+def meaningful_label(label: str) -> bool:
+    """Etiqueta con contenido léxico real. Genérico, sin dominio."""
+    text = " ".join(str(label or "").split())
+    if len(text) < 3 or _SYMBOL_START.match(text):
+        return False
+    letters = len(_LETTER.findall(text))
+    if letters < 3:
+        return False
+    return letters / len(text) >= 0.5
 
 
 @dataclass(frozen=True)
@@ -93,7 +110,7 @@ def activate_nodes(
     ranked: list[dict] = []
     for node, vector in zip(nodes, vectors):
         label = " ".join(str(node.get("label") or "").split())
-        if not label:
+        if not label or not meaningful_label(label):
             continue
         score = _cosine(question_vector, vector)
         if score < min_score:
@@ -145,7 +162,7 @@ def expand_one_hop(
         if kind not in _ASPECT_TYPES and kind not in _ENTITY_TYPES:
             continue
         label = " ".join(str(node.get("label") or "").split())
-        if not label:
+        if not label or not meaningful_label(label):
             continue
         seen.add(other)
         extra.append(
@@ -185,7 +202,9 @@ def build_plan(question: str, activated: list[dict], *, hops: int = 0) -> Semant
     for label in (*entities, *aspects):
         if label not in labels:
             labels.append(label)
-    if not labels:
+    # Sin aspecto aprendido no hay puente de idioma que justifique reemplazar
+    # la pregunta: entidades solas no cambian el retrieval.
+    if not labels or not aspects:
         return SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
     return SemanticQueryPlan(
         knowledge_mode=SEMANTIC_GLOBAL,
