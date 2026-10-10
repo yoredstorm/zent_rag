@@ -234,6 +234,55 @@ class TestAnswerabilityMapping:
         corrected = apply_grounded_reasoning(legacy, grounded)
         assert corrected.status == AnswerabilityStatus.ANSWERABLE_DERIVED
 
+    def test_missing_premise_not_enforced_for_informational(self) -> None:
+        from src.core.domain.intelligence import (
+            AnswerabilityDecision,
+            AnswerabilityStatus,
+            ConfidenceLevel,
+        )
+        from src.intelligence.answerability import apply_grounded_reasoning
+        from src.intelligence.reasoning.grounded_engine import reason_over_evidence
+
+        grounded = reason_over_evidence(
+            question=CANONICAL, evidence_items=[_item(NO_GRAMMAR)]
+        )
+        legacy = AnswerabilityDecision(
+            status=AnswerabilityStatus.ANSWERABLE,
+            answerable=True,
+            confidence_level=ConfidenceLevel.MEDIUM,
+        )
+        # Consulta informacional: la premisa de dominio faltante queda como
+        # telemetría y NO convierte la explicación en «no puedo determinarlo».
+        kept = apply_grounded_reasoning(
+            legacy, grounded, enforce_missing_premise=False
+        )
+        assert kept.status == AnswerabilityStatus.ANSWERABLE
+        assert kept.answerable is True
+        # La vía ejecutable (default) sigue absteniendo por la premisa faltante.
+        enforced = apply_grounded_reasoning(legacy, grounded)
+        assert enforced.status == AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE
+        assert enforced.answerable is False
+
+    def test_grounded_abstention_override_skipped_for_informational(self) -> None:
+        from src.agents.runtime.orchestrator import _grounded_abstention_override
+        from src.core.domain.entities import LLMResponse
+
+        response = LLMResponse(
+            content="El Record 2 trae Eff Date y Disc Date para el cambio de fechas.",
+            model="fake",
+        )
+        adaptive = {
+            "grounded_reasoning": {
+                "answerability": "UNANSWERABLE_MISSING_PREMISE",
+                "abstention_message": "el símbolo & no está definido en las fuentes",
+            }
+        }
+        kept = _grounded_abstention_override(response, adaptive, enforce=False)
+        assert kept.content == response.content
+        # La vía ejecutable (default) aplica la abstención canónica.
+        overridden = _grounded_abstention_override(response, adaptive)
+        assert overridden.content.startswith("No puedo determinarlo porque")
+
 
 class TestPromptContract:
     def test_general_prompt_has_no_literal_only_rule(self) -> None:

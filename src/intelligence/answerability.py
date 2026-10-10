@@ -659,13 +659,20 @@ def answerability_from_grounding(
 
 
 def apply_grounded_reasoning(
-    decision: AnswerabilityDecision, grounded_reasoning: Any | None
+    decision: AnswerabilityDecision,
+    grounded_reasoning: Any | None,
+    *,
+    enforce_missing_premise: bool = True,
 ) -> AnswerabilityDecision:
     """Corrige decisiones de datos con la lectura grounded del run.
 
     Un `DATA_MISSING`/`CONTEXT_MISSING` de la vía clásica no puede sobrevivir
     cuando el motor grounded ya derivó el resultado de premisas respaldadas, ni
     cuando el único faltante es una premisa del dominio.
+
+    `enforce_missing_premise=False` (consulta informacional): una premisa de
+    dominio faltante NO convierte la respuesta en no concluyente; se responde
+    con la evidencia y los límites. El estado grounded queda en telemetría.
     """
     grounded = answerability_from_grounding(grounded_reasoning)
     if grounded is None:
@@ -684,7 +691,7 @@ def apply_grounded_reasoning(
         AnswerabilityStatus.HUMAN_REVIEW_REQUIRED,
     ):
         return grounded
-    if status in ("UNANSWERABLE_MISSING_PREMISE", "UNDETERMINED_RULE"):
+    if enforce_missing_premise and status in ("UNANSWERABLE_MISSING_PREMISE", "UNDETERMINED_RULE"):
         return grounded
     if status == "UNANSWERABLE_CONFLICT" and decision.status != AnswerabilityStatus.SOURCE_CONFLICT:
         return grounded

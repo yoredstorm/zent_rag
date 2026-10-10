@@ -73,6 +73,59 @@ def test_table_header_becomes_a_field_with_quote() -> None:
     assert any("date processing" in item.label.lower() for item in refs)
 
 
+def test_mask_labels_never_become_vocabulary() -> None:
+    """Una máscara (&a&m&2, *a) no entra como entidad/concepto/alias/topic.
+
+    Las definiciones de máscara se conservan (gramática) y los símbolos viajan
+    con kind="symbol" para que la resolución de premisas funcione.
+    """
+    block = _Block(
+        "&a&m&2 - máscara del Record 2. Eff Date - fecha efectiva.",
+        StructuredBlockKind.PARAGRAPH,
+    )
+    doc = _Doc()
+    doc.metadata = {
+        "understanding": {
+            "definitions": [
+                {
+                    "term": "&a&m&2",
+                    "definition": "máscara del Record 2",
+                    "block_id": str(block.id),
+                    "confidence": 0.9,
+                },
+                {
+                    "term": "Eff Date",
+                    "definition": "fecha efectiva",
+                    "block_id": str(block.id),
+                    "confidence": 0.9,
+                },
+            ],
+            "technical_fields": [
+                {"name": "*a", "block_id": str(block.id), "confidence": 0.8}
+            ],
+            "exact_literals": [
+                {
+                    "value": "&a&m&2",
+                    "pattern_type": "mask",
+                    "block_id": str(block.id),
+                    "confidence": 0.9,
+                }
+            ],
+        }
+    }
+    items = extract_window_items(document=doc, window_blocks=[block], window_index=0)
+
+    entities = {item.label for item in items if item.kind == "entity"}
+    assert "*a" not in entities
+    assert "&a&m&2" not in entities
+
+    # La máscara definida sigue disponible como definición y símbolo.
+    definitions = {item.label for item in items if item.kind == "definition"}
+    assert "&a&m&2" in definitions
+    symbols = {item.label for item in items if item.kind == "symbol"}
+    assert "&a&m&2" in symbols
+
+
 def test_activation_uses_embedding_neighbors_not_a_dictionary() -> None:
     nodes = [
         {"id": "1", "label": "Footnote", "node_type": "Concept", "block_ids": ["b1"]},

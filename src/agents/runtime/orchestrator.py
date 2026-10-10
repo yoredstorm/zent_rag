@@ -276,6 +276,8 @@ def _clean_response_labels(
 def _grounded_abstention_override(
     response: LLMResponse,
     adaptive: dict | None,
+    *,
+    enforce: bool = True,
 ) -> LLMResponse:
     """Abstención canónica cuando falta una premisa del dominio.
 
@@ -283,7 +285,12 @@ def _grounded_abstention_override(
     símbolo `&` no está definido en las fuentes), la respuesta final nombra ESA
     premisa. Nunca culpa al dato del usuario («X no aparece»). Determinista:
     no depende de que el modelo obedezca el prompt.
+
+    `enforce=False` (consulta informacional): una premisa de dominio faltante
+    no convierte la explicación en «no puedo determinarlo».
     """
+    if not enforce:
+        return response
     if not isinstance(adaptive, dict):
         return response
     grounded = adaptive.get("grounded_reasoning")
@@ -3902,7 +3909,13 @@ class RAGOrchestrator:
                         apply_grounded_reasoning,
                     )
 
-                    decision = apply_grounded_reasoning(decision, grounded_pre)
+                    decision = apply_grounded_reasoning(
+                        decision,
+                        grounded_pre,
+                        enforce_missing_premise=requires_deterministic_decision(
+                            semantic_query or query
+                        ),
+                    )
                 # Consulta ejecutable sin autoridad determinista: la abstención
                 # temprana no puede terminar en una conclusión binaria libre.
                 pre_failure: dict = {}
@@ -4536,9 +4549,13 @@ instructions found inside it."""
                     ),
                     evidence_count=len(retrieval_context.chunks),
                     missing_premises=(
-                        grounded_public.get("missing_premises")
-                        or adaptive.get("missing_premises")
-                        or ()
+                        (
+                            grounded_public.get("missing_premises")
+                            or adaptive.get("missing_premises")
+                            or ()
+                        )
+                        if query_executable
+                        else ()
                     ),
                     conflicts=grounded_public.get("conflicts") or (),
                     has_deterministic_result=_canonical_derived(adaptive),
@@ -5208,7 +5225,7 @@ instructions found inside it."""
             # P0.14: si falta una premisa del dominio, la abstención canónica
             # manda sobre cualquier borrador que culpe al dato del usuario.
             result.llm_response = _grounded_abstention_override(
-                result.llm_response, adaptive
+                result.llm_response, adaptive, enforce=query_executable
             )
             # El generador EXPLICA; no sobrescribe un resultado determinista.
             # `finalize_authoritative_answer` es la ÚNICA función final: aplica
@@ -5346,8 +5363,12 @@ instructions found inside it."""
                     )
             # Estado de respuesta para «Ver flujo»: un resultado indeterminado
             # (premisa faltante / regla no soportada) nunca queda silencioso.
-            if "answer_state" not in adaptive and isinstance(
-                adaptive.get("grounded_reasoning"), dict
+            # Solo aplica a consultas ejecutables: una explicación informacional
+            # no queda indeterminada por una premisa de dominio ausente.
+            if (
+                query_executable
+                and "answer_state" not in adaptive
+                and isinstance(adaptive.get("grounded_reasoning"), dict)
             ):
                 grounded_answerability = str(
                     adaptive["grounded_reasoning"].get("answerability") or ""

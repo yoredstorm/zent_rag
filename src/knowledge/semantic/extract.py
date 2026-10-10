@@ -16,6 +16,7 @@ import re
 
 from src.core.domain.knowledge_v2 import StructuredBlock, StructuredBlockKind
 from src.knowledge.compiler.model import normalize_term
+from src.knowledge.labels import word_like_label
 
 from .contracts import WindowItem
 
@@ -64,6 +65,13 @@ _KIND_ORDER = {
     "conflict": 18,
 }
 
+#: Kinds cuya etiqueta ES vocabulario: una máscara o un símbolo (&a&m&2, *a)
+#: no puede entrar al fabric como entidad/concepto/alias/topic. Las
+#: definiciones de máscara sí se conservan (gramática del dominio: los threads
+#: de símbolos y las premisas las resuelven); los símbolos viajan con
+#: kind="symbol" y no pasan por este filtro.
+_WORD_LIKE_KINDS = frozenset({"entity", "concept", "alias", "topic"})
+
 
 def extract_window_items(
     *,
@@ -82,6 +90,8 @@ def extract_window_items(
     found: dict[tuple[str, str], WindowItem] = {}
 
     def add(item: WindowItem) -> None:
+        if item.kind in _WORD_LIKE_KINDS and not word_like_label(item.label):
+            return
         key = (item.kind, item.key)
         existing = found.get(key)
         if existing is None or item.confidence > existing.confidence:

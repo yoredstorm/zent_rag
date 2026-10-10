@@ -261,6 +261,21 @@ def test_tabular_enrichment_has_real_provenance() -> None:
     assert result.quality.orphan_items == 0
 
 
+def test_mask_labels_never_become_concepts() -> None:
+    from src.knowledge.enrichment.concepts import _ConceptAccumulator
+
+    accumulator = _ConceptAccumulator()
+    accumulator.add(
+        "&a&m&2", semantic_type="concept", source_unit_ids=("b1",), confidence=0.9
+    )
+    accumulator.add("*a", semantic_type="concept", source_unit_ids=("b1",), confidence=0.9)
+    accumulator.add(
+        "Eff Date", semantic_type="attribute", source_unit_ids=("b1",), confidence=0.9
+    )
+    names = {concept.canonical_name for concept in accumulator.result()}
+    assert names == {"Eff Date"}
+
+
 def test_model_items_without_provenance_are_rejected() -> None:
     document = _understood("# Manual\n\nStatus byte definition.\n")
     bogus = SemanticConcept(

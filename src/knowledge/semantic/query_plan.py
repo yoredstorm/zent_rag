@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
 from uuid import UUID
 
 from src.infrastructure.observability.logging_config import get_logger
+from src.knowledge.labels import meaningful_label
 
 from .rollout import ACTIVE
 
@@ -34,22 +34,6 @@ _HOP_RELATIONS = frozenset(
 )
 _MAX_NODES = 80
 _MAX_HOPS = 8
-
-_LETTER = re.compile(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]")
-#: Un nodo del fabric puede ser una máscara del manual (&a&m&2, *a, &&test):
-#: no es vocabulario, no puede activar ni reemplazar la pregunta.
-_SYMBOL_START = re.compile(r"^[&*!#$%^~|<>]")
-
-
-def meaningful_label(label: str) -> bool:
-    """Etiqueta con contenido léxico real. Genérico, sin dominio."""
-    text = " ".join(str(label or "").split())
-    if len(text) < 3 or _SYMBOL_START.match(text):
-        return False
-    letters = len(_LETTER.findall(text))
-    if letters < 3:
-        return False
-    return letters / len(text) >= 0.5
 
 
 @dataclass(frozen=True)

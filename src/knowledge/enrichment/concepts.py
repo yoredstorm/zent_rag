@@ -19,6 +19,7 @@ from src.knowledge.enrichment.contracts import SemanticConcept
 from src.knowledge.enrichment.normalize import collapse, normalize_key
 from src.knowledge.enrichment.profiling import EnrichmentContext, classify_term
 from src.knowledge.enrichment.versioning import ENRICHMENT_NAMESPACE, POLICY_VERSION
+from src.knowledge.labels import word_like_label
 
 _NS = UUID(ENRICHMENT_NAMESPACE)
 
@@ -59,6 +60,10 @@ class _ConceptAccumulator:
     ) -> None:
         cleaned = collapse(name)
         if not cleaned or len(cleaned) > 120:
+            return
+        if not word_like_label(cleaned):
+            # Una máscara (&a&m&2, *a) no es un concepto: no entra al
+            # vocabulario del dominio.
             return
         key = normalize_key(cleaned)
         if not key:
