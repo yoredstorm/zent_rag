@@ -89,6 +89,9 @@ class EvidenceRequirement:
     pattern: str = ""
     value: str = ""
     symbols: tuple[str, ...] = ()
+    #: Aliases del vocabulario cargado (packs de dominio) que materializan el
+    #: requirement con otro nombre/idioma («cambio de fechas» → Effective Date).
+    aliases: tuple[str, ...] = ()
 
     @property
     def documentable(self) -> bool:
@@ -441,6 +444,7 @@ def build_requirements(
                 needles=tuple(tokens[:8]),
                 weight=0.3 if soft else 0.6,
                 soft=soft,
+                aliases=_clause_alias_terms(clause),
             )
         )
 
@@ -578,13 +582,20 @@ def _state_for(
         return RequirementState.MISSING.value
     present = sum(1 for needle in needles if needle and needle in joined)
     if requirement.kind == "clause":
-        # Matching de cláusula tolerante: acentos y plural/singular simples no
-        # bloquean («cambio de fechas» vs «fecha efectiva»).
+        # Matching de cláusula tolerante: acentos, plural/singular simple y
+        # aliases del vocabulario cargado («cambio de fechas» vs «fecha»,
+        # «Effective Date») no bloquean.
         folded = _fold(joined)
         present = sum(
             1 for needle in needles if needle and _needle_present(needle, folded)
         )
         ratio = present / len(needles)
+        if ratio < 0.8 and requirement.aliases and any(
+            alias and alias in folded for alias in requirement.aliases
+        ):
+            # El vocabulario del pack nombra el aspecto con otro término:
+            # materialmente está documentado.
+            ratio = 1.0
         if ratio >= 0.8:
             return RequirementState.FOUND.value
         if ratio >= 0.4:
@@ -721,6 +732,42 @@ def _needle_variants(needle: str) -> tuple[str, ...]:
 
 def _needle_present(needle: str, folded_text: str) -> bool:
     return any(variant in folded_text for variant in _needle_variants(needle))
+
+
+def _clause_alias_terms(clause: str) -> tuple[str, ...]:
+    """Aliases del vocabulario cargado (packs) para la cláusula.
+
+    Prueba la cláusula sin encuadre/artículos iniciales y sus prefijos
+    («cuéntame el cambio de fechas del Record 2» → «cambio de fechas»).
+    Genérico: sólo consulta el vocabulario registrado; no conoce dominios.
+    """
+    try:
+        from src.knowledge.enrichment.profiling import expand_aliases
+    except Exception:  # noqa: BLE001 — sin enrichment no hay puente
+        return ()
+    words = [word for word in re.split(r"\s+", _fold(clause)) if word]
+    candidates: list[str] = []
+    while words and words[0] in (_STOPWORDS | _FRAMING_TOKENS) and len(words) > 1:
+        words = words[1:]
+        candidates.append(" ".join(words))
+    if not candidates and words:
+        candidates.append(" ".join(words))
+    found: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        parts = candidate.split()
+        for end in range(len(parts), 1, -1):
+            probe = " ".join(parts[:end])
+            try:
+                aliases = expand_aliases(probe)
+            except Exception:  # noqa: BLE001
+                aliases = ()
+            for alias in aliases:
+                folded = _fold(alias)
+                if folded and folded not in seen:
+                    seen.add(folded)
+                    found.append(folded)
+    return tuple(found)
 
 
 __all__ = [

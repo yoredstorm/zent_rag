@@ -170,6 +170,45 @@ class TestRequirements:
         assert clauses
         assert all(state != RequirementState.MISSING.value for state in clauses)
 
+    def test_pack_alias_bridges_clause_language(self) -> None:
+        # El vocabulario cargado (pack) nombra el aspecto en otro idioma:
+        # «cambio de fechas» → Effective Date/Discontinue Date. La cláusula no
+        # queda MISSING cuando la evidencia documenta el aspecto con ese nombre.
+        from src.knowledge.enrichment.profiling import (
+            EnrichmentProfilePack,
+            register_profile_pack,
+        )
+
+        register_profile_pack(
+            EnrichmentProfilePack(
+                name="test_dates_bridge_pack",
+                version="1",
+                patterns=(),
+                alias_map={
+                    "cambio de fechas": ("Effective Date", "Discontinue Date")
+                },
+            )
+        )
+        requirements = build_requirements(
+            "cuéntame sobre el Record 2 y el cambio de fechas", anchors=[]
+        )
+        coverage = evaluate_requirements(
+            requirements,
+            [
+                _chunk(
+                    "Record 2 compares the Effective Date and Discontinue Date "
+                    "fields of the fare record."
+                )
+            ],
+        )
+        clauses = [
+            requirement
+            for requirement in coverage.requirements
+            if requirement.kind == "clause"
+        ]
+        assert clauses
+        assert all(state != RequirementState.MISSING.value for state in clauses)
+
     def test_plural_and_accent_tolerant_clause_matching(self) -> None:
         requirements = build_requirements(
             "el cambio de fechas del Record 2", anchors=[]
