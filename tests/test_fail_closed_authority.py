@@ -470,7 +470,7 @@ class TestMaxTokensCannotChangeDecision:
 
         monkeypatch.setattr(retrieval_module, "retrieve_canonical_rules", fake_retrieve)
 
-        agent = _agent(config_json={"limits": {"max_tokens": 1}})
+        agent = _agent(config_json={"limits": {"max_total_tokens": 1}})
         llm = _FakeLLM(['{"answer": "No cumple: longitudes distintas."}'])
         result = await AgentRuntime(llm_provider=llm).run(
             _request(agent, CLEAN_QUESTION)
@@ -496,7 +496,7 @@ class TestMaxTokensCannotChangeDecision:
 
         monkeypatch.setattr(retrieval_module, "retrieve_canonical_rules", fake_retrieve)
 
-        agent = _agent(config_json={"limits": {"max_tokens": 1}})
+        agent = _agent(config_json={"limits": {"max_total_tokens": 1}})
         llm = _FakeLLM(['{"answer": "No cumple: 25 está fuera del rango."}'])
         result = await AgentRuntime(llm_provider=llm).run(
             _request(agent, "¿el valor 25 cumple el rango permitido?")
