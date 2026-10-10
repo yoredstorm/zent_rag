@@ -277,6 +277,7 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "reasoning_shape",
         "blueprint",
         "retrieval_rounds",
+        "retrieval_top_k",
         "retrieval_latency_ms",
         "model_latency_ms",
         "verification_latency_ms",

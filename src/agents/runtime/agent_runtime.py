@@ -3866,11 +3866,25 @@ class AgentRuntime:
             # activado por embedding no es equivalencia y no puede declarar un
             # aspecto como cubierto.
             search_query = semantic_plan.search_query or request.message
+            # El top_k de la ruta narrativa es configurable: el del agente
+            # (retrieval.top_k) o el global. Antes quedaba fijo en 5 y el tuning
+            # del env no llegaba nunca a esta ruta.
+            agent_config = getattr(request.agent, "config_json", None) or {}
+            agent_retrieval = agent_config.get("retrieval") if isinstance(agent_config, dict) else None
+            configured_top_k = 0
+            if isinstance(agent_retrieval, dict):
+                try:
+                    configured_top_k = int(agent_retrieval.get("top_k") or 0)
+                except (TypeError, ValueError):
+                    configured_top_k = 0
+            if configured_top_k <= 0:
+                configured_top_k = int(getattr(settings, "RAG_TOP_K", 5) or 5)
+            narrative_top_k = max(5, min(configured_top_k, 30))
             search_started = time.perf_counter()
             tool_result = await execute_tool_guarded(
                 tool,
                 ctx,
-                {"query": search_query, "top_k": 5},
+                {"query": search_query, "top_k": narrative_top_k},
                 self._rate_limiter,
             )
             search_ms = (time.perf_counter() - search_started) * 1000
@@ -3984,7 +3998,7 @@ class AgentRuntime:
                 follow = await execute_tool_guarded(
                     tool,
                     ctx,
-                    {"query": decision.query, "top_k": 5},
+                    {"query": decision.query, "top_k": narrative_top_k},
                     self._rate_limiter,
                 )
                 follow_ms = (time.perf_counter() - follow_started) * 1000
@@ -4138,6 +4152,7 @@ class AgentRuntime:
                         **budget_public,
                         **semantic_plan.to_public_dict(),
                         "retrieval_rounds": 1 + coverage_rounds,
+                        "retrieval_top_k": narrative_top_k,
                         "narrative_concepts": len(concept_plan.concepts),
                         "coverage_rounds": coverage_rounds,
                         "coverage_stop_reason": coverage_stop,
@@ -4302,6 +4317,7 @@ class AgentRuntime:
                     **route.to_public_dict(),
                     **semantic_plan.to_public_dict(),
                     "retrieval_rounds": 1 + coverage_rounds,
+                    "retrieval_top_k": narrative_top_k,
                     "retrieval_latency_ms": round(retrieval_ms, 2),
                     "model_latency_ms": round(model_ms, 2),
                     "verification_latency_ms": round(verification_ms, 2),

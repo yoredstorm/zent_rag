@@ -103,12 +103,14 @@ class _NarrativeSearchTool(Tool):
         date_evidence: tuple[dict, ...] = DATE_EVIDENCE,
     ) -> None:
         self.queries: list[str] = []
+        self.top_ks: list[int] = []
         self._original = original
         self._date_evidence = date_evidence
 
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
         query = str(arguments.get("query") or "")
         self.queries.append(query)
+        self.top_ks.append(int(arguments.get("top_k") or 0))
         directed = query.strip().lower() != self._original.strip().lower()
         evidence = self._date_evidence if directed else INITIAL_EVIDENCE
         return ToolResult(output="resultados", meta={"evidence": list(evidence)})
@@ -158,6 +160,25 @@ def _narrative_step(result) -> dict:
     return next(
         step for step in result.steps if step.get("type") == "narrative_fast_path"
     )
+
+
+@pytest.mark.asyncio
+async def test_narrative_top_k_comes_from_agent_config() -> None:
+    search = _NarrativeSearchTool()
+    register_tool(search)
+    llm = _FakeLLM(
+        [
+            "Record 2 procesa el cambio de fechas con la effective date [Doc: 1]."
+        ]
+    )
+    runtime = AgentRuntime(llm_provider=llm)
+    result = await runtime.run(
+        _request(_agent(config_json={"retrieval": {"top_k": 10}}), QUESTION)
+    )
+
+    step = _narrative_step(result)
+    assert step["retrieval_top_k"] == 10
+    assert search.top_ks == [10, 10]
 
 
 @pytest.mark.asyncio
