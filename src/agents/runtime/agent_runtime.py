@@ -2479,6 +2479,10 @@ class AgentRuntime:
         narrative_version = 0
         narrative_bound = False
         external_claims_removed = 0
+        # Pregunta material de la selección: la ruta narrativa la enriquece con
+        # aliases (pack/vocabulario documental) para que el aspecto rankee.
+        selection_question = request.message
+        selection_max_items = 12
         evidence_budget = int(
             getattr(settings, "RUNTIME_EVIDENCE_BUDGET_CHARS", 0) or 0
         ) or 12_000
@@ -2971,8 +2975,9 @@ class AgentRuntime:
             _sel_t0 = time.perf_counter()
             selection = select_evidence(
                 registry.all_items(),
-                request.message,
+                selection_question,
                 budget_chars=evidence_budget,
+                max_items=selection_max_items,
             )
             sufficiency = assess_sufficiency(
                 selection.items,
@@ -3792,6 +3797,7 @@ class AgentRuntime:
         async def _narrative_fast_path() -> bool:
             """Búsqueda inicial, cierre de cobertura y una generación. Sin ReAct."""
             nonlocal selection, narrative_package, narrative_version
+            nonlocal selection_question, selection_max_items
             from src.knowledge.structure.document_bundle import narrative_context_text
             from src.runtime.narrative_fast_path import (
                 NARRATIVE_FAST_PATH,
@@ -3884,6 +3890,9 @@ class AgentRuntime:
                     search_query = f"{search_query} {' '.join(pack_terms)}"
             except Exception:  # noqa: BLE001 — sin packs sigue la query base
                 pass
+            # La selección de evidencia usa la pregunta material enriquecida:
+            # el aspecto debe rankear, no solo la entidad.
+            selection_question = search_query
             # El top_k de la ruta narrativa es configurable: el del agente
             # (retrieval.top_k) o el global. Antes quedaba fijo en 5 y el tuning
             # del env no llegaba nunca a esta ruta.
@@ -3898,6 +3907,7 @@ class AgentRuntime:
             if configured_top_k <= 0:
                 configured_top_k = int(getattr(settings, "RAG_TOP_K", 5) or 5)
             narrative_top_k = max(5, min(configured_top_k, 30))
+            selection_max_items = max(12, min(narrative_top_k, 24))
             search_started = time.perf_counter()
             tool_result = await execute_tool_guarded(
                 tool,
@@ -3954,8 +3964,9 @@ class AgentRuntime:
                 return False
             probe = select_evidence(
                 registry.all_items(),
-                request.message,
+                selection_question,
                 budget_chars=evidence_budget,
+                max_items=selection_max_items,
             )
             probe_sufficiency = assess_sufficiency(
                 probe.items,
@@ -4111,6 +4122,21 @@ class AgentRuntime:
             system_prompt = (
                 f"{agent_instructions}\n\n{style}\n{policy.instructions()}"
             ).strip()
+            frame_lines: list[str] = []
+            for frame in concept_plan.frames:
+                if frame.entity and frame.aspect:
+                    frame_lines.append(f"- entidad: {frame.entity}; aspecto: {frame.aspect}")
+                elif frame.entity:
+                    frame_lines.append(f"- entidad: {frame.entity}")
+                elif frame.aspect:
+                    frame_lines.append(f"- aspecto: {frame.aspect}")
+            if frame_lines:
+                system_prompt = (
+                    f"{system_prompt}\nLa pregunta pide:\n"
+                    + "\n".join(frame_lines)
+                    + "\nExplicá cada aspecto con la terminología de la evidencia; "
+                    "si un aspecto no tiene respaldo, declaralo como limitación."
+                )
             if coverage_limit:
                 system_prompt = f"{system_prompt}\n{coverage_limit}"
             user_prompt = f"Pregunta:\n{request.message}\n\nEvidencia:\n{context}"

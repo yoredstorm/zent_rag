@@ -372,7 +372,7 @@ def test_missing_date_aspect_does_not_inject_a_domain_dictionary(monkeypatch) ->
     assert "record 2" in query
 
 
-def test_aspect_evidence_leads_and_unrelated_sections_stay_short() -> None:
+def test_aspect_evidence_leads_and_all_selected_items_stay() -> None:
     question = "cuentame sobre el record 2 y el cambio de fechas"
     plan = extract_narrative_concepts(
         question,
@@ -390,4 +390,24 @@ def test_aspect_evidence_leads_and_unrelated_sections_stay_short() -> None:
     ]
     ordered = prefer_aspect_items(items, plan.concepts)
     assert "eff date" in ordered[0].content.lower()
-    assert len(ordered) <= 3
+    # Reordena, no recorta: la selección ya viene acotada por presupuesto.
+    assert len(ordered) == len(items)
+
+
+def test_aspect_token_overlap_counts_as_relevant() -> None:
+    question = "cuentame sobre el cambio de fechas en el record 2"
+    plan = extract_narrative_concepts(
+        question,
+        vocabulary=vocabulary_from_activation(question, ("Eff Date", "Disc Date")),
+    )
+    items = [
+        EvidenceItem(source_type="qdrant", content="Unrelated footnote match.", score=0.9),
+        EvidenceItem(
+            source_type="qdrant",
+            content="Processing will match the date override on the first table.",
+            score=0.3,
+        ),
+    ]
+    ordered = prefer_aspect_items(items, plan.concepts)
+    assert "date override" in ordered[0].content.lower()
+    assert len(ordered) == len(items)

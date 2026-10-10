@@ -711,27 +711,47 @@ def vocabulary_from_activation(question: str, aspect_labels: tuple[str, ...] | l
     return vocabulary
 
 
-def prefer_aspect_items(selected, concepts, *, keep_uncovered: int = 2) -> list:
-    """El aspecto pedido va primero. El resto del documento no llena la respuesta.
+def prefer_aspect_items(
+    selected,
+    concepts,
+    *,
+    keep_uncovered: int | None = None,
+) -> list:
+    """El aspecto pedido va primero. REORDENA, no recorta.
 
-    Sin un ítem que cubra el aspecto, no recorta: la búsqueda dirigida todavía
-    puede traerlo.
+    `select_evidence` ya recortó por presupuesto y tope: truncar acá borraba
+    los pasajes que explican el aspecto (p. ej. «date override» para
+    «cambio de fechas») aunque estuvieran seleccionados. Un ítem es relevante
+    si cubre el concepto o si comparte tokens con sus aliases documentales.
+    `keep_uncovered` queda sólo por compatibilidad explícita.
     """
     chosen = list(selected or [])
     watched = [concept for concept in concepts or () if getattr(concept, "aliases", ())]
     if not chosen or not watched:
         return chosen
+
+    def relevant(item: object) -> bool:
+        text = _as_text(item)
+        text_tokens = set(_tokens(text))
+        for concept in watched:
+            if _status_on_text(concept, text) != MISSING:
+                return True
+            terms = set(_tokens(concept.label))
+            for alias in concept.aliases:
+                terms.update(_tokens(alias))
+            if terms & text_tokens:
+                return True
+        return False
+
     front: list = []
     back: list = []
     for item in chosen:
-        text = _as_text(item)
-        if any(_status_on_text(concept, text) == COVERED for concept in watched):
-            front.append(item)
-        else:
-            back.append(item)
+        (front if relevant(item) else back).append(item)
     if not front:
         return chosen
-    return front + back[: max(0, int(keep_uncovered))]
+    if keep_uncovered is not None:
+        return front + back[: max(0, int(keep_uncovered))]
+    return front + back
 
 
 def narrative_coverage_applies(question: str) -> bool:
