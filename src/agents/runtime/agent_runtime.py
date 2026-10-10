@@ -2471,6 +2471,7 @@ class AgentRuntime:
             assess_sufficiency,
             observe_selection,
             observe_sufficiency,
+            question_needles,
             render_evidence,
             select_evidence,
         )
@@ -4123,7 +4124,11 @@ class AgentRuntime:
             budget = prompt_char_budget(
                 request.message, evidence_items=len(active.items)
             )
-            context = compress_narrative_context(blocks, max_chars=budget)
+            context = compress_narrative_context(
+                blocks,
+                max_chars=budget,
+                needles=tuple(question_needles(selection_question)),
+            )
             if not context.strip():
                 return False
             persona = personality_for_agent(

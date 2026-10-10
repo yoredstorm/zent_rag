@@ -288,8 +288,19 @@ def jev_needed(
     )
 
 
-def compress_narrative_context(blocks: list[str], *, max_chars: int) -> str:
-    """Contexto de secciones. Sin pies de página, metadata de parser ni headers repetidos."""
+def compress_narrative_context(
+    blocks: list[str],
+    *,
+    max_chars: int,
+    needles: tuple[str, ...] = (),
+    max_block_chars: int = 1600,
+) -> str:
+    """Contexto de secciones. Sin pies de página, metadata de parser ni headers repetidos.
+
+    Cada bloque se recorta a `max_block_chars` conservando la ventana alrededor
+    de lo que la pregunta nombra (`needles`): sin esto, dos o tres fragmentos
+    largos consumen el presupuesto y el pasaje que explica el aspecto no entra.
+    """
     seen_headers: set[str] = set()
     kept: list[str] = []
     used = 0
@@ -306,6 +317,17 @@ def compress_narrative_context(blocks: list[str], *, max_chars: int) -> str:
                 seen_headers.add(key)
             lines.append(stripped)
         piece = "\n".join(lines).strip()
+        if not piece:
+            continue
+        if len(piece) > max_block_chars:
+            if needles:
+                from src.runtime.evidence import relevance_window
+
+                piece = relevance_window(
+                    piece, needles, budget=max_block_chars
+                ).strip()
+            else:
+                piece = piece[:max_block_chars]
         if not piece:
             continue
         if used + len(piece) > max_chars and kept:

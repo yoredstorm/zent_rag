@@ -80,6 +80,23 @@ def test_context_drops_footer_and_duplicate_heading() -> None:
     assert "vigencia" in text
 
 
+def test_context_caps_each_block_around_the_needle() -> None:
+    block = (
+        "[Doc: 1] fuente\n"
+        + ("relleno " * 500)
+        + "Eff Date processing section "
+        + ("cola " * 500)
+    )
+    text = compress_narrative_context(
+        [block],
+        max_chars=3000,
+        needles=("eff date",),
+        max_block_chars=1600,
+    )
+    assert "eff date" in text.lower()
+    assert len(text) <= 1800
+
+
 def test_desired_output_is_a_target_not_a_hard_cap() -> None:
     assert prompt_char_budget(CASE_INFO, evidence_items=5) <= 8_000
     assert output_token_budget("technical_explanation") > 800

@@ -721,37 +721,47 @@ def prefer_aspect_items(
 
     `select_evidence` ya recortó por presupuesto y tope: truncar acá borraba
     los pasajes que explican el aspecto (p. ej. «date override» para
-    «cambio de fechas») aunque estuvieran seleccionados. Un ítem es relevante
-    si cubre el concepto o si comparte tokens con sus aliases documentales.
-    `keep_uncovered` queda sólo por compatibilidad explícita.
+    «cambio de fechas») aunque estuvieran seleccionados.
+
+    Tiers: 2 = cubre el concepto (frase/alias o tokens del label); 1 = comparte
+    tokens distintivos con los aliases (se descartan los comunes al paquete,
+    p. ej. «processing»); 0 = resto. `keep_uncovered` sólo por compatibilidad.
     """
     chosen = list(selected or [])
     watched = [concept for concept in concepts or () if getattr(concept, "aliases", ())]
     if not chosen or not watched:
         return chosen
 
-    def relevant(item: object) -> bool:
+    alias_tokens: set[str] = set()
+    for concept in watched:
+        for alias in concept.aliases:
+            alias_tokens.update(token for token in _tokens(alias) if len(token) >= 4)
+    if alias_tokens:
+        document_frequency: dict[str, int] = {}
+        for item in chosen:
+            present = set(_tokens(_as_text(item))) & alias_tokens
+            for token in present:
+                document_frequency[token] = document_frequency.get(token, 0) + 1
+        common = {
+            token
+            for token, count in document_frequency.items()
+            if count > max(1, len(chosen) // 2)
+        }
+        alias_tokens -= common
+
+    def tier_hits(item: object) -> tuple[int, int]:
         text = _as_text(item)
         text_tokens = set(_tokens(text))
         for concept in watched:
             if _status_on_text(concept, text) != MISSING:
-                return True
-            terms = set(_tokens(concept.label))
-            for alias in concept.aliases:
-                terms.update(_tokens(alias))
-            if terms & text_tokens:
-                return True
-        return False
+                return 2, 0
+        hits = len(alias_tokens & text_tokens)
+        return (1, hits) if hits else (0, 0)
 
-    front: list = []
-    back: list = []
-    for item in chosen:
-        (front if relevant(item) else back).append(item)
-    if not front:
-        return chosen
+    ordered = sorted(chosen, key=lambda item: (-tier_hits(item)[0], -tier_hits(item)[1]))
     if keep_uncovered is not None:
-        return front + back[: max(0, int(keep_uncovered))]
-    return front + back
+        return ordered[: max(0, int(keep_uncovered))]
+    return ordered
 
 
 def narrative_coverage_applies(question: str) -> bool:
