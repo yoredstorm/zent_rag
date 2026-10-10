@@ -103,7 +103,7 @@ def activate_nodes(
     nodes: list[dict],
     vectors: list[list[float]],
     *,
-    min_score: float = 0.42,
+    min_score: float = 0.50,
     limit: int = 6,
 ) -> list[dict]:
     """Rankea nodos aprendidos por similitud. El embedder es el puente de idioma."""
@@ -202,17 +202,21 @@ def build_plan(question: str, activated: list[dict], *, hops: int = 0) -> Semant
     for label in (*entities, *aspects):
         if label not in labels:
             labels.append(label)
-    # Sin aspecto aprendido no hay puente de idioma que justifique reemplazar
-    # la pregunta: entidades solas no cambian el retrieval.
+    # Sin aspecto aprendido no hay puente de idioma que justifique el plan:
+    # entidades solas no cambian el retrieval.
     if not labels or not aspects:
         return SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
+    # La pregunta original nunca se reemplaza: los labels del fabric SUMAN
+    # terminología (el puente de idioma), no secuestran el retrieval.
+    question_text = " ".join(str(question or "").split())
+    search_query = " ".join(part for part in (question_text, *labels) if part)
     return SemanticQueryPlan(
         knowledge_mode=SEMANTIC_GLOBAL,
         entities=tuple(entities),
         concepts=tuple(aspects),
         regions=tuple(regions),
         activated=tuple(activated),
-        search_query=" ".join(labels),
+        search_query=search_query,
         aspect_labels=tuple(aspects),
         hops=hops,
     )
