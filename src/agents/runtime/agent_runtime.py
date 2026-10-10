@@ -3866,6 +3866,24 @@ class AgentRuntime:
             # activado por embedding no es equivalencia y no puede declarar un
             # aspecto como cubierto.
             search_query = semantic_plan.search_query or request.message
+            # Aliases conocidos (packs de dominio) también en la búsqueda
+            # inicial: el puente de idioma no puede esperar a la cobertura.
+            try:
+                from src.runtime.narrative_coverage import (
+                    extract_narrative_concepts as _pre_extract,
+                )
+
+                pre_plan = _pre_extract(request.message)
+                pack_terms: list[str] = []
+                for frame in pre_plan.frames:
+                    for alias in frame.aliases:
+                        text = " ".join(str(alias or "").split())
+                        if text and text not in pack_terms:
+                            pack_terms.append(text)
+                if pack_terms:
+                    search_query = f"{search_query} {' '.join(pack_terms)}"
+            except Exception:  # noqa: BLE001 — sin packs sigue la query base
+                pass
             # El top_k de la ruta narrativa es configurable: el del agente
             # (retrieval.top_k) o el global. Antes quedaba fijo en 5 y el tuning
             # del env no llegaba nunca a esta ruta.

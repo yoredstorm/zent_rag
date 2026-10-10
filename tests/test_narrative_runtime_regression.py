@@ -145,7 +145,10 @@ def _isolate_tool_registry():
 @pytest.fixture(autouse=True)
 def _narrative_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     from src.core.config import get_settings
+    from src.runtime import narrative_coverage as nc
 
+    # Tests independientes de los packs verticales cargados por el .env local.
+    monkeypatch.setattr(nc, "_pack_aliases", lambda label: ())
     settings = get_settings()
     monkeypatch.setattr(settings, "RUNTIME_NARRATIVE_FAST_PATH", "on")
     monkeypatch.setattr(settings, "RUNTIME_TURN_INTENT", "off")
