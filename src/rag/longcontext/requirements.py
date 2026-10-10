@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -46,6 +47,19 @@ _ASK_TOKENS: frozenset[str] = frozenset(
         "funciona", "funcionaria", "funcionaría", "sirve", "valida", "validar",
         "corresponde", "pasa", "ocurre", "match", "matches", "applies", "apply",
         "works", "eligible", "valido", "válido", "califica",
+    }
+)
+
+#: Palabras de ENCUADRE de la pregunta («cuéntame sobre…», «dime acerca de…»):
+#: piden la explicación, no son premisas documentales. Genérico, sin dominio.
+_FRAMING_TOKENS: frozenset[str] = frozenset(
+    {
+        "cuentame", "cuentanos", "contame", "dime", "diganos", "decime",
+        "explicame", "explicanos", "explica", "explicar", "hablame", "hablar",
+        "muestrame", "mostrar", "describe", "describir", "detalla", "detallar",
+        "resumeme", "resume", "resumen", "sobre", "acerca", "respecto",
+        "tell", "about", "explain", "show", "summary", "summarize",
+        "information", "informacion", "info", "mas",
     }
 )
 
@@ -563,8 +577,14 @@ def _state_for(
             return _pattern_state(requirement, items, pattern_semantics)
         return RequirementState.MISSING.value
     present = sum(1 for needle in needles if needle and needle in joined)
-    ratio = present / len(needles)
     if requirement.kind == "clause":
+        # Matching de cláusula tolerante: acentos y plural/singular simples no
+        # bloquean («cambio de fechas» vs «fecha efectiva»).
+        folded = _fold(joined)
+        present = sum(
+            1 for needle in needles if needle and _needle_present(needle, folded)
+        )
+        ratio = present / len(needles)
         if ratio >= 0.8:
             return RequirementState.FOUND.value
         if ratio >= 0.4:
@@ -667,12 +687,40 @@ def _clauses(text: str) -> list[str]:
 
 def _clause_tokens(clause: str) -> list[str]:
     tokens: list[str] = []
-    for token in _TOKEN_RE.findall(clause.lower()):
-        if token in _STOPWORDS or len(token) < 3:
+    for token in _TOKEN_RE.findall(_fold(clause)):
+        if token in _STOPWORDS or token in _FRAMING_TOKENS or len(token) < 3:
             continue
         if token not in tokens:
             tokens.append(token)
     return tokens
+
+
+def _fold(text: str) -> str:
+    """Minúsculas sin diacríticos (matching léxico tolerante, no stemmer)."""
+    return (
+        unicodedata.normalize("NFKD", str(text or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+    )
+
+
+def _needle_variants(needle: str) -> tuple[str, ...]:
+    """Variantes morfológicas simples ES/EN (plural -> singular)."""
+    value = str(needle or "").strip().lower()
+    if not value:
+        return ()
+    variants = [value]
+    if len(value) > 4:
+        if value.endswith("es") and len(value) > 5:
+            variants.append(value[:-2])
+        if value.endswith("s"):
+            variants.append(value[:-1])
+    return tuple(dict.fromkeys(variants))
+
+
+def _needle_present(needle: str, folded_text: str) -> bool:
+    return any(variant in folded_text for variant in _needle_variants(needle))
 
 
 __all__ = [

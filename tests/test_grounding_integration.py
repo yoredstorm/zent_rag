@@ -149,6 +149,24 @@ class TestGenerationPackage:
         assert "do NOT search them as source evidence" in block
         assert "chain" not in block.lower()
 
+    def test_informational_block_softens_missing_premise(self) -> None:
+        from src.intelligence.reasoning.grounded_engine import reason_over_evidence
+
+        grounded = reason_over_evidence(
+            question=CANONICAL, evidence_items=[_item(NO_GRAMMAR)]
+        )
+        payload = grounded.to_public_dict()
+        # Vía ejecutable: el bloque nombra la premisa como bloqueo (fail-closed).
+        executable_block = render_grounding_block(payload)
+        assert "MISSING DOMAIN PREMISES" in executable_block
+        assert "Answerability: UNANSWERABLE_MISSING_PREMISE" in executable_block
+        # Consulta informacional: premisa como telemetría, no como bloqueo.
+        informational_block = render_grounding_block(payload, executable=False)
+        assert "MISSING DOMAIN PREMISES" not in informational_block
+        assert "Answerability:" not in informational_block
+        assert "state exactly which one" not in informational_block
+        assert "never refuse the explanation" in informational_block
+
     def test_evidence_block_shows_runtime_pattern_status(self) -> None:
         state = build_evidence_state(CANONICAL, [_item(GRAMMAR)])
         block = render_evidence_state_block(state.to_public_dict())

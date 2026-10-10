@@ -130,6 +130,21 @@ async def test_informational_question_never_abstains_on_missing_premise(
     assert "no tengo suficiente" not in lowered, content
     assert "eff date" in lowered, content
 
+    # El prompt tampoco instruye «state exactly this»: la premisa no es bloqueo.
+    combined_prompts = "\n".join(
+        f"{call.get('system_prompt') or ''}\n{call.get('prompt') or ''}"
+        for call in llm.calls
+    )
+    assert "MISSING DOMAIN PREMISES" not in combined_prompts
+
+    # El paquete de generación no declara faltantes léxicos falsos: la evidencia
+    # cubre la entidad (Record 2) y el aspecto (fechas) por vocabulario.
+    package_steps = [
+        step for step in _steps(result) if step.get("type") == "generation_package"
+    ]
+    assert package_steps, _steps(result)
+    assert not (package_steps[0].get("missing_evidence") or ()), package_steps[0]
+
     # La telemetría conserva la premisa faltante: el escenario se ejercitó.
     grounded_steps = [
         step for step in _steps(result) if step.get("type") == "grounded_reasoning"

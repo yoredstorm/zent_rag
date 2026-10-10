@@ -348,6 +348,16 @@ GROUNDING_PROMPT_INSTRUCTIONS = (
     "if a DOMAIN PREMISE is missing, state exactly which one.",
 )
 
+#: Variante para consultas informacionales (no ejecutables): una premisa de
+#: dominio faltante es telemetría de la cadena determinista, no un bloqueo de
+#: la explicación. El modelo explica lo documentado y declara el límite en una
+#: frase; nunca convierte la respuesta en «no puedo determinarlo».
+INFORMATIONAL_GROUNDING_INSTRUCTIONS = GROUNDING_PROMPT_INSTRUCTIONS[:-1] + (
+    "GENERAL MODEL KNOWLEDGE must not silently fill missing domain semantics; "
+    "if a rule-execution premise is not documented, explain what IS documented "
+    "and state the limit in one sentence (never refuse the explanation).",
+)
+
 #: Instrucciones específicas de resultados deterministas (no negociables).
 AUTHORITATIVE_RESULT_INSTRUCTIONS = (
     "These results were computed by code from verified canonical rules and "
@@ -421,8 +431,16 @@ def render_authoritative_results(payload: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
-def render_grounding_block(payload: dict[str, Any] | None) -> str:
-    """Bloque de razonamiento grounded para el prompt (resultado primero)."""
+def render_grounding_block(
+    payload: dict[str, Any] | None, *, executable: bool = True
+) -> str:
+    """Bloque de razonamiento grounded para el prompt (resultado primero).
+
+    `executable=False` (consulta informacional): la premisa de dominio faltante
+    queda como telemetría de la cadena determinista, no como bloqueo de la
+    explicación. El bloque no pide «state exactly this» ni publica el estado
+    indeterminado de decisión.
+    """
     if not isinstance(payload, dict):
         return ""
     grounding = payload.get("grounding") if isinstance(payload.get("grounding"), dict) else {}
@@ -492,14 +510,18 @@ def render_grounding_block(payload: dict[str, Any] | None) -> str:
             "UNVERIFIED CLAIM (do not assert): "
             + str(claim.get("statement") or "")[:160]
         )
-    if missing_premises:
+    if missing_premises and executable:
         lines.append(
             "MISSING DOMAIN PREMISES (state exactly this; do not fill from model knowledge): "
             + ", ".join(missing_premises[:6])
         )
-    if answerability:
+    if answerability and executable:
         lines.append(f"Answerability: {answerability}")
-    for instruction in GROUNDING_PROMPT_INSTRUCTIONS:
+    for instruction in (
+        GROUNDING_PROMPT_INSTRUCTIONS
+        if executable
+        else INFORMATIONAL_GROUNDING_INSTRUCTIONS
+    ):
         lines.append(f"- {instruction}")
     if supported:
         lines.append(

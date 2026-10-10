@@ -165,7 +165,10 @@ def _coverage_block(adaptive: dict) -> str:
             return ""
         blocks = (
             render_evidence_state_block(package),
-            render_grounding_block(package),
+            render_grounding_block(
+                package,
+                executable=bool(adaptive.get("query_executable", True)),
+            ),
         )
         return "\n\n".join(block for block in blocks if block)
     except Exception as exc:  # noqa: BLE001 — el bloque nunca rompe el request

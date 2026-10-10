@@ -156,6 +156,41 @@ class TestRequirements:
         assert coverage.coverage >= 0.8
         assert requirements_satisfied(coverage, 0.6)
 
+    def test_framing_words_do_not_block_clause_coverage(self) -> None:
+        # «cuéntame sobre …» pide la explicación: no es premisa documental.
+        requirements = build_requirements("cuéntame sobre el Record 2", anchors=[])
+        coverage = evaluate_requirements(
+            requirements, [_chunk("El Record 2 describe los campos del registro.")]
+        )
+        clauses = [
+            requirement.state
+            for requirement in coverage.requirements
+            if requirement.kind == "clause"
+        ]
+        assert clauses
+        assert all(state != RequirementState.MISSING.value for state in clauses)
+
+    def test_plural_and_accent_tolerant_clause_matching(self) -> None:
+        requirements = build_requirements(
+            "el cambio de fechas del Record 2", anchors=[]
+        )
+        coverage = evaluate_requirements(
+            requirements,
+            [
+                _chunk(
+                    "La fecha efectiva y la fecha de descontinuación se "
+                    "procesan en el Record 2."
+                )
+            ],
+        )
+        clause = next(
+            requirement
+            for requirement in coverage.requirements
+            if requirement.kind == "clause"
+        )
+        # «fechas» cubre por «fecha»; «record» está: parcial, nunca MISSING.
+        assert clause.state != RequirementState.MISSING.value
+
     def test_anchor_coverage_exact(self) -> None:
         from src.intelligence.response.anchors import extract_anchors
 
