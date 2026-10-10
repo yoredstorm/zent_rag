@@ -756,7 +756,7 @@ def _clause_alias_terms(clause: str) -> tuple[str, ...]:
     seen: set[str] = set()
     for candidate in candidates:
         parts = candidate.split()
-        for end in range(len(parts), 1, -1):
+        for end in range(len(parts), 0, -1):
             probe = " ".join(parts[:end])
             try:
                 aliases = expand_aliases(probe)

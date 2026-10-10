@@ -180,6 +180,10 @@ class Settings(BaseSettings):
     LITELLM_DEFAULT_MODEL: str = "gpt-4o-mini"
     LITELLM_TIMEOUT_SECONDS: int = Field(default=300, ge=1, le=600)
     LITELLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    #: Límite de pedidos por minuto al proveedor (token bucket cliente). 0 =
+    #: deshabilitado. Debe quedar por debajo del límite real del proveedor
+    #: (p. ej. 30 req/min en Novita) para que el excedente espere en vez de 429.
+    LITELLM_MAX_RPM: int = Field(default=0, ge=0, le=6000)
     #: Modelos de razonamiento (Novita/DeepSeek) emiten `reasoning_content`
     #: oculto que consume `max_tokens`: con el flag encendido se apaga el
     #: thinking en el gateway (`chat_template_kwargs.thinking=false`) para que

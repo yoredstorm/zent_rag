@@ -23,8 +23,10 @@ class FakeLLM(LLMProvider):
     def __init__(self, scores: list[str] | None = None, fail: bool = False) -> None:
         self.scores = scores or []
         self.fail = fail
+        self.calls = 0
 
     async def generate(self, prompt: str, model=None, **kwargs) -> LLMResponse:
+        self.calls += 1
         if self.fail:
             raise RuntimeError("LLM down")
         score = self.scores.pop(0) if self.scores else "0.5"
@@ -67,11 +69,24 @@ class TestNoopReranker:
 class TestLLMReranker:
     @pytest.mark.asyncio
     async def test_blend_and_reorder(self) -> None:
-        llm = FakeLLM(scores=["0.9", "0.1"])
+        # Batch: un solo pedido devuelve el score de cada documento.
+        llm = FakeLLM(scores=["[0.9, 0.1]"])
         chunks = [_chunk("low", 0.5), _chunk("high", 0.5)]
         reranker = LLMReranker(llm_provider=llm, model="test-model")
         out = await reranker.rerank("q", chunks, top_n=2)
+        assert llm.calls == 1
         assert out[0].content == "low"  # blend 0.4*0.5+0.6*0.9 > 0.4*0.5+0.6*0.1
+        assert out[0].score > out[1].score
+
+    @pytest.mark.asyncio
+    async def test_batch_parse_failure_falls_back_per_chunk(self) -> None:
+        # El batch devuelve menos scores que documentos: scoring por chunk.
+        llm = FakeLLM(scores=["[0.9]", "0.8", "0.2"])
+        chunks = [_chunk("a", 0.5), _chunk("b", 0.5)]
+        reranker = LLMReranker(llm_provider=llm, model="test-model")
+        out = await reranker.rerank("q", chunks, top_n=2)
+        assert llm.calls == 3
+        assert out[0].content == "a"
         assert out[0].score > out[1].score
 
     @pytest.mark.asyncio

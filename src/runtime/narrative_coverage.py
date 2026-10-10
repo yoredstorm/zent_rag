@@ -60,6 +60,14 @@ _EDGE_FILLER = (
     r"cuanto|respecto)"
 )
 _EDGE_RE = re.compile(rf"{_EDGE_FILLER}", re.IGNORECASE)
+#: Pedidos de la pregunta que NO son material («… para qué sirven», «cómo
+#: funciona», «sirve para»): no forman parte del aspecto medido.
+_REQUEST_TAIL = re.compile(
+    r"\bpara\s+qu[eé]?\b.*$"
+    r"|\bsirve(?:n)?\b.*$"
+    r"|\bc[oó]mo\s+funciona(?:n)?\b.*$",
+    re.IGNORECASE,
+)
 _STOP = frozenset(
     "de del la el los las en por para con una uno que sobre general".split()
 )
@@ -222,6 +230,13 @@ def _aspect_from_clause(cleaned: str, entity) -> str:
             continue
         kept.append(token)
     text = " ".join(kept)
+    for _ in range(4):
+        updated = re.sub(rf"^{_EDGE_RE.pattern}\s+", "", text).strip()
+        updated = re.sub(rf"\s+{_EDGE_RE.pattern}$", "", updated).strip()
+        if updated == text:
+            break
+        text = updated
+    text = _REQUEST_TAIL.sub(" ", text).strip()
     for _ in range(4):
         updated = re.sub(rf"^{_EDGE_RE.pattern}\s+", "", text).strip()
         updated = re.sub(rf"\s+{_EDGE_RE.pattern}$", "", updated).strip()

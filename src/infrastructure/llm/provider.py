@@ -29,6 +29,7 @@ from src.infrastructure.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
 )
+from src.infrastructure.resilience.rate_limiter import AsyncRateLimiter
 
 logger = get_logger(__name__)
 
@@ -202,6 +203,20 @@ async def _call_generate(
 
 _circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=30.0)
 
+#: Limitador de RPM del proveedor (token bucket). Se reconstruye si cambia el
+#: setting (tests con settings monkeypatcheados incluidos).
+_rate_limiter: AsyncRateLimiter | None = None
+_rate_limiter_rpm = -1
+
+
+def _llm_rate_limiter() -> AsyncRateLimiter:
+    global _rate_limiter, _rate_limiter_rpm
+    rpm = int(getattr(get_settings(), "LITELLM_MAX_RPM", 0) or 0)
+    if _rate_limiter is None or rpm != _rate_limiter_rpm:
+        _rate_limiter = AsyncRateLimiter(rpm)
+        _rate_limiter_rpm = rpm
+    return _rate_limiter
+
 
 class LiteLLMProvider(LLMProvider, EmbeddingProvider):
     """Implementación unificada de LLMProvider y EmbeddingProvider vía LiteLLM."""
@@ -244,6 +259,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         messages.append({"role": "user", "content": prompt})
 
         start = time.perf_counter()
+        await _llm_rate_limiter().acquire()
         try:
             response = await _circuit_breaker.call(
                 f"generate:{model_name}",
@@ -325,6 +341,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
             finish_reason = "stop"
             emitted = False
             try:
+                await _llm_rate_limiter().acquire()
                 response = await _circuit_breaker.call(
                     f"generate:{model_name}",
                     acompletion,
@@ -443,6 +460,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         while True:
             route_attempt += 1
             try:
+                await _llm_rate_limiter().acquire()
                 response = await aembedding(
                     model=call_model,
                     input=texts,

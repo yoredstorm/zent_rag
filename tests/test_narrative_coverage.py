@@ -46,6 +46,35 @@ RECORD_ONLY = (
 )
 
 
+def test_request_tail_is_not_part_of_the_aspect() -> None:
+    plan = extract_narrative_concepts(
+        "cuentame sobre las secuencias en el record 2 para que sirven?"
+    )
+    frame = next(f for f in plan.frames if f.entity.lower().startswith("record"))
+    assert "sirven" not in frame.aspect.lower()
+    assert "para que" not in frame.aspect.lower()
+    assert "secuencias" in frame.aspect.lower()
+
+
+def test_sequence_pack_alias_covers_cross_language_aspect() -> None:
+    from src.knowledge.enrichment.profiling import register_profile_pack
+    from src.verticals.atpco.enrichment import ATPCO_PROFILE_PACK
+
+    register_profile_pack(ATPCO_PROFILE_PACK)
+    plan = extract_narrative_concepts(
+        "cuentame sobre las secuencias en el record 2 para que sirven?"
+    )
+    measured = measure_coverage(
+        plan,
+        ("Record 2 sequences must be read in ascending order.",),
+        searched=False,
+    )
+    aspect = next(
+        item for item in measured if "secuencia" in item.label.lower()
+    )
+    assert aspect.status == COVERED
+
+
 def test_multi_topic_extracts_record_and_date_change() -> None:
     plan = extract_narrative_concepts(QUESTION, vocabulary=DATE_ALIASES)
     labels = [concept.label.lower() for concept in plan.concepts]

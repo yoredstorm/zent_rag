@@ -170,6 +170,34 @@ class TestRequirements:
         assert clauses
         assert all(state != RequirementState.MISSING.value for state in clauses)
 
+    def test_sequence_pack_alias_bridges_english_evidence(self) -> None:
+        from src.knowledge.enrichment.profiling import (
+            EnrichmentProfilePack,
+            register_profile_pack,
+        )
+
+        register_profile_pack(
+            EnrichmentProfilePack(
+                name="test_sequence_bridge_pack",
+                version="1",
+                patterns=(),
+                alias_map={"secuencias": ("Sequence", "Sequences")},
+            )
+        )
+        requirements = build_requirements(
+            "cuéntame sobre las secuencias en el Record 2", anchors=[]
+        )
+        coverage = evaluate_requirements(
+            requirements,
+            [_chunk("Record 2 sequences must be read in ascending order.")],
+        )
+        clause = next(
+            requirement
+            for requirement in coverage.requirements
+            if requirement.kind == "clause"
+        )
+        assert clause.state == RequirementState.FOUND.value
+
     def test_pack_alias_bridges_clause_language(self) -> None:
         # El vocabulario cargado (pack) nombra el aspecto en otro idioma:
         # «cambio de fechas» → Effective Date/Discontinue Date. La cláusula no

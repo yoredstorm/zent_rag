@@ -22,6 +22,16 @@ _DATE_FIELD_ALIASES = (
     "Date Processing",
 )
 
+#: Secuencias del Record 2 (lectura ascendente y matched sequence) tal como
+#: aparecen en el manual en inglés.
+_SEQUENCE_ALIASES = (
+    "Sequence",
+    "Sequences",
+    "Sequence Number",
+    "Sequence Numbers",
+    "Matched Sequence",
+)
+
 ATPCO_PROFILE_PACK = EnrichmentProfilePack(
     name="atpco",
     version="1",
@@ -37,6 +47,10 @@ ATPCO_PROFILE_PACK = EnrichmentProfilePack(
         "fechas efectivas": _DATE_FIELD_ALIASES,
         "fechas de vigencia": _DATE_FIELD_ALIASES,
         "vigencia": _DATE_FIELD_ALIASES,
+        "secuencia": _SEQUENCE_ALIASES,
+        "secuencias": _SEQUENCE_ALIASES,
+        "numero de secuencia": _SEQUENCE_ALIASES,
+        "numeros de secuencia": _SEQUENCE_ALIASES,
     },
     term_map={
         "cambio de fechas": "Effective Date",
