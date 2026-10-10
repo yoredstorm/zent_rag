@@ -3837,7 +3837,6 @@ class AgentRuntime:
                 resolve_semantic_query,
             )
             from src.runtime.dependencies import get_embedding_provider
-            from src.runtime.narrative_coverage import vocabulary_from_activation
 
             semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
             workspace_ids = [
@@ -3862,9 +3861,10 @@ class AgentRuntime:
                 )
             except Exception:  # noqa: BLE001 — sin modelo, sigue el retrieval legado
                 semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
-            learned = vocabulary_from_activation(
-                request.message, semantic_plan.aspect_labels
-            )
+            # El plan semántico enriquece la BÚSQUEDA (terminología del fabric).
+            # La cobertura sigue midiéndose con vocabulario documental: un label
+            # activado por embedding no es equivalencia y no puede declarar un
+            # aspecto como cubierto.
             search_query = semantic_plan.search_query or request.message
             search_started = time.perf_counter()
             tool_result = await execute_tool_guarded(
@@ -3914,7 +3914,6 @@ class AgentRuntime:
                 measure_coverage,
                 narrative_coverage_applies,
                 prefer_aspect_items,
-                vocabulary_from_activation,
                 vocabulary_from_items,
             )
             from src.runtime.narrative_package import freeze_narrative_package
@@ -3938,7 +3937,7 @@ class AgentRuntime:
                 return False
             concept_plan = extract_narrative_concepts(
                 request.message,
-                vocabulary=learned or vocabulary_from_items(registry.all_items()),
+                vocabulary=vocabulary_from_items(registry.all_items()),
             )
             initial_coverage = measure_coverage(
                 concept_plan, registry.all_items(), searched=False
