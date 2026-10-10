@@ -146,11 +146,12 @@ def _clean_clause(clause: str) -> str:
 
 
 def _alias_set(label: str, vocabulary: dict | None) -> tuple[str, ...]:
+    """Vocabulario documental + aliases conocidos por packs de dominio."""
     merged: list[str] = []
     seen: set[str] = set()
-    for alias in _aliases_for(label, vocabulary):
+    for alias in (*_aliases_for(label, vocabulary), *_pack_aliases(label)):
         text = " ".join(str(alias or "").split())
-        folded = text.lower()
+        folded = text.casefold()
         if text and folded not in seen:
             seen.add(folded)
             merged.append(text)
@@ -174,6 +175,19 @@ def _aliases_for(label: str, vocabulary: dict | None) -> tuple[str, ...]:
                 seen.add(folded)
                 found.append(text)
     return tuple(found)
+
+
+def _pack_aliases(label: str) -> tuple[str, ...]:
+    """Aliases conocidos por los packs de dominio cargados (metadata).
+
+    La lógica genérica no conoce ATPCO: consulta el vocabulario enchufado.
+    """
+    try:
+        from src.knowledge.enrichment.profiling import expand_aliases
+
+        return expand_aliases(label)
+    except Exception:  # noqa: BLE001 — sin packs sigue el vocabulario documental
+        return ()
 
 
 def _label_for(clause: str) -> str:
@@ -593,15 +607,15 @@ def decide_coverage_round(
         build_coverage_query(item, anchors=anchors, headings=headings)
         for item in needs_search
     ]
-    words: list[str] = []
+    # Dedupe por frase completa: cortar por palabra rompe "Eff Date"/"Disc Date".
+    parts: list[str] = []
     seen: set[str] = set()
     for chunk in chunks:
-        for word in chunk.split():
-            folded = word.lower()
-            if folded not in seen:
-                seen.add(folded)
-                words.append(word)
-    query = " ".join(words)
+        text = " ".join(chunk.split())
+        if text and text not in seen:
+            seen.add(text)
+            parts.append(text)
+    query = " ".join(parts)
     if not query.strip():
         return CoverageRoundDecision(False, "", NO_TARGET_QUERY, NO_TARGET_QUERY)
     reason = (

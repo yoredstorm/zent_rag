@@ -1,3 +1,3 @@
 # =============================================================================
-# Verticales — packs de dominio enchufables (tools, anchors, vocabulario).
+# Vertical ATPCO — vocabulario y packs de dominio.
 # =============================================================================

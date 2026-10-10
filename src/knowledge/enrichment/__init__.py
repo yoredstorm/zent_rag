@@ -35,6 +35,7 @@ from .pipeline import enrich_document
 from .profiling import (
     EnrichmentProfilePack,
     active_profile_packs,
+    expand_aliases,
     register_profile_pack,
 )
 from .versioning import (
@@ -62,5 +63,6 @@ __all__ = [
     "TemporalQualifier",
     "active_profile_packs",
     "enrich_document",
+    "expand_aliases",
     "register_profile_pack",
 ]

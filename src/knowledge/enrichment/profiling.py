@@ -57,6 +57,9 @@ class EnrichmentProfilePack:
     patterns: tuple[ProfilePattern, ...] = ()
     term_map: Mapping[str, str] = field(default_factory=dict)
     term_types: Mapping[str, str] = field(default_factory=dict)
+    #: Alias conocidos 1:N (término del usuario -> términos del documento).
+    #: Es metadata de dominio del pack, no una regla de la lógica genérica.
+    alias_map: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def canonicalize(self, value: str) -> str | None:
         return self.term_map.get(normalize_key(value))
@@ -195,6 +198,31 @@ def active_profile_packs() -> list[EnrichmentProfilePack]:
     packs = list(_REGISTRY.values())
     packs.sort(key=lambda pack: (pack.name != "generic", pack.name, pack.version))
     return packs
+
+
+def expand_aliases(
+    value: str,
+    packs: Iterable[EnrichmentProfilePack] | None = None,
+) -> tuple[str, ...]:
+    """Aliases conocidos del término según los packs (1:N).
+
+    Ej.: un pack ATPCO mapea «cambio de fechas» a Eff Date/Disc Date. La
+    lógica genérica no conoce dominios: sólo consulta el vocabulario cargado.
+    """
+    key = normalize_key(value)
+    if not key:
+        return ()
+    selected = packs if packs is not None else load_profile_packs()
+    found: list[str] = []
+    seen: set[str] = set()
+    for pack in selected:
+        for alias in pack.alias_map.get(key, ()):
+            text = " ".join(str(alias or "").split())
+            folded = text.casefold()
+            if text and folded not in seen:
+                seen.add(folded)
+                found.append(text)
+    return tuple(found)
 
 
 def classify_term(value: str, packs: Iterable[EnrichmentProfilePack]) -> tuple[str, str, float] | None:

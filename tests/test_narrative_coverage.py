@@ -288,10 +288,47 @@ def test_simple_query_does_not_open_a_coverage_round() -> None:
     assert decision.stop_reason == INITIAL_COMPLETE
 
 
-def test_spanish_date_aspect_does_not_invent_english_aliases() -> None:
+def test_spanish_date_aspect_does_not_invent_english_aliases(monkeypatch) -> None:
+    from src.runtime import narrative_coverage as nc
+
+    monkeypatch.setattr(nc, "_pack_aliases", lambda label: ())
     plan = extract_narrative_concepts("cuentame sobre el record 2 y el cambio de fechas")
     date = next(concept for concept in plan.concepts if "fecha" in concept.label.lower())
     assert date.aliases == ()
+
+
+def test_known_alias_pack_expands_the_date_aspect(monkeypatch) -> None:
+    """El pack vertical es metadata de aliases: la lógica genérica solo lo consulta."""
+    from src.runtime import narrative_coverage as nc
+
+    monkeypatch.setattr(
+        nc,
+        "_pack_aliases",
+        lambda label: ("Eff Date", "Disc Date") if "fecha" in label.lower() else (),
+    )
+    plan = extract_narrative_concepts("cuentame sobre el cambio de fechas en el record 2")
+    date = next(concept for concept in plan.concepts if "fecha" in concept.label.lower())
+    assert "Eff Date" in date.aliases
+    measured = measure_coverage(plan, RECORD_ONLY, searched=False)
+    [coverage] = measured
+    assert coverage.status == PARTIAL_MATERIAL
+    decision = decide_coverage_round(
+        measured,
+        rounds_done=0,
+        max_rounds=1,
+        remaining_steps=4,
+    )
+    assert decision.search is True
+    query = decision.query.lower()
+    assert "eff date" in query
+    assert "disc date" in query
+    found = measure_coverage(
+        plan,
+        ("Record 2 uses the Eff Date and Disc Date fields.",),
+        searched=True,
+    )
+    [covered] = found
+    assert covered.status == COVERED
 
 
 def test_learned_fabric_labels_cover_the_date_aspect() -> None:
@@ -314,7 +351,10 @@ def test_learned_fabric_labels_cover_the_date_aspect() -> None:
     assert "no encontré evidencia suficiente" not in limited.lower()
 
 
-def test_missing_date_aspect_does_not_inject_a_domain_dictionary() -> None:
+def test_missing_date_aspect_does_not_inject_a_domain_dictionary(monkeypatch) -> None:
+    from src.runtime import narrative_coverage as nc
+
+    monkeypatch.setattr(nc, "_pack_aliases", lambda label: ())
     plan = extract_narrative_concepts("cuentame sobre el cambio de fechas en el record 2")
     measured = measure_coverage(plan, RECORD_ONLY, searched=False)
     [coverage] = measured
