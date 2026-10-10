@@ -114,6 +114,33 @@ async def test_stream_no_failover_con_tokens_ya_emitidos(monkeypatch: pytest.Mon
     assert bases == [NOVITA_BASE]
 
 
+@pytest.mark.asyncio
+async def test_stream_failover_con_breaker_abierto_del_primario(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaker del primario abierto: el stream prueba el fallback, no aborta."""
+    _install_settings(monkeypatch)
+    breaker = provider_module._circuit_breaker
+    for _ in range(3):
+        breaker._on_failure(f"generate:{PRIMARY}")
+
+    bases: list[str] = []
+
+    async def fake_acompletion(**kwargs: Any):
+        bases.append(str(kwargs.get("api_base") or ""))
+        return _stream([_delta_chunk("Hola"), _usage_chunk()])
+
+    monkeypatch.setattr(provider_module, "acompletion", fake_acompletion)
+
+    events = [
+        event
+        async for event in provider_module.LiteLLMProvider().generate_stream(prompt="hola")
+    ]
+    done = next(event for event in events if event["type"] == "done")
+    assert done["model"] == FALLBACK
+    assert bases == [DEEPINFRA_BASE]
+
+
 def test_thinking_no_se_pasa_si_esta_apagado(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_settings(monkeypatch, LLM_DISABLE_THINKING=False)
 

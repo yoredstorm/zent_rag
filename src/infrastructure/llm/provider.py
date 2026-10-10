@@ -352,11 +352,22 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
                     if chunk_usage is not None:
                         usage = chunk_usage
             except CircuitBreakerOpenError:
+                # El breaker abierto del primario ES la señal de failover, no
+                # un aborto: si no se emitió nada, se prueba el siguiente
+                # candidato. Con tokens ya emitidos no hay failover posible.
+                has_fallback = attempt + 1 < len(candidates)
+                if emitted or not has_fallback:
+                    logger.warning(
+                        "LLM streaming generation rejected by circuit breaker (circuit is OPEN)",
+                        model=model_name,
+                    )
+                    raise
                 logger.warning(
-                    "LLM streaming generation rejected by circuit breaker (circuit is OPEN)",
+                    "LLM streaming rejected by open breaker; trying fallback model",
                     model=model_name,
+                    fallback=candidates[attempt + 1],
                 )
-                raise
+                continue
             except Exception as exc:
                 # Con tokens ya emitidos no hay failover posible: el cliente vio
                 # texto y cambiar de modelo duplicaría la respuesta.
