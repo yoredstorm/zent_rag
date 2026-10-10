@@ -416,6 +416,80 @@ def _canonical_derived(adaptive: dict | None) -> bool:
     return False
 
 
+#: Stops del motor long-context que significan «evidencia completa» (autoridad
+#: canónica). El score clásico no puede convertir eso en «no hay información».
+_CANONICAL_COMPLETE_STOPS = frozenset(
+    {
+        "evidence_complete_initial",
+        "evidence_complete",
+        "confidence_threshold",
+        "long_context_escalated",
+    }
+)
+
+
+def _canonical_evidence_complete(adaptive: dict | None) -> bool:
+    """¿El motor long-context declaró completa la evidencia recuperada?"""
+    if not isinstance(adaptive, dict) or not adaptive.get("long_context_applied"):
+        return False
+    result = adaptive.get("long_context_result")
+    stop = str(getattr(result, "stop_reason", "") or "")
+    return stop in _CANONICAL_COMPLETE_STOPS
+
+
+def _requires_deterministic(subject: Any) -> bool:
+    """Fail-closed: sin clasificador disponible se asume decisión determinista."""
+    try:
+        from src.runtime.deterministic_authority import (
+            requires_deterministic_decision,
+        )
+
+        return requires_deterministic_decision(subject)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+#: Veredictos clásicos que la autoridad canónica de evidencia puede corregir.
+_CLASSIC_ABSTAIN_STATUSES = frozenset(
+    {"DATA_MISSING", "CONTEXT_MISSING", "DATA_QUALITY_LOW", "HUMAN_REVIEW_REQUIRED"}
+)
+
+
+def correct_decision_with_canonical_evidence(
+    decision: Any,
+    adaptive: dict | None,
+    subject: Any,
+) -> tuple[Any, bool]:
+    """Corrige un veredicto clásico de abstención con la autoridad canónica.
+
+    Si el motor long-context declaró la evidencia completa, un score clásico
+    bajo (rerank bajo umbral, evidences vacías) no puede abstener una
+    explicación informacional. La vía ejecutable conserva su fail-closed.
+    Devuelve (decisión, corregida).
+    """
+    if not _canonical_evidence_complete(adaptive):
+        return decision, False
+    if _requires_deterministic(subject):
+        return decision, False
+    if str(getattr(decision, "status", "") or "") not in _CLASSIC_ABSTAIN_STATUSES:
+        return decision, False
+    from src.core.domain.intelligence import AnswerabilityStatus, ConfidenceLevel
+
+    corrected = replace(
+        decision,
+        status=AnswerabilityStatus.ANSWERABLE_WITH_LIMITS,
+        answerable=True,
+        confidence_level=ConfidenceLevel.MEDIUM,
+        reason_codes=[
+            *(getattr(decision, "reason_codes", None) or []),
+            "CANONICAL_EVIDENCE_COMPLETE",
+        ],
+        recommended_actions=[],
+        message=None,
+    )
+    return corrected, True
+
+
 def _presentation_policy(*, query: str, adaptive: dict, signals: dict | None = None) -> Any:
     """Política de presentación del caso RAG (determinista, fail-soft).
 
@@ -3857,6 +3931,34 @@ class RAGOrchestrator:
                     execution_error=execution_error,
                     authoritative_source=authoritative_source,
                 )
+                # Autoridad canónica de evidencia: si el motor long-context ya
+                # declaró la evidencia completa, un veredicto clásico de
+                # «no hay información / calidad baja» (score del rerank bajo el
+                # umbral, evidences vacías) no puede abstener una explicación
+                # informacional. La vía ejecutable conserva su fail-closed.
+                decision, _canonical_corrected = (
+                    correct_decision_with_canonical_evidence(
+                        decision, adaptive, semantic_query or query
+                    )
+                )
+                if _canonical_corrected:
+                    result.steps.append(
+                        {
+                            "type": "canonical_evidence_override",
+                            "status": "ok",
+                            "detail": (
+                                "evidencia canónica completa: el veredicto "
+                                "clásico no puede abstener la explicación"
+                            ),
+                            "stop_reason": str(
+                                getattr(
+                                    adaptive.get("long_context_result"),
+                                    "stop_reason",
+                                    "",
+                                )
+                            ),
+                        }
+                    )
                 # Una decisión clásica no puede convertir DERIVABLE en abstención:
                 # el motor determinista sobre la evidencia recuperada manda. Si
                 # deriva con premisas grounded, la decisión se corrige; si falta

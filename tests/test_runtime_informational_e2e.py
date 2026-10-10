@@ -99,6 +99,69 @@ def _retrieval() -> RetrievalContext:
     )
 
 
+def test_canonical_evidence_complete_detects_stops() -> None:
+    from src.agents.runtime.orchestrator import _canonical_evidence_complete
+
+    class _Complete:
+        stop_reason = "evidence_complete"
+
+    class _MaxTier:
+        stop_reason = "max_tier_reached"
+
+    assert _canonical_evidence_complete(
+        {"long_context_applied": True, "long_context_result": _Complete()}
+    )
+    assert not _canonical_evidence_complete(
+        {"long_context_applied": False, "long_context_result": _Complete()}
+    )
+    assert not _canonical_evidence_complete(
+        {"long_context_applied": True, "long_context_result": _MaxTier()}
+    )
+    assert not _canonical_evidence_complete(None)
+
+
+def test_canonical_override_corrects_classic_abstention() -> None:
+    from src.agents.runtime.orchestrator import (
+        correct_decision_with_canonical_evidence,
+    )
+    from src.core.domain.intelligence import (
+        AnswerabilityDecision,
+        AnswerabilityStatus,
+    )
+
+    class _Complete:
+        stop_reason = "evidence_complete"
+
+    adaptive = {"long_context_applied": True, "long_context_result": _Complete()}
+    decision = AnswerabilityDecision(
+        status=AnswerabilityStatus.DATA_MISSING,
+        answerable=False,
+        reason_codes=["NO_RETRIEVAL"],
+        missing_data=["Datos sobre: la consulta"],
+    )
+    corrected, applied = correct_decision_with_canonical_evidence(
+        decision, adaptive, "cuentame sobre el record 2"
+    )
+    assert applied is True
+    assert corrected.answerable is True
+    assert corrected.status == AnswerabilityStatus.ANSWERABLE_WITH_LIMITS
+    assert "CANONICAL_EVIDENCE_COMPLETE" in corrected.reason_codes
+
+    # Consulta ejecutable: intacta (fail-closed).
+    executable, applied_exec = correct_decision_with_canonical_evidence(
+        decision, adaptive, "si tengo un farebasis ASDFGRE y &&&F, ¿cumple?"
+    )
+    assert applied_exec is False
+    assert executable.status == AnswerabilityStatus.DATA_MISSING
+
+    # Sin evidencia canónica completa: intacta.
+    untouched, applied_none = correct_decision_with_canonical_evidence(
+        decision, {"long_context_applied": False}, "cuentame sobre el record 2"
+    )
+    assert applied_none is False
+    assert untouched.status == AnswerabilityStatus.DATA_MISSING
+
+
 @pytest.mark.asyncio
 async def test_informational_question_never_abstains_on_missing_premise(
     monkeypatch: pytest.MonkeyPatch,
