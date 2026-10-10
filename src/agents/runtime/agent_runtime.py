@@ -4161,8 +4161,9 @@ class AgentRuntime:
                 system_prompt = (
                     f"{system_prompt}\nLa pregunta pide:\n"
                     + "\n".join(frame_lines)
-                    + "\nExplicá cada aspecto con la terminología de la evidencia; "
-                    "si un aspecto no tiene respaldo, declaralo como limitación."
+                    + "\nExplicá cada aspecto en su sentido material con la "
+                    "terminología de la evidencia; reservá la limitación para un "
+                    "aspecto sin ningún respaldo y declarala una sola vez."
                 )
             if coverage_limit:
                 system_prompt = f"{system_prompt}\n{coverage_limit}"

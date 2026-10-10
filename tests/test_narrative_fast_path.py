@@ -151,6 +151,8 @@ def test_grounded_policy_forbids_external_domain_knowledge() -> None:
     assert "no recomiendes categor" in rules
     assert "implicación práctica" in rules
     assert "no encontraste respaldo suficiente" in rules
+    assert "sentido material" in rules
+    assert "una única vez" in rules
 
 
 def test_narrative_model_policy_configurable_with_agent_fallback() -> None:
