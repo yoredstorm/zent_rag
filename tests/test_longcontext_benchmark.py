@@ -94,7 +94,9 @@ async def test_benchmark_antes_despues(capsys: pytest.CaptureFixture) -> None:
             _query("¿qué es FCLAS?"),
             "gpt-4.1",
             _engine(
-                LongContextSettings(mode="active", requirement_min=0.0),
+                LongContextSettings(
+                    mode="active", requirement_min=0.0, min_initial_chunks=1
+                ),
                 [_Strategy("noop", "no aplica", [simple])],
                 needles=(),
             ),
