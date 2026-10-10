@@ -274,7 +274,9 @@ class AdaptiveLongContextEngine:
             }
         ]
 
-        if self._sufficient(quality, coverage, policy):
+        if self._sufficient(quality, coverage, policy) and self._initial_base_ok(
+            packed.chunks
+        ):
             timeline.append(
                 {
                     "step": "stop",
@@ -638,6 +640,18 @@ class AdaptiveLongContextEngine:
             requirements=requirements,
             anchors=anchors,
         )
+
+    def _initial_base_ok(self, chunks: list[RetrievalChunk]) -> bool:
+        """La primera pasada no cierra con una base mínima de fragmentos.
+
+        Coverage suficiente con pocos fragmentos no garantiza que el gate
+        clásico (scores) vea evidencia: una expansión barata evita una
+        abstención por NO_RETRIEVAL aguas abajo.
+        """
+        minimum = int(getattr(self._settings, "min_initial_chunks", 0) or 0)
+        if minimum <= 0:
+            return True
+        return len(chunks or ()) >= minimum
 
     async def _check(self, chunks: list[RetrievalChunk]) -> Any | None:
         if self._evidence_check is None:

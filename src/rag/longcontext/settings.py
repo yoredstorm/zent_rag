@@ -41,6 +41,10 @@ class LongContextSettings:
     start_tier: int = 0
     max_tier: int = 7
     max_expansions: int = 6
+    #: Base mínima de fragmentos para cerrar el loop en la primera pasada:
+    #: coverage suficiente con pocos fragmentos no garantiza que el gate
+    #: clásico (scores) vea evidencia. 0 = sin mínimo.
+    min_initial_chunks: int = 5
     gain_min: float = 0.04
     requirement_min: float = 0.6
     #: Confianza mínima del evidence evaluator para cerrar el loop.
@@ -314,6 +318,9 @@ def settings_from_app() -> LongContextSettings:
         start_tier=int(getattr(s, "RAG_LONG_CONTEXT_START_TIER", 0) or 0),
         max_tier=int(getattr(s, "RAG_LONG_CONTEXT_MAX_TIER", 7) or 0),
         max_expansions=int(getattr(s, "RAG_LONG_CONTEXT_MAX_EXPANSIONS", 6) or 0),
+        min_initial_chunks=int(
+            getattr(s, "RAG_LONG_CONTEXT_MIN_INITIAL_CHUNKS", 5) or 0
+        ),
         gain_min=float(getattr(s, "RAG_LONG_CONTEXT_GAIN_MIN", 0.04) or 0.0),
         requirement_min=float(
             getattr(s, "RAG_LONG_CONTEXT_REQUIREMENT_MIN", 0.6) or 0.0

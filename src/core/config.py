@@ -2222,6 +2222,16 @@ class Settings(BaseSettings):
         le=12,
         description="Máximo de expansiones progresivas por consulta.",
     )
+    RAG_LONG_CONTEXT_MIN_INITIAL_CHUNKS: int = Field(
+        default=5,
+        ge=0,
+        le=50,
+        description=(
+            "Base mínima de fragmentos para cerrar la primera pasada del "
+            "long-context: coverage suficiente con pocos fragmentos no "
+            "garantiza que el gate clásico vea evidencia. 0 = sin mínimo."
+        ),
+    )
     RAG_LONG_CONTEXT_GAIN_MIN: float = Field(
         default=0.04,
         ge=0.0,

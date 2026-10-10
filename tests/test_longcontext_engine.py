@@ -265,7 +265,7 @@ class TestAdaptiveLongContextEngine:
         """TEST 4: no se consumen 100K para una pregunta ya respondida."""
         initial = _chunk("Byte 105 | Fee application\nLa Tabla de campos lo define.")
         engine = _engine(
-            settings=_settings(),
+            settings=_settings(min_initial_chunks=1),
             initial=initial,
             strategies=[_Strategy("nunca", "no debería usarse", [_chunk("x")])],
             check=_always_sufficient(),
@@ -279,6 +279,33 @@ class TestAdaptiveLongContextEngine:
         assert result.final_tokens <= 8192
         assert result.expansions == []
         assert result.budget.usable_context > 500_000  # disponible, no usado
+
+    @pytest.mark.asyncio
+    async def test_min_initial_base_expands_before_stopping(self) -> None:
+        """Coverage suficiente con base mínima no cierra la primera pasada.
+
+        Con pocos fragmentos el gate clásico (scores) puede no ver evidencia y
+        abstenerse por NO_RETRIEVAL: una expansión barata lo evita.
+        """
+        initial = _chunk("La respuesta corta está en un solo fragmento.")
+        extra = [
+            _chunk(f"Fragmento adicional {index} del contexto.") for index in range(2)
+        ]
+        engine = _engine(
+            settings=_settings(
+                min_initial_chunks=3, max_expansions=2, expansion_chunks=2
+            ),
+            initial=initial,
+            strategies=[_Strategy("extra", "faltaba base mínima", extra)],
+            check=_always_sufficient(),
+        )
+        result = await engine.run(
+            query=_query("¿cuál es la respuesta?"),
+            model="gpt-4.1",
+            initial=RetrievalContext(chunks=[initial]),
+        )
+        assert result.stop_reason != STOP_EVIDENCE_INITIAL
+        assert len(result.packed.chunks) >= 3
 
     @pytest.mark.asyncio
     async def test_expands_to_next_chunk(self) -> None:
@@ -356,7 +383,7 @@ class TestAdaptiveLongContextEngine:
         """TEST 8: 500K+ disponibles y evidencia completa temprano; no se usa."""
         initial = _chunk("La respuesta corta está en un solo fragmento.")
         engine = _engine(
-            settings=_settings(),
+            settings=_settings(min_initial_chunks=1),
             initial=initial,
             strategies=[_Strategy("x", "no aplica", [_chunk("irrelevante")])],
             check=_always_sufficient(),
