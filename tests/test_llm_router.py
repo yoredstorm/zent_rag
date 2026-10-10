@@ -153,6 +153,29 @@ async def test_generate_routed_non_transient_goes_straight_to_fallback() -> None
     assert fake.calls == ["bad-primary", "good-fallback"]
 
 
+class _QuotaError(Exception):
+    status_code = 429
+
+
+@pytest.mark.asyncio
+async def test_generate_routed_explicit_rate_limit_goes_straight_to_fallback() -> None:
+    """Un rate limit de cuota no se reintenta: reintentar lo empeora."""
+    calls: list[str] = []
+
+    async def generate(prompt: str, model: str | None = None, **kwargs) -> LLMResponse:
+        calls.append(str(model))
+        if model == "primary":
+            raise _QuotaError(
+                "You have exceeded the request rate limit. Please wait a short period"
+            )
+        return LLMResponse(content="ok", model=model)
+
+    route = resolve_route(requested="primary", fallback_override="fallback")
+    response = await generate_routed(generate, prompt="hola", route=route)
+    assert response.model == "fallback"
+    assert calls == ["primary", "fallback"]
+
+
 @pytest.mark.asyncio
 async def test_circuit_breaker_es_por_modelo(monkeypatch: pytest.MonkeyPatch) -> None:
     """Un modelo caído no abre el circuito del fallback."""

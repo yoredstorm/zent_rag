@@ -22,16 +22,19 @@ _TRANSIENT_RETRY_SECONDS = 1.5
 
 
 def _retryable_provider_error(exc: Exception) -> bool:
-    """429/overloaded transitorio. Un circuit breaker abierto no se reintenta."""
+    """429/overloaded transitorio. Un rate limit explícito va al fallback ya."""
     name = type(exc).__name__.lower()
     if "circuitbreaker" in name:
+        return False
+    message = str(exc).lower()
+    if "exceeded the request rate limit" in message or "rate limit exceeded" in message:
+        # Cuota/rate limit del proveedor: reintentar en 1.5s solo lo empeora.
         return False
     if "ratelimit" in name or "overloaded" in name or "timeout" in name:
         return True
     if getattr(exc, "status_code", None) == 429:
         return True
-    message = str(exc).lower()
-    return "429" in message or "model busy" in message or "overloaded" in message
+    return "model busy" in message or "overloaded" in message
 
 
 @dataclass(frozen=True, kw_only=True)
