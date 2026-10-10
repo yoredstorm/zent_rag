@@ -871,14 +871,8 @@ class KnowledgeIngestionEngine:
     # Camino único: source -> StructuredDocument -> knowledge
     # ------------------------------------------------------------------
     def _semantic_service(self):
-        """Servicio de ingesta semántica progresiva (None = deshabilitado)."""
-        service = self._semantic_ingestion
-        if service is None:
-            return None
-        try:
-            return service if getattr(service, "enabled", False) else None
-        except Exception:  # noqa: BLE001
-            return None
+        """Servicio de ingesta semántica. El rollout decide por workspace."""
+        return self._semantic_ingestion
 
     async def _semantic_record_failed(self, job, source, record, exc) -> None:
         """Marca el fallo real del record en el manifiesto (fail-soft)."""
@@ -961,6 +955,7 @@ class KnowledgeIngestionEngine:
             organization_id=job.organization_id,
             source_id=source.id,
             external_id=external_id,
+            workspace_id=getattr(source, "workspace_id", None),
         ):
             # Canary: esta fuente no entra al pipeline semántico.
             semantic = None

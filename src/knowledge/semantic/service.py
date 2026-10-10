@@ -212,6 +212,20 @@ class SemanticIngestionService:
             ).strip().lower()
         return value if value in _MODES else "off"
 
+    def mode_for(self, *, organization_id=None, workspace_id=None) -> str:
+        from .rollout import resolve_semantic_mode
+
+        return resolve_semantic_mode(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            global_mode=self.mode,
+        )
+
+    def allows(self, *, organization_id=None, workspace_id=None) -> bool:
+        return self.mode_for(
+            organization_id=organization_id, workspace_id=workspace_id
+        ) != "off"
+
     @property
     def enabled(self) -> bool:
         return self.mode != "off"
@@ -236,13 +250,16 @@ class SemanticIngestionService:
         organization_id,
         source_id,
         external_id: str,
+        workspace_id=None,
     ) -> bool:
         """Canary: selección determinista por org+source+external_id.
 
         shadow/active procesan siempre; canary solo el porcentaje configurado;
-        off nunca.
+        off nunca. El rollout de workspace/org pisa el modo global.
         """
-        mode = self.mode
+        mode = self.mode_for(
+            organization_id=organization_id, workspace_id=workspace_id
+        )
         if mode == "off":
             return False
         if mode != "canary":
@@ -276,9 +293,13 @@ class SemanticIngestionService:
         raw_data: bytes,
         versions: dict | None = None,
         document_id: UUID | None = None,
+        force: bool = False,
     ) -> bool:
         """Registra el inicio. True = fuente ya completa y vigente (SKIP)."""
-        if not self.enabled or source_id is None:
+        scoped = self.mode_for(
+            organization_id=organization_id, workspace_id=workspace_id
+        )
+        if scoped == "off" or source_id is None:
             return False
         raw_hash = raw_fingerprint(raw_data)
         current_versions = dict(versions or semantic_versions())
@@ -294,7 +315,8 @@ class SemanticIngestionService:
             )
             return False
         if (
-            self.active
+            not force
+            and scoped == "active"
             and existing is not None
             and existing.raw_fingerprint == raw_hash
             and existing.versions == current_versions
@@ -366,7 +388,10 @@ class SemanticIngestionService:
 
     async def parsed(self, document: StructuredDocument) -> SemanticWindowPlan | None:
         """Marca parsing/understanding y planifica ventanas (soft boundaries)."""
-        if not self.enabled:
+        if not self.allows(
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+        ):
             return None
         manifest = await self._load(document)
         if manifest is None:
@@ -451,7 +476,10 @@ class SemanticIngestionService:
         indexed_units: int,
         window_plan: SemanticWindowPlan | None = None,
     ) -> None:
-        if not self.enabled:
+        if not self.allows(
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+        ):
             return
         manifest = await self._load(document)
         if manifest is None:
@@ -483,7 +511,10 @@ class SemanticIngestionService:
         Fail-soft: un fallo del procesador no frena la ingesta; el manifiesto
         refleja PARTIAL/FAILED y el próximo sync reanuda las ventanas stale.
         """
-        if not self.enabled:
+        if not self.allows(
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+        ):
             return None
         if plan is None:
             try:
@@ -774,7 +805,10 @@ class SemanticIngestionService:
         self, document: StructuredDocument, *, compiled: bool | None = None
     ) -> None:
         """Cierra el manifiesto: pipeline completo si las etapas requeridas corrieron."""
-        if not self.enabled:
+        if not self.allows(
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+        ):
             return
         manifest = await self._load(document)
         if manifest is None:
@@ -809,7 +843,10 @@ class SemanticIngestionService:
         self, document: StructuredDocument
     ) -> tuple[list[dict], dict] | None:
         """Fase 14: probes V2 derivados del fabric (nodos + dependencias)."""
-        if not self.enabled:
+        if not self.allows(
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+        ):
             return None
         try:
             nodes = await self._store.list_fabric_nodes(
@@ -842,13 +879,21 @@ class SemanticIngestionService:
         retrievers actuales los ignoran); active = además labels en sparse.
         Fail-soft: sin fabric persistido devuelve None.
         """
-        if not self.enabled:
+        if not self.allows(
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+        ):
             return None
-        mode = str(
-            _setting("KNOWLEDGE_SEMANTIC_FABRIC_UNITS_MODE", "shadow") or "shadow"
-        ).strip().lower()
-        if mode not in ("off", "shadow", "active"):
-            mode = "shadow"
+        from .rollout import resolve_fabric_mode
+
+        mode = resolve_fabric_mode(
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+            global_semantic_mode=self.mode,
+            global_fabric_mode=str(
+                _setting("KNOWLEDGE_SEMANTIC_FABRIC_UNITS_MODE", "shadow") or "shadow"
+            ),
+        )
         if mode == "off":
             return None
         try:

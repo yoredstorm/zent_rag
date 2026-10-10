@@ -64,18 +64,6 @@ _STOP = frozenset(
     "de del la el los las en por para con una uno que sobre general".split()
 )
 _RANK = {MISSING: 0, PARTIAL: 1, PARTIAL_MATERIAL: 2, COVERED: 3}
-#: Puente de idioma, no de dominio. La pregunta dice «fechas»; el manual
-#: nombra estos campos. Sin esto, Eff Date queda MISSING y el prompt obliga
-#: a declarar ausencia.
-_DATE_CUE = re.compile(r"\b(?:fechas?|dates?|vigencia|efectividad)\b")
-_DATE_DOC_ALIASES = (
-    "effective date",
-    "eff date",
-    "discontinue date",
-    "disc date",
-    "date processing",
-    "date change",
-)
 
 
 @dataclass(frozen=True)
@@ -157,16 +145,10 @@ def _clean_clause(clause: str) -> str:
     return text
 
 
-def _documentary_aliases(label: str) -> tuple[str, ...]:
-    if not _DATE_CUE.search(_norm(label)):
-        return ()
-    return _DATE_DOC_ALIASES
-
-
 def _alias_set(label: str, vocabulary: dict | None) -> tuple[str, ...]:
     merged: list[str] = []
     seen: set[str] = set()
-    for alias in (*_aliases_for(label, vocabulary), *_documentary_aliases(label)):
+    for alias in _aliases_for(label, vocabulary):
         text = " ".join(str(alias or "").split())
         folded = text.lower()
         if text and folded not in seen:
@@ -286,9 +268,8 @@ def extract_narrative_concepts(
 
     La conjunción separa cláusulas. Una cláusula con una sola entidad y texto
     adicional se vuelve un frame entidad+aspecto: la entidad no cubre el
-    aspecto. Los aliases salen del vocabulario documental. Un aspecto de
-    fechas también usa los nombres de campo del manual (effective date,
-    discontinue date): si no, el texto en inglés se lee como ausencia.
+    aspecto. Los aliases salen del vocabulario aprendido (fabric) o del que
+    ya vino en la evidencia. Acá no se inventa un diccionario de dominio.
     """
     clauses = [part.strip() for part in _SPLIT.split(question or "") if part.strip()]
     frames: list[NarrativeConceptFrame] = []
@@ -700,6 +681,20 @@ def ensure_concept_representation(selected, all_items, concepts) -> list:
         if all(getattr(best, "evidence_id", id(best)) != getattr(item, "evidence_id", id(item)) for item in chosen):
             chosen.append(best)
     return chosen
+
+
+def vocabulary_from_activation(question: str, aspect_labels: tuple[str, ...] | list[str]) -> dict:
+    """Aliases del aspecto = labels que el fabric activó. Sin lista fija."""
+    labels = tuple(str(label).strip() for label in aspect_labels or () if str(label).strip())
+    if not labels:
+        return {}
+    plan = extract_narrative_concepts(question)
+    vocabulary: dict[str, tuple[str, ...]] = {}
+    for frame in plan.frames:
+        key = frame.aspect or ("" if frame.entity else frame.label)
+        if key:
+            vocabulary[key] = labels
+    return vocabulary
 
 
 def prefer_aspect_items(selected, concepts, *, keep_uncovered: int = 2) -> list:

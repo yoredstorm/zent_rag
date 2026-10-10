@@ -3831,11 +3831,46 @@ class AgentRuntime:
             tool = get_tool("search_knowledge")
             if tool is None or not tool_allowed(tool, effective_tools, ctx):
                 return False
+            from src.knowledge.semantic.query_plan import (
+                LEGACY_RETRIEVAL,
+                SemanticQueryPlan,
+                resolve_semantic_query,
+            )
+            from src.runtime.dependencies import get_embedding_provider
+            from src.runtime.narrative_coverage import vocabulary_from_activation
+
+            semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
+            workspace_ids = [
+                str(item)
+                for item in (ctx.org_config or {}).get("knowledge_workspace_ids") or ()
+                if item
+            ]
+            workspace_id = None
+            if len(workspace_ids) == 1:
+                try:
+                    from uuid import UUID as _UUID
+
+                    workspace_id = _UUID(workspace_ids[0])
+                except ValueError:
+                    workspace_id = None
+            try:
+                semantic_plan = await resolve_semantic_query(
+                    organization_id=ctx.tenant_id,
+                    workspace_id=workspace_id,
+                    question=request.message,
+                    embedder=get_embedding_provider(),
+                )
+            except Exception:  # noqa: BLE001 — sin modelo, sigue el retrieval legado
+                semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
+            learned = vocabulary_from_activation(
+                request.message, semantic_plan.aspect_labels
+            )
+            search_query = semantic_plan.search_query or request.message
             search_started = time.perf_counter()
             tool_result = await execute_tool_guarded(
                 tool,
                 ctx,
-                {"query": request.message, "top_k": 5},
+                {"query": search_query, "top_k": 5},
                 self._rate_limiter,
             )
             search_ms = (time.perf_counter() - search_started) * 1000
@@ -3847,7 +3882,7 @@ class AgentRuntime:
                 )
             record_search_call(
                 result,
-                query=request.message,
+                query=search_query,
                 latency_ms=search_ms,
                 evidence_added=max(0, registry.size - before_evidence),
                 result_count=evidence_count(
@@ -3879,6 +3914,7 @@ class AgentRuntime:
                 measure_coverage,
                 narrative_coverage_applies,
                 prefer_aspect_items,
+                vocabulary_from_activation,
                 vocabulary_from_items,
             )
             from src.runtime.narrative_package import freeze_narrative_package
@@ -3902,7 +3938,7 @@ class AgentRuntime:
                 return False
             concept_plan = extract_narrative_concepts(
                 request.message,
-                vocabulary=vocabulary_from_items(registry.all_items()),
+                vocabulary=learned or vocabulary_from_items(registry.all_items()),
             )
             initial_coverage = measure_coverage(
                 concept_plan, registry.all_items(), searched=False
@@ -4101,6 +4137,7 @@ class AgentRuntime:
                         "detail": reason,
                         **route.to_public_dict(),
                         **budget_public,
+                        **semantic_plan.to_public_dict(),
                         "retrieval_rounds": 1 + coverage_rounds,
                         "narrative_concepts": len(concept_plan.concepts),
                         "coverage_rounds": coverage_rounds,
@@ -4264,6 +4301,7 @@ class AgentRuntime:
                         f"Verification:\n{overall}"
                     ),
                     **route.to_public_dict(),
+                    **semantic_plan.to_public_dict(),
                     "retrieval_rounds": 1 + coverage_rounds,
                     "retrieval_latency_ms": round(retrieval_ms, 2),
                     "model_latency_ms": round(model_ms, 2),

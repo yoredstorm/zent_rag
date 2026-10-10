@@ -1908,6 +1908,14 @@ class Settings(BaseSettings):
         description="Caracteres de cada seccion que entran al prompt de resumen.",
     )
     # --- Progressive Semantic Ingestion (Fases 1-2) -------------------------
+    KNOWLEDGE_SEMANTIC_ROLLOUT: str = Field(
+        default="{}",
+        description=(
+            "JSON {workspaces:{uuid: off|shadow|canary|active}, organizations:{...}}. "
+            "Pisa KNOWLEDGE_SEMANTIC_INGESTION_MODE solo en ese alcance. Vacío = "
+            "el modo global para todos."
+        ),
+    )
     KNOWLEDGE_SEMANTIC_INGESTION_MODE: str = Field(
         default="off",
         pattern="^(off|shadow|active|canary)$",

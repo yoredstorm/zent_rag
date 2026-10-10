@@ -21,7 +21,7 @@ from uuid import UUID
 
 SEMANTIC_INGESTION_VERSION = "semantic-ingestion-1"
 WINDOW_PLAN_VERSION = "semantic-window-plan-1"
-WINDOW_UNDERSTANDING_VERSION = "semantic-window-understanding-1"
+WINDOW_UNDERSTANDING_VERSION = "semantic-window-understanding-2"
 SEMANTIC_STATE_VERSION = "semantic-state-1"
 STATE_SELECTOR_VERSION = "semantic-state-selector-1"
 

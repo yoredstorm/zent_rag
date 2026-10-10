@@ -32,6 +32,12 @@ _TEMPORAL = re.compile(
     r"|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b"
     r"|\b(?:19|20)\d{2}\b"
 )
+_SEE_SECTION = re.compile(
+    r"\b(?:see|refer to|v[eé]ase)\s+(?:the\s+)?"
+    r"([A-Za-z][A-Za-z0-9]+(?:[ \-][A-Za-z0-9]+){0,6})\s+section\b",
+    re.IGNORECASE,
+)
+_FIELD_CELL = re.compile(r"^[A-Za-z][A-Za-z0-9 .#/_-]{1,40}$")
 _STEP = re.compile(r"(?m)^\s*(?:\d{1,2}[.)]|paso\s+\d+|step\s+\d+)\s+\S", re.IGNORECASE)
 _TERMINAL = (".", "!", "?", ";", ":")
 
@@ -451,6 +457,37 @@ def extract_window_items(
                     attributes={"table_id": block.metadata.get("table_id")},
                 )
             )
+            for field_name, quote in _table_field_names(text):
+                add(
+                    WindowItem(
+                        kind="entity",
+                        key=f"field:{normalize_term(field_name)}",
+                        label=field_name,
+                        text=quote,
+                        confidence=0.8,
+                        block_ids=(block_id,),
+                        attributes={
+                            "entity_type": "field",
+                            "source": "table_header",
+                            "quote": quote[:240],
+                        },
+                    )
+                )
+        for match in _SEE_SECTION.finditer(text):
+            target = " ".join(match.group(1).split())
+            if len(target) < 3:
+                continue
+            add(
+                WindowItem(
+                    kind="unresolved_reference",
+                    key=f"section:{normalize_term(target)}",
+                    label=target,
+                    text=match.group(0)[:240],
+                    confidence=0.7,
+                    block_ids=(block_id,),
+                    attributes={"target_kind": "section", "source": "see_section"},
+                )
+            )
         for line in _lines(text):
             if len(line) < 20:
                 continue
@@ -506,6 +543,34 @@ def extract_window_items(
     if max_items > 0 and len(items) > max_items:
         items = items[:max_items]
     return items
+
+
+def _table_field_names(text: str) -> list[tuple[str, str]]:
+    """Nombres de columna de la tabla. El quote es la fila, no un alias inventado."""
+    line = ""
+    for candidate in (text or "").splitlines():
+        if "|" in candidate:
+            line = candidate
+            break
+    if not line and "|" in (text or ""):
+        line = (text or "")[:500]
+    quote = " ".join(line.split())[:240]
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for cell in line.split("|"):
+        name = " ".join(cell.split()).strip(" .")
+        if not name or not _FIELD_CELL.match(name):
+            continue
+        if sum(char.isalpha() for char in name) < 2:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append((name, quote or name))
+        if len(found) >= 16:
+            break
+    return found
 
 
 def _heuristic(kind: str, line: str, block_id: str, window_index: int) -> WindowItem:

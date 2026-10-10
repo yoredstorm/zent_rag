@@ -26,6 +26,7 @@ from src.runtime.narrative_coverage import (
     measure_coverage,
     narrative_coverage_applies,
     prefer_aspect_items,
+    vocabulary_from_activation,
 )
 
 QUESTION = "cuentame sobre el record 2 y el cambio de fechas de efectividad"
@@ -287,15 +288,18 @@ def test_simple_query_does_not_open_a_coverage_round() -> None:
     assert decision.stop_reason == INITIAL_COMPLETE
 
 
-def test_spanish_date_aspect_matches_english_record_2_dates_without_vocabulary() -> None:
-    """El corpus ATPCO nombra Eff Date / Disc Date. La pregunta está en español.
-
-    Sin vocabulario inyectado, el aspecto no puede declararse ausente.
-    """
-    question = "cuentame sobre el record 2 y el cambio de fechas"
-    plan = extract_narrative_concepts(question)
+def test_spanish_date_aspect_does_not_invent_english_aliases() -> None:
+    plan = extract_narrative_concepts("cuentame sobre el record 2 y el cambio de fechas")
     date = next(concept for concept in plan.concepts if "fecha" in concept.label.lower())
-    assert "effective date" in [alias.lower() for alias in date.aliases]
+    assert date.aliases == ()
+
+
+def test_learned_fabric_labels_cover_the_date_aspect() -> None:
+    question = "cuentame sobre el record 2 y el cambio de fechas"
+    vocabulary = vocabulary_from_activation(question, ("Eff Date", "Disc Date"))
+    plan = extract_narrative_concepts(question, vocabulary=vocabulary)
+    date = next(concept for concept in plan.concepts if "fecha" in concept.label.lower())
+    assert "eff date" in [alias.lower() for alias in date.aliases]
     evidence = (
         "Footnote Record 2 is an exact match.",
         "Eff Date | Disc Date | See the Date processing Section on Effective date Matching.",
@@ -303,15 +307,6 @@ def test_spanish_date_aspect_matches_english_record_2_dates_without_vocabulary()
     measured = measure_coverage(plan, evidence, searched=False)
     covered = next(item for item in measured if "fecha" in item.label.lower())
     assert covered.status == COVERED
-    assert covered.epistemic == SUPPORTED
-    decision = decide_coverage_round(
-        measured,
-        rounds_done=0,
-        max_rounds=1,
-        remaining_steps=4,
-    )
-    assert decision.search is False
-    assert decision.stop_reason == INITIAL_COMPLETE
     limited = apply_coverage_limitation(
         "Record 2 matchea Eff Date y Disc Date [Doc: 1].",
         measured,
@@ -319,7 +314,7 @@ def test_spanish_date_aspect_matches_english_record_2_dates_without_vocabulary()
     assert "no encontré evidencia suficiente" not in limited.lower()
 
 
-def test_missing_date_aspect_searches_documentary_date_phrases() -> None:
+def test_missing_date_aspect_does_not_inject_a_domain_dictionary() -> None:
     plan = extract_narrative_concepts("cuentame sobre el cambio de fechas en el record 2")
     measured = measure_coverage(plan, RECORD_ONLY, searched=False)
     [coverage] = measured
@@ -332,13 +327,17 @@ def test_missing_date_aspect_searches_documentary_date_phrases() -> None:
     )
     assert decision.search is True
     query = decision.query.lower()
-    assert "effective date" in query
-    assert "discontinue" in query
-    assert "cuentame" not in query
+    assert "effective date" not in query
+    assert "cambio de fechas" in query
+    assert "record 2" in query
 
 
 def test_aspect_evidence_leads_and_unrelated_sections_stay_short() -> None:
-    plan = extract_narrative_concepts("cuentame sobre el record 2 y el cambio de fechas")
+    question = "cuentame sobre el record 2 y el cambio de fechas"
+    plan = extract_narrative_concepts(
+        question,
+        vocabulary=vocabulary_from_activation(question, ("Eff Date", "Disc Date")),
+    )
     items = [
         EvidenceItem(source_type="qdrant", content="Footnote Record 2 exact match.", score=0.9),
         EvidenceItem(source_type="qdrant", content="Fare class hyphen family.", score=0.8),

@@ -1574,6 +1574,37 @@ class PostgresSemanticIngestionStore:
         finally:
             await session.close()
 
+    async def list_modeled_document_ids(
+        self,
+        organization_id: UUID,
+        *,
+        workspace_id: UUID | None = None,
+        limit: int = 8,
+    ) -> list[UUID]:
+        session = await get_async_session()
+        try:
+            where = ["organization_id = :oid"]
+            params: dict = {
+                "oid": str(organization_id),
+                "limit": max(1, min(int(limit), 50)),
+            }
+            if workspace_id is not None:
+                where.append("workspace_id = :ws")
+                params["ws"] = str(workspace_id)
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT document_id FROM knowledge_global_models WHERE "  # noqa: S608
+                        + " AND ".join(where)
+                        + " ORDER BY updated_at DESC LIMIT :limit"
+                    ),
+                    params,
+                )
+            ).fetchall()
+            return [row.document_id for row in rows]
+        finally:
+            await session.close()
+
     async def list_fabric_nodes(
         self,
         organization_id: UUID,
