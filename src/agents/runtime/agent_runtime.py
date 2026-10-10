@@ -3800,6 +3800,10 @@ class AgentRuntime:
             """Búsqueda inicial, cierre de cobertura y una generación. Sin ReAct."""
             nonlocal selection, narrative_package, narrative_version
             nonlocal selection_question, selection_max_items
+
+            def _skip(reason: str) -> bool:
+                logger.info("narrative fast path skipped", reason=reason)
+                return False
             from src.knowledge.structure.document_bundle import narrative_context_text
             from src.runtime.narrative_fast_path import (
                 NARRATIVE_FAST_PATH,
@@ -3825,7 +3829,7 @@ class AgentRuntime:
 
             route = narrative_route(request.message)
             if not route.eligible:
-                return False
+                return _skip("route_ineligible")
             from src.runtime.run_accounting import evidence_count, record_llm_call, record_search_call
 
             ledger = RunBudgetLedger.from_config(result, config)
@@ -3835,10 +3839,10 @@ class AgentRuntime:
             verification_ms = 0.0
             # Retrieval + generación son dos pasos lógicos. Con menos, el loop normal.
             if ledger.remaining_steps < 2:
-                return False
+                return _skip("budget_steps")
             tool = get_tool("search_knowledge")
             if tool is None or not tool_allowed(tool, effective_tools, ctx):
-                return False
+                return _skip("tool_unavailable")
             from src.knowledge.semantic.query_plan import (
                 LEGACY_RETRIEVAL,
                 SemanticQueryPlan,
@@ -3935,9 +3939,9 @@ class AgentRuntime:
                 error=str(getattr(tool_result, "error", "") or ""),
             )
             if getattr(tool_result, "error", None):
-                return False
+                return _skip("search_error")
             if registry.is_empty():
-                return False
+                return _skip("no_evidence")
             ledger.charge_tool_step()
             from src.runtime.evidence import assess_sufficiency, select_evidence
             from src.runtime.narrative_coverage import (
@@ -3963,7 +3967,7 @@ class AgentRuntime:
             from src.runtime.narrative_package import freeze_narrative_package
 
             if not narrative_coverage_applies(request.message):
-                return False
+                return _skip("coverage_not_applicable")
             probe = select_evidence(
                 registry.all_items(),
                 selection_question,
@@ -3977,9 +3981,9 @@ class AgentRuntime:
             )
             conflicts = int(getattr(probe_sufficiency, "conflicting_chunks", 0) or 0)
             if not getattr(probe_sufficiency, "generate", False):
-                return False
+                return _skip("sufficiency_no_generate")
             if jev_needed(conflicts=conflicts) or coverage_needs_jev(conflicts=conflicts):
-                return False
+                return _skip("jev_needed")
             concept_plan = extract_narrative_concepts(
                 request.message,
                 vocabulary=vocabulary_from_items(registry.all_items()),
@@ -4130,7 +4134,7 @@ class AgentRuntime:
                 needles=tuple(question_needles(selection_question)),
             )
             if not context.strip():
-                return False
+                return _skip("empty_context")
             persona = personality_for_agent(
                 getattr(request.agent, "config_json", None),
                 message=request.message,
@@ -4266,7 +4270,7 @@ class AgentRuntime:
                             timeout_seconds=narrative_timeout,
                             model=model_policy.model,
                         )
-                        return False
+                        return _skip("timeout_no_fallback")
                     provider_fallback = True
                     fallback_started = time.perf_counter()
                     response = await self._llm.generate(
@@ -4313,7 +4317,7 @@ class AgentRuntime:
                 result.steps.append({"type": "guardrail", "detail": "max_cost exceeded"})
             content = str(getattr(response, "content", "") or "")
             if not content.strip():
-                return False
+                return _skip("empty_generation")
             result.answer = apply_coverage_limitation(content, final_coverage)
             verify_started = time.perf_counter()
             _bind_narrative_answer()
