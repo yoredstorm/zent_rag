@@ -46,6 +46,23 @@ RECORD_ONLY = (
 )
 
 
+def test_closure_pack_alias_covers_date_closure_aspect() -> None:
+    from src.knowledge.enrichment.profiling import register_profile_pack
+    from src.verticals.atpco.enrichment import ATPCO_PROFILE_PACK
+
+    register_profile_pack(ATPCO_PROFILE_PACK)
+    plan = extract_narrative_concepts(
+        "cuentame sobre el cierre de fechas en el record 2"
+    )
+    measured = measure_coverage(
+        plan,
+        ("Record 2 includes the Discontinue Date field (Rule bytes 80-86).",),
+        searched=False,
+    )
+    aspect = next(item for item in measured if "cierre" in item.label.lower())
+    assert aspect.status == COVERED
+
+
 def test_request_tail_is_not_part_of_the_aspect() -> None:
     plan = extract_narrative_concepts(
         "cuentame sobre las secuencias en el record 2 para que sirven?"

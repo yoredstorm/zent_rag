@@ -32,6 +32,15 @@ _SEQUENCE_ALIASES = (
     "Matched Sequence",
 )
 
+#: Cierre/vigencia de fechas: el manual lo documenta como Discontinue Date y el
+#: procesamiento de fechas.
+_CLOSURE_ALIASES = (
+    "Discontinue Date",
+    "Disc Date",
+    "Date Processing",
+    "Effective Date",
+)
+
 ATPCO_PROFILE_PACK = EnrichmentProfilePack(
     name="atpco",
     version="1",
@@ -51,6 +60,10 @@ ATPCO_PROFILE_PACK = EnrichmentProfilePack(
         "secuencias": _SEQUENCE_ALIASES,
         "numero de secuencia": _SEQUENCE_ALIASES,
         "numeros de secuencia": _SEQUENCE_ALIASES,
+        "cierre de fechas": _CLOSURE_ALIASES,
+        "cierre de fecha": _CLOSURE_ALIASES,
+        "fechas de cierre": _CLOSURE_ALIASES,
+        "cierre de vigencia": _CLOSURE_ALIASES,
     },
     term_map={
         "cambio de fechas": "Effective Date",

@@ -4176,11 +4176,23 @@ class AgentRuntime:
                     f"{system_prompt}\nLa pregunta pide:\n"
                     + "\n".join(frame_lines)
                     + "\nExplicá cada aspecto en su sentido material con la "
-                    "terminología de la evidencia; reservá la limitación para un "
-                    "aspecto sin ningún respaldo y declarala una sola vez."
+                    "terminología de la evidencia. No declares limitaciones vos: "
+                    "si un aspecto no tiene respaldo, el sistema agrega la frase "
+                    "al final."
                 )
             if coverage_limit:
-                system_prompt = f"{system_prompt}\n{coverage_limit}"
+                gaps = [
+                    item.aspect or item.label
+                    for item in final_coverage
+                    if item.status in {MISSING, PARTIAL_MATERIAL}
+                ]
+                system_prompt = (
+                    f"{system_prompt}\nAspectos SIN respaldo en la evidencia "
+                    f"recuperada: {', '.join(gaps) or 'ninguno'}. No los cubras "
+                    "con conocimiento propio ni los menciones al inicio o en la "
+                    "«Conclusión»: la frase de limitación la agrega el sistema, "
+                    "una sola vez, al final."
+                )
             user_prompt = f"Pregunta:\n{request.message}\n\nEvidencia:\n{context}"
             rates = await lookup_token_rates(model_policy.model)
             call_plan = plan_response_budget(
