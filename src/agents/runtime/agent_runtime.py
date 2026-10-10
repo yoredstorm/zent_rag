@@ -2466,6 +2466,7 @@ class AgentRuntime:
         # generador, JEV, las citas y «Ver flujo» miran la MISMA evidencia; el
         # texto se recorta por presupuesto y relevancia, nunca por posición.
         from src.runtime.evidence import (
+            EvidenceMatch,
             EvidenceRegistry,
             assess_sufficiency,
             observe_selection,
@@ -4077,7 +4078,28 @@ class AgentRuntime:
             if [item.evidence_id for item in represented] != [
                 item.evidence_id for item in active.items
             ]:
+                # Los matches viajan con su item: reordenar sólo `items` dejaba
+                # `match.content` de otro fragmento (contexto desalineado) y los
+                # items agregados por cobertura se perdían en el zip.
+                matches_by_id = {
+                    match.evidence_id: match for match in active.matches
+                }
+                rebuilt_matches = []
+                for item in represented:
+                    match = matches_by_id.get(item.evidence_id)
+                    if match is None:
+                        match = EvidenceMatch(
+                            evidence_id=item.evidence_id,
+                            match="narrative",
+                            priority=1,
+                            score=float(item.score or 0.0),
+                            chars=len(item.content or ""),
+                            content=item.content or "",
+                            complete=True,
+                        )
+                    rebuilt_matches.append(match)
                 active.items = represented
+                active.matches = rebuilt_matches
                 narrative_version += 1
                 narrative_package = freeze_narrative_package(
                     active,
