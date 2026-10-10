@@ -1278,6 +1278,11 @@ class AgentRuntime:
         max_tokens = limits.get("max_tokens")
         if max_tokens is None:
             max_tokens = raw.get("max_tokens")
+        # Presupuesto TOTAL del run: separado del tope por respuesta. Sin
+        # override explícito manda el default de plataforma (no `max_tokens`).
+        max_total_tokens = limits.get("max_total_tokens")
+        if max_total_tokens is None:
+            max_total_tokens = raw.get("max_total_tokens")
         max_cost = limits.get("max_cost_usd")
         if max_cost is None:
             max_cost = raw.get("max_cost")
@@ -1299,6 +1304,9 @@ class AgentRuntime:
                 max_seconds or settings.RAG_AGENT_MAX_EXECUTION_SECONDS
             ),
             "max_tokens": int(max_tokens or settings.RAG_AGENT_MAX_TOKENS),
+            "max_total_tokens": int(
+                max_total_tokens or settings.RAG_AGENT_MAX_TOTAL_TOKENS
+            ),
             "max_cost": float(max_cost or settings.RAG_AGENT_MAX_COST),
             "temperature": float(temperature) if temperature is not None else 0.3,
             "model": agent.model
@@ -1627,8 +1635,9 @@ class AgentRuntime:
                 return result
             factor = float(budget_status.get("throttle_factor", 1.0))
             if factor < 1.0:
-                config["max_tokens"] = max(
-                    int(config["max_tokens"] * factor), 128
+                config["max_total_tokens"] = max(
+                    int(config.get("max_total_tokens", config["max_tokens"]) * factor),
+                    128,
                 )
                 config["_budget_throttle"] = factor
         except Exception as exc:  # noqa: BLE001
@@ -2380,7 +2389,8 @@ class AgentRuntime:
         failed_tools: dict[str, str] = {}
         max_steps = int(config["max_steps"])
         max_tool_calls = int(config["max_tool_calls"])
-        max_tokens = int(config["max_tokens"])
+        # Guardrail del run: presupuesto TOTAL (no el tope por respuesta).
+        max_tokens = int(config.get("max_total_tokens") or config["max_tokens"])
         max_cost = float(config["max_cost"])
         from src.runtime.agent_step import (
             ACTION_ABSTAIN,

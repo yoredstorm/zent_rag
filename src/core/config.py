@@ -1653,6 +1653,13 @@ class Settings(BaseSettings):
     RAG_AGENT_MAX_TOOL_CALLS: int = Field(default=8, ge=1, le=50)
     RAG_AGENT_MAX_EXECUTION_SECONDS: int = Field(default=60, ge=5, le=300)
     RAG_AGENT_MAX_TOKENS: int = Field(default=4000, ge=256, le=100_000)
+    #: Presupuesto TOTAL de tokens de un run de agente (suma de todas las
+    #: llamadas LLM del run). `RAG_AGENT_MAX_TOKENS`/`agent.max_tokens` es el
+    #: tope de UNA respuesta: usarlo como total auto-limita al agente en la
+    #: primera llamada y lo degrada a volcar evidencia.
+    RAG_AGENT_MAX_TOTAL_TOKENS: int = Field(
+        default=60000, ge=1000, le=2_000_000
+    )
     RAG_AGENT_MAX_COST: float = Field(default=0.05, ge=0.001, le=100.0)
     RAG_AGENT_COST_PER_1K_TOKENS: float = Field(
         default=0.001, ge=0.0, le=1.0,

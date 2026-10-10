@@ -294,7 +294,7 @@ class TestFactCheck:
     @pytest.mark.asyncio
     async def test_max_tokens_guardrail(self) -> None:
         llm = _FakeLLM(['{"tool": "echo", "arguments": {}}'] * 5, tokens=500)
-        agent = _agent(config_json={"max_tokens": 100})
+        agent = _agent(config_json={"max_total_tokens": 100})
         runtime = AgentRuntime(llm_provider=llm)
         result = await runtime.run(_request(agent))
         assert result.status == "limit_reached"
@@ -330,6 +330,17 @@ class TestFactCheck:
             for s in result.steps
         )
 
+    def test_run_budget_is_separate_from_response_max_tokens(self) -> None:
+        """`max_tokens` (respuesta) no puede ser el presupuesto total del run."""
+        runtime = AgentRuntime(llm_provider=_FakeLLM([]))
+        agent = _agent(config_json={"max_tokens": 4000})
+        config = runtime._agent_config(agent)
+        assert config["max_tokens"] == 4000
+        assert config["max_total_tokens"] > config["max_tokens"]
+
+        override = _agent(config_json={"limits": {"max_total_tokens": 1234}})
+        assert runtime._agent_config(override)["max_total_tokens"] == 1234
+
     @pytest.mark.asyncio
     async def test_max_tokens_with_observations_still_answers(self) -> None:
         register_tool(_EchoTool())
@@ -341,7 +352,7 @@ class TestFactCheck:
             ],
             tokens=30,
         )
-        agent = _agent(config_json={"max_tokens": 80})
+        agent = _agent(config_json={"max_total_tokens": 80})
         runtime = AgentRuntime(llm_provider=llm)
         result = await runtime.run(_request(agent, "quien es el gerente"))
         # La primera llamada cabe. La siguiente no: no se pide un completion

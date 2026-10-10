@@ -200,7 +200,11 @@ class RunBudgetLedger:
         return cls(
             result,
             max_steps=int(config.get("max_steps") or 0),
-            max_tokens=int(config.get("max_tokens") or 0),
+            # Presupuesto TOTAL del run: `max_total_tokens` si existe; si no,
+            # compatibilidad con configs viejas que sólo traían `max_tokens`.
+            max_tokens=int(
+                config.get("max_total_tokens") or config.get("max_tokens") or 0
+            ),
             max_cost_usd=max_cost,
         )
 
