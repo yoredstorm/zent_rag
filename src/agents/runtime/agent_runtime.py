@@ -1492,6 +1492,101 @@ def _early_run_state(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _NarrativeSearchPlan:
+    """Plan de búsqueda de la ruta narrativa (bloque extraído del loop)."""
+
+    semantic_plan: Any
+    search_query: str
+    selection_question: str
+    top_k: int
+    max_items: int
+
+
+async def _resolve_narrative_search_plan(
+    *,
+    request: AgentRunRequest,
+    settings: Any,
+    org_config: dict,
+    tenant_id: Any,
+) -> _NarrativeSearchPlan:
+    """Semántica + packs + top_k de la ruta narrativa (puro, sin estado del loop).
+
+    El plan semántico enriquece la BÚSQUEDA: la cobertura sigue midiéndose con
+    vocabulario documental (un label activado por embedding no es equivalencia).
+    """
+    from src.knowledge.semantic.query_plan import (
+        LEGACY_RETRIEVAL,
+        SemanticQueryPlan,
+        resolve_semantic_query,
+    )
+    from src.runtime.dependencies import get_embedding_provider
+    from src.runtime.narrative_coverage import extract_narrative_concepts
+
+    semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
+    workspace_ids = [
+        str(item)
+        for item in (org_config or {}).get("knowledge_workspace_ids") or ()
+        if item
+    ]
+    workspace_id = None
+    if len(workspace_ids) == 1:
+        try:
+            from uuid import UUID as _UUID
+
+            workspace_id = _UUID(workspace_ids[0])
+        except ValueError:
+            workspace_id = None
+    try:
+        semantic_plan = await resolve_semantic_query(
+            organization_id=tenant_id,
+            workspace_id=workspace_id,
+            question=request.message,
+            embedder=get_embedding_provider(),
+        )
+    except Exception:  # noqa: BLE001 — sin modelo, sigue el retrieval legado
+        semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
+    search_query = semantic_plan.search_query or request.message
+    # Aliases conocidos (packs de dominio) también en la búsqueda inicial: el
+    # puente de idioma no puede esperar a la cobertura.
+    try:
+        pre_plan = extract_narrative_concepts(request.message)
+        pack_terms: list[str] = []
+        for frame in pre_plan.frames:
+            for alias in frame.aliases:
+                text = " ".join(str(alias or "").split())
+                if text and text not in pack_terms:
+                    pack_terms.append(text)
+        if pack_terms:
+            search_query = f"{search_query} {' '.join(pack_terms)}"
+    except Exception:  # noqa: BLE001 — sin packs sigue la query base
+        pass
+    # El top_k de la ruta narrativa es configurable: el del agente
+    # (retrieval.top_k) o el global.
+    agent_config = getattr(request.agent, "config_json", None) or {}
+    agent_retrieval = (
+        agent_config.get("retrieval") if isinstance(agent_config, dict) else None
+    )
+    configured_top_k = 0
+    if isinstance(agent_retrieval, dict):
+        try:
+            configured_top_k = int(agent_retrieval.get("top_k") or 0)
+        except (TypeError, ValueError):
+            configured_top_k = 0
+    if configured_top_k <= 0:
+        configured_top_k = int(getattr(settings, "RAG_TOP_K", 5) or 5)
+    narrative_top_k = max(5, min(configured_top_k, 30))
+    return _NarrativeSearchPlan(
+        semantic_plan=semantic_plan,
+        search_query=search_query,
+        # La selección de evidencia usa la pregunta material enriquecida:
+        # el aspecto debe rankear, no solo la entidad.
+        selection_question=search_query,
+        top_k=narrative_top_k,
+        max_items=max(12, min(narrative_top_k, 24)),
+    )
+
+
 class AgentRuntime:
     """Motor de agentes: ReAct loop con guardrails. Depende de puertos."""
 
@@ -4276,77 +4371,19 @@ class AgentRuntime:
             tool = get_tool("search_knowledge")
             if tool is None or not tool_allowed(tool, effective_tools, ctx):
                 return _skip("tool_unavailable")
-            from src.knowledge.semantic.query_plan import (
-                LEGACY_RETRIEVAL,
-                SemanticQueryPlan,
-                resolve_semantic_query,
-            )
             from src.runtime.dependencies import get_embedding_provider
 
-            semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
-            workspace_ids = [
-                str(item)
-                for item in (ctx.org_config or {}).get("knowledge_workspace_ids") or ()
-                if item
-            ]
-            workspace_id = None
-            if len(workspace_ids) == 1:
-                try:
-                    from uuid import UUID as _UUID
-
-                    workspace_id = _UUID(workspace_ids[0])
-                except ValueError:
-                    workspace_id = None
-            try:
-                semantic_plan = await resolve_semantic_query(
-                    organization_id=ctx.tenant_id,
-                    workspace_id=workspace_id,
-                    question=request.message,
-                    embedder=get_embedding_provider(),
-                )
-            except Exception:  # noqa: BLE001 — sin modelo, sigue el retrieval legado
-                semantic_plan = SemanticQueryPlan(knowledge_mode=LEGACY_RETRIEVAL)
-            # El plan semántico enriquece la BÚSQUEDA (terminología del fabric).
-            # La cobertura sigue midiéndose con vocabulario documental: un label
-            # activado por embedding no es equivalencia y no puede declarar un
-            # aspecto como cubierto.
-            search_query = semantic_plan.search_query or request.message
-            # Aliases conocidos (packs de dominio) también en la búsqueda
-            # inicial: el puente de idioma no puede esperar a la cobertura.
-            try:
-                from src.runtime.narrative_coverage import (
-                    extract_narrative_concepts as _pre_extract,
-                )
-
-                pre_plan = _pre_extract(request.message)
-                pack_terms: list[str] = []
-                for frame in pre_plan.frames:
-                    for alias in frame.aliases:
-                        text = " ".join(str(alias or "").split())
-                        if text and text not in pack_terms:
-                            pack_terms.append(text)
-                if pack_terms:
-                    search_query = f"{search_query} {' '.join(pack_terms)}"
-            except Exception:  # noqa: BLE001 — sin packs sigue la query base
-                pass
-            # La selección de evidencia usa la pregunta material enriquecida:
-            # el aspecto debe rankear, no solo la entidad.
-            selection_question = search_query
-            # El top_k de la ruta narrativa es configurable: el del agente
-            # (retrieval.top_k) o el global. Antes quedaba fijo en 5 y el tuning
-            # del env no llegaba nunca a esta ruta.
-            agent_config = getattr(request.agent, "config_json", None) or {}
-            agent_retrieval = agent_config.get("retrieval") if isinstance(agent_config, dict) else None
-            configured_top_k = 0
-            if isinstance(agent_retrieval, dict):
-                try:
-                    configured_top_k = int(agent_retrieval.get("top_k") or 0)
-                except (TypeError, ValueError):
-                    configured_top_k = 0
-            if configured_top_k <= 0:
-                configured_top_k = int(getattr(settings, "RAG_TOP_K", 5) or 5)
-            narrative_top_k = max(5, min(configured_top_k, 30))
-            selection_max_items = max(12, min(narrative_top_k, 24))
+            _search_plan = await _resolve_narrative_search_plan(
+                request=request,
+                settings=settings,
+                org_config=ctx.org_config or {},
+                tenant_id=ctx.tenant_id,
+            )
+            semantic_plan = _search_plan.semantic_plan
+            search_query = _search_plan.search_query
+            selection_question = _search_plan.selection_question
+            narrative_top_k = _search_plan.top_k
+            selection_max_items = _search_plan.max_items
             search_started = time.perf_counter()
             tool_result = await execute_tool_guarded(
                 tool,
