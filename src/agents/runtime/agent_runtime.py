@@ -4016,6 +4016,7 @@ class AgentRuntime:
                 measure_coverage,
                 narrative_coverage_applies,
                 prefer_aspect_items,
+                strip_generic_limitation,
                 vocabulary_from_items,
             )
             from src.runtime.narrative_package import freeze_narrative_package
@@ -4503,6 +4504,12 @@ class AgentRuntime:
             content = str(getattr(response, "content", "") or "")
             if not content.strip():
                 return _skip("empty_generation")
+            if final_coverage and all(
+                item.status == COVERED for item in final_coverage
+            ):
+                # Cobertura completa: una cautela «otros aspectos no cubiertos»
+                # es ruido del modelo, no una limitación medida.
+                content = strip_generic_limitation(content)
             result.answer = apply_coverage_limitation(content, final_coverage)
             verify_started = time.perf_counter()
             _bind_narrative_answer()

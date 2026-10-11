@@ -306,6 +306,28 @@ async def test_simple_query_stays_in_one_retrieval_round() -> None:
     assert llm.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_generic_caveat_stripped_when_coverage_complete() -> None:
+    search = _NarrativeSearchTool()
+    register_tool(search)
+    llm = _FakeLLM(
+        [
+            "Record 2 procesa el cambio de fechas con la effective date y la "
+            "discontinue date [Doc: 1].\n\n"
+            "No encontré respaldo suficiente en las fuentes para esta ejecución "
+            "respecto de otros aspectos del Record 2 no cubiertos por la "
+            "evidencia recuperada."
+        ]
+    )
+    runtime = AgentRuntime(llm_provider=llm)
+    result = await runtime.run(_request(_agent(), QUESTION))
+
+    step = _narrative_step(result)
+    assert step["final_aspect_coverage"] == ["COVERED"]
+    assert "no encontré respaldo" not in result.answer.lower()
+    assert "discontinue date" in result.answer.lower()
+
+
 class _TruncatingLLM(_FakeLLM):
     """Primera generación cortada por tope de tokens; la continuación cierra."""
 

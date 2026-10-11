@@ -143,6 +143,31 @@ async def test_embedding_bridge_proposes_and_anchors(
     assert aspect.status == COVERED
 
 
+def test_strip_generic_limitation_removes_model_caveat() -> None:
+    from src.runtime.narrative_coverage import strip_generic_limitation
+
+    answer = (
+        "El Record 2 se compara contra el Fare [Doc: 1].\n\n"
+        "No encontré respaldo suficiente en las fuentes para esta ejecución "
+        "respecto de otros aspectos del Record 2 no cubiertos por la evidencia "
+        "recuperada."
+    )
+    cleaned = strip_generic_limitation(answer)
+    assert "no encontré" not in cleaned.lower()
+    assert "El Record 2 se compara" in cleaned
+
+
+def test_strip_generic_limitation_keeps_measured_limits() -> None:
+    from src.runtime.narrative_coverage import strip_generic_limitation
+
+    answer = (
+        "El Record 2 se compara contra el Fare [Doc: 1].\n\n"
+        "No encontré evidencia suficiente sobre cierre de fechas en las "
+        "fuentes disponibles para este agente."
+    )
+    assert strip_generic_limitation(answer) == answer
+
+
 def test_closure_pack_alias_covers_date_closure_aspect() -> None:
     from src.knowledge.enrichment.profiling import register_profile_pack
     from src.verticals.atpco.enrichment import ATPCO_PROFILE_PACK

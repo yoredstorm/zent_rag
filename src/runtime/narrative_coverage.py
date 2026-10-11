@@ -646,6 +646,27 @@ def decide_coverage_round(
     return CoverageRoundDecision(True, query, reason)
 
 
+#: Cautela genérica del modelo («…respecto de otros aspectos no cubiertos…»):
+#: con cobertura completa es ruido, no una limitación medida.
+_GENERIC_CAVEAT = re.compile(
+    r"\n*\s*No\s+encontr[eé]\s+respaldo\s+suficiente[^.!?]*?"
+    r"(?:no\s+cubiert[oa]s?|no\s+descrit[oa]s?|otros?\s+aspectos)[^.!?]*[.!?]\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_generic_limitation(answer: str) -> str:
+    """Quita la cautela genérica del cierre cuando la cobertura está completa.
+
+    Sólo aplica a frases de «no encontré respaldo … otros aspectos no
+    cubiertos/descritos»: una limitación medida la agrega el código con
+    `limitation_sentence`.
+    """
+    text = (answer or "").rstrip()
+    updated = _GENERIC_CAVEAT.sub("", text).rstrip()
+    return updated or text
+
+
 def limitation_sentence(measured: tuple[ConceptCoverage, ...] | list[ConceptCoverage]) -> str:
     gaps = [
         item
