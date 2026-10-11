@@ -50,6 +50,10 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   caminos + métrica de aperturas.
 - **DO NOT**: desactivar el breaker.
 - **Test**: fallas de una org no afectan runs de otra (fake provider).
+- **Estado (este pase)**: no implementado — el breaker es una tabla DB global
+  por `model_name`; scoping por tenant exige migración (columna + unique) y
+  cambio de claves en `check_circuit`/`record_*`. Se mantiene como NEXT con
+  ese prerequisito explícito.
 
 ### 4. `adaptive` sigue siendo storage en el orquestador (P2)
 - **Evidence**: `plan`, `quality`, `evidence`, `attempts` se escriben y leen del
@@ -61,6 +65,11 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   se hace con las claves modeladas).
 - **DO NOT**: borrar claves antes de migrar readers del flow.
 - **Test**: flow byte-idéntico con estado como fuente.
+- **Estado (este pase)**: parcial — `_adaptive_publish` regenera al cierre las
+  claves modeladas (registry/selection/sufficiency/evidence_state/grounded/
+  envelope/package/query_executable/response_plan/long_context). `plan`,
+  `quality`, `evidence`, `attempts` son engine-native del hook y quedan en
+  `adaptive`; moverlas requiere modelarlas en el estado primero.
 
 ### 5. JEV sin criterio de skip por datos (P2)
 - **Evidence**: `jev_value` ahora mide `redundant_rate` en el flow; turn intent
@@ -71,6 +80,9 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   (`RUNTIME_JEV_SKIP_<PHASE>`), apagados por defecto.
 - **DO NOT**: dejar que JEV autorice ni que un skip aplique a incertidumbre real.
 - **Test**: golden set con calidad igual y tokens JEV medidos antes/después.
+- **Estado (este pase)**: medición lista (`flow["jev_value"]` + tokens JEV en el
+  run). Los skips quedan a la espera de `redundant_rate` real de producción;
+  los estructurales ya existen (rules-first, batching, bypass fail-closed).
 
 ### 6. AgentRuntime todavía concentra demasiado (P2)
 - **Evidence**: `agent_runtime.py` ~5.8k líneas; narrative fast path ~800
@@ -81,6 +93,8 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   explícitos; criterio: el método principal se lee en <10 min.
 - **DO NOT**: reescribir el ReAct ni crear microarchivos.
 - **Test**: mismos 1000+ tests verdes tras cada extracción; sin cambios de flow.
+- **Estado (este pase)**: pendiente por diseño (P9); prerrequisito antes de
+  extraer: preservar la suite verde del programa y no tocar el contrato del flow.
 
 ### 7. Mezcla de contextos en prompt sin sobre (P2)
 - **Evidence**: `context_block`, company context, memory hits y evidencia
