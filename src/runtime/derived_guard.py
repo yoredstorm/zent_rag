@@ -332,6 +332,31 @@ def enforce_derived_result(
     )
 
 
+def is_deterministic_supported_claim(claim: Any) -> bool:
+    """¿El generador puede sobrescribir este claim? No: deterministic + SUPPORTED.
+
+    Definición ÚNICA de autoridad por claim. La usan `deterministic_claims` y
+    `DerivedPreparationResult.has_authority`; acepta objetos (DerivedClaim),
+    dicts y payloads serializados.
+    """
+    if hasattr(claim, "to_public_dict"):
+        try:
+            payload = claim.to_public_dict()
+        except Exception:  # noqa: BLE001 — un claim roto no tiene autoridad
+            payload = None
+    elif isinstance(claim, dict):
+        payload = claim
+    else:
+        payload = None
+    if isinstance(payload, dict):
+        return bool(payload.get("deterministic")) and str(
+            payload.get("verification_status") or ""
+        ) == "SUPPORTED"
+    return bool(getattr(claim, "deterministic", False)) and str(
+        getattr(claim, "verification_status", "")
+    ) == "SUPPORTED"
+
+
 def deterministic_claims(claims: Iterable[Any]) -> list[dict]:
     """Vista pública de los claims que el generador no puede sobrescribir."""
     found: list[dict] = []
@@ -339,9 +364,7 @@ def deterministic_claims(claims: Iterable[Any]) -> list[dict]:
         payload = (
             claim.to_public_dict() if hasattr(claim, "to_public_dict") else dict(claim)
         )
-        if payload.get("deterministic") and str(
-            payload.get("verification_status") or ""
-        ) == "SUPPORTED":
+        if is_deterministic_supported_claim(payload):
             found.append(payload)
     return found
 

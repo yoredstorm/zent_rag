@@ -25,6 +25,14 @@ from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
+from src.runtime.answer_state import (
+    ANSWER_STATE_DERIVATION_FAILED,
+    ANSWER_STATE_DERIVED,
+    ANSWER_STATE_GROUNDING_ENGINE_FAILED,
+    ANSWER_STATE_RULE_EVALUATION_FAILED,
+    ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE,
+    ANSWER_STATE_UNDETERMINED,
+)
 from src.runtime.derived_guard import DerivedGuardOutcome, enforce_derived_result
 from src.runtime.deterministic_authority import undetermined_authoritative_answer
 
@@ -411,15 +419,15 @@ def finalize_authoritative_answer(
 
     if resolved is None:
         if requires_deterministic_decision:
-            state = "UNDETERMINED_RULE"
-            if failure_stage == "grounding" or failure_code == "GROUNDING_ENGINE_FAILED":
-                state = "GROUNDING_ENGINE_FAILED"
-            elif failure_stage == "rule_retrieval" or failure_code == "RULE_RETRIEVAL_UNAVAILABLE":
-                state = "RULE_RETRIEVAL_UNAVAILABLE"
-            elif failure_stage == "rule_evaluation" or failure_code == "RULE_EVALUATION_FAILED":
-                state = "RULE_EVALUATION_FAILED"
-            elif failure_stage == "derivation" or failure_code == "DERIVATION_FAILED":
-                state = "DERIVATION_FAILED"
+            state = ANSWER_STATE_UNDETERMINED
+            if failure_stage == "grounding" or failure_code == ANSWER_STATE_GROUNDING_ENGINE_FAILED:
+                state = ANSWER_STATE_GROUNDING_ENGINE_FAILED
+            elif failure_stage == "rule_retrieval" or failure_code == ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE:
+                state = ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE
+            elif failure_stage == "rule_evaluation" or failure_code == ANSWER_STATE_RULE_EVALUATION_FAILED:
+                state = ANSWER_STATE_RULE_EVALUATION_FAILED
+            elif failure_stage == "derivation" or failure_code == ANSWER_STATE_DERIVATION_FAILED:
+                state = ANSWER_STATE_DERIVATION_FAILED
             if failure_message:
                 message = str(failure_message)
             elif missing_premises:
@@ -461,7 +469,7 @@ def finalize_authoritative_answer(
             guard=guard,
             overridden=True,
             changed=True,
-            state="DERIVED_RESULT",
+            state=ANSWER_STATE_DERIVED,
             lock_action="rebuilt",
         )
 
@@ -487,7 +495,7 @@ def finalize_authoritative_answer(
                 guard=guard,
                 overridden=True,
                 changed=True,
-                state="DERIVED_RESULT",
+                state=ANSWER_STATE_DERIVED,
                 lock_action="rebuilt",
             )
     return FinalizedAnswer(
@@ -496,7 +504,7 @@ def finalize_authoritative_answer(
         guard=guard,
         overridden=False,
         changed=final != str(answer or ""),
-        state="DERIVED_RESULT",
+        state=ANSWER_STATE_DERIVED,
         lock_action="preserved",
     )
 

@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
 from src.infrastructure.observability.logging_config import get_logger
-from src.runtime.answer_gate import (
+from src.runtime.answer_gate import undetermined_answer
+from src.runtime.answer_state import (
     ANSWER_STATE_CONFLICTING_RULE,
     ANSWER_STATE_DERIVATION_FAILED,
     ANSWER_STATE_DERIVED,
@@ -40,8 +41,8 @@ from src.runtime.answer_gate import (
     ANSWER_STATE_RULE_EVALUATION_FAILED,
     ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE,
     ANSWER_STATE_UNDETERMINED,
-    undetermined_answer,
 )
+from src.runtime.derived_guard import is_deterministic_supported_claim
 
 logger = get_logger(__name__)
 
@@ -400,10 +401,9 @@ class DerivedPreparationResult:
         envelope = self.authoritative_envelope
         if envelope is not None and bool(getattr(envelope, "authoritative", True)):
             return True
+        # Definición única de «claim autoritativo» (derived_guard).
         return any(
-            bool(getattr(claim, "deterministic", False))
-            and str(getattr(claim, "verification_status", "")) == "SUPPORTED"
-            for claim in self.derived_claims
+            is_deterministic_supported_claim(claim) for claim in self.derived_claims
         )
 
     def answer_state(self) -> tuple[str, str]:
