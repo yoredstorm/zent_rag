@@ -392,6 +392,50 @@ def _budget_answer(history: list[str], reason: str) -> str:
     )
 
 
+async def _bridge_language_gaps(
+    concept_plan: Any,
+    coverage: Any,
+    items: Any,
+    *,
+    activated: Any = (),
+    embedder: Any,
+    searched: bool = False,
+) -> tuple[Any, Any, dict]:
+    """Aplica el puente de idioma a los aspectos sin cobertura.
+
+    El embedding multilingüe propone términos del documento (candidatos) y la
+    evidencia los ancla al re-medir. Devuelve (plan, cobertura, aliases); sin
+    cambios si no hay gaps o no hay propuesta.
+    """
+    from src.runtime.narrative_coverage import (
+        MISSING,
+        PARTIAL_MATERIAL,
+        candidate_terms,
+        embedding_alias_bridge,
+        measure_coverage,
+        with_extra_aliases,
+    )
+
+    gaps = [
+        item.aspect or item.label
+        for item in coverage or ()
+        if item.status in {MISSING, PARTIAL_MATERIAL}
+    ]
+    if not gaps or embedder is None:
+        return concept_plan, coverage, {}
+    candidates = list(candidate_terms(items))
+    for node in activated or ():
+        label = str(node.get("label") or "") if isinstance(node, dict) else ""
+        if label:
+            candidates.append(label)
+    aliases = await embedding_alias_bridge(gaps, candidates, embedder=embedder)
+    if not aliases:
+        return concept_plan, coverage, {}
+    enriched = with_extra_aliases(concept_plan, aliases)
+    remeasured = measure_coverage(enriched, items, searched=searched)
+    return enriched, remeasured, aliases
+
+
 def _evidence_window(history: list[str], limit: int = 6) -> list[str]:
     """Últimas observaciones CON evidencia (documentos), no los avisos internos.
 
@@ -4005,63 +4049,36 @@ class AgentRuntime:
             # («cierre de fechas» vs «Discontinue Date»), el embedding
             # multilingüe propone los términos del documento y la evidencia los
             # ancla. Los packs quedan como precisión opcional, no requisito.
-            gap_aspects = [
-                item.aspect or item.label
-                for item in initial_coverage
-                if item.status in {MISSING, PARTIAL_MATERIAL}
-            ]
-            if gap_aspects:
-                try:
-                    from src.runtime.narrative_coverage import (
-                        candidate_terms as _candidate_terms,
-                    )
-                    from src.runtime.narrative_coverage import (
-                        embedding_alias_bridge as _auto_bridge,
-                    )
-                    from src.runtime.narrative_coverage import (
-                        with_extra_aliases as _with_aliases,
-                    )
-
-                    auto_candidates = list(_candidate_terms(registry.all_items()))
-                    for node in getattr(semantic_plan, "activated", ()) or ():
-                        label = (
-                            str(node.get("label") or "")
-                            if isinstance(node, dict)
-                            else ""
-                        )
-                        if label:
-                            auto_candidates.append(label)
-                    auto_aliases = await _auto_bridge(
-                        gap_aspects,
-                        auto_candidates,
+            try:
+                concept_plan, initial_coverage, auto_aliases = (
+                    await _bridge_language_gaps(
+                        concept_plan,
+                        initial_coverage,
+                        registry.all_items(),
+                        activated=getattr(semantic_plan, "activated", ()),
                         embedder=get_embedding_provider(),
                     )
-                    if auto_aliases:
-                        concept_plan = _with_aliases(concept_plan, auto_aliases)
-                        initial_coverage = measure_coverage(
-                            concept_plan, registry.all_items(), searched=False
-                        )
-                        result.steps.append(
-                            {
-                                "type": "language_bridge",
-                                "status": "ok",
-                                "detail": (
-                                    "puente de idioma por embedding: "
-                                    + "; ".join(
-                                        f"{aspect} -> {', '.join(aliases)}"
-                                        for aspect, aliases in auto_aliases.items()
-                                    )
-                                )[:240],
-                                "aliases": {
-                                    aspect: list(aliases)
+                )
+                if auto_aliases:
+                    result.steps.append(
+                        {
+                            "type": "language_bridge",
+                            "status": "ok",
+                            "detail": (
+                                "puente de idioma por embedding: "
+                                + "; ".join(
+                                    f"{aspect} -> {', '.join(aliases)}"
                                     for aspect, aliases in auto_aliases.items()
-                                },
-                            }
-                        )
-                except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
-                    logger.warning(
-                        "auto language bridge failed", error=str(exc)[:150]
+                                )
+                            )[:240],
+                            "aliases": {
+                                aspect: list(aliases)
+                                for aspect, aliases in auto_aliases.items()
+                            },
+                        }
                     )
+            except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
+                logger.warning("auto language bridge failed", error=str(exc)[:150])
             max_coverage_rounds = int(
                 getattr(settings, "NARRATIVE_MAX_COVERAGE_ROUNDS", 1) or 0
             )
@@ -4134,6 +4151,40 @@ class AgentRuntime:
                 registry.all_items(),
                 searched=coverage_rounds > 0,
             )
+            # Segunda pasada del puente: la búsqueda de cobertura pudo traer
+            # términos nuevos del documento (p. ej. «Discontinue Date») que el
+            # embedding puede proponer ahora.
+            try:
+                concept_plan, final_coverage, final_aliases = (
+                    await _bridge_language_gaps(
+                        concept_plan,
+                        final_coverage,
+                        registry.all_items(),
+                        activated=getattr(semantic_plan, "activated", ()),
+                        embedder=get_embedding_provider(),
+                        searched=coverage_rounds > 0,
+                    )
+                )
+                if final_aliases:
+                    result.steps.append(
+                        {
+                            "type": "language_bridge",
+                            "status": "ok",
+                            "detail": (
+                                "puente de idioma por embedding (post-coverage): "
+                                + "; ".join(
+                                    f"{aspect} -> {', '.join(aliases)}"
+                                    for aspect, aliases in final_aliases.items()
+                                )
+                            )[:240],
+                            "aliases": {
+                                aspect: list(aliases)
+                                for aspect, aliases in final_aliases.items()
+                            },
+                        }
+                    )
+            except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
+                logger.warning("auto language bridge failed", error=str(exc)[:150])
             if coverage_rounds:
                 if all(
                     item.status not in {MISSING, PARTIAL_MATERIAL}

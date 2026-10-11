@@ -850,35 +850,57 @@ def candidate_terms(items, *, limit: int = 24) -> tuple[str, ...]:
     """Términos candidatos del DOCUMENTO para el puente semántico.
 
     Headings, títulos y frases capitalizadas del texto (campos y entidades).
-    Genérico: no conoce dominios; el embedding decide la equivalencia y la
-    evidencia la ancla.
+    Se descartan palabras sueltas genéricas (presentes en la mayoría de los
+    fragmentos): no discriminan un aspecto. Genérico: el embedding decide la
+    equivalencia y la evidencia la ancla.
     """
-    found: list[str] = []
+    item_list = list(items or ())
+    texts: list[str] = []
     seen: set[str] = set()
 
-    def add(value: object) -> None:
+    def add(value: object) -> str:
         text = " ".join(str(value or "").split())
         parts = text.split()
         while parts and _norm(parts[0]) in _CANDIDATE_SKIP:
             parts = parts[1:]
         text = " ".join(parts)
         folded = _norm(text)
-        if len(text) < 4 or not folded or folded in seen:
-            return
-        if not any(char.isalpha() for char in text):
-            return
-        seen.add(folded)
-        found.append(text)
+        if len(text) < 4 or not folded or not any(char.isalpha() for char in text):
+            return ""
+        if folded not in seen:
+            seen.add(folded)
+            texts.append(text)
+        return folded
 
-    for heading in headings_from_items(items):
+    for heading in headings_from_items(item_list):
         add(heading)
-    for item in items or ():
+
+    per_item: list[set[str]] = []
+    for item in item_list:
         content = str(getattr(item, "content", "") or "")
+        item_terms: set[str] = set()
         for match in _CANDIDATE_RE.findall(content[:4000]):
-            add(match)
-        if len(found) >= limit:
-            break
-    return tuple(found[:limit])
+            folded = add(match)
+            if folded:
+                item_terms.add(folded)
+        per_item.append(item_terms)
+
+    frequency: dict[str, int] = {}
+    for item_terms in per_item:
+        for term in item_terms:
+            frequency[term] = frequency.get(term, 0) + 1
+    generic_at = max(2, int(len(item_list) * 0.6))
+    kept = [
+        text
+        for text in texts
+        if not (
+            len(text.split()) == 1
+            and frequency.get(_norm(text), 0) >= generic_at
+        )
+    ]
+    # Multi-palabra (campos: «Discontinue Date») primero.
+    kept.sort(key=lambda text: len(text.split()) == 1)
+    return tuple(kept[:limit])
 
 
 def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:

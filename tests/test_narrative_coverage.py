@@ -48,6 +48,28 @@ RECORD_ONLY = (
 )
 
 
+def test_candidate_terms_drops_generic_single_words() -> None:
+    from src.runtime.narrative_coverage import candidate_terms
+
+    class _Item:
+        def __init__(self, content: str) -> None:
+            self.content = content
+            self.metadata: dict = {}
+            self.title = ""
+            self.section_path: tuple = ()
+
+    items = [
+        _Item("The Result applies to Record 2. Effective Date is a field."),
+        _Item("Result of Record 2. Discontinue Date is a field."),
+        _Item("Result for Record 2."),
+        _Item("Result in Record 2."),
+    ]
+    terms = candidate_terms(items)
+    assert "Discontinue Date" in terms
+    assert "Effective Date" in terms
+    assert "Result" not in terms
+
+
 def test_candidate_terms_extracts_document_vocabulary() -> None:
     from src.runtime.narrative_coverage import candidate_terms
 
