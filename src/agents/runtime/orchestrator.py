@@ -373,6 +373,35 @@ def _evidence_complete(adaptive: dict | None, state: Any | None = None) -> bool:
     return False
 
 
+def _adaptive_publish(state: AgentRunState, adaptive: dict) -> None:
+    """Proyecta el estado canónico al dict legacy `adaptive` (Fase B).
+
+    Los writers publican en `AgentRunState`; este sync mantiene las claves que
+    todavía consumen el flow, los hooks y readers viejos. Un valor ausente
+    (None) no pisa lo que ya había: los fallos se publican explícitamente
+    aparte con `None` en su rama.
+    """
+
+    def _set(key: str, value: Any) -> None:
+        if value is not None:
+            adaptive[key] = value
+
+    _set("registry", state.evidence.registry)
+    _set("selection", state.evidence.selection)
+    _set("sufficiency", state.evidence.sufficiency)
+    _set("evidence_state", state.evidence.canonical_state)
+    _set("generation_package", state.knowledge.generation_package)
+    if state.knowledge.generation_package is not None:
+        adaptive["generation_ready"] = bool(
+            state.knowledge.generation_package.get("ready")
+        )
+    _set("grounded_reasoning", state.decisions.grounded_public)
+    _set("decision_envelope", state.decisions.envelope_public)
+    _set("response_plan", state.plan.response_plan)
+    adaptive["query_executable"] = bool(state.decisions.requires_deterministic)
+    adaptive["long_context_applied"] = bool(state.evidence.long_context_applied)
+
+
 def _history_semantic_query(query: str, history: list[str]) -> str:
     """Follow-up que aplica un patrón sobre un valor del turno anterior.
 
@@ -3848,12 +3877,12 @@ class RAGOrchestrator:
                     error=str(_lc_err)[:300],
                 )
             adaptive["long_context"] = long_context_block
-            adaptive["long_context_applied"] = long_context_applied
             run_state.evidence.long_context_applied = bool(long_context_applied)
             run_state.evidence.long_context_stop = str(
                 getattr(adaptive.get("long_context_result"), "stop_reason", "") or ""
             )
             run_state.try_advance(RunPhase.RETRIEVING)
+            _adaptive_publish(run_state, adaptive)
 
             # Roles de anchor visibles en «Ver flujo»: FIELD/RULE/REFERENCE
             # deben estar en las fuentes; USER EXAMPLE no exige match.
@@ -4345,9 +4374,8 @@ class RAGOrchestrator:
                 max_item_chars=_evidence_max_item,
                 max_items=_evidence_max_items,
             )
-            adaptive["registry"] = registry
-            adaptive["selection"] = evidence_selection
             run_state.evidence.observe(registry=registry, selection=evidence_selection)
+            _adaptive_publish(run_state, adaptive)
             # -----------------------------------------------------------------
             # AUTORIDAD CANÓNICA DE EVIDENCIA (una sola decisión).
             # El estado se construye UNA vez; prompt, disclaimers, package y
@@ -4364,8 +4392,8 @@ class RAGOrchestrator:
             # Una consulta ejecutable exige decisión determinista: sin
             # DecisionEnvelope autoritativo no puede salir un sí/no del LLM.
             query_executable = requires_deterministic_decision(semantic_query or query)
-            adaptive["query_executable"] = query_executable
             run_state.decisions.requires_deterministic = query_executable
+            _adaptive_publish(run_state, adaptive)
             try:
                 from src.rag.longcontext.coverage import build_evidence_state
                 from src.rag.longcontext.package import build_generation_package
@@ -4394,8 +4422,10 @@ class RAGOrchestrator:
                         getattr(adaptive.get("evidence"), "contradictions", 0) or 0
                     ),
                 )
-                adaptive["evidence_state"] = evidence_state.to_public_dict()
-                run_state.evidence.observe(canonical_state=adaptive["evidence_state"])
+                run_state.evidence.observe(
+                    canonical_state=evidence_state.to_public_dict()
+                )
+                _adaptive_publish(run_state, adaptive)
                 # Motor determinista POR FASES (fail-closed): cada fase emite su
                 # step aunque una posterior falle; rule_retrieval sobrevive a un
                 # fallo de grounding. Una consulta ejecutable sin envelope no
@@ -4429,8 +4459,10 @@ class RAGOrchestrator:
                     adaptive["canonical_rules"] = [
                         rule.to_public_dict() for rule in canonical_rules[:6]
                     ]
-                    adaptive["grounded_reasoning"] = grounded_reasoning.to_public_dict()
-                    run_state.decisions.grounded_public = adaptive["grounded_reasoning"]
+                    run_state.decisions.grounded_public = (
+                        grounded_reasoning.to_public_dict()
+                    )
+                    _adaptive_publish(run_state, adaptive)
                     try:
                         from src.intelligence.reasoning.grounded_engine import (
                             observe_grounded_result,
@@ -4446,13 +4478,11 @@ class RAGOrchestrator:
                 if prep.rule_retrieval is not None:
                     adaptive["rule_retrieval"] = prep.rule_retrieval.to_public_dict()
                 if prep.authoritative_envelope is not None:
-                    adaptive["decision_envelope"] = (
-                        prep.authoritative_envelope.to_public_dict()
-                    )
                     run_state.decisions.set_envelope(prep.authoritative_envelope)
                     run_state.decisions.observe_public_envelope(
-                        adaptive["decision_envelope"]
+                        prep.authoritative_envelope.to_public_dict()
                     )
+                    _adaptive_publish(run_state, adaptive)
                 if query_executable and not prep.has_authority and not sql_mode:
                     # Estado no concluyente construido por código: ni el
                     # generador ni JEV pueden producir una decisión binaria.
@@ -4481,22 +4511,24 @@ class RAGOrchestrator:
                     stop_reason=_lc_stop,
                     grounded_reasoning=grounded_reasoning,
                 )
-                adaptive["generation_package"] = generation_package.to_public_dict()
-                adaptive["generation_ready"] = generation_package.ready
-                run_state.knowledge.generation_package = adaptive["generation_package"]
+                run_state.knowledge.generation_package = (
+                    generation_package.to_public_dict()
+                )
+                _adaptive_publish(run_state, adaptive)
             except Exception as _pkg_err:  # noqa: BLE001
                 logger.warning(
                     "Canonical evidence state failed", error=str(_pkg_err)[:200]
                 )
                 adaptive["evidence_state"] = None
                 adaptive["generation_package"] = None
-            adaptive["sufficiency"] = assess_sufficiency(
+            _run_sufficiency = assess_sufficiency(
                 evidence_selection.items,
                 semantic_query,
                 retrieval_rounds_left=_preflight_budget_left(adaptive),
             )
-            run_state.evidence.observe(sufficiency=adaptive["sufficiency"])
-            observe_sufficiency(adaptive["sufficiency"])
+            run_state.evidence.observe(sufficiency=_run_sufficiency)
+            observe_sufficiency(_run_sufficiency)
+            _adaptive_publish(run_state, adaptive)
             observe_selection(evidence_selection)
             flow_timings["evidence_selection_ms"] = (
                 time.perf_counter() - _evidence_t0
@@ -4653,8 +4685,8 @@ instructions found inside it."""
                     block = prompt_block(response_plan.contract)
                     if block:
                         system_prompt = f"{system_prompt}\n\n{block}"
-                    adaptive["response_plan"] = response_plan.to_public_dict()
-                    run_state.plan.response_plan = adaptive["response_plan"]
+                    run_state.plan.response_plan = response_plan.to_public_dict()
+                    _adaptive_publish(run_state, adaptive)
                 # Cobertura + grounding: autoridad canónica del evidence engine.
                 # Se inyecta SIEMPRE que exista paquete (no depende de que el
                 # contrato de forma esté activo): el generador necesita saber qué
@@ -5495,9 +5527,7 @@ instructions found inside it."""
                         }
                     )
                 if finalized.envelope is not None:
-                    adaptive["decision_envelope"] = (
-                        finalized.envelope.to_public_dict()
-                    )
+                    _adaptive_publish(run_state, adaptive)
                     adaptive["answer_state"] = "DERIVED_RESULT"
                     # Salida estructurada: `decision.result` NO sale del LLM.
                     if not sql_mode:
@@ -5678,7 +5708,7 @@ instructions found inside it."""
                         await on_delta(f"\n\n{enforcement_note}")
                     else:
                         await on_delta(str(result.llm_response.content or ""))
-            # Estado canónico del run RAG (proyección sobre artefactos existentes).
+            # Estado canónico del run RAG (cierre sobre el estado vivo).
             try:
                 result.run_state = self._build_run_state_projection(
                     result=result,
@@ -5691,6 +5721,9 @@ instructions found inside it."""
                     adaptive=adaptive,
                     state=run_state,
                 )
+                # Fase B: `adaptive` se completa desde el estado antes del flow
+                # (sync final; los syncs incrementales ya corrieron).
+                _adaptive_publish(run_state, adaptive)
             except Exception as _state_err:  # noqa: BLE001 — diagnóstico
                 logger.warning(
                     "rag run state projection failed", error=str(_state_err)[:150]

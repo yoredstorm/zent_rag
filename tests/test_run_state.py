@@ -440,6 +440,48 @@ class TestRuntimeWiring:
 # -----------------------------------------------------------------------------
 # Fase D/E: autoridad reutilizada, métrica de invariantes y modo estricto
 # -----------------------------------------------------------------------------
+class TestAdaptiveProjection:
+    def test_sync_proyecta_estado_en_adaptive(self) -> None:
+        from src.agents.runtime.orchestrator import _adaptive_publish
+
+        state = _state()
+        state.evidence.observe(
+            registry="reg",
+            selection="sel",
+            sufficiency="suf",
+            canonical_state={"evidence_complete": True},
+        )
+        state.knowledge.generation_package = {"ready": True}
+        state.decisions.grounded_public = {"answerability": "ANSWERABLE_DERIVED"}
+        state.decisions.observe_public_envelope({"authoritative": True, "state": "MATCH"})
+        state.decisions.requires_deterministic = True
+        state.plan.response_plan = {"shape": "brief"}
+        state.evidence.long_context_applied = True
+        adaptive: dict = {}
+        _adaptive_publish(state, adaptive)
+        assert adaptive["registry"] == "reg"
+        assert adaptive["selection"] == "sel"
+        assert adaptive["sufficiency"] == "suf"
+        assert adaptive["evidence_state"] == {"evidence_complete": True}
+        assert adaptive["generation_package"] == {"ready": True}
+        assert adaptive["generation_ready"] is True
+        assert adaptive["grounded_reasoning"] == {"answerability": "ANSWERABLE_DERIVED"}
+        assert adaptive["decision_envelope"]["state"] == "MATCH"
+        assert adaptive["query_executable"] is True
+        assert adaptive["response_plan"] == {"shape": "brief"}
+        assert adaptive["long_context_applied"] is True
+
+    def test_sync_no_pisa_con_none(self) -> None:
+        from src.agents.runtime.orchestrator import _adaptive_publish
+
+        state = _state()
+        adaptive = {"evidence_state": None, "selection": "vieja"}
+        _adaptive_publish(state, adaptive)
+        assert adaptive["evidence_state"] is None
+        assert adaptive["selection"] == "vieja"
+        assert adaptive["query_executable"] is False
+
+
 class TestStrictModeAndMetrics:
     def test_critical_violations_filtra_solo_riesgo_de_correccion(self) -> None:
         state = _state()

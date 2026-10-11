@@ -540,7 +540,10 @@ class DecisionState:
             return
         self.finalized = finalized
         self.guard = getattr(finalized, "guard", None) or self.guard
-        self.set_envelope(getattr(finalized, "envelope", None))
+        envelope = getattr(finalized, "envelope", None)
+        self.set_envelope(envelope)
+        if envelope is not None and hasattr(envelope, "to_public_dict"):
+            self.observe_public_envelope(envelope.to_public_dict())
         state = str(getattr(finalized, "state", "") or "")
         if state:
             self.final_state = state
