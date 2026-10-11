@@ -25,6 +25,29 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from src.runtime.reason_codes import (
+    AUTHORITY_MISSING_FOR_EXECUTABLE,
+    AUTHORITY_MISSING_RETRIEVE,
+    BUDGET_EXHAUSTED_WITH_EVIDENCE,
+    BUDGET_EXHAUSTED_WITHOUT_EVIDENCE,
+    DETERMINISTIC_AUTHORITY,
+    EVIDENCE_INCOMPLETE,
+    EVIDENCE_INCOMPLETE_LIMITED,
+    EVIDENCE_INSUFFICIENT,
+    JEV_ONLY_NEGATIVE_SIGNAL,
+    JEV_POSITIVE_WITHOUT_EVIDENCE,
+    NEED_DRAFT,
+    READY,
+    REASONING_INCOMPLETE,
+    REASONING_INCOMPLETE_OVERRIDDEN_BY_AUTHORITY,
+    RETRIEVAL_UNAVAILABLE,
+    TERMINATION_SATISFIED,
+    TERMINATION_VS_INCOMPLETE_REASONING,
+    TERMINATION_WITHOUT_DRAFT,
+    TOOL_AUTHORIZED,
+    TOOL_NOT_AUTHORIZED,
+    TOOL_OUTSIDE_ALLOWLIST,
+)
 from src.runtime.run_state import TERMINAL_PHASES, AgentRunState, RunPhase
 
 FINALIZATION_POLICY_VERSION = "finalization-policy-1"
@@ -206,100 +229,104 @@ def evaluate_finalization(
 
     # 1. SAFETY / AUTHORIZATION: ninguna acción se ejecuta sin autorización.
     if state.tools.calls_outside_allowlist():
-        return decide(FinalizationAction.BLOCK, "TOOL_OUTSIDE_ALLOWLIST", AuthorityLevel.SAFETY)
+        return decide(
+            FinalizationAction.BLOCK, TOOL_OUTSIDE_ALLOWLIST, AuthorityLevel.SAFETY
+        )
     if tool_requested:
         if not tool_authorized:
             return decide(
-                FinalizationAction.CONTINUE, "TOOL_NOT_AUTHORIZED", AuthorityLevel.SAFETY
+                FinalizationAction.CONTINUE, TOOL_NOT_AUTHORIZED, AuthorityLevel.SAFETY
             )
-        return decide(FinalizationAction.USE_TOOL, "TOOL_AUTHORIZED", AuthorityLevel.SAFETY)
+        return decide(FinalizationAction.USE_TOOL, TOOL_AUTHORIZED, AuthorityLevel.SAFETY)
 
     # 2. DETERMINISTIC AUTHORITY: no se anula con narrativa ni con JEV.
     if decisions.authoritative:
         if jev in _JEV_NEGATIVE:
-            note_ignored("jev_only_negative_signal")
+            note_ignored(JEV_ONLY_NEGATIVE_SIGNAL)
         if state.reasoning.blocks_early_answer:
-            note_ignored("reasoning_incomplete_overridden_by_authority")
+            note_ignored(REASONING_INCOMPLETE_OVERRIDDEN_BY_AUTHORITY)
         return decide(
-            FinalizationAction.FINALIZE, "DETERMINISTIC_AUTHORITY", AuthorityLevel.DETERMINISTIC
+            FinalizationAction.FINALIZE, DETERMINISTIC_AUTHORITY, AuthorityLevel.DETERMINISTIC
         )
     if decisions.requires_deterministic and state.phase not in TERMINAL_PHASES:
         if jev in _JEV_NEGATIVE and evidence.complete:
-            note_ignored("jev_only_negative_signal")
+            note_ignored(JEV_ONLY_NEGATIVE_SIGNAL)
         if retrieval_possible and not budget.exhausted and evidence.insufficient:
             return decide(
                 FinalizationAction.RETRIEVE_MORE,
-                "AUTHORITY_MISSING_RETRIEVE",
+                AUTHORITY_MISSING_RETRIEVE,
                 AuthorityLevel.DETERMINISTIC,
             )
         return decide(
             FinalizationAction.UNDETERMINED,
-            "AUTHORITY_MISSING_FOR_EXECUTABLE",
+            AUTHORITY_MISSING_FOR_EXECUTABLE,
             AuthorityLevel.DETERMINISTIC,
         )
 
     # 3. RETRIEVAL FAILURE: fallo operativo, nunca «no hay datos».
     if evidence.retrieval_failed and not evidence.complete:
         if jev in _JEV_AFFIRMATIVE:
-            ignored.append("jev_positive_without_evidence")
-        return decide(FinalizationAction.BLOCK, "RETRIEVAL_UNAVAILABLE", AuthorityLevel.EVIDENCE)
+            ignored.append(JEV_POSITIVE_WITHOUT_EVIDENCE)
+        return decide(
+            FinalizationAction.BLOCK, RETRIEVAL_UNAVAILABLE, AuthorityLevel.EVIDENCE
+        )
 
     # 4. BUDGET: con evidencia se cierra degradado; sin evidencia se limita.
     if budget.exhausted:
         if evidence.complete or evidence.can_answer:
             return decide(
                 FinalizationAction.FINALIZE,
-                "BUDGET_EXHAUSTED_WITH_EVIDENCE",
+                BUDGET_EXHAUSTED_WITH_EVIDENCE,
                 AuthorityLevel.RESOURCE,
                 limited=True,
             )
         return decide(
             FinalizationAction.BLOCK,
-            "BUDGET_EXHAUSTED_WITHOUT_EVIDENCE",
+            BUDGET_EXHAUSTED_WITHOUT_EVIDENCE,
             AuthorityLevel.RESOURCE,
         )
 
     # 5. EVIDENCE SUFFICIENCY.
     if evidence.insufficient:
         if jev in _JEV_AFFIRMATIVE:
-            ignored.append("jev_positive_without_evidence")
+            ignored.append(JEV_POSITIVE_WITHOUT_EVIDENCE)
         if retrieval_possible:
             return decide(
-                FinalizationAction.RETRIEVE_MORE, "EVIDENCE_INCOMPLETE", AuthorityLevel.EVIDENCE
+                FinalizationAction.RETRIEVE_MORE, EVIDENCE_INCOMPLETE, AuthorityLevel.EVIDENCE
             )
         if draft_available:
             return decide(
                 FinalizationAction.FINALIZE,
-                "EVIDENCE_INCOMPLETE_LIMITED",
+                EVIDENCE_INCOMPLETE_LIMITED,
                 AuthorityLevel.EVIDENCE,
                 limited=True,
             )
         return decide(
-            FinalizationAction.ABSTAIN, "EVIDENCE_INSUFFICIENT", AuthorityLevel.EVIDENCE
+            FinalizationAction.ABSTAIN, EVIDENCE_INSUFFICIENT, AuthorityLevel.EVIDENCE
         )
 
     # 6. REASONING COMPLETENESS: análisis complejo incompleto no concluye.
     if state.reasoning.blocks_early_answer:
         if termination_requested:
-            conflicts.append("termination_vs_incomplete_reasoning")
+            conflicts.append(TERMINATION_VS_INCOMPLETE_REASONING)
         return decide(
-            FinalizationAction.CONTINUE, "REASONING_INCOMPLETE", AuthorityLevel.REASONING
+            FinalizationAction.CONTINUE, REASONING_INCOMPLETE, AuthorityLevel.REASONING
         )
 
     # 7. TERMINATION.
     if termination_requested:
         if draft_available:
             return decide(
-                FinalizationAction.FINALIZE, "TERMINATION_SATISFIED", AuthorityLevel.TERMINATION
+                FinalizationAction.FINALIZE, TERMINATION_SATISFIED, AuthorityLevel.TERMINATION
             )
         return decide(
-            FinalizationAction.CONTINUE, "TERMINATION_WITHOUT_DRAFT", AuthorityLevel.TERMINATION
+            FinalizationAction.CONTINUE, TERMINATION_WITHOUT_DRAFT, AuthorityLevel.TERMINATION
         )
 
     # 8. GENERATION: sin señales negativas, se puede finalizar con borrador.
     if draft_available:
-        return decide(FinalizationAction.FINALIZE, "READY", AuthorityLevel.GENERATION)
-    return decide(FinalizationAction.CONTINUE, "NEED_DRAFT", AuthorityLevel.GENERATION)
+        return decide(FinalizationAction.FINALIZE, READY, AuthorityLevel.GENERATION)
+    return decide(FinalizationAction.CONTINUE, NEED_DRAFT, AuthorityLevel.GENERATION)
 
 
 #: Acción esperada por fase terminal (para verificar acuerdo en el cierre).

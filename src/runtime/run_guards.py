@@ -15,6 +15,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from src.runtime.reason_codes import (
+    ANALYSIS_INCOMPLETE,
+    AUTHORITY_MISSING_FOR_EXECUTABLE,
+    BUDGET_EXHAUSTED,
+    BUDGET_EXHAUSTED_WITH_EVIDENCE,
+    DUPLICATE_TOOL_CALL,
+    LIMIT_REACHED_WITHOUT_EVIDENCE,
+    READY_TO_FINALIZE,
+    RETRIEVAL_ALLOWED,
+    TERMINAL_NO_TRANSITIONS,
+    TOOL_AUTHORIZED,
+    TOOL_FAILED_PERMANENT_NO_RETRY,
+    TOOL_NOT_AUTHORIZED,
+    TOOL_RESULT_OBSERVED,
+    TOOL_RETRY_ALLOWED,
+)
 from src.runtime.run_state import TERMINAL_PHASES, RunPhase
 
 RUN_GUARDS_VERSION = "run-guards-1"
@@ -61,26 +77,26 @@ def evaluate_transition(
     """
     if phase in TERMINAL_PHASES:
         return TransitionVerdict(
-            allowed=False, to_phase=phase, reason_code="TERMINAL_NO_TRANSITIONS"
+            allowed=False, to_phase=phase, reason_code=TERMINAL_NO_TRANSITIONS
         )
 
     if event is RunEvent.REQUEST_TOOL:
         if not tool_authorized:
             return TransitionVerdict(
-                allowed=False, to_phase=RunPhase.REASONING, reason_code="TOOL_NOT_AUTHORIZED"
+                allowed=False, to_phase=RunPhase.REASONING, reason_code=TOOL_NOT_AUTHORIZED
             )
         if duplicate_tool_call:
             return TransitionVerdict(
-                allowed=False, to_phase=RunPhase.REASONING, reason_code="DUPLICATE_TOOL_CALL"
+                allowed=False, to_phase=RunPhase.REASONING, reason_code=DUPLICATE_TOOL_CALL
             )
         if budget_exhausted:
             return TransitionVerdict(
                 allowed=False,
                 to_phase=RunPhase.READY_TO_FINALIZE,
-                reason_code="BUDGET_EXHAUSTED",
+                reason_code=BUDGET_EXHAUSTED,
             )
         return TransitionVerdict(
-            allowed=True, to_phase=RunPhase.ACTING, reason_code="TOOL_AUTHORIZED"
+            allowed=True, to_phase=RunPhase.ACTING, reason_code=TOOL_AUTHORIZED
         )
 
     if event is RunEvent.REQUEST_RETRIEVAL:
@@ -88,10 +104,10 @@ def evaluate_transition(
             return TransitionVerdict(
                 allowed=False,
                 to_phase=RunPhase.READY_TO_FINALIZE,
-                reason_code="BUDGET_EXHAUSTED",
+                reason_code=BUDGET_EXHAUSTED,
             )
         return TransitionVerdict(
-            allowed=True, to_phase=RunPhase.RETRIEVING, reason_code="RETRIEVAL_ALLOWED"
+            allowed=True, to_phase=RunPhase.RETRIEVING, reason_code=RETRIEVAL_ALLOWED
         )
 
     if event is RunEvent.REQUEST_FINALIZE:
@@ -101,41 +117,41 @@ def evaluate_transition(
             return TransitionVerdict(
                 allowed=True,
                 to_phase=RunPhase.UNDETERMINED,
-                reason_code="AUTHORITY_MISSING_FOR_EXECUTABLE",
+                reason_code=AUTHORITY_MISSING_FOR_EXECUTABLE,
             )
         if analysis_incomplete:
             return TransitionVerdict(
                 allowed=False,
                 to_phase=RunPhase.REASONING,
-                reason_code="ANALYSIS_INCOMPLETE",
+                reason_code=ANALYSIS_INCOMPLETE,
             )
         if budget_exhausted:
             return TransitionVerdict(
                 allowed=True,
                 to_phase=RunPhase.FINALIZED,
                 reason_code=(
-                    "BUDGET_EXHAUSTED_WITH_EVIDENCE"
+                    BUDGET_EXHAUSTED_WITH_EVIDENCE
                     if evidence_available
-                    else "LIMIT_REACHED_WITHOUT_EVIDENCE"
+                    else LIMIT_REACHED_WITHOUT_EVIDENCE
                 ),
             )
         return TransitionVerdict(
-            allowed=True, to_phase=RunPhase.FINALIZED, reason_code="READY_TO_FINALIZE"
+            allowed=True, to_phase=RunPhase.FINALIZED, reason_code=READY_TO_FINALIZE
         )
 
     # OBSERVE_TOOL_RESULT: política de retry por tipo de fallo.
     if tool_failure == "transient":
         return TransitionVerdict(
-            allowed=True, to_phase=RunPhase.REASONING, reason_code="TOOL_RETRY_ALLOWED"
+            allowed=True, to_phase=RunPhase.REASONING, reason_code=TOOL_RETRY_ALLOWED
         )
     if tool_failure == "permanent":
         return TransitionVerdict(
             allowed=False,
             to_phase=RunPhase.REASONING,
-            reason_code="TOOL_FAILED_PERMANENT_NO_RETRY",
+            reason_code=TOOL_FAILED_PERMANENT_NO_RETRY,
         )
     return TransitionVerdict(
-        allowed=True, to_phase=RunPhase.REASONING, reason_code="TOOL_RESULT_OBSERVED"
+        allowed=True, to_phase=RunPhase.REASONING, reason_code=TOOL_RESULT_OBSERVED
     )
 
 
