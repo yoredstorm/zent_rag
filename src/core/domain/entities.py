@@ -450,6 +450,16 @@ class RAGQueryResult:
     steps: list[dict] = field(default_factory=list)
     # C9 T2: costo real del DAG cognitivo (deep path) para sumar al usage.
     cognitive_cost_usd: float = 0.0
+    #: Contabilidad única del run RAG (RunBudgetLedger). Aditivo: el evento de
+    #: uso LEE estos campos; nadie los recalcula por fuera del ledger.
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost: float = 0.0
+    llm_calls: int = 0
+    logical_steps: int = 0
+    tool_calls: int = 0
+    embedding_tokens: int = 0
     #: Estado canónico del run (AgentRunState, Fase A). Aditivo: no reemplaza
     #: ningún campo existente ni entra en los payloads API por sí solo.
     run_state: object | None = None

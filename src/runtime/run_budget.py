@@ -247,6 +247,10 @@ class RunBudgetLedger:
         return float(getattr(self.result, "cost", 0.0) or 0.0)
 
     @property
+    def consumed_embedding_tokens(self) -> int:
+        return int(getattr(self.result, "embedding_tokens", 0) or 0)
+
+    @property
     def llm_calls(self) -> int:
         return int(getattr(self.result, "llm_calls", 0) or 0)
 
@@ -295,6 +299,24 @@ class RunBudgetLedger:
         self.result.cost = round(self.consumed_cost_usd + max(0.0, float(cost_usd or 0.0)), 6)
         self.result.llm_calls = self.llm_calls + 1
         self.result.logical_steps = self.logical_steps + 1
+
+    def account_embedding_usage(
+        self,
+        *,
+        tokens: int,
+        cost_usd: float = 0.0,
+    ) -> None:
+        """Línea de embeddings: tokens y costo, sin contarse como llamada LLM."""
+        added = max(0, int(tokens or 0))
+        self.result.embedding_tokens = self.consumed_embedding_tokens + added
+        self.result.cost = round(self.consumed_cost_usd + max(0.0, float(cost_usd or 0.0)), 6)
+
+    def account_charge(self, *, cost_usd: float) -> None:
+        """Cargo externo ya reportado (p. ej. DAG cognitivo). Solo costo."""
+        amount = float(cost_usd or 0.0)
+        if amount <= 0:
+            return
+        self.result.cost = round(self.consumed_cost_usd + amount, 6)
 
 
 @dataclass(frozen=True)

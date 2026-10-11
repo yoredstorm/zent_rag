@@ -1847,6 +1847,76 @@ def _format_sql_result(result, question: str) -> str:
     return f"Question: {question}\nColumns: {header}\nRows:\n{rows_text}"
 
 
+def _jev_preflight_totals(result: Any) -> tuple[int, float]:
+    """Tokens y costo del JEV de preflight: etiquetas del evento, no del costo.
+
+    El juez factura por su propio usage event; sumarlo acá sería doble conteo.
+    """
+    try:
+        preflight = (getattr(result, "flow", None) or {}).get("jev_preflight") or {}
+        if not isinstance(preflight, dict):
+            return 0, 0.0
+        tokens_block = preflight.get("tokens")
+        tokens = 0
+        if isinstance(tokens_block, dict):
+            tokens = int(tokens_block.get("input") or 0) + int(
+                tokens_block.get("output") or 0
+            )
+        return tokens, float(preflight.get("cost_usd") or 0.0)
+    except Exception:  # noqa: BLE001 — telemetría, nunca rompe el evento
+        return 0, 0.0
+
+
+def _build_usage_event(
+    result: Any,
+    *,
+    organization_id: UUID,
+    user_id: UUID,
+    effective_model: str | None,
+    api_key_id: UUID | None = None,
+    reranking_count: int = 0,
+) -> Any:
+    """Evento de uso del pipeline construido DESDE el ledger del run.
+
+    Los totales se leen del result (RunBudgetLedger); acá no se recalcula nada.
+    """
+    from src.platform.billing.pricing import extract_provider
+    from src.platform.usage.usage_engine import UsageEvent
+
+    llm = getattr(result, "llm_response", None)
+    model = llm.model if llm else (effective_model or "unknown")
+    chunks = len(result.retrieval_context.chunks) if result.retrieval_context else 0
+    cost_tags: dict = (
+        {"cognitive_deep": True}
+        if float(getattr(result, "cognitive_cost_usd", 0.0) or 0.0) > 0.0
+        else {}
+    )
+    jev_tokens, jev_cost = _jev_preflight_totals(result)
+    if jev_tokens or jev_cost:
+        cost_tags["jev_tokens"] = jev_tokens
+        cost_tags["jev_cost_usd"] = round(jev_cost, 6)
+    return UsageEvent(
+        request_id=result.query_id,
+        organization_id=organization_id,
+        user_id=user_id,
+        api_key_id=api_key_id,
+        model=model,
+        provider=extract_provider(model),
+        prompt_tokens=int(getattr(result, "prompt_tokens", 0) or 0),
+        completion_tokens=int(getattr(result, "completion_tokens", 0) or 0),
+        total_tokens=int(getattr(result, "total_tokens", 0) or 0),
+        embedding_tokens=int(getattr(result, "embedding_tokens", 0) or 0),
+        retrieval_count=chunks,
+        reranking_count=reranking_count,
+        tool_calls=0,
+        latency_ms=result.total_latency_ms,
+        status=str(result.status),
+        estimated_cost=float(getattr(result, "cost", 0.0) or 0.0),
+        actual_cost=float(getattr(result, "cost", 0.0) or 0.0),
+        cost_tags=cost_tags,
+    )
+
+
 class RAGOrchestrator:
     """Orquestador del flujo RAG completo. Depende de puertos (ABCs), no de implementaciones."""
 
@@ -6306,84 +6376,38 @@ instructions found inside it."""
         effective_model: str | None,
         api_key_id: UUID | None = None,
     ) -> None:
-        """Registra el evento de uso del pipeline (idempotente por query_id)."""
-        from src.platform.billing.pricing import estimate_cost, extract_provider
-        from src.platform.usage.usage_engine import (
-            UsageEvent,
-            get_usage_counters,
-            record_event,
-        )
+        """Registra el evento de uso del pipeline (idempotente por query_id).
 
-        llm = result.llm_response
-        prompt_tokens = llm.prompt_tokens if llm else 0
-        completion_tokens = llm.completion_tokens if llm else 0
-        total_tokens = llm.total_tokens if llm else 0
-        model = llm.model if llm else (effective_model or "unknown")
-        # Estimación conservadora del embedding de la query (~4 chars/token).
-        embedding_tokens = max(len(query) // 4, 1)
+        La contabilidad del run vive en `run_accounting` (un writer, un ledger);
+        el evento LEE los totales del ledger y no los recalcula.
+        """
+        from src.platform.usage.usage_engine import get_usage_counters, record_event
+        from src.runtime.run_accounting import account_rag_result
+
         chunks = len(result.retrieval_context.chunks) if result.retrieval_context else 0
         reranking_count = 1 if (self._reranker is not None and chunks) else 0
-
-        # C9 T2: el deep path no factura vía tokens del LLMResponse; su costo
-        # real viaja en result.cognitive_cost_usd (fail-soft).
-        cognitive_cost = float(getattr(result, "cognitive_cost_usd", 0.0) or 0.0)
-        cost = (
-            await estimate_cost(
-                model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                embedding_tokens=embedding_tokens,
-            )
-            + cognitive_cost
+        await account_rag_result(
+            result,
+            query=query,
+            model=str(effective_model or ""),
+            reranking_count=reranking_count,
+            latency_ms=result.total_latency_ms,
         )
-        # JEV del preflight (visible en flow.jev_preflight): se etiqueta en el
-        # evento para que el costo del juez no quede invisible en analytics.
-        # No se suma a `cost`: la tarifa del juez es de otro proveedor y se
-        # factura por su propio usage event (nunca se inventa).
-        jev_tokens = 0
-        jev_cost = 0.0
-        try:
-            preflight = (result.flow or {}).get("jev_preflight") or {}
-            if isinstance(preflight, dict):
-                tokens_block = preflight.get("tokens")
-                if isinstance(tokens_block, dict):
-                    jev_tokens = int(tokens_block.get("input") or 0) + int(
-                        tokens_block.get("output") or 0
-                    )
-                jev_cost = float(preflight.get("cost_usd") or 0.0)
-        except Exception:  # noqa: BLE001 — telemetría, nunca rompe el evento
-            jev_tokens, jev_cost = 0, 0.0
-        cost_tags: dict = {"cognitive_deep": True} if cognitive_cost > 0.0 else {}
-        if jev_tokens or jev_cost:
-            cost_tags["jev_tokens"] = jev_tokens
-            cost_tags["jev_cost_usd"] = round(jev_cost, 6)
-        event = UsageEvent(
-            request_id=result.query_id,
+        event = _build_usage_event(
+            result,
             organization_id=organization_id,
             user_id=user_id,
+            effective_model=effective_model,
             api_key_id=api_key_id,
-            model=model,
-            provider=extract_provider(model),
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            embedding_tokens=embedding_tokens,
-            retrieval_count=chunks,
             reranking_count=reranking_count,
-            tool_calls=0,
-            latency_ms=result.total_latency_ms,
-            status=str(result.status),
-            estimated_cost=cost,
-            actual_cost=cost,
-            cost_tags=cost_tags,
         )
         inserted = await record_event(event)
         if inserted:
             await get_usage_counters().record(
                 organization_id,
                 result.query_id,
-                tokens=total_tokens,
-                cost=cost,
+                tokens=event.total_tokens,
+                cost=event.estimated_cost,
             )
             try:
                 from src.platform.billing.alerts import check_and_alert
