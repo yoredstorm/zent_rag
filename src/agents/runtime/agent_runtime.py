@@ -1044,7 +1044,7 @@ async def _circuit_check(config: dict, organization_id: UUID) -> None:
     try:
         from src.platform.modelhealth.guardrails import check_circuit
 
-        circuit = await check_circuit(str(config["model"]))
+        circuit = await check_circuit(str(config["model"]), organization_id)
         if circuit["state"] == "open":
             candidates = config.get("_router_candidates") or [config["model"]]
             fallback = next(
@@ -2182,7 +2182,7 @@ class AgentRuntime:
             try:
                 from src.platform.modelhealth.guardrails import record_failure
 
-                await record_failure(str(config["model"]))
+                await record_failure(str(config["model"]), agent.organization_id)
             except Exception:  # noqa: BLE001
                 pass
         except Exception as exc:
@@ -2198,7 +2198,7 @@ class AgentRuntime:
             try:
                 from src.platform.modelhealth.guardrails import record_failure
 
-                await record_failure(str(config["model"]))
+                await record_failure(str(config["model"]), agent.organization_id)
             except Exception:  # noqa: BLE001
                 pass
         else:
@@ -2206,7 +2206,7 @@ class AgentRuntime:
                 if result.status == "completed":
                     from src.platform.modelhealth.guardrails import record_success
 
-                    await record_success(str(config["model"]))
+                    await record_success(str(config["model"]), agent.organization_id)
             except Exception:  # noqa: BLE001
                 pass
 

@@ -88,3 +88,23 @@ groups:
             - Modelo cargado correctamente en memoria
             - Recursos de GPU/CPU del nodo Ollama
             - Conectividad de red entre la API y Ollama
+
+      # -----------------------------------------------------------------------
+      # Alerta 6: Circuit breaker abierto para MÚLTIPLES tenants (provider caído
+      # para todos, no un tenant problemático).
+      # -----------------------------------------------------------------------
+      - alert: ModelCircuitMultiTenantOpen
+        expr: count by (model) (zent_model_circuit_openings_total{scope!="global"}) > 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Más de un tenant abrió el circuito del modelo {{ $labels.model }}"
+          description: |
+            Varios tenants distintos abrieron su circuit breaker para el mismo
+            modelo ({{ $value }} scopes en 5m). Eso apunta a un problema del
+            PROVIDER/modelo, no de una organización:
+            - Revisar estado del provider (429/5xx/timeouts)
+            - Considerar abrir el circuito GLOBAL del modelo
+            - Verificar el fallback de modelo por si el primario está degradado
+            Un solo tenant abriendo su scope es aislado y no dispara esta alerta.

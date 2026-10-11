@@ -378,6 +378,19 @@ zent_run_state_violations_total = Counter(
     labelnames=["path", "kind"],  # path: agent | rag; kind: código del invariante
 )
 
+# Circuit breaker de modelos con scope: global (provider caído) o tenant
+# (aislamiento: los fallos de una org no bloquean a las demás).
+zent_model_circuit_failures_total = Counter(
+    "zent_model_circuit_failures_total",
+    "Fallos registrados por el circuit breaker de modelos",
+    labelnames=["model", "scope"],  # scope: global | <organization_id>
+)
+zent_model_circuit_openings_total = Counter(
+    "zent_model_circuit_openings_total",
+    "Aperturas del circuit breaker de modelos",
+    labelnames=["model", "scope"],
+)
+
 # -----------------------------------------------------------------------------
 # Zent Discovery Engine & Semantic Catalog (FASE 24)
 # -----------------------------------------------------------------------------

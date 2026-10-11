@@ -338,60 +338,173 @@ async def budgets_status(organization_id: UUID | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # Circuit breakers por modelo
 # ---------------------------------------------------------------------------
-async def check_circuit(model: str) -> dict:
-    """closed | open (cooldown activo) | half_open (cooldown vencido)."""
-    session = await get_async_session()
+#: Orden de severidad para combinar el breaker del tenant con el global.
+_CIRCUIT_RANK = {"closed": 0, "half_open": 1, "open": 2}
+
+
+def _scope_where(organization_id: UUID | None) -> tuple[str, dict]:
+    """Filtro de scope: fila del tenant o fila global (organization_id NULL)."""
+    if organization_id:
+        return (
+            "model_name = :model AND organization_id = :oid",
+            {"model": None, "oid": organization_id},
+        )
+    return (
+        "model_name = :model AND organization_id IS NULL",
+        {"model": None},
+    )
+
+
+def _observe_circuit(
+    model: str, organization_id: UUID | None, *, opened: bool = False
+) -> None:
+    """Métrica de fallos/aperturas con scope por tenant (fail-soft)."""
     try:
-        row = (
-            await session.execute(
-                text(
-                    "SELECT state, failures, failure_threshold, window_seconds, "
-                    "cooldown_seconds, last_failure_at, opened_at, opened_until "
-                    "FROM model_circuit_breakers WHERE model_name = :model"
-                ),
-                {"model": model},
-            )
-        ).fetchone()
-        if row is None:
-            return {"model": model, "state": "closed", "failures": 0}
-        state = row.state
-        if state == "open" and row.opened_until and row.opened_until <= datetime.now(timezone.utc):
-            state = "half_open"
-    finally:
-        await session.close()
+        import src.infrastructure.observability.metrics as m
+
+        scope = str(organization_id) if organization_id else "global"
+        m.zent_model_circuit_failures_total.labels(model=model, scope=scope).inc()
+        if opened:
+            m.zent_model_circuit_openings_total.labels(model=model, scope=scope).inc()
+    except Exception:  # noqa: BLE001 — la métrica nunca rompe el camino
+        pass
+
+
+def _row_payload(row, model: str, organization_id: UUID | None) -> dict:
     return {
         "model": model,
-        "state": state,
+        "scope": str(organization_id) if organization_id else "global",
+        "state": row.state,
         "failures": int(row.failures),
         "failure_threshold": int(row.failure_threshold),
         "opened_until": row.opened_until.isoformat() if row.opened_until else None,
     }
 
 
-async def record_failure(model: str) -> dict:
+async def _fetch_circuit_row(session, model: str, organization_id: UUID | None):
+    where, params = _scope_where(organization_id)
+    params["model"] = model
+    return (
+        await session.execute(
+            text(
+                "SELECT state, failures, failure_threshold, window_seconds, "
+                "cooldown_seconds, last_failure_at, opened_at, opened_until "
+                "FROM model_circuit_breakers WHERE " + where
+            ),
+            params,
+        )
+    ).fetchone()
+
+
+async def check_circuit(model: str, organization_id: UUID | None = None) -> dict:
+    """closed | open (cooldown activo) | half_open (cooldown vencido).
+
+    Con tenant: se combina su fila con la global (el peor estado manda), así un
+    provider caído para todos protege igual y los fallos de un tenant no
+    bloquean a los demás.
+    """
+    session = await get_async_session()
+    try:
+        merged_state = "closed"
+        payload: dict = {"model": model, "state": "closed", "failures": 0}
+        rows: list = []
+        if organization_id:
+            tenant_row = await _fetch_circuit_row(session, model, organization_id)
+            if tenant_row is not None:
+                rows.append((tenant_row, organization_id))
+        global_row = await _fetch_circuit_row(session, model, None)
+        if global_row is not None:
+            rows.append((global_row, None))
+        first = True
+        for row, scope in rows:
+            state = row.state
+            if (
+                state == "open"
+                and row.opened_until
+                and row.opened_until <= datetime.now(timezone.utc)
+            ):
+                state = "half_open"
+            if first or _CIRCUIT_RANK.get(state, 0) > _CIRCUIT_RANK.get(
+                merged_state, 0
+            ):
+                merged_state = state
+                first = False
+                payload = {
+                    "model": model,
+                    "scope": str(scope) if scope else "global",
+                    "state": state,
+                    "failures": int(row.failures),
+                    "failure_threshold": int(row.failure_threshold),
+                    "opened_until": (
+                        row.opened_until.isoformat() if row.opened_until else None
+                    ),
+                }
+        return payload
+    finally:
+        await session.close()
+
+
+async def record_failure(model: str, organization_id: UUID | None = None) -> dict:
+    """Registra un fallo en el scope del tenant (o global sin tenant).
+
+    Los fallos de un tenant NO cuentan para el global: un tenant problemático
+    abre solo su circuito. Un provider caído para todos se detecta por métrica
+    (varios tenants abriendo el mismo modelo) y por la alerta asociada.
+    """
     now = datetime.now(timezone.utc)
     session = await get_async_session()
     try:
+        where, params = _scope_where(organization_id)
+        params["model"] = model
         row = (
             await session.execute(
                 text(
                     "SELECT id, failures, failure_threshold, window_seconds, "
-                    "cooldown_seconds, state, last_failure_at FROM model_circuit_breakers "
-                    "WHERE model_name = :model"
+                    "cooldown_seconds, state, last_failure_at "
+                    "FROM model_circuit_breakers WHERE " + where
                 ),
-                {"model": model},
+                params,
             )
         ).fetchone()
         if row is None:
+            # Herencia de umbrales: el tenant nace con la config del global.
+            base = (
+                await session.execute(
+                    text(
+                        "SELECT failure_threshold, window_seconds, cooldown_seconds "
+                        "FROM model_circuit_breakers "
+                        "WHERE model_name = :model AND organization_id IS NULL"
+                    ),
+                    {"model": model},
+                )
+            ).fetchone()
+            failure_threshold = int(base.failure_threshold) if base else 3
+            window_seconds = int(base.window_seconds) if base else 300
+            cooldown_seconds = int(base.cooldown_seconds) if base else 900
             await session.execute(
                 text(
-                    "INSERT INTO model_circuit_breakers (id, model_name, failures, "
-                    "last_failure_at) VALUES (gen_random_uuid(), :model, 1, :now)"
+                    "INSERT INTO model_circuit_breakers (id, model_name, "
+                    "organization_id, failure_threshold, window_seconds, "
+                    "cooldown_seconds, failures, last_failure_at) "
+                    "VALUES (gen_random_uuid(), :model, :oid, :ft, :ws, :cs, 1, :now)"
                 ),
-                {"model": model, "now": now},
+                {
+                    "model": model,
+                    "oid": organization_id,
+                    "ft": failure_threshold,
+                    "ws": window_seconds,
+                    "cs": cooldown_seconds,
+                    "now": now,
+                },
             )
             await session.commit()
-            return {"model": model, "state": "closed", "failures": 1}
+            _observe_circuit(model, organization_id)
+            return {
+                "model": model,
+                "scope": str(organization_id) if organization_id else "global",
+                "state": "closed",
+                "failures": 1,
+            }
         failures = int(row.failures) + 1
         window_ok = (
             row.last_failure_at is None
@@ -400,46 +513,63 @@ async def record_failure(model: str) -> dict:
         if not window_ok:
             failures = 1
         state = row.state
-        if (
-            failures >= int(row.failure_threshold)
-            and state != "open"
-        ):
+        opened_now = False
+        if failures >= int(row.failure_threshold) and state != "open":
             state = "open"
+            opened_now = True
             await session.execute(
                 text(
                     "UPDATE model_circuit_breakers SET failures = :f, state = 'open', "
                     "opened_at = :now, opened_until = :until, last_failure_at = :now "
-                    "WHERE model_name = :model"
+                    "WHERE " + where
                 ),
                 {
+                    **params,
                     "f": failures,
                     "now": now,
                     "until": now + timedelta(seconds=int(row.cooldown_seconds)),
-                    "model": model,
                 },
             )
         else:
             await session.execute(
                 text(
-                    "UPDATE model_circuit_breakers SET failures = :f, last_failure_at = :now "
-                    "WHERE model_name = :model"
+                    "UPDATE model_circuit_breakers SET failures = :f, "
+                    "last_failure_at = :now WHERE " + where
                 ),
-                {"f": failures, "now": now, "model": model},
+                {**params, "f": failures, "now": now},
             )
         await session.commit()
+        _observe_circuit(model, organization_id, opened=opened_now)
     finally:
         await session.close()
-    return {"model": model, "state": state, "failures": failures}
+    return {
+        "model": model,
+        "scope": str(organization_id) if organization_id else "global",
+        "state": state,
+        "failures": failures,
+    }
 
 
-async def record_success(model: str) -> None:
+async def record_success(model: str, organization_id: UUID | None = None) -> None:
+    """Un éxito es evidencia de que el modelo responde: limpia tenant y global."""
     session = await get_async_session()
     try:
+        where, params = _scope_where(organization_id)
+        params["model"] = model
+        if organization_id:
+            await session.execute(
+                text(
+                    "UPDATE model_circuit_breakers SET failures = 0, "
+                    "state = CASE WHEN state = 'open' THEN 'half_open' ELSE state END "
+                    "WHERE " + where
+                ),
+                params,
+            )
         await session.execute(
             text(
                 "UPDATE model_circuit_breakers SET failures = 0, "
                 "state = CASE WHEN state = 'open' THEN 'half_open' ELSE state END "
-                "WHERE model_name = :model"
+                "WHERE model_name = :model AND organization_id IS NULL"
             ),
             {"model": model},
         )
@@ -448,16 +578,25 @@ async def record_success(model: str) -> None:
         await session.close()
 
 
-async def reset_circuit(model: str) -> bool:
+async def reset_circuit(model: str, organization_id: UUID | None = None) -> bool:
+    """Reset admin: sin scope resetes TODOS los circuitos del modelo.
+
+    Con scope, solo la fila del tenant.
+    """
     session = await get_async_session()
     try:
+        if organization_id:
+            where, params = _scope_where(organization_id)
+            params["model"] = model
+        else:
+            where, params = "model_name = :model", {"model": model}
         result = await session.execute(
             text(
                 "UPDATE model_circuit_breakers SET failures = 0, state = 'closed', "
                 "opened_at = NULL, opened_until = NULL, last_failure_at = NULL "
-                "WHERE model_name = :model"
+                "WHERE " + where
             ),
-            {"model": model},
+            params,
         )
         await session.commit()
         return result.rowcount > 0
@@ -471,9 +610,10 @@ async def circuits_list() -> dict:
         rows = (
             await session.execute(
                 text(
-                    "SELECT model_name, state, failures, failure_threshold, "
-                    "window_seconds, cooldown_seconds, opened_at, opened_until "
-                    "FROM model_circuit_breakers ORDER BY model_name"
+                    "SELECT model_name, organization_id, state, failures, "
+                    "failure_threshold, window_seconds, cooldown_seconds, "
+                    "opened_at, opened_until "
+                    "FROM model_circuit_breakers ORDER BY model_name, organization_id"
                 )
             )
         ).fetchall()
@@ -483,6 +623,10 @@ async def circuits_list() -> dict:
         "circuits": [
             {
                 "model": r.model_name,
+                "scope": str(r.organization_id) if r.organization_id else "global",
+                "organization_id": (
+                    str(r.organization_id) if r.organization_id else None
+                ),
                 "state": r.state,
                 "failures": int(r.failures),
                 "failure_threshold": int(r.failure_threshold),
