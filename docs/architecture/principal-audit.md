@@ -96,6 +96,10 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 - **Estado (este pase)**: medición lista (`flow["jev_value"]` + tokens JEV en el
   run). Los skips quedan a la espera de `redundant_rate` real de producción;
   los estructurales ya existen (rules-first, batching, bypass fail-closed).
+- **Estado (skip por calibración)**: mecanismo implementado —
+  `RUNTIME_JEV_SKIP_PHASES=answer_gate,agent_step,termination` (default vacío:
+  JEV corre igual). Con el flag, la fase devuelve `provider="skip_config"` sin
+  llamar al juez. Se activa solo con datos que muestren redundancia alta.
 
 ### 6. AgentRuntime todavía concentra demasiado (P2)
 - **Evidence**: `agent_runtime.py` ~5.8k líneas; narrative fast path ~800
@@ -108,6 +112,9 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 - **Test**: mismos 1000+ tests verdes tras cada extracción; sin cambios de flow.
 - **Estado (este pase)**: pendiente por diseño (P9); prerrequisito antes de
   extraer: preservar la suite verde del programa y no tocar el contrato del flow.
+- **Estado (legibilidad)**: lifecycle documentado en el loop (8 fases con sus
+  estados) y transiciones en `run_guards`; la extracción del narrative fast path
+  queda con criterio explícito (módulo con parámetros, sin rewrite del ReAct).
 
 ### 7. Mezcla de contextos en prompt sin sobre (P2)
 - **Evidence**: `context_block`, company context, memory hits y evidencia
@@ -134,6 +141,10 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   `build_story(steps, view)`; jamás CoT.
 - **DO NOT**: hardcodear frases por step en distintos backends.
 - **Test**: contrato de reason codes versionado + snapshot de traducción.
+- **Estado (backend)**: `GET /agents/runs/{run_id}/story?view=business|technical`
+  devuelve `build_story(...)` desde los steps persistidos (business sin campos
+  técnicos ni CoT; technical con contenido truncado). La migración del portal
+  al endpoint queda como tarea de frontend.
 
 ### 9. Aislamiento por conversación no auditado end-to-end (P3)
 - **Evidence**: `ContextEnvelope.isolation_key = tenant:conversation`; caches
