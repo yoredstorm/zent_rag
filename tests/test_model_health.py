@@ -375,6 +375,45 @@ async def test_circuit_breaker_and_runtime_guard(async_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
+async def test_circuito_aislado_por_tenant(async_client: AsyncClient) -> None:
+    """Fallos de un tenant abren SOLO su scope; el global protege a todos."""
+    from src.platform.modelhealth.guardrails import (
+        check_circuit,
+        record_failure,
+        record_success,
+        reset_circuit,
+    )
+
+    model = f"zent-iso-{uuid4().hex[:8]}"
+    org_a = uuid4()
+    org_b = uuid4()
+    try:
+        for _ in range(3):
+            await record_failure(model, org_a)
+        state_a = await check_circuit(model, org_a)
+        state_b = await check_circuit(model, org_b)
+        assert state_a["state"] == "open"
+        assert state_a["scope"] == str(org_a)
+        # Aislamiento: B y el scope global siguen cerrados.
+        assert state_b["state"] == "closed"
+        assert (await check_circuit(model))["state"] == "closed"
+
+        # Provider caído para todos: el global abierto protege a B (heredado).
+        for _ in range(5):
+            await record_failure(model)
+        state_b = await check_circuit(model, org_b)
+        assert state_b["state"] == "open"
+        assert state_b["scope"] == "global"
+
+        # Un éxito limpia la fila del tenant y también la global.
+        await record_success(model, org_a)
+        assert (await check_circuit(model, org_a))["state"] == "half_open"
+        assert (await check_circuit(model))["state"] == "half_open"
+    finally:
+        await reset_circuit(model)
+
+
+@pytest.mark.asyncio
 async def test_model_health_dashboard(async_client: AsyncClient) -> None:
     plat = await _platform_admin(async_client, f"padmin-mhd-{uuid4().hex[:8]}@zent.example")
 
