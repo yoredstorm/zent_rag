@@ -395,6 +395,89 @@ class TestStoryView:
         assert row["latency_ms"] == 3
 
 
+class TestResolveNarrativeSearchPlan:
+    @pytest.mark.asyncio
+    async def test_top_k_se_acota_y_pack_terms_enriquecen(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        import src.knowledge.semantic.query_plan as query_plan_module
+        import src.runtime.dependencies as deps_module
+        import src.runtime.narrative_coverage as coverage_module
+        from src.agents.runtime.agent_runtime import _resolve_narrative_search_plan
+
+        async def fake_resolve(**kwargs):
+            return SimpleNamespace(search_query="byte 105")
+
+        monkeypatch.setattr(query_plan_module, "resolve_semantic_query", fake_resolve)
+        monkeypatch.setattr(deps_module, "get_embedding_provider", lambda: object())
+        monkeypatch.setattr(
+            coverage_module,
+            "extract_narrative_concepts",
+            lambda message: SimpleNamespace(
+                frames=[SimpleNamespace(aliases=["fee application"])]
+            ),
+        )
+        request = SimpleNamespace(
+            message="¿byte 105?",
+            agent=SimpleNamespace(config_json={"retrieval": {"top_k": 999}}),
+        )
+        plan = await _resolve_narrative_search_plan(
+            request=request,
+            settings=SimpleNamespace(RAG_TOP_K=5),
+            org_config={},
+            tenant_id=None,
+        )
+        assert plan.top_k == 30  # clamp superior
+        assert plan.max_items == 24
+        assert "fee application" in plan.search_query
+        assert plan.selection_question == plan.search_query
+
+    @pytest.mark.asyncio
+    async def test_top_k_minimo_y_default_global(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        import src.knowledge.semantic.query_plan as query_plan_module
+        import src.runtime.dependencies as deps_module
+        from src.agents.runtime.agent_runtime import _resolve_narrative_search_plan
+
+        monkeypatch.setattr(
+            query_plan_module,
+            "resolve_semantic_query",
+            lambda **kwargs: _raise_async(),
+        )
+        monkeypatch.setattr(deps_module, "get_embedding_provider", lambda: object())
+
+        small = await _resolve_narrative_search_plan(
+            request=SimpleNamespace(
+                message="q",
+                agent=SimpleNamespace(config_json={"retrieval": {"top_k": 3}}),
+            ),
+            settings=SimpleNamespace(RAG_TOP_K=5),
+            org_config={},
+            tenant_id=None,
+        )
+        assert small.top_k == 5  # clamp inferior
+
+        default = await _resolve_narrative_search_plan(
+            request=SimpleNamespace(
+                message="q", agent=SimpleNamespace(config_json={})
+            ),
+            settings=SimpleNamespace(RAG_TOP_K=7),
+            org_config={},
+            tenant_id=None,
+        )
+        assert default.top_k == 7  # default global
+        assert default.max_items == 12
+
+
+async def _raise_async():
+    raise RuntimeError("sin modelo")
+
+
 class TestJevSkips:
     def test_skip_phases_from_settings(self) -> None:
         from types import SimpleNamespace
