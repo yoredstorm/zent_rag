@@ -304,3 +304,38 @@ async def test_simple_query_stays_in_one_retrieval_round() -> None:
     assert step["coverage_stop_reason"] == "INITIAL_COMPLETE"
     assert len(search.queries) == 1
     assert llm.calls == 1
+
+
+class _TruncatingLLM(_FakeLLM):
+    """Primera generación cortada por tope de tokens; la continuación cierra."""
+
+    async def generate(self, prompt: str, **kwargs) -> LLMResponse:
+        self.system_prompts.append(str(kwargs.get("system_prompt") or ""))
+        idx = min(self.calls, len(self.contents) - 1)
+        self.calls += 1
+        return LLMResponse(
+            content=self.contents[idx],
+            model="fake",
+            prompt_tokens=self.tokens,
+            completion_tokens=self.tokens,
+            total_tokens=self.tokens * 2,
+            finish_reason="length" if self.calls == 1 else "stop",
+        )
+
+
+@pytest.mark.asyncio
+async def test_truncated_narrative_answer_is_continued() -> None:
+    search = _NarrativeSearchTool()
+    register_tool(search)
+    llm = _TruncatingLLM(
+        [
+            "Record 2 procesa el cambio de fechas con la effective date y la",
+            " discontinue date [Doc: 1].",
+        ]
+    )
+    runtime = AgentRuntime(llm_provider=llm)
+    result = await runtime.run(_request(_agent(), QUESTION))
+
+    assert llm.calls == 2
+    assert "discontinue date" in result.answer.lower()
+    assert result.status == "completed"

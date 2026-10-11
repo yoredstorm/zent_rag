@@ -13,7 +13,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -4333,6 +4333,13 @@ class AgentRuntime:
                     if part
                 ),
                 model_output_limit=_answer_max_tokens(),
+                # Tope por respuesta generoso: el heurístico por blueprint
+                # cortaba explicaciones técnicas largas a mitad de tabla.
+                desired_completion_tokens=min(
+                    int(getattr(settings, "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0)
+                    or _answer_max_tokens(),
+                    _answer_max_tokens(),
+                ),
                 followup_llm=False,
                 input_cost_per_1k=None if rates is None else rates[0],
                 output_cost_per_1k=None if rates is None else rates[1],
@@ -4426,6 +4433,50 @@ class AgentRuntime:
                     system_prompt=system_prompt,
                 )
             model_ms = (time.perf_counter() - model_started) * 1000
+            # Respuesta cortada por tope de tokens: UNA continuación la cierra
+            # (sin repetir lo ya escrito). Los tokens se suman al run.
+            if (
+                str(getattr(response, "finish_reason", "") or "").lower() == "length"
+                and str(getattr(response, "content", "") or "").strip()
+                and ledger.remaining_tokens > 400
+            ):
+                continuation_started = time.perf_counter()
+                try:
+                    tail = str(response.content)[-1200:]
+                    continuation = await self._llm.generate(
+                        prompt=(
+                            f"{user_prompt}\n\nTu respuesta anterior quedó "
+                            "incompleta. Continuala EXACTAMENTE desde donde "
+                            "quedó, sin repetir lo ya escrito ni volver a "
+                            f"encabezar:\n...{tail}"
+                        ),
+                        model=model_policy.model,
+                        max_tokens=min(_answer_max_tokens(), 4096),
+                        temperature=0.2,
+                        system_prompt=system_prompt,
+                    )
+                    extra = str(getattr(continuation, "content", "") or "").strip()
+                    if extra:
+                        response = replace(
+                            response,
+                            content=str(response.content).rstrip() + "\n" + extra,
+                            prompt_tokens=int(getattr(response, "prompt_tokens", 0) or 0)
+                            + int(getattr(continuation, "prompt_tokens", 0) or 0),
+                            completion_tokens=int(
+                                getattr(response, "completion_tokens", 0) or 0
+                            )
+                            + int(getattr(continuation, "completion_tokens", 0) or 0),
+                            total_tokens=int(getattr(response, "total_tokens", 0) or 0)
+                            + int(getattr(continuation, "total_tokens", 0) or 0),
+                            finish_reason=str(
+                                getattr(continuation, "finish_reason", "") or "stop"
+                            ),
+                        )
+                except Exception as exc:  # noqa: BLE001 — se conserva lo generado
+                    logger.warning(
+                        "narrative continuation failed", error=str(exc)[:150]
+                    )
+                model_ms += (time.perf_counter() - continuation_started) * 1000
             await record_llm_call(
                 result,
                 ledger,
