@@ -182,6 +182,7 @@ y generan un step `run_invariants` solo cuando existen.
 | 7 | `analysis_complete=False` complejo => sin cierre normal | `incomplete_analysis_finalized` |
 | 8 | `retrieval_failed != evidence_insufficient` | `retrieval_failure_reported_as_insufficiency` |
 | 9 | La autoridad no se reemplaza con contenido distinto | `authoritative_decision_replaced` |
+| 10 | Cobertura narrativa no pide búsqueda con evidencia completa | `coverage_search_after_evidence_complete` |
 
 ### 2.5 Diagrama del estado propuesto
 
@@ -323,10 +324,11 @@ Hecho:
 1. ✅ `_evidence_complete`, `_canonical_derived`, `_coverage_block`,
    `_canonical_evidence_complete`, `correct_decision_with_canonical_evidence` y
    `_contradictory_disclaimer` leen el estado canónico (fallback `adaptive`).
-2. ⏳ Gates JEV (`answer_gate`, `termination`, `tool_routing`): reciben sus
-   insumos explícitos del loop; reemplazarlos por el estado cambiaría el
-   conjunto exacto de evidencia/`retrieval_rounds_left` que juzgan. Requiere
-   decisión de producto + tests de equivalencia del gap (1 ronda de diferencia).
+2. ✅ Gates JEV: `judge_answer` reusa la suficiencia canónica del estado cuando
+   la evidencia es exactamente la misma (identidad de objetos) y la ronda de
+   retrieval no cambió (`reuse_canonical_sufficiency`); fuera de eso recalcula
+   como siempre. `termination`/`tool_routing` reciben sus insumos explícitos del
+   loop (no recomputan estado).
 3. ✅ La traza publica las violaciones: step `run_invariants` (merge de
    `result.steps` en el flow de ambos caminos) + `zent_run_state_violations_total`.
    No se agregó una clave nueva al payload del flow para no tocar contrato.
@@ -342,21 +344,24 @@ Hecho:
 5. `_sufficiency_complete` delega en `EvidenceSufficiency.evidence_complete`
    (la completitud positiva sale de la definición canónica) con el fallback
    histórico documentado para no cambiar respuestas.
+6. Builder único de estado de respuesta: `answer_state.select_answer_state`
+   decide la rama (derivado → no-conocimiento → operativo → retrieval →
+   conflicto → mismatch → premisa → insuficiencia) y `operational_failure_state`
+   es el único mapeo stage/código; `resolve_answer_state`,
+   `DerivedPreparationResult.answer_state()` y `finalize_authoritative_answer`
+   lo consumen (cada uno aporta sus mensajes).
+7. Cobertura narrativa en el estado: `KnowledgeState.coverage` +
+   `coverage_search_after_complete` (invariante 10).
+8. Eliminados `self._pending_*`/`self._last_*`: el estado de run vive en
+   `AgentRunResult.run_state` + scratch `AgentRunResult._runtime` (por run, sin
+   carrera entre runs concurrentes).
 
-Diferido con razón (cada borrado cambia semántica sin migración previa):
+Diferido con razón:
 
-6. `resolve_answer_state` vs `prep.answer_state()`: insumos distintos; el
-   vocabulario ya es único.
-7. Rechequeos del fast path: son la verificación de elegibilidad (fail-closed),
+9. Rechequeos del fast path: son la verificación de elegibilidad (fail-closed),
    no un recalculador de estado.
-8. `narrative_coverage` vs `EvidenceSufficiency`: la contención de entidades se
-   calcula desde modelos distintos (frames vs anchors); unificar exige mover el
-   modelo de cobertura al estado primero.
-9. `_item_key` vs `_excerpt_key`: reglas de identidad distintas a propósito
-   (documento/chunk vs excerpt de unidad).
-10. `self._pending_*`/`self._last_*`: eliminarlos requiere pasar el estado por
-    parámetro a `_try_finalize_answer`/`_ensure_answer`; se hará al migrar el
-    cierre del agente a lectura directa del estado.
+10. `_item_key` vs `_excerpt_key`: reglas de identidad distintas a propósito
+    (documento/chunk vs excerpt de unidad).
 
 ### Fase E — endurecer invariantes (✅ métrica, estricto y traza; ⏳ cobertura narrativa)
 
@@ -369,11 +374,9 @@ Hecho:
 3. Violaciones visibles en la traza: step `run_invariants` (merge al flow en
    ambos caminos) + logs + métrica.
 
-Diferido:
-
-4. Invariante de cobertura narrativa vs. `EvidenceView.complete`: exige exponer
-   los huecos materiales del paquete narrativo en el estado (hoy viven solo en
-   los steps de cobertura).
+4. ✅ Invariante de cobertura narrativa (10): la cobertura medida se publica en
+   `KnowledgeState` y pedir búsqueda con evidencia completa se registra como
+   violación.
 
 ---
 
@@ -404,12 +407,13 @@ Preservado (verificado por la suite de §6):
 |---|---|---|---|
 | Fuentes de verdad consultables | 6+ (`result`, `adaptive`, locales, instancia, steps, objetos) | 1 (`AgentRunState`) + compat | Los writers siguen publicando también en `result`/`adaptive` (Fase B parcial) |
 | Readers del RAG que reconstruyen estado | 6 (`_evidence_complete`, `_canonical_derived`, `_coverage_block`, `_canonical_evidence_complete`, `correct_decision...`, `_contradictory_disclaimer`) | 0 (leen el estado; fallback `adaptive`) | Fase C |
-| Estados recalculados por run | 13 detectados (§1.4) | ~10 | Fase D eliminó el rebuild del envelope (×2), la regla de autoridad duplicada, el contador de tools y la completitud de suficiencia |
+| Estados recalculados por run | 13 detectados (§1.4) | ~8 | Fase D eliminó envelope (×2), autoridad, contador de tools, completitud, builder de estado y el fallback por instancia |
 | Banderas de «evidencia completa/suficiente» | 4 | 4 activas + 2 lecturas canónicas (`EvidenceView.complete`, `_sufficiency_complete` delega) | Unificación total al mover el modelo de cobertura |
 | Banderas de autoridad | 4 | 3 unificadas (`has_authority`, `deterministic_claims`, `DecisionVerification`) + 1 canónica (`DecisionState.authoritative`) | `facts.authoritative` lee el vocabulario único (constante) |
-| Duplicaciones eliminadas | — | 12 (vocabulario, autoridad ×2, envelope ×2, contador de tools, completitud, literales del composer, identidad de estado temprano, colisión de nombres, transiciones, sync adaptive) | Ver §3.3 y §4 |
+| Duplicaciones eliminadas | — | 16 (vocabulario, autoridad ×2, envelope ×2, contador de tools, completitud, literales del composer, identidad, colisión, transiciones, sync adaptive, selector de estado, mapeo stage/código, scratch por run, reuso de suficiencia, cobertura) | Ver §3.3 y §4 |
+| Estado compartido entre runs concurrentes | 4 attrs de instancia (`_pending_*`, `_last_*`) | 0 (scratch por run en `AgentRunResult._runtime`) | Fix de carrera real |
 | Lifecycle explícito | 0 (implícito en código) | 15 fases + 10 transiciones válidas + terminales | Agente y RAG |
-| Invariantes comprobables | tests dispersos | 9 invariantes + 39 tests + métrica + modo estricto | Violaciones → `trace.violations`, step y `zent_run_state_violations_total` |
+| Invariantes comprobables | tests dispersos | 10 invariantes + tests dedicados + métrica + modo estricto | Violaciones → `trace.violations`, step y `zent_run_state_violations_total` |
 | LOC (tracked) | — | +539/−74 | runtime +200/−7; orquestador +261/−34; soporte +75/−32 |
 | LOC (nuevos) | — | 868 (run_state) + 60 (answer_state) + 515 (tests) + 434 (doc) | — |
 | Branches de control del runtime | — | +0 ramas de decisión nuevas | Transiciones inválidas se registran; el modo estricto está detrás de un flag |
@@ -431,15 +435,22 @@ Cierre B–E (misma fecha, commits `f955279`, `72cfccb`, `6e80b87`):
 | `test_run_state` + `test_canonical_evidence` + `test_agent_runtime` + `test_run_accounting` + `test_run_budget` + `test_agent_budget_closure` | 121 passed |
 | `test_response_composer` + `test_verification_split` + `test_narrative_verification_bridge` + `test_evidence_usage_trace` + `test_decision_wiring` + `test_agent_flow_v2` + `test_deterministic_fast_path` + `test_final_authority_lock` + `test_fail_closed_authority` + `test_production_consistency` + `test_answerability_engine` + `test_bundle_atpco` | 287 passed |
 
-Total acumulado: **865 ejecuciones verdes, 0 fallos**.
+Cierre de pendientes 1–4 (commits `1140b89`, `49ef292`):
+
+| Suite | Resultado |
+|---|---|
+| `test_fail_closed_authority` + `test_deterministic_fast_path` + `test_production_consistency` + `test_answerability_engine` + `test_runtime_audit_36` + `test_adaptive_rag` + `test_decision_wiring` + `test_evidence_first_gate` + `test_agent_reasoning_integration` + `test_narrative_coverage` + `test_inference_proxy` + `test_model_health` + `test_traces` + `test_notifications_v2` | 345 passed |
+| `test_run_state` (selector, reuso, scratch, cobertura) + `test_fail_closed_authority` + `test_deterministic_fast_path` (post-fix de mensaje default) | 95 passed |
+
+Total acumulado: **1305 ejecuciones verdes, 0 fallos**.
 
 ---
 
 ## 7. Próximo paso sugerido
 
-1. Gate JEV con estado canónico (decisión de producto + test de equivalencia del
-   `retrieval_rounds_left` entre refresh y gate).
-2. Fase D restante: builder único de `answer_state`, fast path, contención de
-   entidades narrativa y eliminación de `self._pending_*`/`self._last_*`.
-3. Fase E restante: invariante de cobertura narrativa (exponer huecos
-   materiales en `KnowledgeState`).
+1. Fast path: decidir si su verificación de elegibilidad se muda al estado
+   (hoy es fail-closed propio y no un recalculador).
+2. Unificar `_item_key`/`_excerpt_key` si el modelo de identidad de evidencia
+   converge (hoy son reglas distintas a propósito).
+3. Observar `zent_run_state_violations_total` en producción antes de pasar
+   algún invariante a bloqueante por defecto.
