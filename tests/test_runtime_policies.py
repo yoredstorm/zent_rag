@@ -193,6 +193,75 @@ class TestContextEnvelope:
         assert self._envelope().untrusted()
 
 
+class TestGateAbstentionAdoption:
+    @staticmethod
+    def _state(*, evidence: str = "unknown", authority: str = "none"):
+        from types import SimpleNamespace
+
+        from src.runtime.run_state import AgentRunState, RunIdentity
+
+        state = AgentRunState(identity=RunIdentity(run_id="gate-abstention"))
+        if evidence == "complete":
+            state.evidence.observe(
+                sufficiency=SimpleNamespace(
+                    evidence_complete=True,
+                    recommended_action="generate",
+                    missing_entities=(),
+                    missing_anchors=(),
+                )
+            )
+        elif evidence == "insufficient":
+            state.evidence.observe(
+                sufficiency=SimpleNamespace(
+                    evidence_complete=False,
+                    recommended_action="retrieve_more",
+                    missing_entities=("campo_x",),
+                    missing_anchors=(),
+                )
+            )
+        elif evidence == "failed":
+            state.evidence.retrieval_failed = True
+        if authority == "positive":
+            state.decisions.set_envelope(
+                SimpleNamespace(authoritative=True, state="MATCH")
+            )
+        return state
+
+    def test_evidencia_alcanza_no_abstiene(self) -> None:
+        from src.runtime.finalization_policy import gate_abstention_action
+
+        state = self._state(evidence="complete")
+        assert (
+            gate_abstention_action(state, draft_available=True)
+            == "answer_with_limits"
+        )
+
+    def test_evidencia_insuficiente_sin_draft_abstiene(self) -> None:
+        from src.runtime.finalization_policy import gate_abstention_action
+
+        state = self._state(evidence="insufficient")
+        assert gate_abstention_action(state, draft_available=False) == "abstain"
+
+    def test_evidencia_insuficiente_con_draft_tambien_abstiene(self) -> None:
+        from src.runtime.finalization_policy import gate_abstention_action
+
+        state = self._state(evidence="insufficient")
+        assert gate_abstention_action(state, draft_available=True) == "abstain"
+
+    def test_retrieval_fallido_abstiene(self) -> None:
+        from src.runtime.finalization_policy import gate_abstention_action
+
+        state = self._state(evidence="failed")
+        assert gate_abstention_action(state, draft_available=True) == "abstain"
+
+    def test_autoridad_sin_evidencia_no_es_tarea_del_helper(self) -> None:
+        """El envelope lo resuelve el runtime antes de llegar a este helper."""
+        from src.runtime.finalization_policy import gate_abstention_action
+
+        state = self._state(authority="positive")
+        assert gate_abstention_action(state, draft_available=True) == "abstain"
+
+
 class TestJevAccounting:
     def test_record_judge_call_suma_tokens_y_step(self) -> None:
         from uuid import uuid4
