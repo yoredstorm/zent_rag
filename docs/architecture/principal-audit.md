@@ -22,6 +22,10 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   (answer_gate, agent_step, termination, turn intent) y el ledger lo ve en la
   próxima construcción; falta el camino RAG, embeddings/rerank y la tarifa del
   juez (no se inventa costo si el precio es desconocido).
+- **Estado (contabilidad RAG)**: el evento de uso del pipeline etiqueta
+  `jev_tokens`/`jev_cost_usd` desde `flow.jev_preflight` (no se suman a `cost`:
+  el juez factura por su propio usage event). Embeddings y reranking ya viajan
+  en el evento; falta la tarifa del juez para costearlo ahí.
 
 ### 2. Adopción incompleta del resolver de autoridad (P1)
 - **Evidence**: `finalization_policy` corre en observabilidad + strict; los
@@ -37,8 +41,12 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 - **Estado (este pase)**: etapa 1 hecha — `run_guards` es la tabla explícita y
   el loop ya no ejecuta tools con budget agotado; las denegaciones registran
   `guard_reason` (`BUDGET_EXHAUSTED`, `DUPLICATE_TOOL_CALL`,
-  `TOOL_NOT_AUTHORIZED`). Falta adoptar el resolver en el cierre del loop y en
-  el gate de respuesta.
+  `TOOL_NOT_AUTHORIZED`).
+- **Estado (etapa 2)**: el gate de respuesta adopta la política —
+  `gate_abstention_action` convierte una abstención JEV en `answer_with_limits`
+  cuando la evidencia canónica alcanza (completa o `can_answer`), y mantiene la
+  abstención si la evidencia es insuficiente o el retrieval falló (caso D de
+  evidence-first preservado).
 
 ### 3. Resiliencia de providers acoplada al modelo (P1)
 - **Evidence**: `_circuit_check` marca `_circuit_open` global por modelo;
