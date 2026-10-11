@@ -371,6 +371,13 @@ rag_agent_retrieval_unavailable_total = Counter(
     labelnames=["organization_id", "failure_kind"],  # failure_kind: transient | permanent
 )
 
+# Estado canónico del run (AgentRunState): una violación = una incoherencia real.
+zent_run_state_violations_total = Counter(
+    "zent_run_state_violations_total",
+    "Violaciones de invariantes del estado canónico del run",
+    labelnames=["path", "kind"],  # path: agent | rag; kind: código del invariante
+)
+
 # -----------------------------------------------------------------------------
 # Zent Discovery Engine & Semantic Catalog (FASE 24)
 # -----------------------------------------------------------------------------
