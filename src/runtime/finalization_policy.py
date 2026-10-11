@@ -316,6 +316,33 @@ def expected_actions_for_phase(phase: RunPhase) -> frozenset[FinalizationAction]
     return _EXPECTED_ACTIONS.get(phase, frozenset())
 
 
+def gate_abstention_action(
+    state: AgentRunState, *, draft_available: bool
+) -> str:
+    """Qué hacer cuando JEV quiere abstenerse y no hay envelope determinista.
+
+    La política manda: si la evidencia canónica ALCANZA (completa o `can_answer`),
+    se responde con límites y la señal JEV queda registrada como ignorada. Si la
+    evidencia es insuficiente o el retrieval falló, la abstención se mantiene
+    (responder un draft sin respaldo violaría evidence-first).
+    """
+    if state.evidence.retrieval_failed and not state.evidence.complete:
+        return "abstain"
+    if not (state.evidence.complete or state.evidence.can_answer):
+        return "abstain"
+    decision = evaluate_finalization(
+        state,
+        draft_available=draft_available,
+        retrieval_possible=False,
+        jev_verdict="no",
+    )
+    return (
+        "answer_with_limits"
+        if decision.action is FinalizationAction.FINALIZE
+        else "abstain"
+    )
+
+
 def decision_matches_terminal(
     decision: FinalizationDecision, phase: RunPhase
 ) -> bool:
@@ -338,4 +365,5 @@ __all__ = [
     "decision_matches_terminal",
     "evaluate_finalization",
     "expected_actions_for_phase",
+    "gate_abstention_action",
 ]

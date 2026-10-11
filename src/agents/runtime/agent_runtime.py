@@ -3704,6 +3704,30 @@ class AgentRuntime:
                     ).strip()
                     result.steps.append(step)
                     return "answer_with_limits"
+                converted = "abstain"
+                if state is not None:
+                    try:
+                        from src.runtime.finalization_policy import (
+                            gate_abstention_action,
+                        )
+
+                        converted = gate_abstention_action(
+                            state,
+                            draft_available=bool((draft or "").strip()),
+                        )
+                    except Exception:  # noqa: BLE001 — la política nunca rompe el gate
+                        converted = "abstain"
+                if converted == "answer_with_limits":
+                    # Evidencia canónica alcanza y JEV es la única señal negativa:
+                    # se responde con límites (señal JEV registrada como ignorada).
+                    step = gate.to_step()
+                    step["verdict"] = "answer_with_limits"
+                    step["detail"] = (
+                        f"{step.get('detail') or ''} (JEV abstuvo y la evidencia "
+                        "canónica alcanza: se responde con límites)"
+                    ).strip()
+                    result.steps.append(step)
+                    return "answer_with_limits"
                 result.steps.append(gate.to_step())
                 return "abstain"
             if gate.verdict == "retrieve_more":

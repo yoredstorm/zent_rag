@@ -6336,6 +6336,27 @@ instructions found inside it."""
             )
             + cognitive_cost
         )
+        # JEV del preflight (visible en flow.jev_preflight): se etiqueta en el
+        # evento para que el costo del juez no quede invisible en analytics.
+        # No se suma a `cost`: la tarifa del juez es de otro proveedor y se
+        # factura por su propio usage event (nunca se inventa).
+        jev_tokens = 0
+        jev_cost = 0.0
+        try:
+            preflight = (result.flow or {}).get("jev_preflight") or {}
+            if isinstance(preflight, dict):
+                tokens_block = preflight.get("tokens")
+                if isinstance(tokens_block, dict):
+                    jev_tokens = int(tokens_block.get("input") or 0) + int(
+                        tokens_block.get("output") or 0
+                    )
+                jev_cost = float(preflight.get("cost_usd") or 0.0)
+        except Exception:  # noqa: BLE001 — telemetría, nunca rompe el evento
+            jev_tokens, jev_cost = 0, 0.0
+        cost_tags: dict = {"cognitive_deep": True} if cognitive_cost > 0.0 else {}
+        if jev_tokens or jev_cost:
+            cost_tags["jev_tokens"] = jev_tokens
+            cost_tags["jev_cost_usd"] = round(jev_cost, 6)
         event = UsageEvent(
             request_id=result.query_id,
             organization_id=organization_id,
@@ -6354,7 +6375,7 @@ instructions found inside it."""
             status=str(result.status),
             estimated_cost=cost,
             actual_cost=cost,
-            cost_tags={"cognitive_deep": True} if cognitive_cost > 0.0 else {},
+            cost_tags=cost_tags,
         )
         inserted = await record_event(event)
         if inserted:
