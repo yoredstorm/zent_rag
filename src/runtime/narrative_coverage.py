@@ -981,7 +981,11 @@ async def embedding_alias_bridge(
                 scored.append((similarity, candidate))
         scored.sort(key=lambda item: -item[0])
         if scored:
-            result[aspect] = tuple(candidate for _, candidate in scored[:top_k])
+            # Preferir términos específicos (campos multi-palabra) cuando los
+            # haya: una palabra suelta («Result») es ruido genérico.
+            specific = [item for item in scored if len(item[1].split()) > 1]
+            chosen = specific or scored
+            result[aspect] = tuple(candidate for _, candidate in chosen[:top_k])
     return result
 
 

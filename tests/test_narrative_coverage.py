@@ -109,6 +109,8 @@ async def test_embedding_bridge_proposes_and_anchors(
                 "cierre de fechas": [1.0, 0.0],
                 "Discontinue Date": [0.9, 0.1],
                 "Fare Record": [0.1, 0.9],
+                "fin de la fecha": [1.0, 0.0],
+                "Result": [0.95, 0.05],
             }
             return [vectors[text] for text in texts]
 
@@ -119,6 +121,14 @@ async def test_embedding_bridge_proposes_and_anchors(
         threshold=0.8,
     )
     assert bridge["cierre de fechas"] == ("Discontinue Date",)
+
+    specific = await embedding_alias_bridge(
+        ["fin de la fecha"],
+        ["Discontinue Date", "Result"],
+        embedder=_Embedder(),
+        threshold=0.8,
+    )
+    assert specific["fin de la fecha"] == ("Discontinue Date",)
 
     plan = extract_narrative_concepts(
         "cuentame sobre el cierre de fechas en el record 2"
