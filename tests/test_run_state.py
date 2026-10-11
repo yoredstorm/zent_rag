@@ -282,6 +282,17 @@ class TestInvariants:
         )
         assert "incomplete_analysis_finalized" not in violations
 
+    def test_coverage_search_tras_evidencia_completa_viola(self) -> None:
+        state = _state()
+        state.evidence.observe(
+            sufficiency=SimpleNamespace(
+                evidence_complete=True, recommended_action="generate"
+            )
+        )
+        state.knowledge.coverage_search_after_complete = True
+        violations = finalize_state(state, status="completed", answer="ok", answer_state=None)
+        assert "coverage_search_after_evidence_complete" in violations
+
     def test_retrieval_failed_no_es_insuficiencia(self) -> None:
         state = _state()
         state.evidence.retrieval_failed = True
@@ -448,6 +459,129 @@ class TestRuntimeWiring:
 # -----------------------------------------------------------------------------
 # Fase D/E: autoridad reutilizada, métrica de invariantes y modo estricto
 # -----------------------------------------------------------------------------
+class TestAnswerStateSelector:
+    def test_prioridad_unica(self) -> None:
+        from src.runtime.answer_state import (
+            ANSWER_STATE_CONFLICTING_RULE,
+            ANSWER_STATE_DERIVED,
+            ANSWER_STATE_GROUNDING_ENGINE_FAILED,
+            ANSWER_STATE_INSUFFICIENT,
+            ANSWER_STATE_UNDETERMINED,
+            select_answer_state,
+        )
+
+        assert select_answer_state(has_deterministic_result=True) == ANSWER_STATE_DERIVED
+        assert select_answer_state(is_knowledge_question=False) == ""
+        assert (
+            select_answer_state(
+                operational_failure=ANSWER_STATE_GROUNDING_ENGINE_FAILED,
+                conflicts=True,
+            )
+            == ANSWER_STATE_GROUNDING_ENGINE_FAILED
+        )
+        assert (
+            select_answer_state(
+                conflicts=True, conflict_state=ANSWER_STATE_CONFLICTING_RULE
+            )
+            == ANSWER_STATE_CONFLICTING_RULE
+        )
+        assert select_answer_state(missing_premises=True) == ANSWER_STATE_UNDETERMINED
+        assert select_answer_state(evidence_count=0) == ANSWER_STATE_INSUFFICIENT
+        assert select_answer_state(evidence_count=None) == ""
+        assert (
+            select_answer_state(default_state=ANSWER_STATE_UNDETERMINED)
+            == ANSWER_STATE_UNDETERMINED
+        )
+
+    def test_mapeo_operativo_prioridad_historica(self) -> None:
+        from src.runtime.answer_state import (
+            ANSWER_STATE_DERIVATION_FAILED,
+            ANSWER_STATE_GROUNDING_ENGINE_FAILED,
+            ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE,
+            ANSWER_STATE_UNDETERMINED,
+            operational_failure_state,
+        )
+
+        assert (
+            operational_failure_state("grounding", "DERIVATION_FAILED")
+            == ANSWER_STATE_GROUNDING_ENGINE_FAILED
+        )
+        assert (
+            operational_failure_state("", "RULE_RETRIEVAL_UNAVAILABLE")
+            == ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE
+        )
+        assert (
+            operational_failure_state("derivation", "")
+            == ANSWER_STATE_DERIVATION_FAILED
+        )
+        assert operational_failure_state("", "") == ANSWER_STATE_UNDETERMINED
+
+
+class TestGateSufficiencyReuse:
+    def test_reuso_solo_con_items_identicos_y_misma_ronda(self) -> None:
+        from src.runtime.answer_gate import reuse_canonical_sufficiency
+
+        item = object()
+        sufficiency = object()
+        common = {
+            "reference_items": [item],
+            "items": [item],
+            "sufficiency_rounds_left": 1,
+            "retrieval_rounds_left": 1,
+        }
+        assert reuse_canonical_sufficiency(sufficiency, **common) is True
+        assert (
+            reuse_canonical_sufficiency(sufficiency, **{**common, "items": [object()]})
+            is False
+        )
+        assert (
+            reuse_canonical_sufficiency(
+                sufficiency, **{**common, "sufficiency_rounds_left": 2}
+            )
+            is False
+        )
+        assert reuse_canonical_sufficiency(None, **common) is False
+        assert (
+            reuse_canonical_sufficiency(
+                sufficiency, **{**common, "sufficiency_rounds_left": None}
+            )
+            is False
+        )
+        assert (
+            reuse_canonical_sufficiency(sufficiency, **{**common, "reference_items": []})
+            is False
+        )
+
+    def test_observe_registra_ronda_de_suficiencia(self) -> None:
+        state = _state()
+        state.evidence.observe(sufficiency=object(), rounds_left=3)
+        assert state.evidence.sufficiency_rounds_left == 3
+
+
+class TestRunScratch:
+    def test_scratch_es_por_result_no_de_instancia(self) -> None:
+        from src.agents.runtime.agent_runtime import _runtime_scratch
+
+        first = AgentRunResult(
+            run_id=uuid4(),
+            agent_id=uuid4(),
+            organization_id=None,
+            status="completed",
+            answer="a",
+        )
+        second = AgentRunResult(
+            run_id=uuid4(),
+            agent_id=uuid4(),
+            organization_id=None,
+            status="completed",
+            answer="b",
+        )
+        _runtime_scratch(first)["response_plan"] = {"shape": "brief"}
+        _runtime_scratch(first)["history"] = ["USER QUESTION: x"]
+        assert _runtime_scratch(second) == {}
+        assert _runtime_scratch(first)["response_plan"] == {"shape": "brief"}
+
+
 class TestAdaptiveProjection:
     def test_sync_proyecta_estado_en_adaptive(self) -> None:
         from src.agents.runtime.orchestrator import _adaptive_publish

@@ -269,7 +269,10 @@ class KnowledgeState:
     narrative_package: Any | None = None
     #: Paquete de generación (dict público) del camino RAG.
     generation_package: dict | None = None
+    #: Cobertura narrativa medida (ConceptCoverage) y divergencia detectada:
+    #: search pedido por cobertura con evidencia ya completa.
     coverage: tuple[Any, ...] = ()
+    coverage_search_after_complete: bool = False
 
 
 @dataclass(kw_only=True)
@@ -289,6 +292,8 @@ class EvidenceView:
     #: Long-context (RAG): stop declarado por el motor y si aplicó.
     long_context_applied: bool = False
     long_context_stop: str = ""
+    #: Ronda de retrieval con la que se calculó `sufficiency` (guardia de reuso).
+    sufficiency_rounds_left: int | None = None
     retrieval_failed: bool = False
     selected: frozenset[str] = frozenset()
     used: frozenset[str] = frozenset()
@@ -302,6 +307,7 @@ class EvidenceView:
         sufficiency: Any | None = None,
         canonical_state: Any | None = None,
         public: dict | None = None,
+        rounds_left: int | None = None,
     ) -> None:
         """Publica las referencias canónicas (no copia contenido)."""
         if registry is not None:
@@ -314,6 +320,8 @@ class EvidenceView:
             self.canonical_state = canonical_state
         if public is not None:
             self.public = public
+        if rounds_left is not None:
+            self.sufficiency_rounds_left = int(rounds_left)
 
     def observe_usage(
         self,
@@ -743,6 +751,15 @@ class AgentRunState:
         if decisions.envelope_conflict:
             violations.append("authoritative_decision_replaced")
 
+        # 10. Cobertura narrativa vs evidencia canónica: pedir búsqueda por
+        # cobertura cuando la evidencia ya es completa es una divergencia.
+        if (
+            self.phase == RunPhase.FINALIZED
+            and self.evidence.complete
+            and self.knowledge.coverage_search_after_complete
+        ):
+            violations.append("coverage_search_after_evidence_complete")
+
         return tuple(violations)
 
     # ------------------------------------------------------------------ proyección
@@ -762,6 +779,10 @@ class AgentRunState:
             "terminal": self.terminal,
             "identity": self.identity.to_public_dict(),
             "turn": self.turn.to_public_dict(),
+            "knowledge": {
+                "coverage": len(self.knowledge.coverage),
+                "coverage_search_after_complete": self.knowledge.coverage_search_after_complete,
+            },
             "evidence": self.evidence.to_public_dict(),
             "reasoning": self.reasoning.to_public_dict(),
             "tools": self.tools.to_public_dict(),

@@ -606,6 +606,10 @@ class AgentRunResult:
     #: vista única de fases, evidencia, decisiones, presupuesto e invariantes.
     #: No entra en payloads API/SSE por sí sola (los builders usan claves fijas).
     run_state: AgentRunState | None = None
+    #: Scratch POR RUN (no de instancia): el runtime es un singleton de proceso y
+    #: guardar aquí evita mezclar runs concurrentes. Claves: reasoning,
+    #: reasoning_steps, response_plan, history, draft_gate, polish.
+    _runtime: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 _ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
@@ -1351,6 +1355,18 @@ def _strict_block_run_state(state: AgentRunState, result: AgentRunResult) -> boo
     return True
 
 
+def _runtime_scratch(result: AgentRunResult) -> dict:
+    """Scratch POR RUN del runtime (evita atributos de instancia compartidos)."""
+    scratch = getattr(result, "_runtime", None)
+    if not isinstance(scratch, dict):
+        scratch = {}
+        try:
+            result._runtime = scratch
+        except Exception:  # noqa: BLE001 — dobles de test inmutables
+            pass
+    return scratch
+
+
 def _early_run_state(
     result: AgentRunResult,
     agent: Agent,
@@ -1382,14 +1398,8 @@ class AgentRuntime:
         self._llm = llm_provider
         self._rate_limiter = ToolRateLimiter(cache_provider)
         self._loop_guard = LoopGuard()
-        # Response Intelligence: contrato de composición del run (§2).
-        self._pending_response_plan = None
-        # Evidencia seleccionada del último run (citas del cierre por presupuesto).
-        self._last_evidence_selection = None
-        # Suficiencia del último run: el cierre por presupuesto declara sus límites.
-        self._last_sufficiency: dict | None = None
-        # Pulido de presentación del run (títulos de evidencia para las fuentes).
-        self._polish_answer = None
+        # El estado por run vive en `AgentRunResult.run_state` y en el scratch
+        # `AgentRunResult._runtime`: nada de esto es de instancia (singleton).
 
     def _agent_config(self, agent: Agent) -> dict:
         settings = get_settings()
@@ -1544,14 +1554,23 @@ class AgentRuntime:
             return False
         # Estado del run que llega por parámetro: el runtime es un singleton de
         # proceso, así que leer atributos de instancia podía mezclar dos runs
-        # concurrentes (contrato, citas y límites).
-        run_plan = plan if plan is not None else getattr(self, "_pending_response_plan", None)
+        # concurrentes (contrato, citas y límites). El fallback es el estado
+        # canónico del run (o su scratch), nunca la instancia.
+        state = getattr(result, "run_state", None)
+        scratch = _runtime_scratch(result)
+        run_plan = (
+            plan
+            if plan is not None
+            else scratch.get("response_plan")
+        )
         run_selection = (
-            selection if selection is not None else getattr(self, "_last_evidence_selection", None)
+            selection
+            if selection is not None
+            else (state.evidence.selection if state is not None else None)
         )
-        run_sufficiency = (
-            sufficiency if sufficiency is not None else getattr(self, "_last_sufficiency", None)
-        )
+        run_sufficiency = sufficiency
+        if run_sufficiency is None and state is not None and state.evidence.sufficiency is not None:
+            run_sufficiency = state.evidence.sufficiency.to_public_dict()
         # La respuesta final necesita su propio presupuesto: el del loop (o 512)
         # cortaba explicaciones técnicas y dejaba el JSON abierto. El techo del
         # run sigue siendo `config["max_tokens"]`; acá solo cabe lo que queda.
@@ -1638,7 +1657,7 @@ class AgentRuntime:
         answer = _direct_answer(action)
         if answer is None:
             return False
-        polish = getattr(self, "_polish_answer", None)
+        polish = _runtime_scratch(result).get("polish")
         if polish is not None:
             answer = polish(answer)
         # Mismo chequeo determinista que en el loop: figuras sin respaldo se
@@ -1677,7 +1696,7 @@ class AgentRuntime:
         # cuando hay evidencia registrada: una respuesta sin evidencia no se
         # entrega sólo porque el run terminó antes. Sin evidencia estructurada
         # (tools que sólo devuelven texto) se conserva el cierre previo.
-        draft_gate = getattr(self, "_draft_gate", None)
+        draft_gate = _runtime_scratch(result).get("draft_gate")
         if draft_gate is not None and run_selection is not None and not run_selection.empty:
             verdict = await draft_gate(answer, final=True)
             if verdict == "abstain":
@@ -2014,12 +2033,17 @@ class AgentRuntime:
         # El razonamiento se prepara antes del loop y viaja en el estado del
         # runtime: la firma de _run_loop no cambia (los dobles de test siguen
         # siendo válidos).
-        await self._prepare_reasoning(request)
+        reasoning_state, reasoning_steps = await self._prepare_reasoning(request)
+        _scratch = _runtime_scratch(result)
+        _scratch["reasoning"] = reasoning_state
+        _scratch["reasoning_steps"] = reasoning_steps
         if result.run_state is not None:
-            result.run_state.reasoning.run = getattr(self, "_pending_reasoning", None)
+            result.run_state.reasoning.run = reasoning_state
         # Response Intelligence: forma de explicar (determinista; JEV sólo si
         # dos formas quedan empatadas). No cambia hechos.
-        await self._prepare_response_plan(request, getattr(self, "_pending_reasoning", None))
+        _scratch["response_plan"] = await self._prepare_response_plan(
+            request, reasoning_state
+        )
         try:
             await asyncio.wait_for(
                 self._run_loop(request, ctx, config, result),
@@ -2043,7 +2067,7 @@ class AgentRuntime:
             # Sin respuesta vacía: se devuelve lo reunido hasta el corte.
             self._ensure_answer(
                 result,
-                getattr(self, "_last_history", []) or [],
+                _runtime_scratch(result).get("history") or [],
                 reason="max_execution_seconds exceeded",
             )
             try:
@@ -2059,7 +2083,7 @@ class AgentRuntime:
             logger.error("Agent run failed", agent_id=str(agent.id), error=str(exc))
             self._ensure_answer(
                 result,
-                getattr(self, "_last_history", []) or [],
+                _runtime_scratch(result).get("history") or [],
                 reason=f"error: {str(exc)[:120]}",
             )
             try:
@@ -2300,7 +2324,8 @@ class AgentRuntime:
         """§35/§47: razona una vez por run y registra los pasos observables.
 
         Falla suave: si el razonamiento está apagado o falla, el runtime se
-        comporta como antes (fast path).
+        comporta como antes (fast path). Devuelve `(estado, pasos)`; nada se
+        guarda en la instancia (el runtime es un singleton de proceso).
         """
         try:
             from src.agents.runtime.reasoning_step import (
@@ -2316,14 +2341,10 @@ class AgentRuntime:
             )
         except Exception as exc:  # noqa: BLE001 - nunca rompe el run
             logger.warning("reasoning preparation failed", error=str(exc)[:150])
-            return None
+            return None, ()
         if not state.enabled:
-            self._pending_reasoning_steps = None
-            self._pending_reasoning = None
-            return None
-        self._pending_reasoning = state
-        self._pending_reasoning_steps = reasoning_steps_detailed(state)
-        return state
+            return None, ()
+        return state, tuple(reasoning_steps_detailed(state))
 
     async def _prepare_response_plan(self, request: AgentRunRequest, reasoning: object | None):
         """Response Intelligence (§2): decide CÓMO explicar, nunca qué decir.
@@ -2353,14 +2374,13 @@ class AgentRuntime:
                 judge=judge,
                 request_id=getattr(request, "request_id", None),
                 organization_id=getattr(request.agent, "organization_id", None),
-                shape=str(getattr(getattr(self, "_pending_reasoning", None), "shape", "") or ""),
+                shape=str(getattr(reasoning, "shape", "") or ""),
                 presentation=_presentation_from_question(request.message),
                 **signals,
             )
         except Exception as exc:  # noqa: BLE001 - el contrato nunca rompe el run
             logger.warning("response plan failed", error=str(exc)[:150])
             return None
-        self._pending_response_plan = plan
         return plan
 
     async def _run_loop(
@@ -2372,7 +2392,7 @@ class AgentRuntime:
         reasoning: object | None = None,
     ) -> None:
         if reasoning is None:
-            reasoning = getattr(self, "_pending_reasoning", None)
+            reasoning = _runtime_scratch(result).get("reasoning")
         # Estado canónico del run (puede faltar en dobles de test que no pasan
         # por `run()`): todas las publicaciones son best-effort.
         state = getattr(result, "run_state", None)
@@ -2405,7 +2425,7 @@ class AgentRuntime:
             state.tools.set_allowed(allowed_tools)
         # Contrato de composición del run, capturado una vez: es por run (el
         # runtime es compartido entre requests).
-        run_plan = getattr(self, "_pending_response_plan", None)
+        run_plan = _runtime_scratch(result).get("response_plan")
         # P0.1: scope autorizado REAL del agente (config, no chunks). El fast
         # path corre antes del retrieval principal: sin esto Rule Lane/Premise
         # Closure buscarían en toda la organización.
@@ -2556,7 +2576,7 @@ class AgentRuntime:
             context_block = (
                 f"{capability_block}\n\n{context_block}" if context_block else capability_block
             )
-        for reasoning_step in getattr(self, "_pending_reasoning_steps", None) or ():
+        for reasoning_step in _runtime_scratch(result).get("reasoning_steps") or ():
             result.steps.append(reasoning_step)
         response_step = _response_planning_step(run_plan)
         if response_step is not None:
@@ -2573,7 +2593,7 @@ class AgentRuntime:
         history: list[str] = [f"USER QUESTION: {request.message}"]
         # El cierre por presupuesto (timeout/error) necesita lo reunido hasta el
         # corte para no devolver una respuesta vacía.
-        self._last_history = history
+        _runtime_scratch(result)["history"] = history
         # Contador único de tools: `result.tool_calls` (el ledger, el uso y el
         # cierre lo leen de ahí; no hay contador paralelo por loop).
         failed_tools: dict[str, str] = {}
@@ -2818,7 +2838,7 @@ class AgentRuntime:
                     return
                 plan.contract = contrato
                 result.response_plan = plan.to_public_dict()
-                self._pending_response_plan = plan
+                _runtime_scratch(result)["response_plan"] = plan
                 result.steps.append(
                     {
                         "type": "response_presentation",
@@ -3216,7 +3236,10 @@ class AgentRuntime:
             )
             if state is not None:
                 state.evidence.observe(
-                    registry=registry, selection=selection, sufficiency=sufficiency
+                    registry=registry,
+                    selection=selection,
+                    sufficiency=sufficiency,
+                    rounds_left=_rounds_left(),
                 )
                 if str(getattr(sufficiency, "recommended_action", "")) == "retrieve_more":
                     state.try_advance(RunPhase.EVIDENCE_REQUIRED)
@@ -3231,7 +3254,6 @@ class AgentRuntime:
             )
             _publish_evidence()
             result.evidence_sufficiency = sufficiency.to_public_dict()
-            self._last_sufficiency = result.evidence_sufficiency
             observe_sufficiency(sufficiency)
             observe_selection(selection)
             # Selección de evidencia: tiempo real de la etapa (no se atribuye a
@@ -3250,8 +3272,7 @@ class AgentRuntime:
                 }
             )
             # El cierre por presupuesto (`_ensure_answer`) y la finalización
-            # necesitan las mismas citas del run.
-            self._last_evidence_selection = selection
+            # necesitan las mismas citas del run: viven en el estado canónico.
             return selection
 
         def _evidence_text() -> str:
@@ -3331,6 +3352,24 @@ class AgentRuntime:
                     retrieval_rounds_left=_rounds_left(),
                     evidence_budget_chars=evidence_budget,
                     grounded_reasoning=grounded_reasoning,
+                    # Fase C: reusar la suficiencia canónica del estado cuando
+                    # es exactamente la misma evidencia y la misma ronda.
+                    evidence_sufficiency=(
+                        sufficiency
+                        if (
+                            state is not None
+                            and state.evidence.sufficiency is sufficiency
+                        )
+                        else None
+                    ),
+                    sufficiency_rounds_left=(
+                        state.evidence.sufficiency_rounds_left
+                        if state is not None
+                        else None
+                    ),
+                    evidence_for_sufficiency=(
+                        active.items if active is not None else None
+                    ),
                     context=JudgmentContext(
                         phase=PHASE_ANSWER_GATE,
                         organization_id=request.agent.organization_id,
@@ -3606,8 +3645,8 @@ class AgentRuntime:
 
         # El cierre por termination/guardrail reusa el mismo verificador y el
         # mismo pulido de presentación.
-        self._draft_gate = _gate_draft
-        self._polish_answer = _polish_answer
+        _runtime_scratch(result)["draft_gate"] = _gate_draft
+        _runtime_scratch(result)["polish"] = _polish_answer
 
         def _record_fast_path_metric(
             outcome: str,
@@ -4278,6 +4317,12 @@ class AgentRuntime:
                 headings=headings_from_items(registry.all_items()),
                 over_budget=over_budget,
             )
+            if state is not None:
+                # Cobertura narrativa publicada en el estado (P3): el invariante
+                # detecta pedir búsqueda por cobertura con evidencia ya completa.
+                state.knowledge.coverage = tuple(initial_coverage)
+                if decision.search and state.evidence.complete:
+                    state.knowledge.coverage_search_after_complete = True
             coverage_rounds = 0
             coverage_queries: list[str] = []
             coverage_added = 0
@@ -4913,7 +4958,7 @@ class AgentRuntime:
                         agent_instructions=agent_instructions,
                         reasoning_rule=_reasoning_rule_text(reasoning),
                         response_shape=_response_shape_block(
-                            getattr(self, "_pending_response_plan", None)
+                            _runtime_scratch(result).get("response_plan")
                         ),
                     )
                     result.steps.append(
