@@ -194,6 +194,9 @@ class AnswerGateResult:
     missing_entities: tuple[str, ...] = ()
     unsupported_claims: tuple[str, ...] = ()
     claims_summary: dict[str, Any] = field(default_factory=dict)
+    #: Tokens del juez cuando JEV corrió (0 = no llamó; se suman al run).
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
     @property
     def action(self) -> str:
@@ -226,6 +229,11 @@ class AnswerGateResult:
             payload["missing_entities"] = list(self.missing_entities)[:6]
         if self.claims_summary:
             payload["claims"] = dict(self.claims_summary)
+        if self.prompt_tokens or self.completion_tokens:
+            payload["jev_tokens"] = {
+                "input": self.prompt_tokens,
+                "output": self.completion_tokens,
+            }
         return payload
 
 
@@ -691,6 +699,9 @@ async def judge_answer(
         return result
     if not isinstance(payload, dict):
         return result
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    result.prompt_tokens = max(0, int(usage.get("input_tokens") or 0))
+    result.completion_tokens = max(0, int(usage.get("output_tokens") or 0))
     answers = payload.get("answers") if isinstance(payload.get("answers"), dict) else {}
     if not answers:
         return result
@@ -807,6 +818,8 @@ async def judge_answer(
         }
         if claims
         else {},
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
     )
 
 

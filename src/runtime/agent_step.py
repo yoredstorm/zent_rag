@@ -117,6 +117,9 @@ class AgentStepJudgment:
     #: Entidades de la pregunta que la evidencia todavía no menciona.
     uncovered_entities: list[str] = field(default_factory=list)
     mode: str = MODE_OFF
+    #: Tokens del pack cuando JEV corrió (0 = no llamó; se suman al run).
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
     def to_step(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -132,6 +135,11 @@ class AgentStepJudgment:
             payload["action_reason"] = self.action_reason
         if self.uncovered_entities:
             payload["uncovered_entities"] = list(self.uncovered_entities)[:4]
+        if self.prompt_tokens or self.completion_tokens:
+            payload["jev_tokens"] = {
+                "input": self.prompt_tokens,
+                "output": self.completion_tokens,
+            }
         return payload
 
 
@@ -191,6 +199,9 @@ async def judge_agent_step(
     )
     if not isinstance(payload, dict):
         return None
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    prompt_tokens = max(0, int(usage.get("input_tokens") or 0))
+    completion_tokens = max(0, int(usage.get("output_tokens") or 0))
     answers = payload.get("answers") or {}
     if include_routing:
         selected, routing_meta = apply_tool_answers(
@@ -239,6 +250,8 @@ async def judge_agent_step(
         action_reason=reason,
         uncovered_entities=gap,
         mode=mode,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )
 
 

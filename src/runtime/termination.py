@@ -81,4 +81,8 @@ async def original_request_satisfied(
     if not isinstance(payload, dict):
         return result
     answers = payload.get("answers") or {}
-    return satisfied_from_answers(answers, noul_yes=noul_yes)
+    outcome = satisfied_from_answers(answers, noul_yes=noul_yes)
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    outcome["prompt_tokens"] = max(0, int(usage.get("input_tokens") or 0))
+    outcome["completion_tokens"] = max(0, int(usage.get("output_tokens") or 0))
+    return outcome

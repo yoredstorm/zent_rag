@@ -1442,6 +1442,29 @@ def _publish_context_envelope(
         logger.warning("context envelope failed", error=str(exc)[:150])
 
 
+def _record_jev_usage(
+    result: AgentRunResult,
+    *,
+    purpose: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> None:
+    """Suma tokens JEV al run (única vía de accounting; fail-soft)."""
+    try:
+        if int(prompt_tokens or 0) <= 0 and int(completion_tokens or 0) <= 0:
+            return
+        from src.runtime.run_accounting import record_judge_call
+
+        record_judge_call(
+            result,
+            purpose=purpose,
+            prompt_tokens=int(prompt_tokens or 0),
+            completion_tokens=int(completion_tokens or 0),
+        )
+    except Exception as exc:  # noqa: BLE001 — la contabilidad nunca rompe el run
+        logger.warning("jev usage record failed", error=str(exc)[:120])
+
+
 def _mark_budget_stop(result: AgentRunResult, reason: str) -> None:
     """Registra la razón PRECISA de corte (run_budget.STOP_REASONS)."""
     state = getattr(result, "run_state", None)
@@ -2601,6 +2624,12 @@ class AgentRuntime:
                     **turn_decision.to_public_dict(),
                 }
             )
+            _record_jev_usage(
+                result,
+                purpose="turn_intent",
+                prompt_tokens=getattr(turn_decision, "prompt_tokens", 0),
+                completion_tokens=getattr(turn_decision, "completion_tokens", 0),
+            )
             if turn_direct:
                 fast_model = str(
                     getattr(settings, "RUNTIME_TURN_FAST_MODEL", "") or ""
@@ -3618,6 +3647,12 @@ class AgentRuntime:
             gate = await _confidence_gate(draft)
             if gate is None:
                 return "skip"
+            _record_jev_usage(
+                result,
+                purpose="answer_gate",
+                prompt_tokens=getattr(gate, "prompt_tokens", 0),
+                completion_tokens=getattr(gate, "completion_tokens", 0),
+            )
             if gate.mode != "on":
                 result.steps.append(gate.to_step())
                 return "shadow"
@@ -5513,6 +5548,7 @@ class AgentRuntime:
                         "type": "tool_call",
                         "tool": tool_name,
                         "error": "not in agent allowlist",
+                        "guard_reason": "TOOL_NOT_AUTHORIZED",
                     }
                 )
                 continue
@@ -5530,6 +5566,7 @@ class AgentRuntime:
                         "type": "tool_call",
                         "tool": tool_name,
                         "error": "not permitted (RBAC/agent grants)",
+                        "guard_reason": "TOOL_NOT_AUTHORIZED",
                     }
                 )
                 continue
@@ -5564,6 +5601,23 @@ class AgentRuntime:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Approval gate failed (fail-open)", error=str(exc)[:120])
 
+            if state is not None and state.budget.exhausted:
+                result.status = "limit_reached"
+                _mark_budget_stop(
+                    result, state.budget.stop_reason or "TOKEN_BUDGET"
+                )
+                result.steps.append(
+                    {
+                        "type": "guardrail",
+                        "tool": tool_name,
+                        "guard_reason": "BUDGET_EXHAUSTED",
+                        "detail": "budget exhausted: tool bloqueada antes de ejecutar",
+                    }
+                )
+                await _finalize_with_authority("budget exhausted")
+                self._ensure_answer(result, history, reason="budget exhausted")
+                result.answer = _apply_derived_guard(result.answer)
+                return
             if state is not None:
                 state.tools.note_call(tool_name)
                 state.try_advance(RunPhase.ACTION_REQUIRED)
@@ -5623,6 +5677,7 @@ class AgentRuntime:
                     {
                         "type": "guardrail",
                         "tool": tool_name,
+                        "guard_reason": "DUPLICATE_TOOL_CALL",
                         "detail": "loop prevention: duplicate tool call without new information",
                     }
                 )
@@ -5861,6 +5916,14 @@ class AgentRuntime:
                             evidence_text=observation_text if registry.size else None,
                         )
                         if step_judgment is not None:
+                            _record_jev_usage(
+                                result,
+                                purpose="agent_step",
+                                prompt_tokens=getattr(step_judgment, "prompt_tokens", 0),
+                                completion_tokens=getattr(
+                                    step_judgment, "completion_tokens", 0
+                                ),
+                            )
                             pending_step_judgment = step_judgment
                             gate_latency = round((time.perf_counter() - _gate_t0) * 1000, 2)
                             step_record = step_judgment.to_step()
@@ -5990,6 +6053,12 @@ class AgentRuntime:
                                 noul_yes=settings.DECISION_NOUL_YES,
                                 context=step_context,
                             )
+                            _record_jev_usage(
+                                result,
+                                purpose="termination",
+                                prompt_tokens=int(gate.get("prompt_tokens") or 0),
+                                completion_tokens=int(gate.get("completion_tokens") or 0),
+                            )
                             if gate.get("stop"):
                                 held = _holds_termination(reasoning, reason="termination_gate")
                                 result.steps.append(
@@ -6015,6 +6084,12 @@ class AgentRuntime:
                             tool_calls=result.tool_calls,
                             noul_yes=settings.DECISION_NOUL_YES,
                             context=step_context,
+                        )
+                        _record_jev_usage(
+                            result,
+                            purpose="termination",
+                            prompt_tokens=int(gate.get("prompt_tokens") or 0),
+                            completion_tokens=int(gate.get("completion_tokens") or 0),
                         )
                         if gate.get("stop"):
                             held = _holds_termination(reasoning, reason="termination_gate")
