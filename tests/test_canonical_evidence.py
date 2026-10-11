@@ -145,7 +145,9 @@ class TestLegacyHasNoAuthority:
         root = Path(__file__).resolve().parents[1] / "src"
         source = (root / "agents/runtime/orchestrator.py").read_text(encoding="utf-8")
         assert "def _evidence_complete(" in source
-        assert "evidence_complete=_evidence_complete(adaptive)" in source
+        # Fase C: la decisión de disclaimer usa la señal canónica con el estado
+        # del run (los call sites del pipeline pasan state=run_state).
+        assert "evidence_complete=_evidence_complete(adaptive, state=state)" in source
         # La decisión de disclaimer no consulta exact_entity_match.
         block = source.split("def _contradictory_disclaimer")[1].split("def ")[0]
         assert "exact_entity_match" not in block
