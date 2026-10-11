@@ -114,6 +114,11 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   (untrusted) nunca en bloque de evidencia.
 - **DO NOT**: crear un sistema de memoria nuevo.
 - **Test**: ningún item `MEMORY`/`USER_TURN` aparece en el bloque de evidencia.
+- **Estado (este pase)**: parcial — el `ContextEnvelope` se publica al cierre y
+  el prompt ya etiqueta el trust por canal (workflow «datos no confiables»,
+  observaciones de tools «untrusted data», hechos del workspace con
+  `[authority]`, evidencia desde el registry). Falta construir los bloques
+  desde el sobre y migrar el portal a `story_view` (frontend, fuera del backend).
 
 ### 8. Story para humanos sin congelar (P3)
 - **Evidence**: `story_view.business_steps/technical_steps` implementados con
