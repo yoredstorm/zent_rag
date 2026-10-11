@@ -142,9 +142,13 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 - **DO NOT**: hardcodear frases por step en distintos backends.
 - **Test**: contrato de reason codes versionado + snapshot de traducción.
 - **Estado (backend)**: `GET /agents/runs/{run_id}/story?view=business|technical`
-  devuelve `build_story(...)` desde los steps persistidos (business sin campos
-  técnicos ni CoT; technical con contenido truncado). La migración del portal
-  al endpoint queda como tarea de frontend.
+  y alias unificado `GET /executions/agent/{run_id}/story` devuelven
+  `build_story(...)` desde los steps persistidos (business sin campos técnicos
+  ni CoT; technical con contenido truncado).
+- **Estado (portal)**: `portal/src/pages/chat/story/businessStory.ts` traduce
+  `reason_code`+`facts` a copy humano con tonos (`translateReasonCode` /
+  `translateBusinessSteps`, 5 tests vitest). Falta rewire del `FlowDrawer` a
+  esta vista (requiere revisión visual).
 
 ### 9. Aislamiento por conversación no auditado end-to-end (P3)
 - **Evidence**: `ContextEnvelope.isolation_key = tenant:conversation`; caches
