@@ -58,10 +58,15 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   caminos + métrica de aperturas.
 - **DO NOT**: desactivar el breaker.
 - **Test**: fallas de una org no afectan runs de otra (fake provider).
-- **Estado (este pase)**: no implementado — el breaker es una tabla DB global
-  por `model_name`; scoping por tenant exige migración (columna + unique) y
-  cambio de claves en `check_circuit`/`record_*`. Se mantiene como NEXT con
-  ese prerequisito explícito.
+- **Estado (este pase)**: implementado — circuit scoped por tenant
+  (`organization_id` en `model_circuit_breakers`, migración **151**, unique por
+  `(model_name, COALESCE(organization_id))`). El runtime pasa la org:
+  fallos del tenant abren solo su scope; `check_circuit` combina con el global
+  (el peor estado manda) para que un provider caído siga protegiendo a todos.
+  Métricas `zent_model_circuit_failures_total`/`_openings_total{model,scope}` y
+  alerta `ModelCircuitMultiTenantOpen` (varios tenants abriendo el mismo modelo
+  = problema de provider, no de una org). `reset_circuit(model)` sin scope
+  resetea todos los circuitos del modelo (admin); con scope, solo el tenant.
 
 ### 4. `adaptive` sigue siendo storage en el orquestador (P2)
 - **Evidence**: `plan`, `quality`, `evidence`, `attempts` se escriben y leen del
