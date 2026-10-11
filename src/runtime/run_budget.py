@@ -16,6 +16,28 @@ CONSTRAINED = "CONSTRAINED"
 CRITICAL = "CRITICAL"
 EXHAUSTED = "EXHAUSTED"
 
+#: Razones PRECISAS de corte de un run. Nunca agrupar estados operativos
+#: distintos: «¿por qué se detuvo?» debe responder con una de estas.
+STEP_BUDGET = "STEP_BUDGET"
+TOOL_BUDGET = "TOOL_BUDGET"
+TOKEN_BUDGET = "TOKEN_BUDGET"  # noqa: S105 — identificador de corte, no secreto
+COST_BUDGET = "COST_BUDGET"
+TIME_BUDGET = "TIME_BUDGET"
+PROVIDER_RATE_LIMIT = "PROVIDER_RATE_LIMIT"
+PROVIDER_FAILURE = "PROVIDER_FAILURE"
+
+STOP_REASONS: frozenset[str] = frozenset(
+    {
+        STEP_BUDGET,
+        TOOL_BUDGET,
+        TOKEN_BUDGET,
+        COST_BUDGET,
+        TIME_BUDGET,
+        PROVIDER_RATE_LIMIT,
+        PROVIDER_FAILURE,
+    }
+)
+
 COMPACT_INSTRUCTION = (
     "Prioriza cubrir todos los puntos pedidos en forma compacta. "
     "No abras una sección que no puedas cerrar."

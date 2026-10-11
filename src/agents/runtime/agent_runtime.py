@@ -1330,16 +1330,24 @@ def _strict_block_run_state(state: AgentRunState, result: AgentRunResult) -> boo
     """Fail-closed opcional: una autoridad contradictoria no se muestra.
 
     Solo actúa con el flag encendido; por defecto no cambia ninguna respuesta.
+    Bloquea por invariantes críticos o por resolución de autoridad que dice
+    UNDETERMINED/BLOCK sobre un cierre FINALIZED.
     Devuelve True si bloqueó la respuesta final.
     """
     blocking = state.critical_violations()
-    if not blocking:
+    policy = state.decisions.finalization or {}
+    policy_action = str(policy.get("action") or "")
+    policy_blocks = policy_action in ("UNDETERMINED", "BLOCK") and (
+        state.phase == RunPhase.FINALIZED
+    )
+    if not blocking and not policy_blocks:
         return False
     message = undetermined_authoritative_answer()
     logger.error(
         "run state strict block",
         run_id=str(result.run_id),
         violations=list(blocking)[:4],
+        policy_action=policy_action or None,
     )
     result.answer = message
     result.answer_state = {
@@ -1350,9 +1358,51 @@ def _strict_block_run_state(state: AgentRunState, result: AgentRunResult) -> boo
     state.answer.text = message
     state.answer.answer_state = dict(result.answer_state)
     state.phase = RunPhase.UNDETERMINED
-    state.trace.notes.append("strict_block:" + "|".join(blocking[:4]))
+    state.trace.notes.append(
+        "strict_block:" + "|".join(blocking[:4] or (f"policy:{policy_action}",))
+    )
     result.steps.append({"type": "answer_state", **result.answer_state})
     return True
+
+
+def _record_finalization_decision(state: AgentRunState, result: AgentRunResult) -> None:
+    """Resuelve y publica la autoridad del cierre (observabilidad + strict).
+
+    No cambia la respuesta por sí solo: el cambio, si corresponde, lo aplica el
+    modo estricto. Deja la resolución en `state.decisions.finalization` y un
+    step solo cuando discrepa con la fase terminal (sin ruido en runs normales).
+    """
+    try:
+        from src.runtime.finalization_policy import (
+            decision_matches_terminal,
+            evaluate_finalization,
+        )
+
+        decision = evaluate_finalization(
+            state,
+            draft_available=bool((result.answer or "").strip()),
+            retrieval_possible=False,
+        )
+        state.decisions.finalization = decision.to_public_dict()
+        if not decision_matches_terminal(decision, state.phase):
+            logger.warning(
+                "finalization policy disagrees with terminal phase",
+                run_id=str(result.run_id),
+                phase=str(state.phase),
+                action=str(decision.action),
+                reason_code=decision.reason_code,
+            )
+            result.steps.append(
+                {
+                    "type": "finalization_policy",
+                    "status": "warn",
+                    "phase": str(state.phase),
+                    **decision.to_public_dict(),
+                    "detail": "la resolución de autoridad no coincide con la fase terminal",
+                }
+            )
+    except Exception as exc:  # noqa: BLE001 — diagnóstico, nunca rompe el run
+        logger.warning("finalization policy failed", error=str(exc)[:150])
 
 
 def _runtime_scratch(result: AgentRunResult) -> dict:
@@ -1365,6 +1415,13 @@ def _runtime_scratch(result: AgentRunResult) -> dict:
         except Exception:  # noqa: BLE001 — dobles de test inmutables
             pass
     return scratch
+
+
+def _mark_budget_stop(result: AgentRunResult, reason: str) -> None:
+    """Registra la razón PRECISA de corte (run_budget.STOP_REASONS)."""
+    state = getattr(result, "run_state", None)
+    if state is not None:
+        state.budget.stop_reason = str(reason or "")
 
 
 def _early_run_state(
@@ -1782,6 +1839,7 @@ class AgentRuntime:
                 result.run_state = _early_run_state(
                     result, agent, request, phase=RunPhase.BLOCKED
                 )
+                _mark_budget_stop(result, "PROVIDER_RATE_LIMIT")
                 result.total_latency_ms = (time.perf_counter() - start) * 1000
                 return result
             factor = float(budget_status.get("throttle_factor", 1.0))
@@ -1824,6 +1882,7 @@ class AgentRuntime:
             result.run_state = _early_run_state(
                 result, agent, request, phase=RunPhase.BLOCKED
             )
+            _mark_budget_stop(result, "PROVIDER_FAILURE")
             result.total_latency_ms = (time.perf_counter() - start) * 1000
             return result
 
@@ -1984,6 +2043,7 @@ class AgentRuntime:
                             "detail": "deployment_rate_exceeded: límite del deployment",
                         }
                     )
+                    _mark_budget_stop(result, "PROVIDER_RATE_LIMIT")
                     result.total_latency_ms = (time.perf_counter() - start) * 1000
                     return result
             except Exception as exc:  # noqa: BLE001
@@ -2064,6 +2124,7 @@ class AgentRuntime:
             logger.warning(
                 "Agent run hit execution time limit", agent_id=str(agent.id)
             )
+            _mark_budget_stop(result, "TIME_BUDGET")
             # Sin respuesta vacía: se devuelve lo reunido hasta el corte.
             self._ensure_answer(
                 result,
@@ -2174,8 +2235,9 @@ class AgentRuntime:
                         }
                     )
                     observe_violations("agent", violations)
-                    if _strict_run_state_enabled():
-                        _strict_block_run_state(state, result)
+                _record_finalization_decision(state, result)
+                if state.trace.violations and _strict_run_state_enabled():
+                    _strict_block_run_state(state, result)
             except Exception as exc:  # noqa: BLE001 — diagnóstico, nunca rompe el run
                 logger.warning("run state finalize failed", error=str(exc)[:150])
         try:
@@ -2258,8 +2320,8 @@ class AgentRuntime:
                 if str(config["model"]) != "zent-routed"
                 else "proxy",
                 status=result.status,
-                prompt_tokens=result.total_tokens,
-                completion_tokens=result.total_tokens // 2,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
                 latency_ms=result.total_latency_ms,
                 queue_wait_ms=proxy_wait_ms,
                 cost=result.cost,
@@ -4580,6 +4642,10 @@ class AgentRuntime:
                     if "cost" in call_plan.budget_reason
                     else "max_tokens exceeded"
                 )
+                _mark_budget_stop(
+                    result,
+                    "COST_BUDGET" if "cost" in call_plan.budget_reason else "TOKEN_BUDGET",
+                )
                 result.status = "limit_reached"
                 result.answer = _budget_answer(
                     [f"OBSERVATION: {context[:2000]}"],
@@ -4725,6 +4791,7 @@ class AgentRuntime:
                 and ledger.consumed_cost_usd > ledger.max_cost_usd
             ):
                 result.status = "limit_reached"
+                _mark_budget_stop(result, "COST_BUDGET")
                 result.steps.append({"type": "guardrail", "detail": "max_cost exceeded"})
             content = str(getattr(response, "content", "") or "")
             if not content.strip():
@@ -4794,6 +4861,11 @@ class AgentRuntime:
                 overrun.get("cost_overrun_usd") or 0
             ) > 0.01
             result.status = "limit_reached" if large_overrun else "completed"
+            if large_overrun:
+                _mark_budget_stop(
+                    result,
+                    "COST_BUDGET" if float(overrun.get("cost_overrun_usd") or 0) > 0.01 else "TOKEN_BUDGET",
+                )
             result.steps.append(
                 {
                     "type": "narrative_fast_path",
@@ -5018,6 +5090,10 @@ class AgentRuntime:
                     if "cost" in call_plan.budget_reason
                     else "max_tokens exceeded"
                 )
+                _mark_budget_stop(
+                    result,
+                    "COST_BUDGET" if "cost" in call_plan.budget_reason else "TOKEN_BUDGET",
+                )
                 result.status = "limit_reached"
                 result.steps.append(
                     {
@@ -5071,6 +5147,7 @@ class AgentRuntime:
                     )
                     continue
             if resp is None:
+                _mark_budget_stop(result, "PROVIDER_FAILURE")
                 raise RuntimeError("Todos los modelos del router fallaron")
             if len(router_attempts) > 1:
                 result.steps.append(
@@ -5101,6 +5178,7 @@ class AgentRuntime:
 
             if result.total_tokens > max_tokens:
                 result.status = "limit_reached"
+                _mark_budget_stop(result, "TOKEN_BUDGET")
                 result.steps.append(
                     {"type": "guardrail", "detail": "max_tokens exceeded"}
                 )
@@ -5110,6 +5188,7 @@ class AgentRuntime:
                 return
             if result.cost > max_cost:
                 result.status = "limit_reached"
+                _mark_budget_stop(result, "COST_BUDGET")
                 result.steps.append(
                     {"type": "guardrail", "detail": "max_cost exceeded"}
                 )
@@ -5378,6 +5457,7 @@ class AgentRuntime:
             result.tool_calls += 1
             if result.tool_calls > max_tool_calls:
                 result.status = "limit_reached"
+                _mark_budget_stop(result, "TOOL_BUDGET")
                 result.steps.append(
                     {"type": "guardrail", "detail": "max_tool_calls exceeded"}
                 )
@@ -5931,6 +6011,7 @@ class AgentRuntime:
                     logger.warning("termination gate skipped", error=str(exc)[:200])
 
         result.status = "limit_reached"
+        _mark_budget_stop(result, "STEP_BUDGET")
         result.steps.append({"type": "guardrail", "detail": "max_steps reached"})
         await _finalize_with_authority("max_steps reached", reasoning=reasoning)
         self._ensure_answer(result, history, reason="max_steps reached")

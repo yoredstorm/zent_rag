@@ -466,6 +466,8 @@ class BudgetState:
     expensive_calls_after_exhaustion: int = 0
     #: Observacional: el último motivo de corte presupuestario observado.
     last_cut_reason: str = ""
+    #: Razón PRECISA del corte (run_budget.STOP_REASONS). Vacío = sin corte.
+    stop_reason: str = ""
 
     @property
     def exhausted(self) -> bool:
@@ -493,6 +495,7 @@ class BudgetState:
             "remaining_tokens": getattr(ledger, "remaining_tokens", None),
             "remaining_cost_usd": getattr(ledger, "remaining_cost_usd", None),
             "last_cut_reason": self.last_cut_reason or None,
+            "stop_reason": self.stop_reason or None,
         }
 
 
@@ -517,6 +520,8 @@ class DecisionState:
     final_state: str = ""
     terminal_message: str = ""
     envelope_conflict: bool = False
+    #: Resolución de autoridad del cierre (finalization_policy, observabilidad).
+    finalization: dict | None = None
     #: OBSERVATIONAL: veredictos JEV (shadow incluido). Nunca deciden acá.
     jev: list[dict] = field(default_factory=list)
 
