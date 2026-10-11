@@ -162,3 +162,24 @@ class TestBudgetStopReasons:
         assert "STEP_BUDGET" in STOP_REASONS
         assert "PROVIDER_RATE_LIMIT" in STOP_REASONS
         assert "COST_BUDGET" in STOP_REASONS
+
+
+class TestToolGuardAdoption:
+    @pytest.mark.asyncio
+    async def test_duplicate_tool_queda_con_guard_reason(self) -> None:
+        register_tool(_EchoTool())
+        llm = _ScriptedLLM(
+            [
+                '{"tool": "echo", "arguments": {"text": "x"}}',
+                '{"tool": "echo", "arguments": {"text": "x"}}',
+                '{"answer": "ok"}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(_agent(["echo"], {"max_steps": 6})))
+        guardrails = [
+            step
+            for step in result.steps
+            if step.get("guard_reason") == "DUPLICATE_TOOL_CALL"
+        ]
+        assert guardrails

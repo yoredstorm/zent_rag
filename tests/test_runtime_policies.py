@@ -3,6 +3,8 @@
 # =============================================================================
 from __future__ import annotations
 
+import pytest
+
 from src.runtime.context_envelope import (
     ContextOrigin,
     ContextTrust,
@@ -189,6 +191,84 @@ class TestContextEnvelope:
 
     def test_untrusted_lista_tools(self) -> None:
         assert self._envelope().untrusted()
+
+
+class TestJevAccounting:
+    def test_record_judge_call_suma_tokens_y_step(self) -> None:
+        from uuid import uuid4
+
+        from src.agents.runtime.agent_runtime import AgentRunResult
+        from src.runtime.run_accounting import record_judge_call
+
+        result = AgentRunResult(
+            run_id=uuid4(),
+            agent_id=uuid4(),
+            organization_id=None,
+            status="completed",
+            answer="x",
+        )
+        record_judge_call(
+            result, purpose="answer_gate", prompt_tokens=120, completion_tokens=30
+        )
+        assert result.prompt_tokens == 120
+        assert result.completion_tokens == 30
+        assert result.total_tokens == 150
+        assert result.steps[-1]["type"] == "jev_usage"
+        assert result.steps[-1]["purpose"] == "answer_gate"
+        record_judge_call(result, purpose="agent_step")
+        assert len(result.steps) == 1  # sin tokens no ensucia la traza
+
+    @pytest.mark.asyncio
+    async def test_answer_gate_expone_tokens_del_juez(self) -> None:
+        from src.runtime.answer_gate import judge_answer
+
+        class _UsageEngine:
+            def __init__(self) -> None:
+                self.answers = {
+                    "answer_grounded": {"type": "noul", "noul": 0.95},
+                    "answer_complete": {"type": "noul", "noul": 0.9},
+                    "answer_quality": {"type": "score", "score": 1.0},
+                }
+
+            async def judge(self, *, state, questions, context=None):
+                return {
+                    "model": "jev-test",
+                    "answers": dict(self.answers),
+                    "usage": {"input_tokens": 111, "output_tokens": 22},
+                }
+
+        gate = await judge_answer(
+            engine=_UsageEngine(),
+            mode="on",
+            user_request="¿cumple?",
+            draft="Sí, cumple.",
+            settings=object(),
+            retrieval_rounds_left=0,
+        )
+        assert gate.prompt_tokens == 111
+        assert gate.completion_tokens == 22
+        assert gate.to_step()["jev_tokens"] == {"input": 111, "output": 22}
+
+    @pytest.mark.asyncio
+    async def test_termination_expone_tokens_del_pack(self) -> None:
+        from src.runtime.termination import original_request_satisfied
+
+        class _UsageEngine:
+            async def judge(self, *, state, questions, context=None):
+                return {
+                    "model": "jev-test",
+                    "answers": {"request_satisfied": {"type": "noul", "noul": 0.95}},
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                }
+
+        outcome = await original_request_satisfied(
+            engine=_UsageEngine(),
+            user_request="q",
+            history=["OBSERVATION: algo"],
+            tool_calls=1,
+        )
+        assert outcome["prompt_tokens"] == 10
+        assert outcome["completion_tokens"] == 5
 
 
 class TestStoryView:
