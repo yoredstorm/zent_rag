@@ -1374,8 +1374,8 @@ def _record_finalization_decision(state: AgentRunState, result: AgentRunResult) 
     """
     try:
         from src.runtime.finalization_policy import (
-            decision_matches_terminal,
             evaluate_finalization,
+            observe_shadow_divergence,
         )
 
         decision = evaluate_finalization(
@@ -1384,7 +1384,7 @@ def _record_finalization_decision(state: AgentRunState, result: AgentRunResult) 
             retrieval_possible=False,
         )
         state.decisions.finalization = decision.to_public_dict()
-        if not decision_matches_terminal(decision, state.phase):
+        if observe_shadow_divergence(decision, state.phase):
             logger.warning(
                 "finalization policy disagrees with terminal phase",
                 run_id=str(result.run_id),

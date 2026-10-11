@@ -378,6 +378,15 @@ zent_run_state_violations_total = Counter(
     labelnames=["path", "kind"],  # path: agent | rag; kind: código del invariante
 )
 
+# Finalization Policy: adopción por etapas (shadow). Una divergencia = una
+# discrepancia real entre la ruta vigente y la resolución de autoridad; el gate
+# de adopción exige cero antes de convertir la señal en autoridad.
+zent_finalization_shadow_divergence_total = Counter(
+    "zent_finalization_shadow_divergence_total",
+    "Divergencias entre la fase terminal del run y la resolución de autoridad (shadow)",
+    labelnames=["phase", "action", "reason_code"],
+)
+
 # Circuit breaker de modelos con scope: global (provider caído) o tenant
 # (aislamiento: los fallos de una org no bloquean a las demás).
 zent_model_circuit_failures_total = Counter(

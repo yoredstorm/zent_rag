@@ -221,3 +221,43 @@ class TestSafetyAndObservability:
         assert (
             decision_matches_terminal(undetermined, RunPhase.UNDETERMINED) is True
         )
+
+
+class TestShadowDivergence:
+    def test_sin_divergencia_no_emite_metrica(self) -> None:
+        from src.infrastructure.observability.metrics import (
+            zent_finalization_shadow_divergence_total,
+        )
+        from src.runtime.finalization_policy import observe_shadow_divergence
+
+        decision = evaluate_finalization(
+            _state(evidence="complete"), draft_available=True
+        )
+        counter = zent_finalization_shadow_divergence_total.labels(
+            phase=str(RunPhase.FINALIZED),
+            action=str(decision.action),
+            reason_code=decision.reason_code,
+        )
+        before = counter._value.get()
+        assert observe_shadow_divergence(decision, RunPhase.FINALIZED) is False
+        assert counter._value.get() == before
+
+    def test_divergencia_emite_metrica_y_devuelve_true(self) -> None:
+        from src.infrastructure.observability.metrics import (
+            zent_finalization_shadow_divergence_total,
+        )
+        from src.runtime.finalization_policy import observe_shadow_divergence
+
+        # La ruta cerró ABSTAINED pero la política resuelve FINALIZE (evidencia
+        # completa + draft): divergencia real que el shadow debe registrar.
+        decision = evaluate_finalization(
+            _state(evidence="complete"), draft_available=True
+        )
+        counter = zent_finalization_shadow_divergence_total.labels(
+            phase=str(RunPhase.ABSTAINED),
+            action=str(decision.action),
+            reason_code=decision.reason_code,
+        )
+        before = counter._value.get()
+        assert observe_shadow_divergence(decision, RunPhase.ABSTAINED) is True
+        assert counter._value.get() == before + 1

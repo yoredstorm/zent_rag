@@ -357,6 +357,31 @@ def decision_matches_terminal(
     return decision.action in expected
 
 
+def observe_shadow_divergence(
+    decision: FinalizationDecision, phase: RunPhase
+) -> bool:
+    """Métrica de divergencia del modo sombra (fail-soft, nunca rompe el run).
+
+    Devuelve True si hubo divergencia. El gate de adopción por etapas exige
+    cero divergencias sobre el corpus antes de convertir una señal en autoridad.
+    """
+    if decision_matches_terminal(decision, phase):
+        return False
+    try:
+        from src.infrastructure.observability.metrics import (
+            zent_finalization_shadow_divergence_total,
+        )
+
+        zent_finalization_shadow_divergence_total.labels(
+            phase=str(phase),
+            action=str(decision.action),
+            reason_code=str(decision.reason_code),
+        ).inc()
+    except Exception:  # noqa: BLE001 — observabilidad, nunca rompe el run
+        pass
+    return True
+
+
 __all__ = [
     "AuthorityLevel",
     "FINALIZATION_POLICY_VERSION",
@@ -366,4 +391,5 @@ __all__ = [
     "evaluate_finalization",
     "expected_actions_for_phase",
     "gate_abstention_action",
+    "observe_shadow_divergence",
 ]
