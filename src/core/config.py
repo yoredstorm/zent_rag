@@ -1398,6 +1398,20 @@ class Settings(BaseSettings):
             "finalizar (una revision maximo). shadow = solo observa."
         ),
     )
+    RUNTIME_JEV_SKIP_PHASES: str = Field(
+        default="",
+        description=(
+            "Fases JEV que se saltan por calibracion (redundant_rate): "
+            "answer_gate,agent_step,termination. Vacio = JEV corre siempre."
+        ),
+    )
+    RUNTIME_JEV_SKIP_SHADOW: Literal["off", "on"] = Field(
+        default="off",
+        description=(
+            "on = no llama al juez en fases shadow (un veredicto shadow no "
+            "decide): ahorro puro durante el rollout."
+        ),
+    )
     RUNTIME_NARRATIVE_FAST_PATH: Literal["off", "on"] = Field(
         default="on",
         description=(

@@ -108,6 +108,16 @@ def skip_phases_from_settings(settings: Any) -> frozenset[str]:
     return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
+def skip_shadow_enabled(settings: Any) -> bool:
+    """`RUNTIME_JEV_SKIP_SHADOW=on`: no se llama al juez en fases shadow.
+
+    Un veredicto shadow NO decide (solo se registra): no pagar la llamada es
+    ahorro puro sin cambio de comportamiento. En fase on/canary no aplica.
+    """
+    raw = str(getattr(settings, "RUNTIME_JEV_SKIP_SHADOW", "") or "").strip().lower()
+    return raw in ("on", "1", "true", "yes")
+
+
 def phase_skipped(phase: str) -> bool:
     """¿Ops pidió saltar esta fase JEV? Fail-open: sin settings, no se saltea."""
     try:
@@ -125,5 +135,6 @@ __all__ = [
     "classify_gate_value",
     "phase_skipped",
     "skip_phases_from_settings",
+    "skip_shadow_enabled",
     "summarize_jev_value",
 ]

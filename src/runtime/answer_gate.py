@@ -49,7 +49,7 @@ from src.runtime.evidence import (
     select_evidence,
 )
 from src.runtime.jev_state import StateSection, build_jev_state
-from src.runtime.jev_value import phase_skipped
+from src.runtime.jev_value import phase_skipped, skip_shadow_enabled
 from src.runtime.questions import answer_gate_questions
 
 ANSWER_WEIGHTS = {"grounded": 0.45, "complete": 0.35, "quality": 0.20}
@@ -601,6 +601,10 @@ async def judge_answer(
     if phase_skipped("answer_gate"):
         # Calibración por datos (redundant_rate): la fase no llama a JEV.
         result.provider = "skip_config"
+        return result
+    if mode != "on" and skip_shadow_enabled(settings):
+        # Shadow no decide: se registra el modo sin pagar la llamada.
+        result.provider = "skip_shadow"
         return result
     if mode == "off" or engine is None:
         return result
