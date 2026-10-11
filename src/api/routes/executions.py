@@ -122,3 +122,62 @@ async def execution_flow(kind: str, execution_id: str, request: Request) -> dict
     flow["flow_version"] = 1
     flow.pop("events", None)
     return {"flow": flow, "kind": resolved, "id": str(target)}
+
+
+@router.get(
+    "/{kind}/{execution_id}/story", summary="Vista de negocio/técnica (P7)"
+)
+async def execution_story(
+    kind: str,
+    execution_id: str,
+    request: Request,
+    view: str = "business",
+) -> dict:
+    """Vista normalizada de un run de agente: reason_code + facts.
+
+    `business` (default): para el portal, sin campos técnicos ni CoT.
+    `technical`: steps crudos con contenido truncado. Otros kinds devuelven 404
+    explícito (la vista normalizada es de runs de agente).
+    """
+    ctx = require_permission(request, "rag:read")
+    resolved = str(kind or "").strip().lower()
+    if resolved not in KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "invalid_kind",
+                "message": f"kind debe ser uno de {', '.join(KINDS)}",
+            },
+        )
+    try:
+        target = UUID(execution_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "invalid_id", "message": "id debe ser UUID"},
+        ) from exc
+    if resolved != "agent":
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "story_unavailable",
+                "message": "La vista normalizada existe para runs de agente",
+            },
+        )
+
+    from src.agents.runtime.trace_store import ensure_agent_runs_table, get_run
+    from src.runtime.story_view import build_story
+
+    await ensure_agent_runs_table()
+    run = await get_run(ctx.organization_id, target)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "run_not_found", "message": "Run not found"},
+        )
+    steps = run.get("steps") if isinstance(run, dict) else None
+    payload = build_story(
+        steps or [],
+        view="technical" if str(view).lower() == "technical" else "business",
+    )
+    return {**payload, "kind": resolved, "id": str(target)}
