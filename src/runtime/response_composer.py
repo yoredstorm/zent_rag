@@ -32,6 +32,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
+from src.runtime.answer_state import ANSWER_STATE_DERIVED
+
 RESPONSE_COMPOSER_VERSION = "response-composer-1"
 
 # --- modos de redacción -----------------------------------------------------
@@ -251,7 +253,7 @@ class DeterministicResponseFacts:
 
     @property
     def authoritative(self) -> bool:
-        return self.answer_state == "DERIVED_RESULT"
+        return self.answer_state == ANSWER_STATE_DERIVED
 
     @property
     def citation_handles(self) -> tuple[str, ...]:

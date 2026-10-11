@@ -828,11 +828,19 @@ def _canonical_gap_line(note: str) -> str:
 def _sufficiency_complete(sufficiency: object | None) -> bool:
     """Evidencia completa con señal role-aware YA calculada (sin recalcular).
 
+    La completitud positiva se lee de la definición canónica
+    (`EvidenceSufficiency.evidence_complete`). El cierre histórico aceptaba
+    «sin huecos documentables» aunque no hubiera fragmentos (supporting_chunks=0);
+    ese fallback se conserva para no cambiar respuestas.
+
     Un EXAMPLE_VALUE no aparece en missing_anchors (assess_sufficiency lo
     excluye por rol), así que no puede degradar la decisión.
     """
     if sufficiency is None:
         return False
+    canonical = getattr(sufficiency, "evidence_complete", None)
+    if isinstance(canonical, bool) and canonical:
+        return True
     return not (
         tuple(getattr(sufficiency, "missing_entities", ()) or ())
         or tuple(getattr(sufficiency, "missing_anchors", ()) or ())
@@ -1309,10 +1317,9 @@ def _record_step_judgment(
 
 def _strict_run_state_enabled() -> bool:
     """`RUNTIME_RUN_STATE_STRICT=on` activa el fail-closed por invariantes."""
-    value = str(
-        getattr(get_settings(), "RUNTIME_RUN_STATE_STRICT", "off") or "off"
-    ).strip().lower()
-    return value in ("on", "1", "true", "yes")
+    from src.runtime.run_state import strict_mode_enabled
+
+    return strict_mode_enabled(get_settings())
 
 
 def _strict_block_run_state(state: AgentRunState, result: AgentRunResult) -> bool:
@@ -2252,9 +2259,7 @@ class AgentRuntime:
             record_event,
         )
 
-        tool_calls = sum(
-            1 for step in result.steps if step.get("type") == "tool_call"
-        )
+        tool_calls = int(getattr(result, "tool_calls", 0) or 0)
         event = UsageEvent(
             request_id=result.run_id,
             organization_id=request.agent.organization_id,
@@ -2569,7 +2574,8 @@ class AgentRuntime:
         # El cierre por presupuesto (timeout/error) necesita lo reunido hasta el
         # corte para no devolver una respuesta vacía.
         self._last_history = history
-        tool_calls = 0
+        # Contador único de tools: `result.tool_calls` (el ledger, el uso y el
+        # cierre lo leen de ahí; no hay contador paralelo por loop).
         failed_tools: dict[str, str] = {}
         max_steps = int(config["max_steps"])
         max_tool_calls = int(config["max_tool_calls"])
@@ -4993,7 +4999,7 @@ class AgentRuntime:
                     # del modelo) y el usuario vería texto que no se entrega.
                     if (
                         request.on_delta is not None
-                        and tool_calls > 0
+                        and result.tool_calls > 0
                         and not query_executable
                     ):
                         resp = await self._stream_response(
@@ -5098,7 +5104,7 @@ class AgentRuntime:
                 direct = _apply_derived_guard(direct)
                 if (
                     knowledge_agent
-                    and tool_calls == 0
+                    and result.tool_calls == 0
                     and not turn_direct
                     and grounding_nudges < 1
                     and _looks_like_knowledge_question(request.message)
@@ -5229,7 +5235,7 @@ class AgentRuntime:
                     ).inc()
                     if outcome in {"ok", "error"}:
                         retrieval_rounds += 1
-                        tool_calls += 1
+                        result.tool_calls += 1
                         searches_done += 1
                     elif outcome in {"blocked", "unavailable"}:
                         history.append(
@@ -5324,8 +5330,8 @@ class AgentRuntime:
                 )
                 continue
 
-            tool_calls += 1
-            if tool_calls > max_tool_calls:
+            result.tool_calls += 1
+            if result.tool_calls > max_tool_calls:
                 result.status = "limit_reached"
                 result.steps.append(
                     {"type": "guardrail", "detail": "max_tool_calls exceeded"}
@@ -5673,9 +5679,12 @@ class AgentRuntime:
                     # Evidencia usable = la pregunta puede responderse con lo
                     # recuperado. Con registry manda la suficiencia (entidades
                     # cubiertas); sin registry, la observación no vacía de siempre.
+                    canonical_answerable = (
+                        state.evidence.can_answer if state is not None else None
+                    )
                     has_usable_evidence = (
-                        sufficiency.generate
-                        if (registry.size and sufficiency is not None)
+                        canonical_answerable
+                        if (registry.size and canonical_answerable is not None)
                         else _history_has_usable_observation(history)
                     )
                     if jev_loop_active or step_batch_enabled(settings, request.agent.config_json):
@@ -5685,7 +5694,7 @@ class AgentRuntime:
                             tools=allowed_tools,
                             user_request=request.message,
                             history=history,
-                            tool_calls=tool_calls,
+                            tool_calls=result.tool_calls,
                             agent_instructions=agent_instructions,
                             noul_yes=settings.DECISION_NOUL_YES,
                             noul_no=settings.DECISION_NOUL_NO,
@@ -5776,7 +5785,7 @@ class AgentRuntime:
                                 ).inc()
                                 if outcome in {"ok", "error"}:
                                     retrieval_rounds += 1
-                                    tool_calls += 1
+                                    result.tool_calls += 1
                                     searches_done += 1
                                     # Sin evidencia NUEVA no tiene sentido pedir otra
                                     # ronda: el modelo repetía la misma búsqueda, el
@@ -5826,7 +5835,7 @@ class AgentRuntime:
                                 engine=get_decision_engine(),
                                 user_request=request.message,
                                 history=history,
-                                tool_calls=tool_calls,
+                                tool_calls=result.tool_calls,
                                 noul_yes=settings.DECISION_NOUL_YES,
                                 context=step_context,
                             )
@@ -5852,7 +5861,7 @@ class AgentRuntime:
                             engine=get_decision_engine(),
                             user_request=request.message,
                             history=history,
-                            tool_calls=tool_calls,
+                            tool_calls=result.tool_calls,
                             noul_yes=settings.DECISION_NOUL_YES,
                             context=step_context,
                         )

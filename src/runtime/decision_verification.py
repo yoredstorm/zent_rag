@@ -24,6 +24,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from src.runtime.derived_guard import is_deterministic_supported_claim
+
 VERIFICATION_SPLIT_VERSION = "verification-split-1"
 
 #: Estados de la DECISIÓN determinista. `UNVERIFIED` no existe acá: una
@@ -195,9 +197,7 @@ def build_decision_verification(
     views = [claim_view(claim) for claim in claims or ()]
     authoritative = bool(env.get("authoritative"))
     supported = [
-        view
-        for view in views
-        if view["deterministic"] and view["verification_status"] == _SUPPORTED
+        view for view in views if is_deterministic_supported_claim(view)
     ]
     conflicting = [
         view

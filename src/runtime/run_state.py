@@ -351,6 +351,15 @@ class EvidenceView:
         return action in {"retrieve_more", "abstain"}
 
     @property
+    def can_answer(self) -> bool | None:
+        """`generate` de la suficiencia canónica (None = sin autoridad)."""
+        sufficiency = self.sufficiency
+        if sufficiency is None:
+            return None
+        generate = getattr(sufficiency, "generate", None)
+        return bool(generate) if isinstance(generate, bool) else None
+
+    @property
     def chain_violations(self) -> tuple[str, ...]:
         if self.cited and not self.cited <= self.used:
             return ("cited_not_used",)
@@ -792,6 +801,14 @@ def terminal_phase_for(*, status: str, answer: str, answer_state: dict | None) -
     return RunPhase.BLOCKED
 
 
+def strict_mode_enabled(settings: Any) -> bool:
+    """`RUNTIME_RUN_STATE_STRICT=on` activa el fail-closed por invariantes."""
+    value = str(
+        getattr(settings, "RUNTIME_RUN_STATE_STRICT", "off") or "off"
+    ).strip().lower()
+    return value in ("on", "1", "true", "yes")
+
+
 def observe_violations(path: str, violations: Iterable[str]) -> None:
     """Métrica de invariantes violados (fail-soft, nunca rompe el run)."""
     try:
@@ -867,5 +884,6 @@ __all__ = [
     "TurnState",
     "finalize_state",
     "observe_violations",
+    "strict_mode_enabled",
     "terminal_phase_for",
 ]

@@ -321,6 +321,14 @@ class TestAggregation:
         assert state.evidence.selection is selection
         assert state.evidence.sufficiency is sufficiency
 
+    def test_can_answer_delega_en_sufficiency(self) -> None:
+        state = _state()
+        assert state.evidence.can_answer is None
+        state.evidence.observe(sufficiency=SimpleNamespace(generate=True))
+        assert state.evidence.can_answer is True
+        state.evidence.observe(sufficiency=SimpleNamespace(generate=False))
+        assert state.evidence.can_answer is False
+
     def test_evidence_complete_delega_en_sufficiency(self) -> None:
         state = _state()
         state.evidence.observe(
@@ -542,6 +550,11 @@ class TestStrictModeAndMetrics:
     def test_flag_estricto_off_por_defecto(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import src.agents.runtime.agent_runtime as runtime_module
         from src.agents.runtime.agent_runtime import _strict_run_state_enabled
+        from src.runtime.run_state import strict_mode_enabled
+
+        assert strict_mode_enabled(SimpleNamespace(RUNTIME_RUN_STATE_STRICT="on")) is True
+        assert strict_mode_enabled(SimpleNamespace(RUNTIME_RUN_STATE_STRICT="off")) is False
+        assert strict_mode_enabled(SimpleNamespace()) is False
 
         monkeypatch.setattr(
             runtime_module,

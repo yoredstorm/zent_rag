@@ -174,6 +174,21 @@ class TestAgentRuntimeSameAuthority:
         assert _sufficiency_complete(_Suff(missing_anchors=("&&&F",))) is False
         assert _sufficiency_complete(None) is False
 
+    def test_agent_completeness_delega_en_canonico(self) -> None:
+        """D: la completitud positiva sale de EvidenceSufficiency.evidence_complete."""
+        from src.agents.runtime.agent_runtime import _sufficiency_complete
+
+        class _Canonical:
+            def __init__(self, complete, missing_entities=(), missing_anchors=()):
+                self.evidence_complete = complete
+                self.missing_entities = missing_entities
+                self.missing_anchors = missing_anchors
+
+        assert _sufficiency_complete(_Canonical(True, missing_entities=("x",))) is True
+        assert _sufficiency_complete(_Canonical(False, missing_entities=("x",))) is False
+        # Fallback histórico: sin huecos documentables y sin fragmentos.
+        assert _sufficiency_complete(_Canonical(False)) is True
+
 
 class TestDisclaimersUseCanonical:
     def test_disclaimer_uses_evidence_complete(self) -> None:
