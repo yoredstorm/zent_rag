@@ -101,9 +101,10 @@ se permite (`LoopGuard` por run).
 - `UNCLASSIFIED`: sin señal determinista comparable en el run.
 
 Reporte: `summarize_jev_value(steps)` → llamadas por fase, valores,
-`redundant_rate` (confirmados / comparables). Sobre eso se deciden skips
-conservadores (los ya existentes: reglas-first en turn intent, batching por
-paso, bypass fail-closed en ejecutables, shadow/canary).
+`redundant_rate` (confirmados / comparables). Se publica en el flow de agente
+(`flow["jev_value"]`) y sobre eso se deciden skips conservadores (los ya
+existentes: reglas-first en turn intent, batching por paso, bypass fail-closed
+en ejecutables, shadow/canary).
 
 ## 5. Budget: razones precisas de corte (P5)
 
@@ -142,32 +143,42 @@ aislamiento). Reglas verificadas en tests: memory no es evidence, escenario de
 usuario no es evidencia documental, company context no es autoritativo,
 workflow es input del run, tools son untrusted.
 
-Adopción pendiente: el prompt assembly debe declarar sus items en el sobre
-(hoy el contrato existe y está testeado; el wiring es incremental).
+Adopción: el envelope se publica al cierre del run en
+`result.run_state.context` (tenant, conversación, evidencia seleccionada, tools
+usadas, claves de workflow). El wiring del prompt assembly es incremental
+(roadmap P10-7).
 
 ## 7. Roadmap P7 / P9 / P10
 
-**P7 — Execution Story 2 vistas** (después de reason codes estables):
+**P7 — Execution Story 2 vistas** (implementado como contrato; migración de
+portal pendiente):
 
-- BUSINESS: `{type, status, reason_code, facts}` — el portal traduce
-  (ej.: `EVIDENCE_COMPLETE` → «Evidencia suficiente»).
-- TECHNICAL: provider, model, tokens, JEV judgments, scores, latencies,
-  budgets, authority transitions, fallbacks.
+- `src/runtime/story_view.py`: `business_steps(steps)` con
+  `{type, status, reason_code, facts}` (sin provider/tokens/latencia/checks) y
+  `technical_steps(steps)` con payloads y contenido truncado.
+- Diccionario inicial de reason codes: `EVIDENCE_COMPLETE/INCOMPLETE`,
+  `ANSWER_APPROVED/LIMITED/ABSTAINED`, `AUTHORITY_*`, `CONSISTENCY_VIOLATIONS`,
+  `TOOL_EXECUTED/FAILED`, `REQUEST_SATISFIED`, etc.
 - Prohibido CoT: solo estados, decisiones, hechos, evidencia, reglas,
   eventos, reason codes, resultados.
 
-**P9 — AgentRuntime legible** (extracción por frontera real, no rewrite):
+**P9 — AgentRuntime legible**: extracciones chicas hechas en este programa
+(`_record_finalization_decision`, `_mark_budget_stop`, `_publish_context_envelope`,
+guards como tabla). Pendiente con criterio: extraer el finalizador y el
+narrative fast path (~800 líneas) a módulos con parámetros explícitos, sin
+reescribir el ReAct.
 
-- Candidatos: finalizer (`_try_finalize_answer` + `_apply_derived_guard` +
-  `_finalize_with_authority`) → policy; narrative fast path (~800 líneas) →
-  módulo propio; el loop ReAct se mantiene.
-- Criterio: el método principal se entiende en <10 min; sin microarchivos.
+**P10 — Auditoría principal**: `docs/architecture/principal-audit.md` con el
+TOP 10 (contabilidad partida, adopción del resolver, circuit breaker por
+tenant, `adaptive` storage, skips JEV, extracción del runtime, prompt desde
+ContextEnvelope, story para humanos, aislamiento por conversación, matriz
+adversarial) y roadmap NOW/NEXT/LATER.
 
-**P10 — Auditoría principal**: correr con métricas de P2/P4/P5/P8 en mano.
-Hallazgos ya materializados en este programa (referencia): split de tokens en
-`log_inference` (corregido), doble usage event por camino, JEV fuera del ledger,
-orquestador sin ledger, atributos de instancia con carrera (corregido),
-duplicación de reglas de autoridad (corregida).
+## 7b. Observabilidad de la resolución en el flow
+
+- `flow["jev_value"]` (agente): llamadas JEV por fase + `redundant_rate`.
+- `state.decisions.finalization`: resolución de autoridad del cierre.
+- `state.context`: sobre de procedencia (tenant/conversación/trust).
 
 ## 8. Observabilidad de la resolución
 
@@ -202,8 +213,10 @@ Cada cierre guarda en `result.run_state.decisions.finalization`:
 | `test_finalization_policy.py` (10 casos del prompt P2 + seguridad + observabilidad) | 14 passed |
 | `test_adversarial_matrix.py` (matriz 192 combinaciones + estabilidad 100 runs + tool security) | 197 passed |
 | `test_budget_stop_reasons.py` (STEP/TOOL/TOKEN/TIME/PROVIDER) | 6 passed |
-| `test_runtime_policies.py` (transiciones + valor JEV + contexto) | 18 passed |
+| `test_runtime_policies.py` (transiciones + valor JEV + contexto + story views) | 20 passed |
+| `test_run_state` + `test_agent_flow_v2` + `test_agent_runtime` (wiring P6, `flow["jev_value"]`, story view) | 134 passed |
 
 Límites de este pase: el resolver corre en **observabilidad** + modo estricto;
 los guards son tabla + tests (la adopción por el loop es incremental); el
-ContextEnvelope aún no se inyecta en el prompt assembly.
+ContextEnvelope se publica al cierre pero aún no construye los bloques del
+prompt.
