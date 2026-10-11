@@ -169,6 +169,50 @@ describe("FlowDrawer", () => {
     expect(screen.getByText(/Comparar con Zent actual/)).toBeTruthy();
   });
 
+  it("muestra los pasos normalizados de un run de agente (P7)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/story")) {
+          return json({
+            version: "story-view-1",
+            view: "business",
+            kind: "agent",
+            id: "r-1",
+            steps: [
+              {
+                type: "evidence_evaluation",
+                status: "ok",
+                reason_code: "EVIDENCE_COMPLETE",
+              },
+              {
+                type: "answer_decision",
+                status: "ok",
+                reason_code: "ANSWER_APPROVED",
+              },
+            ],
+          });
+        }
+        return json({}, 404);
+      }),
+    );
+    render(
+      <FlowDrawer
+        open
+        onOpenChange={() => {}}
+        flow={FLOW}
+        role="admin"
+        runId="r-1"
+        session={SESSION}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Evidencia suficiente")).toBeTruthy(),
+    );
+    expect(screen.getByText("Respuesta aprobada")).toBeTruthy();
+    expect(screen.getByTestId("business-steps")).toBeTruthy();
+  });
+
   it("explica qué falló cuando no puede cargar el flujo", async () => {
     vi.stubGlobal(
       "fetch",

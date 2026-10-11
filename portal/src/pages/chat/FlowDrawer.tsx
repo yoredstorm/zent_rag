@@ -12,6 +12,12 @@ import { buildExecutionStory } from "./executionStory";
 import type { ImpactLoad, QueryImpact } from "./MemoryImpact";
 import type { ReplayResult } from "./ReplayCompare";
 import { ExecutionStoryView, type StoryMode } from "./story/ExecutionStoryView";
+import {
+  fetchAgentStory,
+  translateBusinessSteps,
+  type BusinessStory,
+  type BusinessTone,
+} from "./story/businessStory";
 
 type Flow = Record<string, unknown>;
 
@@ -130,6 +136,27 @@ export default function FlowDrawer({
     setReplayPending(false);
   }, [open, ref]);
 
+  // Vista normalizada (P7): sólo para runs de agente; aditiva y fail-soft.
+  const [business, setBusiness] = useState<BusinessStory | null>(null);
+  useEffect(() => {
+    if (!open || !ref || ref.kind !== "agent") {
+      setBusiness(null);
+      return;
+    }
+    let cancelled = false;
+    fetchAgentStory(ref, session)
+      .then((body) => {
+        if (!cancelled && body?.view === "business") setBusiness(body);
+      })
+      .catch(() => {
+        // Sin vista normalizada (run viejo o endpoint ausente) no se muestra nada.
+        if (!cancelled) setBusiness(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, ref, session.token, session.organizationId]);
+
   function runReplay() {
     // El replay existe sólo para respuestas RAG (query_id): no se inventa para
     // runs de agente.
@@ -160,6 +187,13 @@ export default function FlowDrawer({
   const story = active ? buildExecutionStory(active) : null;
   const sql = active?.sql ? (active.sql as Flow) : null;
   const memoryHits = countMemoryHits(active);
+  const businessSteps = business ? translateBusinessSteps(business.steps) : [];
+  const badgeTone = (tone: BusinessTone): "ok" | "warn" | "danger" | "neutral" => {
+    if (tone === "ok") return "ok";
+    if (tone === "warn") return "warn";
+    if (tone === "error") return "danger";
+    return "neutral";
+  };
 
   return (
     <Drawer
@@ -195,6 +229,19 @@ export default function FlowDrawer({
             ) : null
           }
         />
+      ) : null}
+      {businessSteps.length ? (
+        <section className="mt-4" data-testid="business-steps">
+          <p className="eyebrow mb-2">Pasos del run</p>
+          <ul className="space-y-2">
+            {businessSteps.map((step, index) => (
+              <li key={index} className="flex items-start gap-2">
+                <Badge tone={badgeTone(step.tone)}>{step.title}</Badge>
+                <span className="text-[13px] text-muted">{step.caption}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
     </Drawer>
   );
