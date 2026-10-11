@@ -2868,6 +2868,42 @@ class AgentRuntime:
                 rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
                 steps_left=_steps_left(),
             )
+
+        def _retrieval_still_possible() -> bool:
+            return (
+                _steps_left() > 0
+                and retrieval_rounds < max_retrieval_rounds
+                and not retrieval_exhausted
+            )
+
+        def _shadow_trigger(
+            stage: str,
+            intended: str,
+            *,
+            termination_requested: bool = False,
+            draft_available: bool = True,
+        ) -> None:
+            """Shadow del trigger (fail-soft): la ruta cierra; ¿la política acompaña?
+
+            Observabilidad pura: no cambia ninguna decisión. La divergencia queda
+            en `zent_finalization_shadow_divergence_total{stage=...}`.
+            """
+            if state is None:
+                return
+            try:
+                from src.runtime.finalization_policy import observe_trigger_shadow
+
+                observe_trigger_shadow(
+                    state,
+                    stage=stage,
+                    intended=intended,
+                    retrieval_possible=_retrieval_still_possible(),
+                    draft_available=draft_available,
+                    termination_requested=termination_requested,
+                )
+            except Exception as exc:  # noqa: BLE001 — observabilidad, nunca rompe el run
+                logger.warning("trigger shadow failed", error=str(exc)[:150])
+
         revision_used = False
         pending_step_judgment = None
         # Claims deterministas vistos por el gate: el texto final no puede
@@ -5408,6 +5444,15 @@ class AgentRuntime:
                     failure = result.answer_state or {}
                     authoritative_message = str(failure.get("message") or "")
                     failure_kind, reason = _retrieval_unavailable(failed_tools, retrieved_refs)
+                    _shadow_trigger(
+                        "draft_gate",
+                        (
+                            "UNDETERMINED"
+                            if authoritative_message
+                            else ("BLOCK" if failure_kind else "ABSTAIN")
+                        ),
+                        draft_available=True,
+                    )
                     if authoritative_message:
                         # Fail-closed: la autoridad determinista ya declaró el
                         # estado (fallo de fase o regla indeterminada). Ese
@@ -6112,6 +6157,11 @@ class AgentRuntime:
                                 if held is not None:
                                     result.steps.append(held)
                                 else:
+                                    _shadow_trigger(
+                                        "termination_trigger",
+                                        "FINALIZE",
+                                        termination_requested=True,
+                                    )
                                     await _finalize_with_authority(
                                         "agent_step_batched", reasoning=reasoning
                                     )
@@ -6145,6 +6195,11 @@ class AgentRuntime:
                                     }
                                 )
                                 if held is None:
+                                    _shadow_trigger(
+                                        "termination_trigger",
+                                        "FINALIZE",
+                                        termination_requested=True,
+                                    )
                                     await _finalize_with_authority(
                                         "termination_gate", reasoning=reasoning
                                     )
@@ -6177,6 +6232,11 @@ class AgentRuntime:
                                 }
                             )
                             if held is None:
+                                _shadow_trigger(
+                                    "termination_trigger",
+                                    "FINALIZE",
+                                    termination_requested=True,
+                                )
                                 await _finalize_with_authority(
                                     "termination_gate", reasoning=reasoning
                                 )

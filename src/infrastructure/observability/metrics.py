@@ -381,10 +381,11 @@ zent_run_state_violations_total = Counter(
 # Finalization Policy: adopción por etapas (shadow). Una divergencia = una
 # discrepancia real entre la ruta vigente y la resolución de autoridad; el gate
 # de adopción exige cero antes de convertir la señal en autoridad.
+# stage: closure | termination_trigger | draft_gate.
 zent_finalization_shadow_divergence_total = Counter(
     "zent_finalization_shadow_divergence_total",
-    "Divergencias entre la fase terminal del run y la resolución de autoridad (shadow)",
-    labelnames=["phase", "action", "reason_code"],
+    "Divergencias entre la ruta vigente y la resolución de autoridad (shadow)",
+    labelnames=["stage", "action", "reason_code"],
 )
 
 # Circuit breaker de modelos con scope: global (provider caído) o tenant

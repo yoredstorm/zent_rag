@@ -384,29 +384,67 @@ def decision_matches_terminal(
     return decision.action in expected
 
 
-def observe_shadow_divergence(
-    decision: FinalizationDecision, phase: RunPhase
-) -> bool:
-    """Métrica de divergencia del modo sombra (fail-soft, nunca rompe el run).
-
-    Devuelve True si hubo divergencia. El gate de adopción por etapas exige
-    cero divergencias sobre el corpus antes de convertir una señal en autoridad.
-    """
-    if decision_matches_terminal(decision, phase):
-        return False
+def _emit_divergence(stage: str, decision: FinalizationDecision) -> None:
+    """Contador de divergencia shadow (fail-soft)."""
     try:
         from src.infrastructure.observability.metrics import (
             zent_finalization_shadow_divergence_total,
         )
 
         zent_finalization_shadow_divergence_total.labels(
-            phase=str(phase),
+            stage=str(stage),
             action=str(decision.action),
             reason_code=str(decision.reason_code),
         ).inc()
     except Exception:  # noqa: BLE001 — observabilidad, nunca rompe el run
         pass
+
+
+def observe_shadow_divergence(
+    decision: FinalizationDecision, phase: RunPhase
+) -> bool:
+    """Métrica de divergencia del cierre (fail-soft, nunca rompe el run).
+
+    Devuelve True si hubo divergencia. El gate de adopción por etapas exige
+    cero divergencias sobre el corpus antes de convertir una señal en autoridad.
+    """
+    if decision_matches_terminal(decision, phase):
+        return False
+    _emit_divergence("closure", decision)
     return True
+
+
+def observe_trigger_shadow(
+    state: AgentRunState,
+    *,
+    stage: str,
+    intended: str,
+    retrieval_possible: bool,
+    draft_available: bool,
+    tool_requested: bool = False,
+    tool_authorized: bool | None = None,
+    termination_requested: bool = False,
+) -> FinalizationDecision:
+    """Shadow a nivel TRIGGER: la ruta vigente va a cerrar; ¿la política acompaña?
+
+    `intended` es la acción que la ruta vigente ejecutará (FINALIZE para el
+    trigger de termination; ABSTAIN/BLOCK/UNDETERMINED para el gate del
+    borrador). Divergencia = la política resuelve una acción distinta a la
+    esperada por el trigger. A diferencia del cierre (que evalúa con
+    `retrieval_possible=False`), acá el presupuesto de búsqueda todavía importa:
+    detecta cierres prematuros que el shadow del cierre no puede ver.
+    """
+    decision = evaluate_finalization(
+        state,
+        tool_requested=tool_requested,
+        tool_authorized=tool_authorized,
+        retrieval_possible=retrieval_possible,
+        termination_requested=termination_requested,
+        draft_available=draft_available,
+    )
+    if str(decision.action) != str(intended):
+        _emit_divergence(stage, decision)
+    return decision
 
 
 __all__ = [
@@ -419,4 +457,5 @@ __all__ = [
     "expected_actions_for_phase",
     "gate_abstention_action",
     "observe_shadow_divergence",
+    "observe_trigger_shadow",
 ]

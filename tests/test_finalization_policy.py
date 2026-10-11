@@ -234,7 +234,7 @@ class TestShadowDivergence:
             _state(evidence="complete"), draft_available=True
         )
         counter = zent_finalization_shadow_divergence_total.labels(
-            phase=str(RunPhase.FINALIZED),
+            stage="closure",
             action=str(decision.action),
             reason_code=decision.reason_code,
         )
@@ -254,10 +254,95 @@ class TestShadowDivergence:
             _state(evidence="complete"), draft_available=True
         )
         counter = zent_finalization_shadow_divergence_total.labels(
-            phase=str(RunPhase.ABSTAINED),
+            stage="closure",
             action=str(decision.action),
             reason_code=decision.reason_code,
         )
         before = counter._value.get()
         assert observe_shadow_divergence(decision, RunPhase.ABSTAINED) is True
         assert counter._value.get() == before + 1
+
+
+class TestTriggerShadow:
+    def test_termination_acompanado_por_la_politica(self) -> None:
+        from src.infrastructure.observability.metrics import (
+            zent_finalization_shadow_divergence_total,
+        )
+        from src.runtime.finalization_policy import observe_trigger_shadow
+
+        state = _state(evidence="complete")
+        counter = zent_finalization_shadow_divergence_total.labels(
+            stage="termination_trigger",
+            action="FINALIZE",
+            reason_code="TERMINATION_SATISFIED",
+        )
+        before = counter._value.get()
+        decision = observe_trigger_shadow(
+            state,
+            stage="termination_trigger",
+            intended="FINALIZE",
+            retrieval_possible=True,
+            draft_available=True,
+            termination_requested=True,
+        )
+        assert decision.action is FinalizationAction.FINALIZE
+        assert counter._value.get() == before
+
+    def test_termination_prematuro_con_retrieval_posible_diverge(self) -> None:
+        from src.infrastructure.observability.metrics import (
+            zent_finalization_shadow_divergence_total,
+        )
+        from src.runtime.finalization_policy import observe_trigger_shadow
+
+        state = _state(evidence="insufficient")
+        decision = observe_trigger_shadow(
+            state,
+            stage="termination_trigger",
+            intended="FINALIZE",
+            retrieval_possible=True,
+            draft_available=True,
+            termination_requested=True,
+        )
+        assert decision.action is FinalizationAction.RETRIEVE_MORE
+        counter = zent_finalization_shadow_divergence_total.labels(
+            stage="termination_trigger",
+            action=str(decision.action),
+            reason_code=decision.reason_code,
+        )
+        assert counter._value.get() >= 1
+
+    def test_draft_gate_abstiene_y_la_politica_pediria_retrieval(self) -> None:
+        from src.infrastructure.observability.metrics import (
+            zent_finalization_shadow_divergence_total,
+        )
+        from src.runtime.finalization_policy import observe_trigger_shadow
+
+        state = _state(evidence="insufficient")
+        decision = observe_trigger_shadow(
+            state,
+            stage="draft_gate",
+            intended="ABSTAIN",
+            retrieval_possible=True,
+            draft_available=True,
+        )
+        assert decision.action is FinalizationAction.RETRIEVE_MORE
+        counter = zent_finalization_shadow_divergence_total.labels(
+            stage="draft_gate",
+            action=str(decision.action),
+            reason_code=decision.reason_code,
+        )
+        assert counter._value.get() >= 1
+
+    def test_draft_gate_con_fallo_operativo_no_diverge(self) -> None:
+        from src.runtime.finalization_policy import observe_trigger_shadow
+
+        state = _state(evidence="failed")
+        decision = observe_trigger_shadow(
+            state,
+            stage="draft_gate",
+            intended="BLOCK",
+            retrieval_possible=False,
+            draft_available=True,
+        )
+        assert decision.action is FinalizationAction.BLOCK
+        assert decision.reason_code == "RETRIEVAL_UNAVAILABLE"
