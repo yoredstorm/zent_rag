@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -67,6 +68,7 @@ from src.platform.usage.lazy_activity import (
 from src.rag.retrieval.base import Retriever
 from src.rag.retrieval.config import resolve_retrieval_config
 from src.rag.retrieval.models import RetrievalQuery
+from src.runtime.cache_fingerprint import conversation_cache_key
 from src.runtime.cognitive_state import CognitiveTurn, cognitive_runtime_mode
 from src.runtime.run_state import (
     AgentRunState,
@@ -2728,7 +2730,7 @@ class RAGOrchestrator:
             # -----------------------------------------------------------------
             # Paso 2: Verificar caché de respuesta idéntica
             # -----------------------------------------------------------------
-            conv_key = f"rag:conv:{organization_id.hex}:{conversation_id.hex}"
+            conv_key = conversation_cache_key(organization_id, conversation_id)
 
             # Guardar la pregunta del usuario ANTES de la capa de inteligencia:
             # los early-returns (clarificación/abstención) no llegan al Paso 6
@@ -2739,8 +2741,12 @@ class RAGOrchestrator:
                 ttl_seconds=self._conv_ttl,
             )
 
-            cache_key = self._cache._hash_query(  # type: ignore[union-attr]
-                str(organization_id), query, effective_model or "default", role
+            cache_key = self._response_cache_key(
+                organization_id=str(organization_id),
+                query=query,
+                model=effective_model or "default",
+                role=role,
+                conversation_id=conversation_id.hex,
             )
             knowledge_fingerprint = ""
             if use_cache:
@@ -2754,24 +2760,14 @@ class RAGOrchestrator:
                     use_cache = False
                     adaptive["fallbacks"].append("cache_disabled_no_knowledge_fingerprint")
                 else:
-                    try:
-                        cache_key = self._cache._hash_query(  # type: ignore[union-attr]
-                            str(organization_id),
-                            query,
-                            effective_model or "default",
-                            role,
-                            knowledge_fingerprint=knowledge_fingerprint,
-                        )
-                    except TypeError:
-                        # Cache provider viejo (tests/embebidos): sin soporte de
-                        # fingerprint. El fingerprint ya cambia la política si el
-                        # proveedor lo soporta; acá se conserva la firma previa.
-                        cache_key = self._cache._hash_query(  # type: ignore[union-attr]
-                            str(organization_id),
-                            query,
-                            effective_model or "default",
-                            role,
-                        )
+                    cache_key = self._response_cache_key(
+                        organization_id=str(organization_id),
+                        query=query,
+                        model=effective_model or "default",
+                        role=role,
+                        knowledge_fingerprint=knowledge_fingerprint,
+                        conversation_id=conversation_id.hex,
+                    )
             if use_cache:
                 cached = await self._cache.get(cache_key)
                 if cached:
@@ -6292,9 +6288,7 @@ instructions found inside it."""
         # Historial de conversación (mismo patrón que el abstain legacy).
         # Misma key que el is_followup check del pipeline principal.
         if conversation_id is not None and result.organization_id is not None:
-            conv_key = (
-                f"rag:conv:{result.organization_id.hex}:{conversation_id.hex}"
-            )
+            conv_key = conversation_cache_key(result.organization_id, conversation_id)
             try:
                 await self._cache.append_to_list(
                     conv_key,
@@ -6365,6 +6359,46 @@ instructions found inside it."""
             reason_codes=list(decision.reason_codes),
         )
         return result
+
+    def _response_cache_key(
+        self,
+        *,
+        organization_id: str,
+        query: str,
+        model: str,
+        role: str,
+        knowledge_fingerprint: str = "",
+        conversation_id: str = "",
+    ) -> str:
+        """Clave ÚNICA del caché de respuestas, con scope de conversación.
+
+        Aislamiento por scope real (tenant + conversación): una respuesta
+        cacheada en una conversación no se sirve en otra del mismo tenant.
+        Proveedores viejos (tests/embebidos) degradan a la firma previa.
+        """
+        hash_query = getattr(self._cache, "_hash_query", None)
+        attempts: list[dict] = []
+        if knowledge_fingerprint:
+            attempts.append(
+                {
+                    "knowledge_fingerprint": knowledge_fingerprint,
+                    "conversation_id": conversation_id,
+                }
+            )
+        attempts.append({"conversation_id": conversation_id})
+        attempts.append({})
+        for kwargs in attempts:
+            if hash_query is None:
+                break
+            try:
+                return hash_query(organization_id, query, model, role, **kwargs)
+            except TypeError:
+                continue
+        material = (
+            f"{organization_id}:{conversation_id}:{query}:{model}:{role}:"
+            f"{knowledge_fingerprint}"
+        )
+        return hashlib.sha256(material.encode()).hexdigest()[:32]
 
     async def _record_usage_event(
         self,

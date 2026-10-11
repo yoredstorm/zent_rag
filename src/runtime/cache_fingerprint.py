@@ -19,6 +19,25 @@ from src.infrastructure.observability.logging_config import get_logger
 logger = get_logger(__name__)
 
 
+def _hex_scope(value: UUID | str | None) -> str:
+    if value is None:
+        return ""
+    return value.hex if hasattr(value, "hex") else str(value)
+
+
+def conversation_cache_key(
+    organization_id: UUID | str, conversation_id: UUID | str | None
+) -> str:
+    """Clave ÚNICA del historial de conversación: tenant + conversación.
+
+    El aislamiento es por scope real, nunca por TTL. Dos conversaciones del
+    mismo tenant jamás comparten esta clave.
+    """
+    return (
+        f"rag:conv:{_hex_scope(organization_id)}:{_hex_scope(conversation_id) or 'none'}"
+    )
+
+
 async def knowledge_cache_fingerprint(organization_id: UUID | str) -> str:
     """Fingerprint tenant-scoped del conocimiento. "" = no cachear."""
     try:
@@ -63,4 +82,4 @@ async def knowledge_cache_fingerprint(organization_id: UUID | str) -> str:
         return ""
 
 
-__all__ = ["knowledge_cache_fingerprint"]
+__all__ = ["conversation_cache_key", "knowledge_cache_fingerprint"]

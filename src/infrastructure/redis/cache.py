@@ -116,6 +116,7 @@ class RedisCache(CacheProvider):
         role: str = "",
         *,
         knowledge_fingerprint: str = "",
+        conversation_id: str = "",
     ) -> str:
         """Genera un hash determinista para la query (caché de respuestas).
 
@@ -123,6 +124,8 @@ class RedisCache(CacheProvider):
         no debe servirse a un customer y viceversa.
 
         Incluye:
+          - scope de conversación (tenant + conversación): una respuesta
+            cacheada en una conversación NO se sirve en otra del mismo tenant;
           - versión de la política de grounding/semántica;
           - versión del contrato de decisión (DecisionEnvelope/guard);
           - fingerprint del conocimiento (reglas canónicas + documentos): una
@@ -132,7 +135,7 @@ class RedisCache(CacheProvider):
         documentado en el orquestador).
         """
         raw = (
-            f"{organization_id}:{query}:{model}:{role}:"
+            f"{organization_id}:{conversation_id}:{query}:{model}:{role}:"
             f"{_RESPONSE_SEMANTICS_POLICY_VERSION}:"
             f"{_RESPONSE_DECISION_VERSION}:{knowledge_fingerprint}"
         )
