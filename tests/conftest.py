@@ -128,7 +128,12 @@ def _disable_narrative_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
     la ruta tiene tests unitarios propios en test_narrative_fast_path.py."""
     from src.core.config import get_settings
 
-    monkeypatch.setattr(get_settings(), "RUNTIME_NARRATIVE_FAST_PATH", "off")
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RUNTIME_NARRATIVE_FAST_PATH", "off")
+    # Calibración JEV: la suite es hermética al .env local (el skip de fases se
+    # prueba con su propio test, no activado por config de la máquina).
+    monkeypatch.setattr(settings, "RUNTIME_JEV_SKIP_PHASES", "", raising=False)
+    monkeypatch.setattr(settings, "RUNTIME_JEV_SKIP_SHADOW", "off", raising=False)
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -554,6 +554,32 @@ class TestJevSkips:
         assert _Engine.calls == 0
 
     @pytest.mark.asyncio
+    async def test_gate_shadow_no_llama_si_skip_shadow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from src.runtime.answer_gate import judge_answer
+
+        class _Engine:
+            calls = 0
+
+            async def judge(self, *, state, questions, context=None):
+                _Engine.calls += 1
+                return {"answers": {}}
+
+        gate = await judge_answer(
+            engine=_Engine(),
+            mode="shadow",
+            user_request="¿cumple?",
+            draft="Sí, cumple.",
+            settings=SimpleNamespace(RUNTIME_JEV_SKIP_SHADOW="on"),
+        )
+        assert gate.provider == "skip_shadow"
+        assert gate.mode == "shadow"
+        assert _Engine.calls == 0
+
+    @pytest.mark.asyncio
     async def test_termination_no_llama_si_fase_salteada(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
