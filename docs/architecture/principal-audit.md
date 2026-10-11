@@ -18,6 +18,10 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   embeddings como líneas del ledger.
 - **DO NOT**: sumar ambos usage events (doble conteo) ni tocar precios.
 - **Test**: `ledger.total_tokens == usage_event.total_tokens` para agente y RAG.
+- **Estado (este pase)**: JEV suma sus tokens al run vía `record_judge_call`
+  (answer_gate, agent_step, termination, turn intent) y el ledger lo ve en la
+  próxima construcción; falta el camino RAG, embeddings/rerank y la tarifa del
+  juez (no se inventa costo si el precio es desconocido).
 
 ### 2. Adopción incompleta del resolver de autoridad (P1)
 - **Evidence**: `finalization_policy` corre en observabilidad + strict; los
@@ -30,6 +34,11 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   organización, con `decision_matches_terminal` como aserción.
 - **DO NOT**: convertir el resolver en mega-función ni duplicar gates.
 - **Test**: por cada etapa, un caso que antes divergía y ahora coincide.
+- **Estado (este pase)**: etapa 1 hecha — `run_guards` es la tabla explícita y
+  el loop ya no ejecuta tools con budget agotado; las denegaciones registran
+  `guard_reason` (`BUDGET_EXHAUSTED`, `DUPLICATE_TOOL_CALL`,
+  `TOOL_NOT_AUTHORIZED`). Falta adoptar el resolver en el cierre del loop y en
+  el gate de respuesta.
 
 ### 3. Resiliencia de providers acoplada al modelo (P1)
 - **Evidence**: `_circuit_check` marca `_circuit_open` global por modelo;
