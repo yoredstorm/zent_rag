@@ -185,6 +185,30 @@ def test_closure_pack_alias_covers_date_closure_aspect() -> None:
     assert aspect.status == COVERED
 
 
+def test_request_lead_is_not_part_of_the_aspect() -> None:
+    from src.knowledge.enrichment.profiling import register_profile_pack
+    from src.verticals.atpco.enrichment import ATPCO_PROFILE_PACK
+
+    register_profile_pack(ATPCO_PROFILE_PACK)
+    plan = extract_narrative_concepts("como funciona el cierre de fechas")
+    frame = plan.frames[0]
+    assert frame.aspect == "cierre de fechas"
+
+    measured = measure_coverage(
+        plan,
+        ("Record 2 includes the Discontinue Date field.",),
+        searched=False,
+    )
+    assert measured[0].status == COVERED
+
+
+def test_request_only_clause_leaves_no_aspect() -> None:
+    plan = extract_narrative_concepts("como funciona el record 2")
+    frame = plan.frames[0]
+    assert frame.entity.lower().startswith("record")
+    assert frame.aspect == ""
+
+
 def test_request_tail_is_not_part_of_the_aspect() -> None:
     plan = extract_narrative_concepts(
         "cuentame sobre las secuencias en el record 2 para que sirven?"
