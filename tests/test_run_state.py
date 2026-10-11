@@ -418,8 +418,11 @@ class TestRuntimeWiring:
         # Sin violaciones y sin step de diagnóstico.
         assert state.trace.violations == []
         assert all(step.get("type") != "run_invariants" for step in result.steps)
-        # Proyección pública serializable.
-        json.dumps(state.to_public_dict())
+        # ContextEnvelope publicado (P6) y proyección pública serializable.
+        assert state.context is not None
+        payload = state.to_public_dict()
+        assert payload["context"]["isolation_key"]
+        json.dumps(payload)
 
     @pytest.mark.asyncio
     async def test_run_directo_sin_tools_tambien_cierra(self) -> None:

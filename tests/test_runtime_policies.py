@@ -189,3 +189,58 @@ class TestContextEnvelope:
 
     def test_untrusted_lista_tools(self) -> None:
         assert self._envelope().untrusted()
+
+
+class TestStoryView:
+    def test_business_normaliza_reason_codes(self) -> None:
+        from src.runtime.story_view import build_story
+
+        steps = [
+            {
+                "type": "evidence_sufficiency",
+                "status": "ok",
+                "recommended_action": "generate",
+                "supporting_chunks": 4,
+                "latency_ms": 12,
+            },
+            {
+                "type": "answer_gate",
+                "status": "ok",
+                "verdict": "answer_with_limits",
+                "grounding_verdict": "PARTIAL",
+                "latency_ms": 30,
+            },
+            {"type": "tool_call", "tool": "search_knowledge", "output": "x" * 500},
+            {
+                "type": "finalization_policy",
+                "status": "warn",
+                "action": "UNDETERMINED",
+                "authority": "DETERMINISTIC",
+                "signals_ignored": ["jev_only_negative_signal"],
+            },
+        ]
+        story = build_story(steps, view="business")
+        assert story["view"] == "business"
+        rows = story["steps"]
+        assert rows[0]["type"] == "evidence_evaluation"
+        assert rows[0]["reason_code"] == "EVIDENCE_COMPLETE"
+        assert rows[0]["facts"]["supporting_chunks"] == 4
+        assert rows[1]["reason_code"] == "ANSWER_LIMITED"
+        assert rows[2]["reason_code"] == "TOOL_EXECUTED"
+        assert rows[3]["reason_code"] == "AUTHORITY_UNDETERMINED"
+        assert rows[3]["facts"]["signals_ignored"] == ["jev_only_negative_signal"]
+        # Sin campos técnicos en la vista de negocio.
+        assert "latency_ms" not in rows[0]
+        assert "output" not in rows[2]
+
+    def test_technical_trunca_contenido_pesado(self) -> None:
+        from src.runtime.story_view import build_story
+
+        story = build_story(
+            [{"type": "tool_call", "output": "x" * 500, "latency_ms": 3}],
+            view="technical",
+        )
+        row = story["steps"][0]
+        assert len(row["output"]) == 240
+        assert row["output_truncated"] is True
+        assert row["latency_ms"] == 3
