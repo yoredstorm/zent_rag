@@ -2504,6 +2504,19 @@ class AgentRuntime:
     ) -> None:
         if reasoning is None:
             reasoning = _runtime_scratch(result).get("reasoning")
+        # ---------------------------------------------------------------------
+        # LIFECYCLE del loop (leer en este orden):
+        #   1. tools permitidas + scope autorizado  → ToolState
+        #   2. turn intent (directo vs conocimiento) → TurnState
+        #   3. plan de respuesta + prompt            → PlanningState
+        #   4. retrieval por tools (registry/selection/sufficiency)
+        #   5. evidencia canónica + autoridad determinista → DecisionState
+        #   6. generación: fast path narrativo o ReAct (tool loop)
+        #   7. gates (answer gate / termination) + revisión
+        #   8. finalización + derived guard + invariantes (finalization_policy)
+        # Las transiciones válidas viven en src/runtime/run_guards.py; el cierre
+        # en src/runtime/finalization_policy.py. Acá solo se ejecuta el camino.
+        # ---------------------------------------------------------------------
         # Estado canónico del run (puede faltar en dobles de test que no pasan
         # por `run()`): todas las publicaciones son best-effort.
         state = getattr(result, "run_state", None)

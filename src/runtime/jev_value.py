@@ -98,4 +98,32 @@ def summarize_jev_value(steps: Iterable[Any]) -> dict:
     }
 
 
-__all__ = ["JEV_VALUE_VERSION", "classify_gate_value", "summarize_jev_value"]
+def skip_phases_from_settings(settings: Any) -> frozenset[str]:
+    """Fases JEV que ops decide saltar (se habilitan con datos de redundant_rate).
+
+    `RUNTIME_JEV_SKIP_PHASES` = lista separada por comas: `answer_gate`,
+    `agent_step`, `termination`. Default vacío: JEV corre como siempre.
+    """
+    raw = str(getattr(settings, "RUNTIME_JEV_SKIP_PHASES", "") or "")
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+def phase_skipped(phase: str) -> bool:
+    """¿Ops pidió saltar esta fase JEV? Fail-open: sin settings, no se saltea."""
+    try:
+        from src.core.config import get_settings
+
+        return str(phase or "").strip().lower() in skip_phases_from_settings(
+            get_settings()
+        )
+    except Exception:  # noqa: BLE001 — la calibración nunca rompe el run
+        return False
+
+
+__all__ = [
+    "JEV_VALUE_VERSION",
+    "classify_gate_value",
+    "phase_skipped",
+    "skip_phases_from_settings",
+    "summarize_jev_value",
+]

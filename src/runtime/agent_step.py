@@ -18,6 +18,7 @@ from typing import Any
 from src.decision.batch import build_agent_step_questions, normalize_batch_mode, noul_for
 from src.decision.judgment import PHASE_AGENT_STEP, JudgmentContext, call_phase_judge
 from src.decision.questions import noul_is_yes
+from src.runtime.jev_value import phase_skipped
 from src.runtime.termination import gate_enabled, satisfied_from_answers
 from src.runtime.tool_routing import (
     _tool_meta,
@@ -174,6 +175,9 @@ async def judge_agent_step(
     include_routing = len(tools) >= max(1, int(min_tools or 3))
     include_termination = tool_calls > 0
     if engine is None or (not include_routing and not include_termination and not include_evidence_gap):
+        return None
+    if phase_skipped("agent_step"):
+        # Calibración por datos: el paso no llama a JEV (el loop sigue su curso).
         return None
     criteria = tool_criteria(tools) if include_routing else {}
     built = build_agent_state(

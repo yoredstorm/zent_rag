@@ -9,6 +9,7 @@ from typing import Any
 from src.decision.batch import build_agent_step_questions, noul_for
 from src.decision.judgment import PHASE_AGENT_STEP, JudgmentContext, call_phase_judge
 from src.decision.questions import noul_is_yes
+from src.runtime.jev_value import phase_skipped
 from src.runtime.questions import termination_questions
 
 
@@ -51,6 +52,10 @@ async def original_request_satisfied(
 ) -> dict[str, Any]:
     """Return {stop, confidence, provider}. Never bypasses max_steps."""
     result = {"stop": False, "confidence": 0.0, "provider": "skip"}
+    if phase_skipped("termination"):
+        # Calibración por datos: la fase no llama a JEV (no corta el loop).
+        result["provider"] = "skip_config"
+        return result
     if engine is None or tool_calls <= 0:
         return result
     state = {

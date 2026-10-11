@@ -49,6 +49,7 @@ from src.runtime.evidence import (
     select_evidence,
 )
 from src.runtime.jev_state import StateSection, build_jev_state
+from src.runtime.jev_value import phase_skipped
 from src.runtime.questions import answer_gate_questions
 
 ANSWER_WEIGHTS = {"grounded": 0.45, "complete": 0.35, "quality": 0.20}
@@ -597,6 +598,10 @@ async def judge_answer(
     `evidence` conserva el comportamiento previo sobre `observations`.
     """
     result = AnswerGateResult(mode=mode, provider="skip")
+    if phase_skipped("answer_gate"):
+        # Calibración por datos (redundant_rate): la fase no llama a JEV.
+        result.provider = "skip_config"
+        return result
     if mode == "off" or engine is None:
         return result
     include_presentation = (
