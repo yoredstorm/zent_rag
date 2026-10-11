@@ -4001,6 +4001,67 @@ class AgentRuntime:
             initial_coverage = measure_coverage(
                 concept_plan, registry.all_items(), searched=False
             )
+            # Puente de idioma AUTOMÁTICO: si un aspecto no matchea léxicamente
+            # («cierre de fechas» vs «Discontinue Date»), el embedding
+            # multilingüe propone los términos del documento y la evidencia los
+            # ancla. Los packs quedan como precisión opcional, no requisito.
+            gap_aspects = [
+                item.aspect or item.label
+                for item in initial_coverage
+                if item.status in {MISSING, PARTIAL_MATERIAL}
+            ]
+            if gap_aspects:
+                try:
+                    from src.runtime.narrative_coverage import (
+                        candidate_terms as _candidate_terms,
+                    )
+                    from src.runtime.narrative_coverage import (
+                        embedding_alias_bridge as _auto_bridge,
+                    )
+                    from src.runtime.narrative_coverage import (
+                        with_extra_aliases as _with_aliases,
+                    )
+
+                    auto_candidates = list(_candidate_terms(registry.all_items()))
+                    for node in getattr(semantic_plan, "activated", ()) or ():
+                        label = (
+                            str(node.get("label") or "")
+                            if isinstance(node, dict)
+                            else ""
+                        )
+                        if label:
+                            auto_candidates.append(label)
+                    auto_aliases = await _auto_bridge(
+                        gap_aspects,
+                        auto_candidates,
+                        embedder=get_embedding_provider(),
+                    )
+                    if auto_aliases:
+                        concept_plan = _with_aliases(concept_plan, auto_aliases)
+                        initial_coverage = measure_coverage(
+                            concept_plan, registry.all_items(), searched=False
+                        )
+                        result.steps.append(
+                            {
+                                "type": "language_bridge",
+                                "status": "ok",
+                                "detail": (
+                                    "puente de idioma por embedding: "
+                                    + "; ".join(
+                                        f"{aspect} -> {', '.join(aliases)}"
+                                        for aspect, aliases in auto_aliases.items()
+                                    )
+                                )[:240],
+                                "aliases": {
+                                    aspect: list(aliases)
+                                    for aspect, aliases in auto_aliases.items()
+                                },
+                            }
+                        )
+                except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
+                    logger.warning(
+                        "auto language bridge failed", error=str(exc)[:150]
+                    )
             max_coverage_rounds = int(
                 getattr(settings, "NARRATIVE_MAX_COVERAGE_ROUNDS", 1) or 0
             )

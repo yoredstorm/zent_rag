@@ -11,9 +11,10 @@
 # =============================================================================
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from src.intelligence.response.entities import asked_entities
 
@@ -826,3 +827,176 @@ def vocabulary_from_items(items) -> dict[str, tuple[str, ...]]:
                 if text and text not in bucket:
                     bucket.append(text)
     return {key: tuple(values) for key, values in merged.items()}
+
+
+#: Frases capitalizadas del documento (campos: «Discontinue Date»).
+_CANDIDATE_RE = re.compile(r"\b[A-Z][A-Za-z]{2,}(?:\s+[A-Z][A-Za-z]{2,}){0,2}\b")
+#: Arranques de oración que no son términos de documento.
+_CANDIDATE_SKIP = frozenset(
+    {
+        "the", "this", "that", "these", "those", "there", "when", "where",
+        "which", "while", "with", "for", "from", "into", "upon", "after",
+        "before", "each", "every", "all", "any", "not", "only", "also",
+        "if", "in", "on", "at", "as", "an", "and", "or", "but", "by",
+    }
+)
+
+#: Caché en proceso de embeddings de términos (puente de idioma).
+_EMBED_CACHE: dict[str, tuple[float, ...]] = {}
+_EMBED_CACHE_LIMIT = 1024
+
+
+def candidate_terms(items, *, limit: int = 24) -> tuple[str, ...]:
+    """Términos candidatos del DOCUMENTO para el puente semántico.
+
+    Headings, títulos y frases capitalizadas del texto (campos y entidades).
+    Genérico: no conoce dominios; el embedding decide la equivalencia y la
+    evidencia la ancla.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: object) -> None:
+        text = " ".join(str(value or "").split())
+        parts = text.split()
+        while parts and _norm(parts[0]) in _CANDIDATE_SKIP:
+            parts = parts[1:]
+        text = " ".join(parts)
+        folded = _norm(text)
+        if len(text) < 4 or not folded or folded in seen:
+            return
+        if not any(char.isalpha() for char in text):
+            return
+        seen.add(folded)
+        found.append(text)
+
+    for heading in headings_from_items(items):
+        add(heading)
+    for item in items or ():
+        content = str(getattr(item, "content", "") or "")
+        for match in _CANDIDATE_RE.findall(content[:4000]):
+            add(match)
+        if len(found) >= limit:
+            break
+    return tuple(found[:limit])
+
+
+def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right))
+    norm_left = math.sqrt(sum(a * a for a in left))
+    norm_right = math.sqrt(sum(b * b for b in right))
+    if norm_left <= 0 or norm_right <= 0:
+        return 0.0
+    return dot / (norm_left * norm_right)
+
+
+async def embedding_alias_bridge(
+    aspects: tuple[str, ...] | list[str],
+    candidates: tuple[str, ...] | list[str],
+    *,
+    embedder,
+    threshold: float = 0.56,
+    top_k: int = 3,
+) -> dict[str, tuple[str, ...]]:
+    """Puente de idioma automático: el embedding propone, la evidencia decide.
+
+    Para cada aspecto sin match léxico devuelve los términos del documento
+    (candidatos) con similitud >= `threshold` en el embedding multilingüe.
+    Los packs de dominio quedan como precisión opcional, no como requisito.
+    """
+    cleaned_aspects: list[str] = []
+    for aspect in aspects or ():
+        text = " ".join(str(aspect or "").split())
+        if text and text not in cleaned_aspects:
+            cleaned_aspects.append(text)
+    cleaned_candidates: list[str] = []
+    for candidate in candidates or ():
+        text = " ".join(str(candidate or "").split())
+        folded = _norm(text)
+        if not text or not folded:
+            continue
+        if any(_norm(aspect) == folded for aspect in cleaned_aspects):
+            continue
+        if text not in cleaned_candidates:
+            cleaned_candidates.append(text)
+    if not cleaned_aspects or not cleaned_candidates or embedder is None:
+        return {}
+
+    missing = [
+        text
+        for text in (*cleaned_aspects, *cleaned_candidates)
+        if _norm(text) not in _EMBED_CACHE
+    ]
+    if missing:
+        try:
+            vectors = await embedder.embed(missing)
+        except Exception:  # noqa: BLE001 — sin embeddings sigue la vía léxica
+            return {}
+        if isinstance(vectors, list) and vectors and isinstance(
+            vectors[0], (int, float)
+        ):
+            vectors = [vectors]
+        for text, vector in zip(missing, vectors or ()):
+            if isinstance(vector, list) and vector:
+                _EMBED_CACHE[_norm(text)] = tuple(float(value) for value in vector)
+                if len(_EMBED_CACHE) > _EMBED_CACHE_LIMIT:
+                    _EMBED_CACHE.pop(next(iter(_EMBED_CACHE)))
+
+    result: dict[str, tuple[str, ...]] = {}
+    for aspect in cleaned_aspects:
+        aspect_vector = _EMBED_CACHE.get(_norm(aspect))
+        if not aspect_vector:
+            continue
+        scored: list[tuple[float, str]] = []
+        for candidate in cleaned_candidates:
+            candidate_vector = _EMBED_CACHE.get(_norm(candidate))
+            if not candidate_vector:
+                continue
+            similarity = _cosine(aspect_vector, candidate_vector)
+            if similarity >= threshold:
+                scored.append((similarity, candidate))
+        scored.sort(key=lambda item: -item[0])
+        if scored:
+            result[aspect] = tuple(candidate for _, candidate in scored[:top_k])
+    return result
+
+
+def with_extra_aliases(
+    plan: NarrativeConceptPlan,
+    aliases_by_aspect: dict[str, tuple[str, ...]],
+) -> NarrativeConceptPlan:
+    """Suma aliases automáticos al frame cuyo aspecto matchea (folded)."""
+    if not aliases_by_aspect or not plan.frames:
+        return plan
+    frames: list[NarrativeConceptFrame] = []
+    for frame in plan.frames:
+        key = _norm(frame.aspect or frame.label)
+        extra: tuple[str, ...] = ()
+        for aspect, aliases in aliases_by_aspect.items():
+            if _norm(aspect) == key:
+                extra = tuple(aliases)
+                break
+        if not extra:
+            frames.append(frame)
+            continue
+        merged_aliases = tuple(dict.fromkeys((*frame.aliases, *extra)))
+        merged_terms = tuple(dict.fromkeys((*frame.material_terms, *extra)))
+        frames.append(
+            replace(
+                frame,
+                aliases=merged_aliases,
+                material_terms=merged_terms,
+            )
+        )
+    concepts = tuple(
+        NarrativeConcept(
+            concept_id=frame.frame_id,
+            label=frame.label,
+            aliases=frame.aliases,
+        )
+        for frame in frames
+        if frame.label
+    )
+    return NarrativeConceptPlan(concepts=concepts, frames=tuple(frames))

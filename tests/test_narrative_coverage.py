@@ -3,6 +3,8 @@
 # =============================================================================
 from __future__ import annotations
 
+import pytest
+
 from src.core.domain.adaptive import EvidenceItem
 from src.runtime.evidence import EvidenceRegistry
 from src.runtime.narrative_coverage import (
@@ -44,6 +46,69 @@ RECORD_ONLY = (
     "Record 2 footnote fare class.",
     "Record 2 fare family uses & and hyphen.",
 )
+
+
+def test_candidate_terms_extracts_document_vocabulary() -> None:
+    from src.runtime.narrative_coverage import candidate_terms
+
+    class _Item:
+        def __init__(self, content: str) -> None:
+            self.content = content
+            self.metadata: dict = {}
+            self.title = ""
+            self.section_path: tuple = ()
+
+    items = [
+        _Item(
+            "The Discontinue Date field (Rule bytes 80-86) is compared. "
+            "Effective Date is also a match field."
+        )
+    ]
+    terms = candidate_terms(items)
+    assert "Discontinue Date" in terms
+    assert "Effective Date" in terms
+
+
+@pytest.mark.asyncio
+async def test_embedding_bridge_proposes_and_anchors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.runtime.narrative_coverage as coverage_module
+    from src.runtime.narrative_coverage import (
+        embedding_alias_bridge,
+        with_extra_aliases,
+    )
+
+    monkeypatch.setattr(coverage_module, "_EMBED_CACHE", {})
+
+    class _Embedder:
+        async def embed(self, texts):
+            vectors = {
+                "cierre de fechas": [1.0, 0.0],
+                "Discontinue Date": [0.9, 0.1],
+                "Fare Record": [0.1, 0.9],
+            }
+            return [vectors[text] for text in texts]
+
+    bridge = await embedding_alias_bridge(
+        ["cierre de fechas"],
+        ["Discontinue Date", "Fare Record"],
+        embedder=_Embedder(),
+        threshold=0.8,
+    )
+    assert bridge["cierre de fechas"] == ("Discontinue Date",)
+
+    plan = extract_narrative_concepts(
+        "cuentame sobre el cierre de fechas en el record 2"
+    )
+    enriched = with_extra_aliases(plan, bridge)
+    measured = measure_coverage(
+        enriched,
+        ("Record 2 includes the Discontinue Date field.",),
+        searched=False,
+    )
+    aspect = next(item for item in measured if "cierre" in item.label.lower())
+    assert aspect.status == COVERED
 
 
 def test_closure_pack_alias_covers_date_closure_aspect() -> None:
