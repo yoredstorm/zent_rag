@@ -113,8 +113,13 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 - **Estado (este pase)**: pendiente por diseño (P9); prerrequisito antes de
   extraer: preservar la suite verde del programa y no tocar el contrato del flow.
 - **Estado (legibilidad)**: lifecycle documentado en el loop (8 fases con sus
-  estados) y transiciones en `run_guards`; la extracción del narrative fast path
-  queda con criterio explícito (módulo con parámetros, sin rewrite del ReAct).
+  estados) y transiciones en `run_guards`.
+- **Estado (extracción acotada)**: `_resolve_narrative_search_plan` (semántica +
+  packs + top_k de la ruta narrativa) extraído del closure a función de módulo
+  con parámetros explícitos y tests propios; verificado con la ruta narrativa
+  ACTIVA (`test_narrative_runtime_regression`, top_k del agente incluido).
+  La extracción completa del narrative fast path sigue con criterio explícito
+  (módulo con parámetros, sin rewrite del ReAct).
 
 ### 7. Mezcla de contextos en prompt sin sobre (P2)
 - **Evidence**: `context_block`, company context, memory hits y evidencia
@@ -147,8 +152,9 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   ni CoT; technical con contenido truncado).
 - **Estado (portal)**: `portal/src/pages/chat/story/businessStory.ts` traduce
   `reason_code`+`facts` a copy humano con tonos (`translateReasonCode` /
-  `translateBusinessSteps`, 5 tests vitest). Falta rewire del `FlowDrawer` a
-  esta vista (requiere revisión visual).
+  `translateBusinessSteps`, 5 tests vitest) y el `FlowDrawer` muestra la sección
+  «Pasos del run» para runs de agente (fetch fail-soft al endpoint, 1 test de
+  integración vitest).
 
 ### 9. Aislamiento por conversación no auditado end-to-end (P3)
 - **Evidence**: `ContextEnvelope.isolation_key = tenant:conversation`; caches
