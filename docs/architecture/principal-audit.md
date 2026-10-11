@@ -26,6 +26,14 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   `jev_tokens`/`jev_cost_usd` desde `flow.jev_preflight` (no se suman a `cost`:
   el juez factura por su propio usage event). Embeddings y reranking ya viajan
   en el evento; falta la tarifa del juez para costearlo ahí.
+- **Estado (contabilidad unificada)**: el camino RAG cuenta sobre
+  `RunBudgetLedger` con `run_accounting` como único writer
+  (`account_rag_result`: LLM + embedding + rerank + charge + JEV, idempotente).
+  El evento de uso LEE los totales del ledger (`_build_usage_event`) y no los
+  recalcula. Líneas explícitas: `embedding`, `rerank`, `charge`, `jev_usage`
+  (`billed_separately`). Sin tarifa el costo es `unknown`, nunca 0. Test:
+  `tests/test_run_accounting_rag.py` (ledger == usage event). Doc:
+  `docs/architecture/run-accounting.md`.
 
 ### 2. Adopción incompleta del resolver de autoridad (P1)
 - **Evidence**: `finalization_policy` corre en observabilidad + strict; los
@@ -47,6 +55,10 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   cuando la evidencia canónica alcanza (completa o `can_answer`), y mantiene la
   abstención si la evidencia es insuficiente o el retrieval falló (caso D de
   evidence-first preservado).
+- **Estado (shadow medible)**: `observe_shadow_divergence` emite
+  `zent_finalization_shadow_divergence_total{phase, action, reason_code}` cuando
+  la fase terminal no coincide con la resolución. Gate de adopción por etapas:
+  cero divergencias sobre el corpus antes de convertir una señal en autoridad.
 
 ### 3. Resiliencia de providers acoplada al modelo (P1)
 - **Evidence**: `_circuit_check` marca `_circuit_open` global por modelo;
@@ -170,6 +182,14 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 - **Fix**: helper único de key de cache + test de fuga cruzada (conversación A/B).
 - **DO NOT**: confiar en TTLs cortos como aislamiento.
 - **Test**: mismo tenant, dos conversaciones, cache hit nunca cruzado.
+- **Estado (aislamiento)**: implementado — `_hash_query` incluye
+  `conversation_id` en la clave de respuesta; `conversation_cache_key`
+  (`src/runtime/cache_fingerprint.py`) es el helper único del historial
+  (tenant + conversación, usado por el pipeline y la abstención temprana);
+  `_response_cache_key` centraliza la clave con degradación compatible para
+  proveedores viejos (tests/embebidos). Tests:
+  `tests/test_conversation_isolation.py` (dos conversaciones no comparten
+  clave; la firma legacy no se rompe).
 
 ### 10. Matriz adversarial sin fallos de provider/budget (P3)
 - **Evidence**: `test_adversarial_matrix` cubre autoridad/evidencia/budget/
@@ -181,24 +201,36 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   matriz con `same input × 100` en ambos caminos.
 - **DO NOT**: tests que dependan de red real.
 - **Test**: matriz extendida verde en CI.
+- **Estado (streaming)**: implementado — `tests/test_llm_stream_fallback.py`
+  cubre 429/timeout/circuit open antes del primer token (va al fallback),
+  stream cortado tras emitir (error, sin cambiar de modelo), todos los
+  candidatos fallan (propaga) y estabilidad ×100. El camino no-streaming ya
+  estaba cubierto por `tests/test_llm_router.py` y los retries de embeddings
+  por `tests/test_llm_embed_retry.py`.
 
 ## Roadmap
 
-**NOW** (1–2 sesiones)
-1. Contabilidad única (hallazgo 1) + test de igualdad ledger/usage.
-2. Adopción etapa 1 del resolver: tool guard (hallazgo 2).
+**HECHO (2026-10-11)**
+1. Contabilidad unificada del camino RAG sobre `RunBudgetLedger` + test
+   ledger/usage (`run-accounting.md`, hallazgo 1).
+2. Adopción etapa 1 (tool guard) y etapa 2 (answer gate) del resolver;
+   shadow medible con `zent_finalization_shadow_divergence_total` (hallazgo 2).
+3. Circuit breaker por tenant (3).
+4. Skips JEV por calibración con shadow-skip (5).
+8. Story views + portal a `build_story` (8); catálogo único de reason codes
+   (`src/runtime/reason_codes.py`, versionado).
+9. Aislamiento por conversación en caches (tenant + conversación) con tests
+   de fuga (hallazgo 9).
+10. Matriz adversarial de streaming por provider (429/timeout/circuit/fallback
+    + estabilidad ×100) (hallazgo 10).
 
 **NEXT**
-3. Circuit breaker por tenant (3).
-4. `adaptive` regenerado (4).
-5. Skips JEV por `redundant_rate` (5) con golden set.
-6. Extracción narrative fast path (6).
-
-**LATER**
-7. Prompt desde ContextEnvelope (7).
-8. Portal a `build_story` + congelar reason codes (8).
-9. Aislamiento de conversación end-to-end (9).
-10. Matriz adversarial extendida (10).
+5. `adaptive` regenerado: modelar `plan`, `quality`, `evidence`, `attempts` en
+   el estado (4).
+6. Extracción narrative fast path y finalizador con parámetros explícitos (6).
+7. Prompt construido desde `ContextEnvelope` (7).
+11. Invariantes de texto para el resto de los estados de respuesta (ya
+    cubiertos RETRIEVAL_UNAVAILABLE y UNDETERMINED).
 
 ## Regla
 

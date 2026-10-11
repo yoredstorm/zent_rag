@@ -179,6 +179,14 @@ adversarial) y roadmap NOW/NEXT/LATER.
 - `flow["jev_value"]` (agente): llamadas JEV por fase + `redundant_rate`.
 - `state.decisions.finalization`: resolución de autoridad del cierre.
 - `state.context`: sobre de procedencia (tenant/conversación/trust).
+- `zent_finalization_shadow_divergence_total{phase, action, reason_code}`:
+  divergencia entre la fase terminal y la resolución (modo sombra). El gate de
+  adopción por etapas exige cero divergencias sobre el corpus antes de
+  convertir una señal en autoridad.
+- `src/runtime/reason_codes.py`: catálogo único y versionado
+  (`reason-codes-1`) de los reason codes emitidos por la política y los guards;
+  `is_known_reason_code` distingue señal de deuda. Los stop reasons del budget
+  viven en `run_budget.STOP_REASONS` (vocabulario propio, no duplicado).
 
 ## 8. Observabilidad de la resolución
 
