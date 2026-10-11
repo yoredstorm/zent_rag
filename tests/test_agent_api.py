@@ -228,6 +228,63 @@ async def test_run_agent_inactive_409(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_story_endpoint_business_y_technical(async_client: AsyncClient) -> None:
+    """P7: el portal consume reason codes + facts, no steps crudos."""
+    from src.agents.runtime.trace_store import ensure_agent_runs_table, save_run
+
+    org = await _create_org(async_client, "Agent Story Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    result = AgentRunResult(
+        run_id=uuid4(),
+        agent_id=uuid4(),
+        organization_id=UUID(org["organization_id"]),
+        status="completed",
+        answer="ok",
+        steps=[
+            {
+                "type": "evidence_sufficiency",
+                "status": "ok",
+                "recommended_action": "generate",
+                "supporting_chunks": 3,
+                "latency_ms": 11,
+            },
+            {
+                "type": "answer_gate",
+                "status": "ok",
+                "verdict": "approve",
+                "latency_ms": 22,
+            },
+            {"type": "tool_call", "tool": "echo", "output": "x" * 500},
+        ],
+    )
+    await ensure_agent_runs_table()
+    await save_run(result)
+
+    business = await async_client.get(
+        f"/api/v1/agents/runs/{result.run_id}/story", headers=_headers(org)
+    )
+    assert business.status_code == 200, business.text
+    body = business.json()
+    assert body["view"] == "business"
+    types = [step["type"] for step in body["steps"]]
+    assert "evidence_evaluation" in types
+    assert "answer_decision" in types
+    reasons = [step["reason_code"] for step in body["steps"]]
+    assert "EVIDENCE_COMPLETE" in reasons
+    assert "ANSWER_APPROVED" in reasons
+    # La vista de negocio no filtra campos técnicos.
+    assert all("latency_ms" not in step for step in body["steps"])
+
+    technical = await async_client.get(
+        f"/api/v1/agents/runs/{result.run_id}/story?view=technical",
+        headers=_headers(org),
+    )
+    assert technical.status_code == 200, technical.text
+    assert technical.json()["view"] == "technical"
+    assert technical.json()["steps"][2]["output_truncated"] is True
+
+
+@pytest.mark.asyncio
 async def test_trace_store_real_db() -> None:
     from src.core.config import get_settings
 

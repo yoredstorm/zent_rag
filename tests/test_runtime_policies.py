@@ -393,3 +393,111 @@ class TestStoryView:
         assert len(row["output"]) == 240
         assert row["output_truncated"] is True
         assert row["latency_ms"] == 3
+
+
+class TestJevSkips:
+    def test_skip_phases_from_settings(self) -> None:
+        from types import SimpleNamespace
+
+        from src.runtime.jev_value import skip_phases_from_settings
+
+        assert skip_phases_from_settings(
+            SimpleNamespace(RUNTIME_JEV_SKIP_PHASES="answer_gate, agent_step")
+        ) == frozenset({"answer_gate", "agent_step"})
+        assert skip_phases_from_settings(SimpleNamespace()) == frozenset()
+        assert (
+            skip_phases_from_settings(SimpleNamespace(RUNTIME_JEV_SKIP_PHASES=" , "))
+            == frozenset()
+        )
+
+    def test_phase_skipped_default_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from types import SimpleNamespace
+
+        import src.core.config as config_module
+        from src.runtime.jev_value import phase_skipped
+
+        monkeypatch.setattr(
+            config_module,
+            "get_settings",
+            lambda: SimpleNamespace(RUNTIME_JEV_SKIP_PHASES=""),
+        )
+        assert phase_skipped("answer_gate") is False
+
+    def test_phase_skipped_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from types import SimpleNamespace
+
+        import src.core.config as config_module
+        from src.runtime.jev_value import phase_skipped
+
+        monkeypatch.setattr(
+            config_module,
+            "get_settings",
+            lambda: SimpleNamespace(RUNTIME_JEV_SKIP_PHASES="answer_gate"),
+        )
+        assert phase_skipped("answer_gate") is True
+        assert phase_skipped("termination") is False
+
+    @pytest.mark.asyncio
+    async def test_gate_no_llama_al_engine_si_fase_salteada(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        import src.core.config as config_module
+        from src.runtime.answer_gate import judge_answer
+
+        monkeypatch.setattr(
+            config_module,
+            "get_settings",
+            lambda: SimpleNamespace(RUNTIME_JEV_SKIP_PHASES="answer_gate"),
+        )
+
+        class _Engine:
+            calls = 0
+
+            async def judge(self, *, state, questions, context=None):
+                _Engine.calls += 1
+                return {"answers": {}}
+
+        gate = await judge_answer(
+            engine=_Engine(),
+            mode="on",
+            user_request="¿cumple?",
+            draft="Sí, cumple.",
+            settings=object(),
+        )
+        assert gate.verdict == "skipped"
+        assert gate.provider == "skip_config"
+        assert _Engine.calls == 0
+
+    @pytest.mark.asyncio
+    async def test_termination_no_llama_si_fase_salteada(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        import src.core.config as config_module
+        from src.runtime.termination import original_request_satisfied
+
+        monkeypatch.setattr(
+            config_module,
+            "get_settings",
+            lambda: SimpleNamespace(RUNTIME_JEV_SKIP_PHASES="termination"),
+        )
+
+        class _Engine:
+            calls = 0
+
+            async def judge(self, *, state, questions, context=None):
+                _Engine.calls += 1
+                return {"answers": {}}
+
+        outcome = await original_request_satisfied(
+            engine=_Engine(),
+            user_request="q",
+            history=["OBSERVATION: x"],
+            tool_calls=1,
+        )
+        assert outcome["provider"] == "skip_config"
+        assert outcome["stop"] is False
+        assert _Engine.calls == 0
