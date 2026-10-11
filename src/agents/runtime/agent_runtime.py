@@ -1417,6 +1417,31 @@ def _runtime_scratch(result: AgentRunResult) -> dict:
     return scratch
 
 
+def _publish_context_envelope(
+    state: AgentRunState, request: AgentRunRequest, result: AgentRunResult
+) -> None:
+    """Publica la procedencia del contexto del run (P6). Observacional."""
+    try:
+        from src.runtime.context_envelope import build_context_envelope
+
+        agent = request.agent
+        envelope = build_context_envelope(
+            tenant_id=getattr(agent, "organization_id", "") or "",
+            conversation_id=request.conversation_id,
+            user_turn=bool((request.message or "").strip()),
+            workflow_keys=tuple(
+                sorted(str(key) for key in (request.context or ()))
+            ),
+            evidence_ids=tuple(
+                sorted(getattr(state.evidence, "selected", frozenset()) or ())
+            ),
+            tool_observation_labels=tuple(sorted(state.tools.used)),
+        )
+        state.context = envelope
+    except Exception as exc:  # noqa: BLE001 — observabilidad, nunca rompe el run
+        logger.warning("context envelope failed", error=str(exc)[:150])
+
+
 def _mark_budget_stop(result: AgentRunResult, reason: str) -> None:
     """Registra la razón PRECISA de corte (run_budget.STOP_REASONS)."""
     state = getattr(result, "run_state", None)
@@ -2235,6 +2260,7 @@ class AgentRuntime:
                         }
                     )
                     observe_violations("agent", violations)
+                _publish_context_envelope(state, request, result)
                 _record_finalization_decision(state, result)
                 if state.trace.violations and _strict_run_state_enabled():
                     _strict_block_run_state(state, result)

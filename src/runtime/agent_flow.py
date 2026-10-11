@@ -22,6 +22,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from src.runtime.jev_value import summarize_jev_value
+
 #: Tipos de step → campos que se copian VERBATIM al flow (nunca se inventan).
 _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "llm": (
@@ -1422,6 +1424,9 @@ def build_agent_flow(
             for step in steps
             if str(step.get("type") or "") == "guardrail"
         ][:8],
+        # Valor de cada juicio JEV (medición, no decisión): cuántas llamadas
+        # confirmaron la señal determinista vs movieron la decisión.
+        "jev_value": summarize_jev_value(steps),
     }
     # Modo de ejecución: DETERMINISTIC_FAST_PATH se muestra en «Ver flujo» con
     # su telemetría de ahorro (llamadas/tokens evitados, latencia real).

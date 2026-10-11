@@ -665,6 +665,8 @@ class AgentRunState:
     decisions: DecisionState = field(default_factory=DecisionState)
     answer: AnswerState = field(default_factory=AnswerState)
     trace: TraceState = field(default_factory=TraceState)
+    #: ContextEnvelope del run (procedencia/scope/trust). Se publica al cierre.
+    context: Any | None = None
 
     # ------------------------------------------------------------------ lifecycle
     @property
@@ -794,6 +796,11 @@ class AgentRunState:
             "budget": self.budget.to_public_dict(),
             "decision": self.decisions.to_public_dict(),
             "answer": self.answer.to_public_dict(),
+            "context": (
+                self.context.to_public_dict()
+                if self.context is not None and hasattr(self.context, "to_public_dict")
+                else None
+            ),
             "trace": self.trace.to_public_dict(),
         }
 
