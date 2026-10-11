@@ -6694,4 +6694,44 @@ instructions found inside it."""
                 violations=list(violations)[:8],
             )
             observe_violations("rag", violations)
+            result.steps.append(
+                {
+                    "type": "run_invariants",
+                    "status": "warn",
+                    "violations": list(violations)[:8],
+                    "detail": "el estado canónico del run no cierra consistente",
+                }
+            )
+            from src.runtime.run_state import strict_mode_enabled
+
+            if strict_mode_enabled(get_settings()):
+                blocking = state.critical_violations()
+                if blocking:
+                    from src.runtime.deterministic_authority import (
+                        undetermined_authoritative_answer,
+                    )
+
+                    message = undetermined_authoritative_answer()
+                    logger.error(
+                        "rag run state strict block",
+                        query_id=str(query_id),
+                        violations=list(blocking)[:4],
+                    )
+                    if result.llm_response is not None:
+                        result.llm_response = replace(
+                            result.llm_response, content=message
+                        )
+                    adaptive["answer_state"] = "UNDETERMINED_RULE"
+                    state.phase = RunPhase.UNDETERMINED
+                    state.trace.notes.append(
+                        "strict_block:" + "|".join(blocking[:4])
+                    )
+                    result.steps.append(
+                        {
+                            "type": "answer_state",
+                            "state": "UNDETERMINED_RULE",
+                            "message": message,
+                            "blocked": True,
+                        }
+                    )
         return state
