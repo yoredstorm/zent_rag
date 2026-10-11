@@ -283,6 +283,15 @@ async def test_story_endpoint_business_y_technical(async_client: AsyncClient) ->
     assert technical.json()["view"] == "technical"
     assert technical.json()["steps"][2]["output_truncated"] is True
 
+    # El portal consume el camino unificado de ejecuciones.
+    unified = await async_client.get(
+        f"/api/v1/executions/agent/{result.run_id}/story",
+        headers=_headers(org),
+    )
+    assert unified.status_code == 200, unified.text
+    assert unified.json()["kind"] == "agent"
+    assert unified.json()["view"] == "business"
+
 
 @pytest.mark.asyncio
 async def test_trace_store_real_db() -> None:
