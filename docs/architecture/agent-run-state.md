@@ -302,74 +302,78 @@ respuestas sin migración previa):
 Introducir `AgentRunState` y publicar los estados existentes sin cambiar writers,
 readers, contratos ni flujos. Criterio: tests existentes verdes.
 
-### Fase B — migrar writers (✅ alcance de esta iteración)
+### Fase B — migrar writers (✅ completa)
 
 Hecho:
 
-1. `RAGOrchestrator.execute`: estado vivo — plan, turn, registry/selection,
+1. `RAGOrchestrator.execute`: estado vivo; `adaptive` es una **proyección**
+   (`_adaptive_publish`) de los campos modelados — plan, turn, registry/selection,
    sufficiency, evidence_state, grounded, envelope (objeto y público),
-   generation_package, long-context, query_executable y response_plan publican
-   en el estado; `adaptive` sigue publicándose como contrato de compatibilidad.
-2. Vocabulario único de respuesta (`answer_state.py`): `FinalizedAnswer.state` y
-   `deterministic_authority` lo consumen; `answer_gate` re-exporta.
-3. Autoridad por claim única: `is_deterministic_supported_claim` compartida por
-   `has_authority` y `deterministic_claims`.
+   generation_package, long-context, query_executable y response_plan.
+2. Vocabulario único de respuesta (`answer_state.py`).
+3. Autoridad por claim única (`is_deterministic_supported_claim`); la consumen
+   `has_authority`, `deterministic_claims`, `DecisionVerification` y
+   `DeterministicResponseFacts` (sin literales de estado).
+4. Contador único de tools: `result.tool_calls` (loop, ledger, usage y cierre);
+   `budget_step` es solo el índice del loop (no era un contador paralelo).
+5. `has_usable_evidence` se lee de `EvidenceView.can_answer`.
 
-Pendiente:
-
-4. `adaptive` como proyección derivada del estado (dejar de ser storage).
-5. `budget_step`/`tool_calls` locales → solo ledger y `state.tools`.
-6. `has_usable_evidence` → `EvidenceView` (una sola respuesta).
-7. `DeterministicResponseFacts.authoritative` y
-   `DecisionVerification.authoritative` → leer de la misma regla.
-
-### Fase C — migrar readers (✅ orquestador; ⏳ gate JEV)
+### Fase C — migrar readers (✅ orquestador; ⏳ gate JEV por decisión de producto)
 
 1. ✅ `_evidence_complete`, `_canonical_derived`, `_coverage_block`,
    `_canonical_evidence_complete`, `correct_decision_with_canonical_evidence` y
    `_contradictory_disclaimer` leen el estado canónico (fallback `adaptive`).
-2. ⏳ Gates JEV (`answer_gate`, `termination`, `tool_routing`) reciben el estado
-   en lugar de recomputar insumos.
-3. ⏳ `agent_flow` puede construir el resumen desde `to_public_dict()` sin
-   cambiar el contrato SSE/portal (los payloads mantienen claves).
+2. ⏳ Gates JEV (`answer_gate`, `termination`, `tool_routing`): reciben sus
+   insumos explícitos del loop; reemplazarlos por el estado cambiaría el
+   conjunto exacto de evidencia/`retrieval_rounds_left` que juzgan. Requiere
+   decisión de producto + tests de equivalencia del gap (1 ronda de diferencia).
+3. ✅ La traza publica las violaciones: step `run_invariants` (merge de
+   `result.steps` en el flow de ambos caminos) + `zent_run_state_violations_total`.
+   No se agregó una clave nueva al payload del flow para no tocar contrato.
 
-### Fase D — eliminar recalculadores (✅ seguro hecho; ⏳ resto)
+### Fase D — eliminar recalculadores (✅ lo seguro; ⏳ lo demás con razón)
 
 Hecho:
 
-1. Envelope reutilizado en la finalización de ambos caminos (agente y RAG) en
-   lugar de reconstruirlo desde el grounded público.
+1. Envelope reutilizado en la finalización de ambos caminos (agente y RAG).
 2. `FinalizedAnswer.state` sin literales duplicados.
 3. `has_authority` sin la lógica de claims duplicada.
 4. Construcción del estado temprano centralizada (`_early_run_state`).
+5. `_sufficiency_complete` delega en `EvidenceSufficiency.evidence_complete`
+   (la completitud positiva sale de la definición canónica) con el fallback
+   histórico documentado para no cambiar respuestas.
 
-Pendiente (semánticas no idénticas; requiere migración + equivalencia):
+Diferido con razón (cada borrado cambia semántica sin migración previa):
 
-5. `_sufficiency_complete` vs `EvidenceSufficiency.evidence_complete`
-   (supporting_chunks).
-6. `resolve_answer_state` y `prep.answer_state()` → un builder único.
-7. `fast_path` rechequeos → leer `DecisionEnvelope` + `state.decisions`.
-8. `narrative_coverage` y `EvidenceSufficiency` comparten contención de entidades.
-9. `_item_key` y `_excerpt_key` → una sola identidad.
-10. Eliminar `self._pending_*`/`self._last_*` cuando el estado canónico viaje por
-    parámetro (hoy generan riesgo de carrera entre runs concurrentes).
+6. `resolve_answer_state` vs `prep.answer_state()`: insumos distintos; el
+   vocabulario ya es único.
+7. Rechequeos del fast path: son la verificación de elegibilidad (fail-closed),
+   no un recalculador de estado.
+8. `narrative_coverage` vs `EvidenceSufficiency`: la contención de entidades se
+   calcula desde modelos distintos (frames vs anchors); unificar exige mover el
+   modelo de cobertura al estado primero.
+9. `_item_key` vs `_excerpt_key`: reglas de identidad distintas a propósito
+   (documento/chunk vs excerpt de unidad).
+10. `self._pending_*`/`self._last_*`: eliminarlos requiere pasar el estado por
+    parámetro a `_try_finalize_answer`/`_ensure_answer`; se hará al migrar el
+    cierre del agente a lectura directa del estado.
 
-### Fase E — endurecer invariantes (✅ métrica y modo estricto; ⏳ trazas)
+### Fase E — endurecer invariantes (✅ métrica, estricto y traza; ⏳ cobertura narrativa)
 
 Hecho:
 
 1. Métrica `zent_run_state_violations_total{path,kind}` emitida por agente y RAG.
-2. Modo estricto opcional `RUNTIME_RUN_STATE_STRICT=on` (default off): las
-   violaciones críticas (`authoritative_decision_contradicted`,
-   `authoritative_decision_replaced`,
-   `deterministic_finalized_without_envelope`) bloquean la respuesta del agente
-   con el mensaje no concluyente de código.
+2. Modo estricto opcional `RUNTIME_RUN_STATE_STRICT=on` (default off) con helper
+   único `strict_mode_enabled`: en agente y RAG, las violaciones críticas
+   bloquean la respuesta con el mensaje no concluyente de código.
+3. Violaciones visibles en la traza: step `run_invariants` (merge al flow en
+   ambos caminos) + logs + métrica.
 
-Pendiente:
+Diferido:
 
-3. Modo estricto en el camino RAG (hoy solo métrica).
-4. Publicar violaciones en `record_trace`/flow (hoy: log + step en el agente).
-5. Invariante de cobertura narrativa vs. `EvidenceView.complete`.
+4. Invariante de cobertura narrativa vs. `EvidenceView.complete`: exige exponer
+   los huecos materiales del paquete narrativo en el estado (hoy viven solo en
+   los steps de cobertura).
 
 ---
 
@@ -400,10 +404,10 @@ Preservado (verificado por la suite de §6):
 |---|---|---|---|
 | Fuentes de verdad consultables | 6+ (`result`, `adaptive`, locales, instancia, steps, objetos) | 1 (`AgentRunState`) + compat | Los writers siguen publicando también en `result`/`adaptive` (Fase B parcial) |
 | Readers del RAG que reconstruyen estado | 6 (`_evidence_complete`, `_canonical_derived`, `_coverage_block`, `_canonical_evidence_complete`, `correct_decision...`, `_contradictory_disclaimer`) | 0 (leen el estado; fallback `adaptive`) | Fase C |
-| Estados recalculados por run | 13 detectados (§1.4) | 11 | Fase D eliminó el rebuild del envelope en ambas rutas y la regla de autoridad duplicada |
-| Banderas de «evidencia completa/suficiente» | 4 | 4 activas + 1 lectura canónica (`EvidenceView.complete`) | Unificación total en Fase D |
-| Banderas de autoridad | 4 | 2 unificadas (`has_authority`, `deterministic_claims`) + 1 canónica (`DecisionState.authoritative`) | Pendientes: `facts.authoritative`, `DecisionVerification.authoritative` |
-| Duplicaciones eliminadas | — | 7 (vocabulario, autoridad por claim, envelope ×2, identidad de estado temprano, colisión de nombres, set de transiciones) | Ver §3.3 |
+| Estados recalculados por run | 13 detectados (§1.4) | ~10 | Fase D eliminó el rebuild del envelope (×2), la regla de autoridad duplicada, el contador de tools y la completitud de suficiencia |
+| Banderas de «evidencia completa/suficiente» | 4 | 4 activas + 2 lecturas canónicas (`EvidenceView.complete`, `_sufficiency_complete` delega) | Unificación total al mover el modelo de cobertura |
+| Banderas de autoridad | 4 | 3 unificadas (`has_authority`, `deterministic_claims`, `DecisionVerification`) + 1 canónica (`DecisionState.authoritative`) | `facts.authoritative` lee el vocabulario único (constante) |
+| Duplicaciones eliminadas | — | 12 (vocabulario, autoridad ×2, envelope ×2, contador de tools, completitud, literales del composer, identidad de estado temprano, colisión de nombres, transiciones, sync adaptive) | Ver §3.3 y §4 |
 | Lifecycle explícito | 0 (implícito en código) | 15 fases + 10 transiciones válidas + terminales | Agente y RAG |
 | Invariantes comprobables | tests dispersos | 9 invariantes + 39 tests + métrica + modo estricto | Violaciones → `trace.violations`, step y `zent_run_state_violations_total` |
 | LOC (tracked) | — | +539/−74 | runtime +200/−7; orquestador +261/−34; soporte +75/−32 |
@@ -420,15 +424,22 @@ Verificación ejecutada (2026-10-11, `pytest` con `.venv`, Postgres/Redis locale
 | Batch de 14 suites: `test_agent_reasoning_integration`, `test_evidence_first_gate`, `test_fail_closed_authority`, `test_runtime_audit_36`, `test_decision_wiring`, `test_canonical_evidence`, `test_rag_stream`, `test_agent_flow_v2`, `test_final_authority_lock`, `test_deterministic_fast_path`, `test_decision_engine`, `test_production_consistency`, `test_adaptive_rag`, `test_answerability_engine` | 381 passed |
 | `ruff check` (archivos tocados) | limpio |
 
-Total: **457 tests verdes, 0 fallos**.
+Cierre B–E (misma fecha, commits `f955279`, `72cfccb`, `6e80b87`):
+
+| Suite | Resultado |
+|---|---|
+| `test_run_state` + `test_canonical_evidence` + `test_agent_runtime` + `test_run_accounting` + `test_run_budget` + `test_agent_budget_closure` | 121 passed |
+| `test_response_composer` + `test_verification_split` + `test_narrative_verification_bridge` + `test_evidence_usage_trace` + `test_decision_wiring` + `test_agent_flow_v2` + `test_deterministic_fast_path` + `test_final_authority_lock` + `test_fail_closed_authority` + `test_production_consistency` + `test_answerability_engine` + `test_bundle_atpco` | 287 passed |
+
+Total acumulado: **865 ejecuciones verdes, 0 fallos**.
 
 ---
 
 ## 7. Próximo paso sugerido
 
-1. Cerrar Fase B: `adaptive` como proyección generada desde `AgentRunState`
-   (dejar de ser storage) y unificar `budget_step`/`tool_calls` con el ledger.
-2. Cerrar Fase D con tests de equivalencia por par de banderas (empezando por
-   `_sufficiency_complete` vs `EvidenceSufficiency.evidence_complete`).
-3. Cerrar Fase E: modo estricto también en el camino RAG y publicación de
-   violaciones en la traza canónica (`record_trace`) y el flow.
+1. Gate JEV con estado canónico (decisión de producto + test de equivalencia del
+   `retrieval_rounds_left` entre refresh y gate).
+2. Fase D restante: builder único de `answer_state`, fast path, contención de
+   entidades narrativa y eliminación de `self._pending_*`/`self._last_*`.
+3. Fase E restante: invariante de cobertura narrativa (exponer huecos
+   materiales en `KnowledgeState`).
