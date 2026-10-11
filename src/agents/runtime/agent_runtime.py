@@ -49,6 +49,14 @@ from src.runtime.deterministic_authority import (
     requires_deterministic_decision,
     undetermined_authoritative_answer,
 )
+from src.runtime.run_state import (
+    AgentRunState,
+    RunIdentity,
+    RunPhase,
+    finalize_state,
+    observe_violations,
+)
+from src.runtime.runtime_identity import query_fingerprint
 
 logger = get_logger(__name__)
 
@@ -593,6 +601,11 @@ class AgentRunResult:
     llm_calls: int = 0
     tool_calls: int = 0
     logical_steps: int = 0
+    #: Estado canónico del run (AgentRunState). Agregador aditivo: los campos de
+    #: arriba siguen siendo el contrato de compatibilidad; esta estructura es la
+    #: vista única de fases, evidencia, decisiones, presupuesto e invariantes.
+    #: No entra en payloads API/SSE por sí sola (los builders usan claves fijas).
+    run_state: AgentRunState | None = None
 
 
 _ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
@@ -1246,6 +1259,9 @@ async def _execute_jev_retrieval(
         )
         result.evidence = registry.to_public_dict()
         result.evidence_full = registry.to_eval_dict()
+        state = getattr(result, "run_state", None)
+        if state is not None:
+            state.evidence.observe(registry=registry, public=result.evidence)
     if registrados:
         from src.runtime.evidence import render_evidence, select_evidence
 
@@ -1289,6 +1305,63 @@ def _record_step_judgment(
         result.jev_packs.append(pack.to_public_dict())
     except Exception as exc:  # noqa: BLE001 — el flujo nunca se rompe por el pack
         logger.warning("agent step pack failed", error=str(exc)[:150])
+
+
+def _strict_run_state_enabled() -> bool:
+    """`RUNTIME_RUN_STATE_STRICT=on` activa el fail-closed por invariantes."""
+    value = str(
+        getattr(get_settings(), "RUNTIME_RUN_STATE_STRICT", "off") or "off"
+    ).strip().lower()
+    return value in ("on", "1", "true", "yes")
+
+
+def _strict_block_run_state(state: AgentRunState, result: AgentRunResult) -> bool:
+    """Fail-closed opcional: una autoridad contradictoria no se muestra.
+
+    Solo actúa con el flag encendido; por defecto no cambia ninguna respuesta.
+    Devuelve True si bloqueó la respuesta final.
+    """
+    blocking = state.critical_violations()
+    if not blocking:
+        return False
+    message = undetermined_authoritative_answer()
+    logger.error(
+        "run state strict block",
+        run_id=str(result.run_id),
+        violations=list(blocking)[:4],
+    )
+    result.answer = message
+    result.answer_state = {
+        "state": ANSWER_STATE_UNDETERMINED,
+        "message": message,
+        "blocked": True,
+    }
+    state.answer.text = message
+    state.answer.answer_state = dict(result.answer_state)
+    state.phase = RunPhase.UNDETERMINED
+    state.trace.notes.append("strict_block:" + "|".join(blocking[:4]))
+    result.steps.append({"type": "answer_state", **result.answer_state})
+    return True
+
+
+def _early_run_state(
+    result: AgentRunResult,
+    agent: Agent,
+    request: AgentRunRequest,
+    *,
+    phase: RunPhase,
+) -> AgentRunState:
+    """Estado canónico mínimo para salidas tempranas (bloqueo operativo)."""
+    return AgentRunState(
+        identity=RunIdentity(
+            run_id=str(result.run_id),
+            kind="agent",
+            agent_id=str(agent.id),
+            organization_id=str(agent.organization_id),
+            query_fingerprint=query_fingerprint(request.message),
+        ),
+        phase=phase,
+    )
 
 
 class AgentRuntime:
@@ -1514,6 +1587,11 @@ class AgentRuntime:
         ):
             return False
         finalize_max_tokens = call_plan.allowed_completion_tokens
+        state = getattr(result, "run_state", None)
+        if state is not None:
+            state.budget.ledger = ledger
+            if not state.budget.note_expensive_call("finalize_answer"):
+                return False
         try:
             if request.on_delta is not None and not requires_deterministic_decision(
                 request.message
@@ -1675,6 +1753,9 @@ class AgentRuntime:
                         }
                     ],
                 )
+                result.run_state = _early_run_state(
+                    result, agent, request, phase=RunPhase.BLOCKED
+                )
                 result.total_latency_ms = (time.perf_counter() - start) * 1000
                 return result
             factor = float(budget_status.get("throttle_factor", 1.0))
@@ -1713,6 +1794,9 @@ class AgentRuntime:
                         "detail": f"model_circuit_open: {config['model']}",
                     }
                 ],
+            )
+            result.run_state = _early_run_state(
+                result, agent, request, phase=RunPhase.BLOCKED
             )
             result.total_latency_ms = (time.perf_counter() - start) * 1000
             return result
@@ -1840,6 +1924,12 @@ class AgentRuntime:
             model=str(config["model"]),
             injection_detected=has_injection_indicators(request.message),
         )
+        # Estado canónico del run: nace con la identidad y lo acompaña hasta el
+        # cierre. Los writers siguen publicando en `result` (compatibilidad) y
+        # además reflejan acá la fase, evidencia, decisiones y presupuesto.
+        result.run_state = AgentRunState(
+            identity=RunIdentity.from_request(request, run_id=str(result.run_id))
+        )
 
         # Build/versiones del proceso: sin esto no se puede comprobar si el
         # contenedor realmente ejecuta el commit esperado.
@@ -1918,6 +2008,8 @@ class AgentRuntime:
         # runtime: la firma de _run_loop no cambia (los dobles de test siguen
         # siendo válidos).
         await self._prepare_reasoning(request)
+        if result.run_state is not None:
+            result.run_state.reasoning.run = getattr(self, "_pending_reasoning", None)
         # Response Intelligence: forma de explicar (determinista; JEV sólo si
         # dos formas quedan empatadas). No cambia hechos.
         await self._prepare_response_plan(request, getattr(self, "_pending_reasoning", None))
@@ -1992,19 +2084,19 @@ class AgentRuntime:
                 and not result.decision_envelope
             ):
                 failure = result.answer_state or {}
-                state = str(failure.get("state") or ANSWER_STATE_UNDETERMINED)
+                failure_state = str(failure.get("state") or ANSWER_STATE_UNDETERMINED)
                 message = str(failure.get("message") or "") or (
                     undetermined_authoritative_answer()
                 )
                 if (result.answer or "").strip() != message:
                     if result.answer and contains_binary_conclusion(result.answer):
                         logger.warning(
-                            "last-resort binary answer blocked", state=state
+                            "last-resort binary answer blocked", state=failure_state
                         )
                     result.answer = message
                 result.answer_state = {
                     **failure,
-                    "state": state,
+                    "state": failure_state,
                     "message": message,
                 }
                 if not any(
@@ -2020,6 +2112,41 @@ class AgentRuntime:
             result.answer = undetermined_authoritative_answer()
 
         result.total_latency_ms = (time.perf_counter() - start) * 1000
+        # Cierre del estado canónico + invariantes. Aditivo: no cambia el
+        # resultado; una violación se registra en la traza y en un step.
+        state = getattr(result, "run_state", None)
+        if state is not None:
+            try:
+                violations = finalize_state(
+                    state,
+                    status=result.status,
+                    answer=result.answer,
+                    answer_state=result.answer_state,
+                    citations=result.citations,
+                    evidence_public=result.evidence,
+                    steps_count=len(result.steps),
+                    spans_count=len(result.spans),
+                    latency_ms=result.total_latency_ms,
+                )
+                if violations:
+                    logger.warning(
+                        "agent run state invariants violated",
+                        run_id=str(result.run_id),
+                        violations=list(violations)[:8],
+                    )
+                    result.steps.append(
+                        {
+                            "type": "run_invariants",
+                            "status": "warn",
+                            "violations": list(violations)[:8],
+                            "detail": "el estado canónico del run no cierra consistente",
+                        }
+                    )
+                    observe_violations("agent", violations)
+                    if _strict_run_state_enabled():
+                        _strict_block_run_state(state, result)
+            except Exception as exc:  # noqa: BLE001 — diagnóstico, nunca rompe el run
+                logger.warning("run state finalize failed", error=str(exc)[:150])
         try:
             from src.platform.tracing.traces import record_trace
 
@@ -2241,6 +2368,9 @@ class AgentRuntime:
     ) -> None:
         if reasoning is None:
             reasoning = getattr(self, "_pending_reasoning", None)
+        # Estado canónico del run (puede faltar en dobles de test que no pasan
+        # por `run()`): todas las publicaciones son best-effort.
+        state = getattr(result, "run_state", None)
         effective_tools = _effective_tools(request.agent)
         settings = get_settings()
         # Loop prevention POR RUN: el guard no puede recordar llamadas de runs
@@ -2266,6 +2396,8 @@ class AgentRuntime:
                         {"type": "tool_filter", "omitted": omitted_tools}
                     )
         allowed_tools = resolve_allowed_tools(effective_tools, ctx)
+        if state is not None:
+            state.tools.set_allowed(allowed_tools)
         # Contrato de composición del run, capturado una vez: es por run (el
         # runtime es compartido entre requests).
         run_plan = getattr(self, "_pending_response_plan", None)
@@ -2340,6 +2472,8 @@ class AgentRuntime:
         turn_direct_tool_retries = 0
         if turn_decision is not None:
             result.turn_intent = turn_decision.to_public_dict()
+            if state is not None:
+                state.turn.decision = turn_decision
             result.steps.append(
                 {
                     "type": "conversation_intent",
@@ -2375,6 +2509,10 @@ class AgentRuntime:
             return "\n".join(
                 f"- {t.name}: {t.description}" for t in tools
             ) or "(no tools available)"
+
+        # Turno clasificado: la ruta (conversacional vs evidencia) ya está decidida.
+        if state is not None:
+            state.try_advance(RunPhase.CLASSIFIED)
 
         # Turno conversacional: el modelo no ve herramientas (no las necesita) y
         # la pregunta de capacidad se responde con la configuración REAL del agente.
@@ -2420,6 +2558,8 @@ class AgentRuntime:
             result.steps.append(response_step)
             if run_plan is not None and getattr(run_plan, "active", False):
                 result.response_plan = run_plan.to_public_dict()
+                if state is not None:
+                    state.plan.response_plan = result.response_plan
         if request.context:
             result.steps.append(
                 {"type": "context", "sections": sorted(str(key) for key in request.context)}
@@ -2463,6 +2603,9 @@ class AgentRuntime:
         max_retrieval_rounds = int(getattr(settings, "RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS", 2) or 0)
         retrieval_rounds = 0
         budget_step = -1
+        if state is not None:
+            state.plan.authorized_scope = authorized_scope
+            state.try_advance(RunPhase.PLANNED)
 
         def _steps_left() -> int:
             return max(0, max_steps - budget_step - 1)
@@ -2577,6 +2720,13 @@ class AgentRuntime:
                 premise_closure_ids=usage.get("premise_closure") or (),
             )
             result.evidence_full = registry.to_eval_dict()
+            if state is not None:
+                state.evidence.observe_usage(
+                    selected=frozenset(selected),
+                    used=frozenset(narrative_ids) if narrative_ids is not None else None,
+                    cited=frozenset(cited_ids) if cited_ids is not None else None,
+                )
+                state.evidence.observe(public=result.evidence)
 
         def _bind_narrative_answer() -> None:
             """Citas de la respuesta contra el paquete final, no contra otro índice."""
@@ -2725,6 +2875,8 @@ class AgentRuntime:
             """
             # La telemetría de las fases SIEMPRE entra al run (incluso al fallar).
             result.steps.extend(prep.steps)
+            if state is not None:
+                state.decisions.observe_prep(prep)
             if prep.grounded_reasoning is not None:
                 to_public = getattr(prep.grounded_reasoning, "to_public_dict", None)
                 if callable(to_public):
@@ -2766,9 +2918,9 @@ class AgentRuntime:
             if prep.authoritative_envelope is not None:
                 result.decision_envelope = prep.authoritative_envelope.to_public_dict()
             if query_executable and not prep.has_authority:
-                state, message = prep.answer_state()
+                answer_state_code, message = prep.answer_state()
                 result.answer_state = {
-                    "state": state,
+                    "state": answer_state_code,
                     "error_stage": prep.error_stage,
                     "error_code": prep.error_code,
                     "message": message,
@@ -2870,6 +3022,8 @@ class AgentRuntime:
         async def _finalize_with_authority(reason: str, *, reasoning=None) -> bool:
             """Finaliza el run pasando SIEMPRE por la autoridad determinista."""
             nonlocal final_streamed
+            if state is not None:
+                state.try_advance(RunPhase.READY_TO_FINALIZE, detail=str(reason)[:80])
             prep = await _ensure_derived_claims()
             finalized = await self._try_finalize_answer(
                 request,
@@ -2932,7 +3086,17 @@ class AgentRuntime:
                 )
 
                 grounded_public = gate_grounded_public[0] if gate_grounded_public else None
-                envelope = build_decision_envelope(grounded_public) if grounded_public else None
+                # Fase D: la autoridad preparada (envelope del estado) manda; el
+                # rebuild desde el grounded público es solo el fallback.
+                envelope = (
+                    state.decisions.envelope
+                    if state is not None and state.decisions.envelope is not None
+                    else (
+                        build_decision_envelope(grounded_public)
+                        if grounded_public
+                        else None
+                    )
+                )
                 failure = result.answer_state or {}
                 finalized = finalize_authoritative_answer(
                     text,
@@ -2947,6 +3111,10 @@ class AgentRuntime:
                         (grounded_public or {}).get("missing_premises") or ()
                     ),
                 )
+                if state is not None:
+                    state.decisions.observe_finalized(finalized)
+                    if finalized.changed:
+                        state.answer.guard_overrides += 1
                 if finalized.guard is not None:
                     result.steps.append(
                         {
@@ -3040,6 +3208,12 @@ class AgentRuntime:
                 request.message,
                 retrieval_rounds_left=_rounds_left(),
             )
+            if state is not None:
+                state.evidence.observe(
+                    registry=registry, selection=selection, sufficiency=sufficiency
+                )
+                if str(getattr(sufficiency, "recommended_action", "")) == "retrieve_more":
+                    state.try_advance(RunPhase.EVIDENCE_REQUIRED)
             _refresh_presentation()
             from src.runtime.narrative_package import freeze_narrative_package
 
@@ -3122,7 +3296,7 @@ class AgentRuntime:
                 # llega al LLM para decidir.
                 prep = await _prepare_authority()
                 if query_executable and not prep.has_authority:
-                    state, message = prep.answer_state()
+                    answer_state_code, message = prep.answer_state()
                     return AnswerGateResult(
                         verdict="abstain",
                         provider="authoritative",
@@ -4762,6 +4936,10 @@ class AgentRuntime:
             )
 
             loop_ledger = RunBudgetLedger.from_config(result, config)
+            if state is not None:
+                state.budget.ledger = loop_ledger
+                state.try_advance(RunPhase.REASONING)
+                state.budget.note_expensive_call("loop_generation")
             raw_estimate = estimate_prompt_tokens(prompt)
             room_before = loop_ledger.remaining_tokens
             # El provider cuenta el prompt real al responder. Una estimación por
@@ -5229,6 +5407,12 @@ class AgentRuntime:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Approval gate failed (fail-open)", error=str(exc)[:120])
 
+            if state is not None:
+                state.tools.note_call(tool_name)
+                state.try_advance(RunPhase.ACTION_REQUIRED)
+                if any(k in tool_name.lower() for k in ("kb", "search", "retrieve", "rag")):
+                    state.try_advance(RunPhase.RETRIEVING)
+                state.try_advance(RunPhase.ACTING)
             tool_start = time.perf_counter()
             raw_args = action.get("arguments")
             arguments = dict(raw_args) if isinstance(raw_args, dict) else {}
@@ -5412,6 +5596,15 @@ class AgentRuntime:
                 and bool(getattr(settings, "RUNTIME_FAILED_TOOL_GUARD", True))
             ):
                 failed_tools[tool_name] = _classify_tool_failure(tool_result.error)
+                if (
+                    state is not None
+                    and failed_tools[tool_name] == "transient"
+                    and any(
+                        k in tool_name.lower() for k in ("kb", "search", "retrieve", "rag")
+                    )
+                ):
+                    # Fallo OPERATIVO del retrieval: no es «no hay datos».
+                    state.evidence.retrieval_failed = True
                 if failed_tools[tool_name] == "transient":
                     # Un intento que falló por el proveedor no produjo ninguna
                     # observación: no puede contar como duplicado y bloquear su

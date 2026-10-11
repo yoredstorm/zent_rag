@@ -450,6 +450,9 @@ class RAGQueryResult:
     steps: list[dict] = field(default_factory=list)
     # C9 T2: costo real del DAG cognitivo (deep path) para sumar al usage.
     cognitive_cost_usd: float = 0.0
+    #: Estado canónico del run (AgentRunState, Fase A). Aditivo: no reemplaza
+    #: ningún campo existente ni entra en los payloads API por sí solo.
+    run_state: object | None = None
 
 
 # -----------------------------------------------------------------------------
