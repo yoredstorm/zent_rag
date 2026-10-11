@@ -94,6 +94,7 @@ from src.runtime.answer_state import (  # noqa: E402 — re-export en el sitio h
     ANSWER_STATE_RULE_EVALUATION_FAILED,
     ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE,
     ANSWER_STATE_UNDETERMINED,
+    select_answer_state,
 )
 
 CONFLICTING_EVIDENCE_ANSWER = (
@@ -126,20 +127,26 @@ def resolve_answer_state(
 
     Distingue fallo OPERATIVO (no se pudo buscar) de ausencia de evidencia,
     conflicto de fuentes y premisa faltante. Código decide; nunca el LLM.
+    La prioridad es única (`answer_state.select_answer_state`); acá solo se
+    eligen los mensajes del gate.
     """
-    if has_deterministic_result:
-        return ANSWER_STATE_DERIVED, ""
-    if not is_knowledge_question:
-        return "", ""
-    if retrieval_failed and int(evidence_count or 0) == 0:
-        return ANSWER_STATE_RETRIEVAL_UNAVAILABLE, retrieval_unavailable_answer(retrieval_reason)
-    if conflicts:
-        return ANSWER_STATE_CONFLICTING, CONFLICTING_EVIDENCE_ANSWER
-    if missing_premises:
-        return ANSWER_STATE_UNDETERMINED, undetermined_answer(missing_premises)
-    if int(evidence_count or 0) == 0:
-        return ANSWER_STATE_INSUFFICIENT, INSUFFICIENT_ANSWER
-    return "", ""
+    state = select_answer_state(
+        has_deterministic_result=has_deterministic_result,
+        is_knowledge_question=is_knowledge_question,
+        retrieval_failed=retrieval_failed,
+        evidence_count=int(evidence_count or 0),
+        conflicts=bool(conflicts),
+        missing_premises=bool(missing_premises),
+    )
+    if state == ANSWER_STATE_RETRIEVAL_UNAVAILABLE:
+        return state, retrieval_unavailable_answer(retrieval_reason)
+    if state == ANSWER_STATE_CONFLICTING:
+        return state, CONFLICTING_EVIDENCE_ANSWER
+    if state == ANSWER_STATE_UNDETERMINED:
+        return state, undetermined_answer(missing_premises)
+    if state == ANSWER_STATE_INSUFFICIENT:
+        return state, INSUFFICIENT_ANSWER
+    return state, ""
 
 
 def retrieval_unavailable_answer(reason: str = "") -> str:
@@ -524,6 +531,33 @@ def _evidence_action(
     return ACTION_APPROVE
 
 
+def reuse_canonical_sufficiency(
+    evidence_sufficiency: Any | None,
+    *,
+    reference_items: Iterable[Any] | None,
+    items: list[Any],
+    sufficiency_rounds_left: int | None,
+    retrieval_rounds_left: int,
+) -> bool:
+    """¿Se puede reusar la suficiencia canónica del estado en el gate?
+
+    Solo si el conjunto de items es EXACTAMENTE el mismo (identidad de objetos)
+    y la ronda de retrieval no cambió: recalcular con otra ronda podría cambiar
+    la acción recomendada. Fuera de eso, el gate recalcula como siempre.
+    """
+    if evidence_sufficiency is None or sufficiency_rounds_left is None:
+        return False
+    try:
+        if int(sufficiency_rounds_left) != int(retrieval_rounds_left):
+            return False
+    except (TypeError, ValueError):
+        return False
+    reference = list(reference_items or ())
+    if len(reference) != len(items):
+        return False
+    return all(left is right for left, right in zip(reference, items))
+
+
 async def judge_answer(
     *,
     engine,
@@ -543,6 +577,10 @@ async def judge_answer(
     evidence_budget_chars: int = DEFAULT_BUDGET_CHARS,
     presentation_enabled: bool | None = None,
     grounded_reasoning: Any | None = None,
+    #: Fase C: suficiencia canónica del run (AgentRunState) para no recalcularla.
+    evidence_sufficiency: Any | None = None,
+    sufficiency_rounds_left: int | None = None,
+    evidence_for_sufficiency: Iterable[Any] | None = None,
 ) -> AnswerGateResult:
     """Evalua el borrador. Nunca lanza: ante error devuelve skipped.
 
@@ -569,9 +607,18 @@ async def judge_answer(
     else:
         evidence_text = "\n".join(line[:1500] for line in (observations or [])[-8:])
 
-    sufficiency = assess_sufficiency(
-        items, user_request, retrieval_rounds_left=retrieval_rounds_left
-    )
+    if reuse_canonical_sufficiency(
+        evidence_sufficiency,
+        reference_items=evidence_for_sufficiency,
+        items=items,
+        sufficiency_rounds_left=sufficiency_rounds_left,
+        retrieval_rounds_left=retrieval_rounds_left,
+    ):
+        sufficiency = evidence_sufficiency
+    else:
+        sufficiency = assess_sufficiency(
+            items, user_request, retrieval_rounds_left=retrieval_rounds_left
+        )
     claims = claim_checks(draft, selection.items if selection is not None else items)
 
     sections = [

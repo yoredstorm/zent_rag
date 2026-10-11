@@ -26,12 +26,8 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from src.runtime.answer_state import (
-    ANSWER_STATE_DERIVATION_FAILED,
     ANSWER_STATE_DERIVED,
-    ANSWER_STATE_GROUNDING_ENGINE_FAILED,
-    ANSWER_STATE_RULE_EVALUATION_FAILED,
-    ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE,
-    ANSWER_STATE_UNDETERMINED,
+    operational_failure_state,
 )
 from src.runtime.derived_guard import DerivedGuardOutcome, enforce_derived_result
 from src.runtime.deterministic_authority import undetermined_authoritative_answer
@@ -419,15 +415,8 @@ def finalize_authoritative_answer(
 
     if resolved is None:
         if requires_deterministic_decision:
-            state = ANSWER_STATE_UNDETERMINED
-            if failure_stage == "grounding" or failure_code == ANSWER_STATE_GROUNDING_ENGINE_FAILED:
-                state = ANSWER_STATE_GROUNDING_ENGINE_FAILED
-            elif failure_stage == "rule_retrieval" or failure_code == ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE:
-                state = ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE
-            elif failure_stage == "rule_evaluation" or failure_code == ANSWER_STATE_RULE_EVALUATION_FAILED:
-                state = ANSWER_STATE_RULE_EVALUATION_FAILED
-            elif failure_stage == "derivation" or failure_code == ANSWER_STATE_DERIVATION_FAILED:
-                state = ANSWER_STATE_DERIVATION_FAILED
+            # Mapeo stage/código → estado: definición única en answer_state.
+            state = operational_failure_state(failure_stage, failure_code)
             if failure_message:
                 message = str(failure_message)
             elif missing_premises:

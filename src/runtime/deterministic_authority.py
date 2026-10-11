@@ -38,9 +38,11 @@ from src.runtime.answer_state import (
     ANSWER_STATE_DERIVATION_FAILED,
     ANSWER_STATE_DERIVED,
     ANSWER_STATE_GROUNDING_ENGINE_FAILED,
+    ANSWER_STATE_OPERATION_MISMATCH,
     ANSWER_STATE_RULE_EVALUATION_FAILED,
     ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE,
     ANSWER_STATE_UNDETERMINED,
+    select_answer_state,
 )
 from src.runtime.derived_guard import is_deterministic_supported_claim
 
@@ -98,7 +100,7 @@ ERROR_RULE_EVALUATION_FAILED = "RULE_EVALUATION_FAILED"
 ERROR_GROUNDING_ENGINE_FAILED = "GROUNDING_ENGINE_FAILED"
 ERROR_DERIVATION_FAILED = "DERIVATION_FAILED"
 ERROR_UNDETERMINED_RULE = "UNDETERMINED_RULE"
-ERROR_OPERATION_MISMATCH = "UNDETERMINED_OPERATION_MISMATCH"
+ERROR_OPERATION_MISMATCH = ANSWER_STATE_OPERATION_MISMATCH
 ERROR_CONFLICTING_RULE = "CONFLICTING_RULE"
 ERROR_DERIVED_RESULT = "DERIVED_RESULT"
 
@@ -407,47 +409,65 @@ class DerivedPreparationResult:
         )
 
     def answer_state(self) -> tuple[str, str]:
-        """(estado, mensaje) construidos por código cuando no hay autoridad."""
-        if self.has_authority:
-            return ANSWER_STATE_DERIVED, ""
-        if self.error_stage:
-            state = answer_state_for_stage(self.error_stage)
-            if state == ANSWER_STATE_UNDETERMINED and self.error_code:
-                state = str(self.error_code)
+        """(estado, mensaje) construidos por código cuando no hay autoridad.
+
+        La selección del estado es ÚNICA (`answer_state.select_answer_state`);
+        acá solo se componen los mensajes de la cadena determinista.
+        """
+        stage_branch = bool(self.error_stage)
+        operational = ""
+        if stage_branch:
+            operational = answer_state_for_stage(self.error_stage)
+            if operational == ANSWER_STATE_UNDETERMINED and self.error_code:
+                operational = str(self.error_code)
+        elif self.retrieval_unavailable:
+            operational = ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE
+        state = select_answer_state(
+            has_deterministic_result=self.has_authority,
+            operational_failure=operational,
+            conflicts=bool(self.conflicts),
+            conflict_state=ANSWER_STATE_CONFLICTING_RULE,
+            operation_mismatch=self.operation_mismatch,
+            missing_premises=bool(self.missing_premises),
+            default_state=ANSWER_STATE_UNDETERMINED,
+        )
+        if state == ANSWER_STATE_DERIVED:
+            return state, ""
+        if stage_branch:
             return state, undetermined_authoritative_answer(self.error_message)
-        if self.retrieval_unavailable:
+        if state == ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE:
             return (
-                ANSWER_STATE_RULE_RETRIEVAL_UNAVAILABLE,
+                state,
                 undetermined_authoritative_answer(
                     self.retrieval_error
                     or "el retrieval de reglas canónicas no está disponible"
                 ),
             )
-        if self.conflicts:
-            return ANSWER_STATE_CONFLICTING_RULE, (
+        if state == ANSWER_STATE_CONFLICTING_RULE:
+            return state, (
                 "Las reglas recuperadas se contradicen entre sí para esta "
                 "consulta, así que no hay una única conclusión respaldada."
             )
-        if self.operation_mismatch:
-            return ERROR_OPERATION_MISMATCH, (
+        if state == ANSWER_STATE_OPERATION_MISMATCH:
+            return state, (
                 "Las reglas recuperadas existen, pero ninguna ejecuta la "
                 "operación que exige esta consulta (máscara/patrón posicional "
                 "vs comparación, rango u otra familia). No se eligió «la más "
                 "cercana»: el resultado queda indeterminado."
             )
-        if self.missing_premises:
+        if state == ANSWER_STATE_UNDETERMINED:
+            if not self.missing_premises:
+                # Sin premisa señalada no aplica la abstención humanizada.
+                return state, undetermined_authoritative_answer()
             # La abstención humanizada del motor grounded (nombra la premisa
             # faltante) manda sobre el volcado técnico de claves.
             human = str(
                 getattr(self.grounded_reasoning, "abstention_message", "") or ""
             ).strip()
             if human:
-                return (
-                    ANSWER_STATE_UNDETERMINED,
-                    f"No puedo determinarlo porque {human}.",
-                )
-            return ANSWER_STATE_UNDETERMINED, undetermined_answer(self.missing_premises)
-        return ANSWER_STATE_UNDETERMINED, undetermined_authoritative_answer()
+                return state, f"No puedo determinarlo porque {human}."
+            return state, undetermined_answer(self.missing_premises)
+        return state, undetermined_authoritative_answer()
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
