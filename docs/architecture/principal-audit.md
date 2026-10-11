@@ -100,6 +100,12 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   `RUNTIME_JEV_SKIP_PHASES=answer_gate,agent_step,termination` (default vacío:
   JEV corre igual). Con el flag, la fase devuelve `provider="skip_config"` sin
   llamar al juez. Se activa solo con datos que muestren redundancia alta.
+- **Estado (activación)**: `RUNTIME_JEV_SKIP_SHADOW=on` (settings + compose)
+  evita pagar la llamada del juez cuando el veredicto es shadow — no decide,
+  así que es ahorro puro; implementado en el gate de respuesta. El `.env` local
+  queda con `answer_gate` en skip phases y shadow-skip on para probarlo; la
+  suite es hermética (conftest neutraliza ambos). El skip duro de fases en
+  producción sigue pendiente de `redundant_rate`.
 
 ### 6. AgentRuntime todavía concentra demasiado (P2)
 - **Evidence**: `agent_runtime.py` ~5.8k líneas; narrative fast path ~800
