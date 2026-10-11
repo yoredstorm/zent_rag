@@ -280,6 +280,32 @@ async def get_agent_run_flow(run_id: UUID, request: Request) -> dict:
     return {"flow": flow}
 
 
+@router.get("/runs/{run_id}/story", summary="Vista de negocio/técnica del run (tenant)")
+async def get_agent_run_story(
+    run_id: UUID,
+    request: Request,
+    view: str = "business",
+) -> dict:
+    """Vista normalizada del run (P7): el portal traduce `reason_code` + facts.
+
+    `view=business` (default): {type, status, reason_code, facts}, sin campos
+    técnicos ni CoT. `view=technical`: steps crudos con contenido truncado.
+    """
+    from src.platform.rbac.policy import require_permission
+    from src.runtime.story_view import build_story
+
+    ctx = require_permission(request, "rag:read")
+    await ensure_agent_runs_table()
+    run = await get_run(ctx.organization_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    steps = run.get("steps") if isinstance(run, dict) else None
+    return build_story(
+        steps or [],
+        view="technical" if str(view).lower() == "technical" else "business",
+    )
+
+
 @router.post(
     "/runs/{run_id}/analysis",
     summary="Root cause de una respuesta (FASE 03) — admin org",
