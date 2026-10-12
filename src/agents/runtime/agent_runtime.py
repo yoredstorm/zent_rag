@@ -4374,13 +4374,15 @@ class AgentRuntime:
             def _skip(reason: str) -> bool:
                 logger.info("narrative fast path skipped", reason=reason)
                 return False
-            from src.knowledge.structure.document_bundle import narrative_context_text
             from src.runtime.narrative_fast_path import (
                 NARRATIVE_FAST_PATH,
                 completeness_for_finish,
                 compress_narrative_context,
+                coverage_gap_prompt_note,
                 grounded_answer_policy,
                 jev_needed,
+                narrative_context_blocks,
+                narrative_frame_lines,
                 narrative_model_for,
                 narrative_route,
                 personality_instruction,
@@ -4699,19 +4701,7 @@ class AgentRuntime:
                     registry_version=registry.fingerprint(),
                 )
                 selection = active
-            blocks: list[str] = []
-            for index, (item, match) in enumerate(
-                zip(active.items, active.matches), start=1
-            ):
-                meta = item.metadata if isinstance(item.metadata, dict) else {}
-                text = narrative_context_text(
-                    question=request.message,
-                    canonical=match.content or item.content or "",
-                    metadata=meta,
-                )
-                label = item.title or "fuente"
-                page = f" pág. {item.page}" if item.page else ""
-                blocks.append(f"[Doc: {index}] {label}{page}\n{text}")
+            blocks = narrative_context_blocks(active, question=request.message)
             budget = prompt_char_budget(
                 request.message, evidence_items=len(active.items)
             )
@@ -4740,14 +4730,7 @@ class AgentRuntime:
             system_prompt = (
                 f"{agent_instructions}\n\n{style}\n{policy.instructions()}"
             ).strip()
-            frame_lines: list[str] = []
-            for frame in concept_plan.frames:
-                if frame.entity and frame.aspect:
-                    frame_lines.append(f"- entidad: {frame.entity}; aspecto: {frame.aspect}")
-                elif frame.entity:
-                    frame_lines.append(f"- entidad: {frame.entity}")
-                elif frame.aspect:
-                    frame_lines.append(f"- aspecto: {frame.aspect}")
+            frame_lines = narrative_frame_lines(concept_plan)
             if frame_lines:
                 system_prompt = (
                     f"{system_prompt}\nLa pregunta pide:\n"
@@ -4758,17 +4741,8 @@ class AgentRuntime:
                     "al final."
                 )
             if coverage_limit:
-                gaps = [
-                    item.aspect or item.label
-                    for item in final_coverage
-                    if item.status in {MISSING, PARTIAL_MATERIAL}
-                ]
                 system_prompt = (
-                    f"{system_prompt}\nAspectos SIN respaldo en la evidencia "
-                    f"recuperada: {', '.join(gaps) or 'ninguno'}. No los cubras "
-                    "con conocimiento propio ni los menciones al inicio o en la "
-                    "«Conclusión»: la frase de limitación la agrega el sistema, "
-                    "una sola vez, al final."
+                    f"{system_prompt}\n{coverage_gap_prompt_note(final_coverage)}"
                 )
             user_prompt = f"Pregunta:\n{request.message}\n\nEvidencia:\n{context}"
             rates = await lookup_token_rates(model_policy.model)

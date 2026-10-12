@@ -399,3 +399,65 @@ def personality_instruction(tone: str = "", instructions: str = "") -> str:
     if instructions:
         parts.append(instructions.strip()[:400])
     return " ".join(parts)
+
+
+def narrative_frame_lines(concept_plan: object) -> list[str]:
+    """Líneas «entidad/aspecto» que la pregunta pide cubrir (puras).
+
+    El prompt las usa para exigir el sentido material de cada aspecto; sin
+    frames no se agrega nada.
+    """
+    lines: list[str] = []
+    for frame in getattr(concept_plan, "frames", ()) or ():
+        if frame.entity and frame.aspect:
+            lines.append(f"- entidad: {frame.entity}; aspecto: {frame.aspect}")
+        elif frame.entity:
+            lines.append(f"- entidad: {frame.entity}")
+        elif frame.aspect:
+            lines.append(f"- aspecto: {frame.aspect}")
+    return lines
+
+
+def narrative_context_blocks(active: object, *, question: str) -> list[str]:
+    """Bloques `[Doc: N]` del contexto narrativo desde la selección activa.
+
+    Usa el match vigente de cada item (no el contenido suelto): el zip
+    items/matches mantiene el contexto alineado.
+    """
+    from src.knowledge.structure.document_bundle import narrative_context_text
+
+    blocks: list[str] = []
+    items = list(getattr(active, "items", ()) or ())
+    matches = list(getattr(active, "matches", ()) or ())
+    for index, (item, match) in enumerate(zip(items, matches), start=1):
+        meta = item.metadata if isinstance(item.metadata, dict) else {}
+        text = narrative_context_text(
+            question=question,
+            canonical=match.content or item.content or "",
+            metadata=meta,
+        )
+        label = item.title or "fuente"
+        page = f" pág. {item.page}" if item.page else ""
+        blocks.append(f"[Doc: {index}] {label}{page}\n{text}")
+    return blocks
+
+
+def coverage_gap_prompt_note(final_coverage: object) -> str:
+    """Nota de aspectos SIN respaldo para el system prompt (texto puro).
+
+    El caller decide cuándo agregarla (solo si hay frase de limitación); acá
+    se arma el texto con la terminología del sistema, nunca con la del modelo.
+    """
+    from src.runtime.narrative_coverage import MISSING, PARTIAL_MATERIAL
+
+    gaps = [
+        item.aspect or item.label
+        for item in final_coverage or ()
+        if item.status in {MISSING, PARTIAL_MATERIAL}
+    ]
+    return (
+        "Aspectos SIN respaldo en la evidencia recuperada: "
+        f"{', '.join(gaps) or 'ninguno'}. No los cubras con conocimiento propio "
+        "ni los menciones al inicio o en la «Conclusión»: la frase de limitación "
+        "la agrega el sistema, una sola vez, al final."
+    )

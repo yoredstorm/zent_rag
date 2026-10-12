@@ -3,6 +3,8 @@
 # =============================================================================
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from src.runtime.narrative_fast_path import (
     EVIDENCE_ONLY,
     NARRATIVE_FAST_PATH,
@@ -13,8 +15,11 @@ from src.runtime.narrative_fast_path import (
     TIER_STANDARD,
     completeness_for_finish,
     compress_narrative_context,
+    coverage_gap_prompt_note,
     grounded_answer_policy,
     jev_needed,
+    narrative_context_blocks,
+    narrative_frame_lines,
     narrative_model_for,
     narrative_route,
     output_token_budget,
@@ -234,3 +239,72 @@ def test_routing_benchmark() -> None:
     assert scenario_hits == 50
     assert executable_hits == 50
     assert diagnostic_kept == 50
+
+
+class TestExtraccionPura:
+    """Bloques puros extraídos del closure `_narrative_fast_path`."""
+
+    def test_frame_lines_solo_entidad_aspecto(self) -> None:
+        plan = SimpleNamespace(
+            frames=[
+                SimpleNamespace(entity="Record 2", aspect="cierre de fechas"),
+                SimpleNamespace(entity="Byte 105", aspect=""),
+                SimpleNamespace(entity="", aspect="vigencia"),
+                SimpleNamespace(entity="", aspect=""),
+            ]
+        )
+        assert narrative_frame_lines(plan) == [
+            "- entidad: Record 2; aspecto: cierre de fechas",
+            "- entidad: Byte 105",
+            "- aspecto: vigencia",
+        ]
+
+    def test_frame_lines_sin_frames(self) -> None:
+        assert narrative_frame_lines(SimpleNamespace(frames=[])) == []
+        assert narrative_frame_lines(None) == []
+
+    def test_context_blocks_usa_el_match_vigente(self) -> None:
+        active = SimpleNamespace(
+            items=[
+                SimpleNamespace(
+                    title="Manual",
+                    page=7,
+                    content="contenido viejo",
+                    metadata={"source_id": "s1"},
+                )
+            ],
+            matches=[
+                SimpleNamespace(content="contenido del match", evidence_id="e1")
+            ],
+        )
+        blocks = narrative_context_blocks(active, question="¿qué dice?")
+        assert blocks[0].startswith("[Doc: 1] Manual pág. 7")
+        assert "contenido del match" in blocks[0]
+        assert "contenido viejo" not in blocks[0]
+
+    def test_context_blocks_sin_items(self) -> None:
+        assert narrative_context_blocks(
+            SimpleNamespace(items=[], matches=[]), question="q"
+        ) == []
+
+    def test_coverage_gap_note_lista_gaps_y_no_inventa(self) -> None:
+        from src.runtime.narrative_coverage import COVERED, MISSING, PARTIAL_MATERIAL
+
+        note = coverage_gap_prompt_note(
+            [
+                SimpleNamespace(status=COVERED, aspect="", label="ok"),
+                SimpleNamespace(status=MISSING, aspect="cierre de fechas", label=""),
+                SimpleNamespace(status=PARTIAL_MATERIAL, aspect="", label="vigencia"),
+            ]
+        )
+        assert "cierre de fechas" in note
+        assert "vigencia" in note
+        assert "«Conclusión»" in note
+
+    def test_coverage_gap_note_sin_gaps_dice_ninguno(self) -> None:
+        from src.runtime.narrative_coverage import COVERED
+
+        note = coverage_gap_prompt_note(
+            [SimpleNamespace(status=COVERED, aspect="", label="ok")]
+        )
+        assert "ninguno" in note
