@@ -163,9 +163,20 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   `language_bridge_step`); 9) ronda de cobertura y paquete final
   (`run_coverage_round`, `finalize_narrative_coverage`).
   El closure bajó de ~780 a ~359 líneas y ahora se lee por etapas nombradas
-  (cada paso es una llamada). `agent_runtime.py`: 5854 a 5482 líneas.
-  Resta el finalizador (`_try_finalize_answer` y cierres asociados) para una
-  próxima sesión; es la otra mitad del P9.
+  (cada paso es una llamada).
+- **Estado (finalizador, 2026-10-11)**: 5 pasos al módulo
+  `src/runtime/finalizer.py` (239 líneas), comportamiento idéntico y tests
+  propios (`tests/test_finalizer.py`):
+  1) presupuesto del cierre (`plan_finalize_budget` + `FinalizeBudget`);
+  2) citas, límites y entrega (`citations_from_evidence`, `limits_note`,
+  `finalize_answer_delivery`; 5 call sites actualizados);
+  3) prompt del cierre (`FINALIZE_TEMPLATE` + `build_finalize_prompt`);
+  4) cierre determinista (`budget_answer`, `is_provider_failure`,
+  `ensure_answer`; el staticmethod `_ensure_answer` desaparece, 8 call sites);
+  5) generación (`generate_finalize_response`: streaming o generate, fail-soft).
+  `agent_runtime.py`: 5854 a 5345 líneas. El P9 (narrative fast path +
+  finalizador) queda completo en su alcance: el finalizer construye
+  answer/citas/cierre, no decide si el run puede finalizar.
 
 ### 7. Mezcla de contextos en prompt sin sobre (P2)
 - **Evidence**: `context_block`, company context, memory hits y evidencia
@@ -267,13 +278,12 @@ Solo hallazgos con evidencia en el repo. Ordenados por
    origen → trust) (7).
 
 **NEXT**
-6. Extracción del finalizador (`_try_finalize_answer` + cierres, ~200 líneas)
-   con parámetros explícitos; el narrative fast path ya quedó extraído en 9
-   pasos (ver estado). Sesión propia con la suite verde como red (6).
 11. Invariantes de texto para el resto de los estados de respuesta (ya
     cubiertos RETRIEVAL_UNAVAILABLE y UNDETERMINED).
 12. Bloques memory/company del prompt desde el sobre (mismo mecanismo que los
     encabezados ya migrados).
+13. Parse/polish/fact-retry del cierre (`_try_finalize_answer` restante,
+    ~170 líneas) si se quiere terminar de vaciar el método.
 
 ## Regla
 
