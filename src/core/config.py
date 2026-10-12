@@ -1414,6 +1414,15 @@ class Settings(BaseSettings):
             "(una vez por etapa). Vacio u 'off' = solo shadow."
         ),
     )
+    RUNTIME_RUN_STATE_STRICT_ORGS: str = Field(
+        default="",
+        description=(
+            "Canary del modo estricto por organización (ids separados por coma): "
+            "esas orgs corren fail-closed por invariantes aunque el global esté "
+            "apagado. El config del agente "
+            "(config_json.runtime.strict_run_state) manda sobre todo."
+        ),
+    )
     RUNTIME_JEV_SKIP_SHADOW: Literal["off", "on"] = Field(
         default="off",
         description=(

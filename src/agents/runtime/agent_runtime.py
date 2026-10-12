@@ -1216,11 +1216,20 @@ def _record_step_judgment(
         logger.warning("agent step pack failed", error=str(exc)[:150])
 
 
-def _strict_run_state_enabled() -> bool:
-    """`RUNTIME_RUN_STATE_STRICT=on` activa el fail-closed por invariantes."""
+def _strict_run_state_enabled(request: AgentRunRequest | None = None) -> bool:
+    """Fail-closed por invariantes, con scope por agente y canary por org.
+
+    Orden: `config_json.runtime.strict_run_state` > orgs canary > global
+    (`RUNTIME_RUN_STATE_STRICT`). Ver `strict_mode_enabled`.
+    """
     from src.runtime.run_state import strict_mode_enabled
 
-    return strict_mode_enabled(get_settings())
+    agent = getattr(request, "agent", None) if request is not None else None
+    return strict_mode_enabled(
+        get_settings(),
+        config_json=getattr(agent, "config_json", None),
+        organization_id=getattr(agent, "organization_id", None),
+    )
 
 
 def _strict_block_run_state(state: AgentRunState, result: AgentRunResult) -> bool:
@@ -2254,7 +2263,7 @@ class AgentRuntime:
                     observe_violations("agent", violations)
                 _publish_context_envelope(state, request, result)
                 _record_finalization_decision(state, result)
-                if state.trace.violations and _strict_run_state_enabled():
+                if state.trace.violations and _strict_run_state_enabled(request):
                     _strict_block_run_state(state, result)
             except Exception as exc:  # noqa: BLE001 — diagnóstico, nunca rompe el run
                 logger.warning("run state finalize failed", error=str(exc)[:150])

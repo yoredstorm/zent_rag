@@ -637,6 +637,52 @@ class TestStrictModeAndMetrics:
         ]
         assert state.critical_violations() == ("authoritative_decision_contradicted",)
 
+    def test_strict_por_org_canary(self) -> None:
+        from types import SimpleNamespace
+
+        from src.runtime.run_state import strict_mode_enabled
+
+        settings = SimpleNamespace(
+            RUNTIME_RUN_STATE_STRICT="off",
+            RUNTIME_RUN_STATE_STRICT_ORGS="org-1, org-2",
+        )
+        assert strict_mode_enabled(settings, organization_id="org-2") is True
+        assert strict_mode_enabled(settings, organization_id="org-9") is False
+
+    def test_strict_config_del_agente_manda_sobre_todo(self) -> None:
+        from types import SimpleNamespace
+
+        from src.runtime.run_state import strict_mode_enabled
+
+        global_on = SimpleNamespace(
+            RUNTIME_RUN_STATE_STRICT="on", RUNTIME_RUN_STATE_STRICT_ORGS=""
+        )
+        assert (
+            strict_mode_enabled(
+                global_on, config_json={"runtime": {"strict_run_state": False}}
+            )
+            is False
+        )
+        global_off = SimpleNamespace(
+            RUNTIME_RUN_STATE_STRICT="off", RUNTIME_RUN_STATE_STRICT_ORGS=""
+        )
+        assert (
+            strict_mode_enabled(
+                global_off, config_json={"runtime": {"strict_run_state": True}}
+            )
+            is True
+        )
+
+    def test_strict_global_on(self) -> None:
+        from types import SimpleNamespace
+
+        from src.runtime.run_state import strict_mode_enabled
+
+        settings = SimpleNamespace(
+            RUNTIME_RUN_STATE_STRICT="on", RUNTIME_RUN_STATE_STRICT_ORGS=""
+        )
+        assert strict_mode_enabled(settings) is True
+
     def test_observe_violations_emite_metrica(self) -> None:
         from src.infrastructure.observability.metrics import (
             zent_run_state_violations_total,

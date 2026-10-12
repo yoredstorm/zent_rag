@@ -844,8 +844,34 @@ def terminal_phase_for(*, status: str, answer: str, answer_state: dict | None) -
     return RunPhase.BLOCKED
 
 
-def strict_mode_enabled(settings: Any) -> bool:
-    """`RUNTIME_RUN_STATE_STRICT=on` activa el fail-closed por invariantes."""
+def strict_mode_enabled(
+    settings: Any,
+    *,
+    config_json: Any = None,
+    organization_id: Any = None,
+) -> bool:
+    """Fail-closed por invariantes. Scope: config del agente > orgs canary > global.
+
+    1. `config_json["runtime"]["strict_run_state"]` (bool) manda por agente.
+    2. `RUNTIME_RUN_STATE_STRICT_ORGS` (lista de orgs) habilita el canary.
+    3. `RUNTIME_RUN_STATE_STRICT=on` global.
+    """
+    runtime = (
+        config_json.get("runtime") if isinstance(config_json, dict) else None
+    )
+    if isinstance(runtime, dict) and isinstance(
+        runtime.get("strict_run_state"), bool
+    ):
+        return bool(runtime["strict_run_state"])
+    orgs = {
+        part.strip()
+        for part in str(
+            getattr(settings, "RUNTIME_RUN_STATE_STRICT_ORGS", "") or ""
+        ).split(",")
+        if part.strip()
+    }
+    if organization_id is not None and str(organization_id) in orgs:
+        return True
     value = str(
         getattr(settings, "RUNTIME_RUN_STATE_STRICT", "off") or "off"
     ).strip().lower()
