@@ -2093,6 +2093,28 @@ def _build_usage_event(
     )
 
 
+def _observe_cache_bypass(cache: Any, *, reason: str, organization_id: str) -> None:
+    """Caché desactivada por política fail-closed (nunca por un fallo).
+
+    Métrica sin tenant (cardinalidad); la org queda en el log.
+    """
+    provider = type(cache).__name__
+    logger.warning(
+        "response cache bypassed (fail-closed)",
+        reason=reason,
+        provider=provider,
+        organization_id=str(organization_id or ""),
+    )
+    try:
+        from src.infrastructure.observability.metrics import (
+            zent_cache_bypass_total,
+        )
+
+        zent_cache_bypass_total.labels(reason=reason, provider=provider).inc()
+    except Exception:  # noqa: BLE001 — observabilidad, nunca rompe el run
+        pass
+
+
 class RAGOrchestrator:
     """Orquestador del flujo RAG completo. Depende de puertos (ABCs), no de implementaciones."""
 
@@ -2946,6 +2968,14 @@ class RAGOrchestrator:
                         knowledge_fingerprint=knowledge_fingerprint,
                         conversation_id=conversation_id.hex,
                     )
+            if use_cache and cache_key is None:
+                # Fail-closed: el proveedor no soporta aislamiento por
+                # conversación; degradar la clave sería servir una respuesta de
+                # otra conversación del mismo tenant.
+                use_cache = False
+                adaptive["fallbacks"].append(
+                    "cache_disabled_conversation_unsupported"
+                )
             if use_cache:
                 cached = await self._cache.get(cache_key)
                 if cached:
@@ -5953,6 +5983,7 @@ instructions found inside it."""
             # Caché de respuestas: solo después del guard y con el texto final.
             if (
                 use_cache
+                and cache_key is not None
                 and result.llm_response.content
                 and not _is_no_info_answer(result.llm_response.content)
             ):
@@ -6598,31 +6629,42 @@ instructions found inside it."""
         role: str,
         knowledge_fingerprint: str = "",
         conversation_id: str = "",
-    ) -> str:
+    ) -> str | None:
         """Clave ÚNICA del caché de respuestas, con scope de conversación.
 
         Aislamiento por scope real (tenant + conversación): una respuesta
-        cacheada en una conversación no se sirve en otra del mismo tenant.
-        Proveedores viejos (tests/embebidos) degradan a la firma previa.
+        cacheada en una conversación NO se sirve en otra del mismo tenant.
+
+        Fail-closed: si hay conversación y el proveedor de caché no acepta el
+        scope de conversación, NO se degrada a una clave menos aislada —se
+        desactiva la caché para este request (`None`) y se registra
+        `CACHE_BYPASS_CONVERSATION_UNSUPPORTED`.
         """
         hash_query = getattr(self._cache, "_hash_query", None)
-        attempts: list[dict] = []
-        if knowledge_fingerprint:
-            attempts.append(
-                {
-                    "knowledge_fingerprint": knowledge_fingerprint,
-                    "conversation_id": conversation_id,
-                }
-            )
-        attempts.append({"conversation_id": conversation_id})
-        attempts.append({})
-        for kwargs in attempts:
-            if hash_query is None:
-                break
+        if hash_query is not None:
             try:
-                return hash_query(organization_id, query, model, role, **kwargs)
+                return hash_query(
+                    organization_id,
+                    query,
+                    model,
+                    role,
+                    knowledge_fingerprint=knowledge_fingerprint,
+                    conversation_id=conversation_id,
+                )
             except TypeError:
-                continue
+                if conversation_id:
+                    _observe_cache_bypass(
+                        self._cache,
+                        reason="conversation_unsupported",
+                        organization_id=organization_id,
+                    )
+                    return None
+                try:
+                    # Proveedor viejo sin scope de conversación: sin conversación
+                    # no hay aislamiento que preservar, se conserva su firma.
+                    return hash_query(organization_id, query, model, role)
+                except TypeError:
+                    pass
         material = (
             f"{organization_id}:{conversation_id}:{query}:{model}:{role}:"
             f"{knowledge_fingerprint}"

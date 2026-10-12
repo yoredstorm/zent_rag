@@ -117,8 +117,20 @@ class TestResponseCacheKey:
         assert cache.calls[0]["conversation_id"] == "conv-a"
         assert cache.calls[1]["conversation_id"] == "conv-b"
 
-    def test_proveedor_legacy_degrada_a_la_firma_previa(self) -> None:
+    def test_proveedor_legacy_no_cachea_con_conversacion(self) -> None:
+        """Fail-closed: sin soporte de conversación NO hay clave degradada.
+
+        Degradar la clave serviría la respuesta de otra conversación del mismo
+        tenant. Se desactiva la caché para el request (None) y se registra el
+        bypass.
+        """
+        from src.infrastructure.observability.metrics import zent_cache_bypass_total
+
         orch = SimpleNamespace(_cache=_LegacyCache())
+        counter = zent_cache_bypass_total.labels(
+            reason="conversation_unsupported", provider="_LegacyCache"
+        )
+        before = counter._value.get()
         key = RAGOrchestrator._response_cache_key(
             orch,
             organization_id="org",
@@ -127,9 +139,62 @@ class TestResponseCacheKey:
             role="admin",
             conversation_id="conv-a",
         )
-        # Sin soporte del proveedor se conserva la firma previa (tests/embeds):
-        # determinista y sin romper a los consumidores viejos.
+        assert key is None
+        assert counter._value.get() == before + 1
+
+    def test_proveedor_legacy_sin_conversacion_conserva_clave(self) -> None:
+        """Sin conversación no hay aislamiento que preservar: la firma sigue."""
+        orch = SimpleNamespace(_cache=_LegacyCache())
+        key = RAGOrchestrator._response_cache_key(
+            orch,
+            organization_id="org",
+            query="q",
+            model="m",
+            role="admin",
+        )
         assert key == _LegacyCache._hash_query("org", "q", "m", "admin")
+
+    def test_cross_conversation_hits_cero_por_cien(self) -> None:
+        """Adversarial ×100: A escribe, B lee — jamás comparten clave.
+
+        Con proveedor nuevo las claves son distintas; con proveedor legacy la
+        clave es None (caché desactivada), nunca la de la otra conversación.
+        """
+        org = uuid4().hex
+        hits = 0
+        for _ in range(100):
+            conv_a, conv_b = uuid4().hex, uuid4().hex
+            recording = SimpleNamespace(_cache=_RecordingCache())
+            key_a = RAGOrchestrator._response_cache_key(
+                recording,
+                organization_id=org,
+                query="misma pregunta",
+                model="m",
+                role="admin",
+                conversation_id=conv_a,
+            )
+            key_b = RAGOrchestrator._response_cache_key(
+                recording,
+                organization_id=org,
+                query="misma pregunta",
+                model="m",
+                role="admin",
+                conversation_id=conv_b,
+            )
+            if key_a == key_b:
+                hits += 1
+            legacy = SimpleNamespace(_cache=_LegacyCache())
+            legacy_key = RAGOrchestrator._response_cache_key(
+                legacy,
+                organization_id=org,
+                query="misma pregunta",
+                model="m",
+                role="admin",
+                conversation_id=conv_a,
+            )
+            if legacy_key is not None:
+                hits += 1
+        assert hits == 0
 
     def test_fingerprint_y_conversacion_conviven(self) -> None:
         cache = _RecordingCache()

@@ -381,11 +381,39 @@ zent_run_state_violations_total = Counter(
 # Finalization Policy: adopción por etapas (shadow). Una divergencia = una
 # discrepancia real entre la ruta vigente y la resolución de autoridad; el gate
 # de adopción exige cero antes de convertir la señal en autoridad.
-# stage: closure | termination_trigger | draft_gate.
+# stage: closure | termination_trigger | draft_gate | answer_gate.
+# DEPRECADO en favor de `zent_finalization_divergence_total`: se mantiene como
+# alias durante la transición (labels action = policy_action).
 zent_finalization_shadow_divergence_total = Counter(
     "zent_finalization_shadow_divergence_total",
-    "Divergencias entre la ruta vigente y la resolución de autoridad (shadow)",
+    "Divergencias entre la ruta vigente y la resolución de autoridad (shadow, alias)",
     labelnames=["stage", "action", "reason_code"],
+)
+
+# Divergencia de autoridad del cierre: qué resolvió la política vs qué ejecutó
+# la ruta vigente. El gate de adopción por etapa exige cero divergencias no
+# justificadas antes de convertir una señal en autoridad.
+zent_finalization_divergence_total = Counter(
+    "zent_finalization_divergence_total",
+    "Divergencias entre la acción de la ruta vigente y la resolución de autoridad",
+    labelnames=["stage", "policy_action", "legacy_action", "reason_code"],
+)
+
+# Run Guards: veredicto de la tabla de transiciones vs la razón que la ruta
+# vigente registró para el mismo evento (shadow). Una divergencia = deriva
+# entre la tabla y el loop.
+zent_guard_divergence_total = Counter(
+    "zent_guard_divergence_total",
+    "Divergencias entre la tabla de guards y la decisión de la ruta vigente",
+    labelnames=["event", "guard_reason", "legacy_reason"],
+)
+
+# Cache de respuestas desactivada por política fail-closed (no por fallo):
+# p. ej. el proveedor de caché no soporta aislamiento por conversación.
+zent_cache_bypass_total = Counter(
+    "zent_cache_bypass_total",
+    "Requests sin caché de respuestas por política fail-closed",
+    labelnames=["reason", "provider"],
 )
 
 # Circuit breaker de modelos con scope: global (provider caído) o tenant
