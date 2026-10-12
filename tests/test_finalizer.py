@@ -10,6 +10,7 @@ from src.runtime.finalizer import (
     build_finalize_prompt,
     citations_from_evidence,
     finalize_answer_delivery,
+    generate_finalize_response,
     limits_note,
     plan_finalize_budget,
 )
@@ -101,6 +102,39 @@ def _selection():
         content="contenido",
     )
     return EvidenceSelection(items=[item], matches=[match])
+
+
+class TestGeneracionDelCierre:
+    async def test_genera_con_el_presupuesto_aprobado(self) -> None:
+        seen: dict = {}
+
+        async def generate(**kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(content="ok")
+
+        resp = await generate_finalize_response(
+            generate,
+            prompt="p",
+            model="m",
+            max_tokens=512,
+            temperature=0.3,
+        )
+        assert resp.content == "ok"
+        assert seen == {
+            "prompt": "p",
+            "model": "m",
+            "max_tokens": 512,
+            "temperature": 0.3,
+        }
+
+    async def test_fallo_del_provider_devuelve_none(self) -> None:
+        async def generate(**kwargs):
+            raise RuntimeError("proveedor caído")
+
+        resp = await generate_finalize_response(
+            generate, prompt="p", model="m", max_tokens=512, temperature=0.3
+        )
+        assert resp is None
 
 
 class TestPromptDelCierre:

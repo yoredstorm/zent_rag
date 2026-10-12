@@ -10,6 +10,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from src.infrastructure.observability.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class FinalizeBudget:
@@ -224,6 +228,31 @@ def budget_answer(history: list[str], reason: str) -> str:
         "Esto es lo que quedó reunido de las fuentes (sin agregar nada):\n\n"
         f"{evidencia}"
     )
+
+
+async def generate_finalize_response(
+    generate,
+    *,
+    prompt: str,
+    model: str,
+    max_tokens: int,
+    temperature: float,
+) -> object | None:
+    """Llama al generador elegido por el caller; None si falla.
+
+    El caller decide streaming vs generate (on_delta y consulta ejecutable);
+    acá solo se ejecuta con el presupuesto ya aprobado y nunca se rompe el run.
+    """
+    try:
+        return await generate(
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Finalize answer failed", error=str(exc)[:200])
+        return None
 
 
 def ensure_answer(result: object, history: list[str], *, reason: str) -> None:

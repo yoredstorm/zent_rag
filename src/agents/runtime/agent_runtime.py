@@ -59,6 +59,7 @@ from src.runtime.finalizer import (
     citations_from_evidence,
     ensure_answer,
     finalize_answer_delivery,
+    generate_finalize_response,
     limits_note,
 )
 from src.runtime.run_state import (
@@ -1701,30 +1702,27 @@ class AgentRuntime:
             state.budget.ledger = ledger
             if not state.budget.note_expensive_call("finalize_answer"):
                 return False
-        try:
-            if request.on_delta is not None and not requires_deterministic_decision(
-                request.message
-            ):
-                resp = await self._stream_response(
-                    prompt=prompt,
-                    model=config["model"],
-                    # Presupuesto propio de la respuesta final: 512 tokens cortaba
-                    # respuestas técnicas largas y el envoltorio JSON quedaba abierto.
-                    max_tokens=finalize_max_tokens,
-                    temperature=min(float(config["temperature"]), 0.3),
-                    on_delta=request.on_delta,
+        if request.on_delta is not None and not requires_deterministic_decision(
+            request.message
+        ):
+
+            async def _generate(**kwargs):
+                return await self._stream_response(
+                    **kwargs, on_delta=request.on_delta
                 )
-            else:
-                resp = await self._llm.generate(
-                    prompt=prompt,
-                    model=config["model"],
-                    # Presupuesto propio de la respuesta final: 512 tokens cortaba
-                    # respuestas técnicas largas y el envoltorio JSON quedaba abierto.
-                    max_tokens=finalize_max_tokens,
-                    temperature=min(float(config["temperature"]), 0.3),
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Finalize answer failed", error=str(exc)[:200])
+
+        else:
+            _generate = self._llm.generate
+        # Presupuesto propio de la respuesta final: 512 tokens cortaba respuestas
+        # técnicas largas y el envoltorio JSON quedaba abierto.
+        resp = await generate_finalize_response(
+            _generate,
+            prompt=prompt,
+            model=config["model"],
+            max_tokens=finalize_max_tokens,
+            temperature=min(float(config["temperature"]), 0.3),
+        )
+        if resp is None:
             return False
         from src.runtime.run_accounting import record_llm_call
 
