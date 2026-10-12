@@ -9,9 +9,13 @@ from src.runtime.finalizer import (
     FinalizeBudget,
     build_finalize_prompt,
     citations_from_evidence,
+    clean_answer,
+    direct_answer,
     finalize_answer_delivery,
     generate_finalize_response,
     limits_note,
+    parse_action,
+    parse_finalize_answer,
     plan_finalize_budget,
 )
 
@@ -102,6 +106,36 @@ def _selection():
         content="contenido",
     )
     return EvidenceSelection(items=[item], matches=[match])
+
+
+class TestParseoDelCierre:
+    """Parseo de la respuesta final del modelo (movido desde agent_runtime)."""
+
+    def test_parse_action_json_directo(self) -> None:
+        assert parse_action('{"answer": "hola"}') == {"answer": "hola"}
+
+    def test_parse_action_prosa_sin_json(self) -> None:
+        assert parse_action("respuesta en prosa") == {
+            "answer": "respuesta en prosa"
+        }
+
+    def test_parse_action_envuelto_truncado_se_rescata(self) -> None:
+        # Corte por tokens: JSON abierto; el texto se rescata sin mostrar JSON.
+        assert parse_action('{"answer": "hola mundo') == {"answer": "hola mundo"}
+
+    def test_direct_answer_rechaza_tool_y_vacio(self) -> None:
+        assert direct_answer({"tool": "echo"}) is None
+        assert direct_answer({"answer": "  "}) is None
+        assert direct_answer({"answer": '{"tool": "x"}'}) is None
+
+    def test_parse_finalize_answer_completo(self) -> None:
+        assert parse_finalize_answer('{"answer": "Listo [Doc: 1]"}') == (
+            "Listo [Doc: 1]"
+        )
+        assert parse_finalize_answer("") is None
+
+    def test_clean_answer_pasa_texto_simple(self) -> None:
+        assert clean_answer("texto simple") == "texto simple"
 
 
 class TestGeneracionDelCierre:

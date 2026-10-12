@@ -31,7 +31,6 @@ from src.infrastructure.observability.metrics import (
     rag_agent_retrieval_unavailable_total,
     zent_agent_jev_action_total,
     zent_agent_jev_retrieval_total,
-    zent_response_section_labels_stripped_total,
 )
 from src.intelligence.loop_guard import LoopGuard
 from src.runtime.answer_gate import (
@@ -57,10 +56,14 @@ from src.runtime.finalizer import (
     budget_answer,
     build_finalize_prompt,
     citations_from_evidence,
+    clean_answer,
+    direct_answer,
     ensure_answer,
     finalize_answer_delivery,
     generate_finalize_response,
     limits_note,
+    parse_action,
+    parse_finalize_answer,
 )
 from src.runtime.run_state import (
     AgentRunState,
@@ -509,96 +512,7 @@ class AgentRunResult:
     _runtime: dict = field(default_factory=dict, repr=False, compare=False)
 
 
-_ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
-_JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f"}
 
-
-def _decode_json_string(body: str) -> str:
-    """Deshace los escapes del campo `answer`. Corta en la comilla sin escapar."""
-    out: list[str] = []
-    index = 0
-    while index < len(body):
-        char = body[index]
-        if char == "\\" and index + 1 < len(body):
-            nxt = body[index + 1]
-            if nxt == "u":
-                hexpart = body[index + 2 : index + 6]
-                if len(hexpart) == 4 and all(c in "0123456789abcdefABCDEF" for c in hexpart):
-                    out.append(chr(int(hexpart, 16)))
-                    index += 6
-                    continue
-                break  # escape cortado por truncamiento
-            out.append(_JSON_ESCAPES.get(nxt, nxt))
-            index += 2
-            continue
-        if char == "\\":
-            break  # barra final: escape cortado por truncamiento
-        if char == '"':
-            break
-        out.append(char)
-        index += 1
-    return "".join(out).strip()
-
-
-def _salvage_answer(content: str) -> str | None:
-    """Rescata el texto de `"answer": "…"` cuando el JSON no se pudo parsear.
-
-    Pasa cuando la generación se corta por tokens: el envoltorio queda abierto y,
-    sin esto, el usuario vería el JSON crudo. Determinista: sólo deshace los
-    escapes del propio campo, no inventa texto.
-    """
-    match = _ANSWER_FIELD_RE.search(content or "")
-    if match is None:
-        return None
-    salvaged = _decode_json_string(content[match.end() :])
-    return salvaged or None
-
-
-def _parse_action(content: str) -> dict:
-    """Extrae el primer objeto JSON válido de la respuesta del LLM.
-
-    Fallback: respuesta sin JSON se trata como answer directa; un envoltorio
-    truncado se rescata campo por campo para no mostrar JSON al usuario.
-    """
-    text = (content or "").strip()
-    match = _JSON_OBJECT_RE.search(text)
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-    if _looks_like_envelope(text):
-        salvaged = _salvage_answer(text)
-        if salvaged:
-            logger.warning("answer JSON malformed or truncated; salvaged text field")
-            return {"answer": salvaged}
-    return {"answer": text}
-
-
-def _looks_like_envelope(text: str) -> bool:
-    """El texto es (o intenta ser) el envoltorio `{"answer": "…"}`, no prosa."""
-    body = text.lstrip("`").lstrip()
-    return body.startswith("{") and _ANSWER_FIELD_RE.search(text) is not None
-
-
-def _tool_shaped(text: str) -> bool:
-    """JSON de tool que no parseó (p.ej. ``top_k: III``). No es respuesta."""
-    body = (text or "").strip()
-    return body.startswith("{") and '"tool"' in body
-
-
-def _direct_answer(action: dict) -> str | None:
-    """Texto final para el usuario. None si es una llamada a tool."""
-    if action.get("tool"):
-        return None
-    answer = action.get("answer")
-    if not isinstance(answer, str) or not answer.strip():
-        return None
-    if _tool_shaped(answer):
-        return None
-    return _clean_answer(answer)
 
 
 class _AnswerStreamExtractor:
@@ -761,33 +675,6 @@ def _presentation_from_question(question: str, *, detail: str = ""):
         return build_presentation_policy(question=question, detail=detail or DETAIL_NORMAL)
     except Exception:  # noqa: BLE001 — la presentación nunca rompe el run
         return None
-
-
-def _clean_answer(answer: str, *, titles: Any = ()) -> str:
-    """Higiene del texto final: rótulos internos, escapes y bloque de fuentes.
-
-    El prompt de composición no nombra las secciones ni pide una lista de
-    fuentes; esto cubre prompts viejos, modelos que igual los copian y respuestas
-    en caché. Se registra porque no es silencioso: cambia el texto que ve el usuario.
-    """
-    try:
-        from src.intelligence.response.contract import normalize_answer_text
-
-        hygiene = normalize_answer_text(answer, titles=titles)
-        if hygiene.changed:
-            if hygiene.labels_stripped:
-                zent_response_section_labels_stripped_total.inc(hygiene.labels_stripped)
-            logger.warning(
-                "answer text normalized",
-                labels_stripped=hygiene.labels_stripped,
-                markdown_escapes_fixed=hygiene.markdown_escapes_fixed,
-                sources_normalized=hygiene.sources_normalized,
-                answer_chars=len(answer),
-            )
-        return hygiene.text
-    except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe por esto
-        logger.warning("answer cleanup failed", error=str(exc)[:150])
-        return answer
 
 
 def _effective_tools(agent: Agent) -> list[str]:
@@ -1743,8 +1630,7 @@ class AgentRuntime:
             model=str(config.get("model") or ""),
             latency_ms=float(getattr(resp, "latency_ms", 0.0) or 0.0),
         )
-        action = _parse_action(resp.content)
-        answer = _direct_answer(action)
+        answer = parse_finalize_answer(resp.content)
         if answer is None:
             return False
         polish = _runtime_scratch(result).get("polish")
@@ -3058,7 +2944,7 @@ class AgentRuntime:
                     if getattr(item, "title", None)
                 )
             )
-            limpio = _clean_answer(text, titles=titulos)
+            limpio = clean_answer(text, titles=titulos)
             try:
                 from src.intelligence.response.entities import (
                     strip_contradicting_disclaimer,
@@ -4829,7 +4715,7 @@ class AgentRuntime:
                 )
                 config["model"] = used_model
             llm_latency = (time.perf_counter() - llm_start) * 1000
-            action = _parse_action(resp.content)
+            action = parse_action(resp.content)
             from src.runtime.run_accounting import record_llm_call
 
             await record_llm_call(
@@ -4867,7 +4753,7 @@ class AgentRuntime:
                 result.answer = _apply_derived_guard(result.answer)
                 return
 
-            direct = _direct_answer(action)
+            direct = direct_answer(action)
             if (
                 turn_direct
                 and direct is None

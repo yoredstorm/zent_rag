@@ -13,12 +13,12 @@ from src.agents.runtime.agent_runtime import (
     AgentRunRequest,
     AgentRuntime,
     _filter_tools_by_sources,
-    _parse_action,
 )
 from src.agents.tools.base import Tool, ToolContext, ToolResult
 from src.agents.tools.registry import register_tool
 from src.core.domain.entities import Agent, LLMResponse
 from src.core.ports import LLMProvider
+from src.runtime.finalizer import parse_action as _parse_action
 
 
 @pytest.fixture(autouse=True)

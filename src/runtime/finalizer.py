@@ -6,6 +6,7 @@
 # presupuesto (RunBudgetLedger). La contabilidad sigue en `run_accounting`.
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +14,147 @@ from typing import Any
 from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# --- Parseo de la respuesta final del modelo (JSON o prosa) -------------------
+_ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_JSON_ESCAPES = {
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    "b": "\b",
+    "f": "\f",
+}
+
+
+def decode_json_string(body: str) -> str:
+    """Deshace los escapes del campo `answer`. Corta en la comilla sin escapar."""
+    out: list[str] = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "\\" and index + 1 < len(body):
+            nxt = body[index + 1]
+            if nxt == "u":
+                hexpart = body[index + 2 : index + 6]
+                if len(hexpart) == 4 and all(
+                    c in "0123456789abcdefABCDEF" for c in hexpart
+                ):
+                    out.append(chr(int(hexpart, 16)))
+                    index += 6
+                    continue
+                break  # escape cortado por truncamiento
+            out.append(_JSON_ESCAPES.get(nxt, nxt))
+            index += 2
+            continue
+        if char == "\\":
+            break  # barra final: escape cortado por truncamiento
+        if char == '"':
+            break
+        out.append(char)
+        index += 1
+    return "".join(out).strip()
+
+
+def salvage_answer(content: str) -> str | None:
+    """Rescata el texto de `"answer": "…"` cuando el JSON no se pudo parsear.
+
+    Pasa cuando la generación se corta por tokens: el envoltorio queda abierto y,
+    sin esto, el usuario vería el JSON crudo. Determinista: sólo deshace los
+    escapes del propio campo, no inventa texto.
+    """
+    match = _ANSWER_FIELD_RE.search(content or "")
+    if match is None:
+        return None
+    salvaged = decode_json_string(content[match.end() :])
+    return salvaged or None
+
+
+def looks_like_envelope(text: str) -> bool:
+    """El texto es (o intenta ser) el envoltorio `{"answer": "…"}`, no prosa."""
+    body = text.lstrip("`").lstrip()
+    return body.startswith("{") and _ANSWER_FIELD_RE.search(text) is not None
+
+
+def tool_shaped(text: str) -> bool:
+    """JSON de tool que no parseó (p.ej. ``top_k: III``). No es respuesta."""
+    body = (text or "").strip()
+    return body.startswith("{") and '"tool"' in body
+
+
+def parse_action(content: str) -> dict:
+    """Extrae el primer objeto JSON válido de la respuesta del LLM.
+
+    Fallback: respuesta sin JSON se trata como answer directa; un envoltorio
+    truncado se rescata campo por campo para no mostrar JSON al usuario.
+    """
+    text = (content or "").strip()
+    match = _JSON_OBJECT_RE.search(text)
+    if match:
+        try:
+            parsed = json.loads(match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    if looks_like_envelope(text):
+        salvaged = salvage_answer(text)
+        if salvaged:
+            logger.warning("answer JSON malformed or truncated; salvaged text field")
+            return {"answer": salvaged}
+    return {"answer": text}
+
+
+def clean_answer(answer: str, *, titles: Any = ()) -> str:
+    """Higiene del texto final: rótulos internos, escapes y bloque de fuentes.
+
+    El prompt de composición no nombra las secciones ni pide una lista de
+    fuentes; esto cubre prompts viejos, modelos que igual los copian y respuestas
+    en caché. Se registra porque no es silencioso: cambia el texto que ve el usuario.
+    """
+    try:
+        from src.infrastructure.observability.metrics import (
+            zent_response_section_labels_stripped_total,
+        )
+        from src.intelligence.response.contract import normalize_answer_text
+
+        hygiene = normalize_answer_text(answer, titles=titles)
+        if hygiene.changed:
+            if hygiene.labels_stripped:
+                zent_response_section_labels_stripped_total.inc(
+                    hygiene.labels_stripped
+                )
+            logger.warning(
+                "answer text normalized",
+                labels_stripped=hygiene.labels_stripped,
+                markdown_escapes_fixed=hygiene.markdown_escapes_fixed,
+                sources_normalized=hygiene.sources_normalized,
+                answer_chars=len(answer),
+            )
+        return hygiene.text
+    except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe por esto
+        logger.warning("answer cleanup failed", error=str(exc)[:150])
+        return answer
+
+
+def direct_answer(action: dict) -> str | None:
+    """Texto final para el usuario. None si es una llamada a tool."""
+    if action.get("tool"):
+        return None
+    answer = action.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        return None
+    if tool_shaped(answer):
+        return None
+    return clean_answer(answer)
+
+
+def parse_finalize_answer(content: str) -> str | None:
+    """Respuesta final del cierre: None = no hay texto entregable."""
+    return direct_answer(parse_action(content))
 
 
 @dataclass(frozen=True)
