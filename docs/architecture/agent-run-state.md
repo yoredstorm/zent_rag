@@ -141,6 +141,12 @@ Reglas de diseño vigentes:
   (o en `EvidenceState` para el camino RAG); no redefine completitud.
 - `TraceState.phase_history` se auto-registra; una transición inválida se registra
   como nota y no mueve la fase (jamás rompe el run).
+- Claves engine-native del motor adaptativo (`plan`, `quality`, `evidence`,
+  `attempts`): el estado es la fuente (`plan.adaptive_plan`,
+  `evidence.engine_evidence/engine_quality/retrieval_attempts`, mismas
+  referencias que la proyección); `adaptive` es proyección legacy y el writer
+  único es `_adaptive_write` + `_adaptive_publish`
+  (`tests/test_adaptive_projection.py`).
 
 ### 2.3 Lifecycle
 

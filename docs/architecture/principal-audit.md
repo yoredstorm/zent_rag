@@ -100,6 +100,13 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   envelope/package/query_executable/response_plan/long_context). `plan`,
   `quality`, `evidence`, `attempts` son engine-native del hook y quedan en
   `adaptive`; moverlas requiere modelarlas en el estado primero.
+- **Estado (engine-native modeladas)**: hecho — las cuatro claves viven en el
+  estado (`plan.adaptive_plan`, `evidence.engine_evidence/engine_quality/
+  retrieval_attempts`, mismas referencias) y `adaptive` pasó a proyección: el
+  writer único es `_adaptive_write` (estado + proyección) y
+  `_adaptive_publish` regenera las cuatro claves. Test de writers = 1:
+  `tests/test_adaptive_projection.py` (escaneo del repo; solo la proyección
+  escribe directo).
 
 ### 5. JEV sin criterio de skip por datos (P2)
 - **Evidence**: `jev_value` ahora mide `redundant_rate` en el flow; turn intent

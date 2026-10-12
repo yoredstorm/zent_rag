@@ -258,6 +258,9 @@ class PlanningState:
     strategy: Any | None = None
     response_plan: dict | None = None
     authorized_scope: Any | None = None
+    #: Plan del motor adaptativo (AdaptivePlan). Writer único: `_adaptive_write`
+    #: (orquestador); `adaptive["plan"]` es proyección legacy del mismo objeto.
+    adaptive_plan: Any | None = None
 
 
 @dataclass(kw_only=True)
@@ -295,6 +298,13 @@ class EvidenceView:
     #: Ronda de retrieval con la que se calculó `sufficiency` (guardia de reuso).
     sufficiency_rounds_left: int | None = None
     retrieval_failed: bool = False
+    #: Evidencia y calidad del motor adaptativo (objetos del hook; misma
+    #: referencia que `adaptive["evidence"]` / `adaptive["quality"]`).
+    engine_evidence: Any | None = None
+    engine_quality: Any | None = None
+    #: Intentos de retrieval del motor adaptativo (misma lista que
+    #: `adaptive["attempts"]`; se muta in place).
+    retrieval_attempts: list = field(default_factory=list)
     selected: frozenset[str] = frozenset()
     used: frozenset[str] = frozenset()
     cited: frozenset[str] = frozenset()

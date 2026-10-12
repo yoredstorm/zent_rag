@@ -375,6 +375,35 @@ def _evidence_complete(adaptive: dict | None, state: Any | None = None) -> bool:
     return False
 
 
+#: Claves engine-native del hook adaptativo: writer único (`_adaptive_write`).
+ADAPTIVE_ENGINE_KEYS: frozenset[str] = frozenset(
+    {"plan", "quality", "evidence", "attempts"}
+)
+
+
+def _adaptive_write(
+    adaptive: dict, state: AgentRunState | None, key: str, value: Any
+) -> None:
+    """Writer único de las claves engine-native de `adaptive` (Fase C).
+
+    Publica en el estado canónico (fuente) y en la proyección legacy. Los
+    readers viejos siguen viendo el mismo valor (misma referencia); el estado
+    deja de ser espejo parcial para estas claves. Un `key` fuera del set solo
+    escribe la proyección (no hay campo canónico que lo reciba).
+    """
+    adaptive[key] = value
+    if state is None or key not in ADAPTIVE_ENGINE_KEYS:
+        return
+    if key == "plan":
+        state.plan.adaptive_plan = value
+    elif key == "evidence":
+        state.evidence.engine_evidence = value
+    elif key == "quality":
+        state.evidence.engine_quality = value
+    elif key == "attempts":
+        state.evidence.retrieval_attempts = value
+
+
 def _adaptive_publish(state: AgentRunState, adaptive: dict) -> None:
     """Proyecta el estado canónico al dict legacy `adaptive` (Fase B).
 
@@ -400,6 +429,12 @@ def _adaptive_publish(state: AgentRunState, adaptive: dict) -> None:
     _set("grounded_reasoning", state.decisions.grounded_public)
     _set("decision_envelope", state.decisions.envelope_public)
     _set("response_plan", state.plan.response_plan)
+    # Engine-native (Fase C): el estado es la fuente; mismas referencias.
+    _set("plan", state.plan.adaptive_plan)
+    _set("evidence", state.evidence.engine_evidence)
+    _set("quality", state.evidence.engine_quality)
+    if state.evidence.retrieval_attempts:
+        adaptive["attempts"] = state.evidence.retrieval_attempts
     adaptive["query_executable"] = bool(state.decisions.requires_deterministic)
     adaptive["long_context_applied"] = bool(state.evidence.long_context_applied)
 
@@ -2663,6 +2698,9 @@ class RAGOrchestrator:
                 query_fingerprint=query_fingerprint(query),
             )
         )
+        # Engine-native: la lista de intentos vive en el estado desde el inicio
+        # (misma referencia que `adaptive["attempts"]`; se muta in place).
+        _adaptive_write(adaptive, run_state, "attempts", adaptive["attempts"])
 
         try:
             # -----------------------------------------------------------------
@@ -2954,14 +2992,19 @@ class RAGOrchestrator:
                             tenant_top_k = int(org_adaptive["top_k_max"])
                         except (TypeError, ValueError):
                             tenant_top_k = None
-                    adaptive["plan"] = await _adaptive.plan(
-                        organization_id=organization_id,
-                        request_id=query_id,
-                        query=query,
-                        sql_enabled=self._sql_expert is not None,
-                        routing=routing_decision,
-                        tenant_top_k_max=tenant_top_k,
-                        conversation_present=bool(history),
+                    _adaptive_write(
+                        adaptive,
+                        run_state,
+                        "plan",
+                        await _adaptive.plan(
+                            organization_id=organization_id,
+                            request_id=query_id,
+                            query=query,
+                            sql_enabled=self._sql_expert is not None,
+                            routing=routing_decision,
+                            tenant_top_k_max=tenant_top_k,
+                            conversation_present=bool(history),
+                        ),
                     )
                     rewritten = await _adaptive.maybe_rewrite_query(adaptive["plan"], query)
                     if rewritten:
@@ -3547,12 +3590,22 @@ class RAGOrchestrator:
                         finally:
                             flow_timings["evidence_ms"] += (time.perf_counter() - _ev_t0) * 1000
 
-                    adaptive["evidence"] = _adaptive.build_evidence(  # type: ignore[union-attr]
-                        query=_retrieve_opts["text"],
-                        retrieval=retrieval_context,
-                        sql_result=sql_result,
+                    _adaptive_write(
+                        adaptive,
+                        run_state,
+                        "evidence",
+                        _adaptive.build_evidence(  # type: ignore[union-attr]
+                            query=_retrieve_opts["text"],
+                            retrieval=retrieval_context,
+                            sql_result=sql_result,
+                        ),
                     )
-                    adaptive["quality"] = await _eval_evidence(adaptive["evidence"])
+                    _adaptive_write(
+                        adaptive,
+                        run_state,
+                        "quality",
+                        await _eval_evidence(adaptive["evidence"]),
+                    )
                     adaptive["attempts"].append(
                         RetrievalAttempt(
                             attempt=1,
@@ -3577,7 +3630,7 @@ class RAGOrchestrator:
                             break
                         attempt_n += 1
                         _plan = nxt
-                        adaptive["plan"] = nxt
+                        _adaptive_write(adaptive, run_state, "plan", nxt)
                         _retrieve_opts["strategy"] = nxt.engine_strategy
                         _retrieve_opts["lexical_weight"] = nxt.lexical_weight
                         _retrieve_opts["skip_vector"] = False
@@ -3607,12 +3660,22 @@ class RAGOrchestrator:
                                     "Adaptive SQL retry failed",
                                     error=str(_retry_sql)[:200],
                                 )
-                        adaptive["evidence"] = _adaptive.build_evidence(  # type: ignore[union-attr]
-                            query=_retrieve_opts["text"],
-                            retrieval=retrieval_context,
-                            sql_result=sql_result,
+                        _adaptive_write(
+                            adaptive,
+                            run_state,
+                            "evidence",
+                            _adaptive.build_evidence(  # type: ignore[union-attr]
+                                query=_retrieve_opts["text"],
+                                retrieval=retrieval_context,
+                                sql_result=sql_result,
+                            ),
                         )
-                        adaptive["quality"] = await _eval_evidence(adaptive["evidence"])
+                        _adaptive_write(
+                            adaptive,
+                            run_state,
+                            "quality",
+                            await _eval_evidence(adaptive["evidence"]),
+                        )
                         adaptive["attempts"].append(
                             RetrievalAttempt(
                                 attempt=attempt_n,
@@ -3661,7 +3724,7 @@ class RAGOrchestrator:
                             return False
                         attempt_n += 1
                         _plan = nxt
-                        adaptive["plan"] = nxt
+                        _adaptive_write(adaptive, run_state, "plan", nxt)
                         _retrieve_opts["strategy"] = nxt.engine_strategy
                         _retrieve_opts["lexical_weight"] = nxt.lexical_weight
                         _retrieve_opts["skip_vector"] = False
@@ -3687,12 +3750,22 @@ class RAGOrchestrator:
                                     "Extra round SQL failed",
                                     error=str(_extra_sql)[:200],
                                 )
-                        adaptive["evidence"] = _adaptive.build_evidence(  # type: ignore[union-attr]
-                            query=_retrieve_opts["text"],
-                            retrieval=retrieval_context,
-                            sql_result=sql_result,
+                        _adaptive_write(
+                            adaptive,
+                            run_state,
+                            "evidence",
+                            _adaptive.build_evidence(  # type: ignore[union-attr]
+                                query=_retrieve_opts["text"],
+                                retrieval=retrieval_context,
+                                sql_result=sql_result,
+                            ),
                         )
-                        adaptive["quality"] = await _eval_evidence(adaptive["evidence"])
+                        _adaptive_write(
+                            adaptive,
+                            run_state,
+                            "quality",
+                            await _eval_evidence(adaptive["evidence"]),
+                        )
                         adaptive["attempts"].append(
                             RetrievalAttempt(
                                 attempt=attempt_n,
@@ -3932,10 +4005,15 @@ class RAGOrchestrator:
                                 self._adaptive_hook is not None
                                 and adaptive.get("evidence") is not None
                             ):
-                                adaptive["evidence"] = self._adaptive_hook.build_evidence(  # type: ignore[union-attr]
-                                    query=_retrieve_opts["text"],
-                                    retrieval=retrieval_context,
-                                    sql_result=sql_result,
+                                _adaptive_write(
+                                    adaptive,
+                                    run_state,
+                                    "evidence",
+                                    self._adaptive_hook.build_evidence(  # type: ignore[union-attr]
+                                        query=_retrieve_opts["text"],
+                                        retrieval=retrieval_context,
+                                        sql_result=sql_result,
+                                    ),
                                 )
             except Exception as _lc_err:  # noqa: BLE001 — el motor nunca rompe la respuesta
                 logger.warning(
