@@ -3,12 +3,17 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 
 from src.core.domain.reasoning import QueryMode
+from src.infrastructure.observability.logging_config import get_logger
 from src.intelligence.reasoning.classifier import deterministic_shape
 from src.runtime.deterministic_authority import requires_deterministic_decision
+
+logger = get_logger(__name__)
 
 NARRATIVE_FAST_PATH = "NARRATIVE_FAST_PATH"
 ROUTE_DETERMINISTIC = "DETERMINISTIC_FAST_PATH"
@@ -585,3 +590,133 @@ def mark_partial_grounded(steps: list[dict], gap_items: object) -> bool:
         recorded["grounding"] = "PARTIAL"
         return True
     return False
+
+
+@dataclass(frozen=True)
+class NarrativeGeneration:
+    """Resultado de la generación narrativa (una llamada, con cierre)."""
+
+    response: object | None = None
+    provider_fallback: bool = False
+    primary_latency_ms: float = 0.0
+    fallback_latency_ms: float = 0.0
+    model_ms: float = 0.0
+    #: "timeout_no_fallback" cuando no hubo respuesta y la ruta normal debe seguir.
+    skip_reason: str = ""
+
+
+async def generate_narrative_answer(
+    llm: object,
+    *,
+    user_prompt: str,
+    system_prompt: str,
+    model: str,
+    max_tokens: int,
+    timeout_seconds: float = 0.0,
+    fallback_model: str = "",
+    continuation_allowed: bool = False,
+    continuation_max_tokens: int = 4096,
+) -> NarrativeGeneration:
+    """Una generación narrativa: timeout con fallback y UNA continuación.
+
+    Código decide: el modelo no elige tier ni reintenta por su cuenta. Un
+    timeout sin fallback disponible no genera: devuelve `skip_reason` para que
+    la ruta normal siga. La continuación sólo cierra respuestas cortadas por
+    tope de tokens y suma sus tokens a la respuesta (el caller los contabiliza).
+    """
+    started = time.perf_counter()
+    provider_fallback = False
+    primary_latency_ms = 0.0
+    fallback_latency_ms = 0.0
+    if timeout_seconds > 0:
+        try:
+            response = await asyncio.wait_for(
+                llm.generate(  # type: ignore[attr-defined]
+                    prompt=user_prompt,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                    system_prompt=system_prompt,
+                ),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            primary_latency_ms = (time.perf_counter() - started) * 1000
+            fallback = str(fallback_model or "").strip()
+            if not fallback or fallback == model:
+                logger.warning(
+                    "narrative generation timeout without fallback",
+                    timeout_seconds=timeout_seconds,
+                    model=model,
+                )
+                return NarrativeGeneration(
+                    primary_latency_ms=primary_latency_ms,
+                    model_ms=(time.perf_counter() - started) * 1000,
+                    skip_reason="timeout_no_fallback",
+                )
+            provider_fallback = True
+            fallback_started = time.perf_counter()
+            response = await llm.generate(  # type: ignore[attr-defined]
+                prompt=user_prompt,
+                model=fallback,
+                max_tokens=max_tokens,
+                temperature=0.2,
+                system_prompt=system_prompt,
+            )
+            fallback_latency_ms = (time.perf_counter() - fallback_started) * 1000
+    else:
+        response = await llm.generate(  # type: ignore[attr-defined]
+            prompt=user_prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=0.2,
+            system_prompt=system_prompt,
+        )
+    model_ms = (time.perf_counter() - started) * 1000
+    if (
+        str(getattr(response, "finish_reason", "") or "").lower() == "length"
+        and str(getattr(response, "content", "") or "").strip()
+        and continuation_allowed
+    ):
+        continuation_started = time.perf_counter()
+        try:
+            tail = str(getattr(response, "content", ""))[-1200:]
+            continuation = await llm.generate(  # type: ignore[attr-defined]
+                prompt=(
+                    f"{user_prompt}\n\nTu respuesta anterior quedó "
+                    "incompleta. Continuala EXACTAMENTE desde donde "
+                    "quedó, sin repetir lo ya escrito ni volver a "
+                    f"encabezar:\n...{tail}"
+                ),
+                model=model,
+                max_tokens=continuation_max_tokens,
+                temperature=0.2,
+                system_prompt=system_prompt,
+            )
+            extra = str(getattr(continuation, "content", "") or "").strip()
+            if extra:
+                response = replace(
+                    response,
+                    content=str(response.content).rstrip() + "\n" + extra,
+                    prompt_tokens=int(getattr(response, "prompt_tokens", 0) or 0)
+                    + int(getattr(continuation, "prompt_tokens", 0) or 0),
+                    completion_tokens=int(
+                        getattr(response, "completion_tokens", 0) or 0
+                    )
+                    + int(getattr(continuation, "completion_tokens", 0) or 0),
+                    total_tokens=int(getattr(response, "total_tokens", 0) or 0)
+                    + int(getattr(continuation, "total_tokens", 0) or 0),
+                    finish_reason=str(
+                        getattr(continuation, "finish_reason", "") or "stop"
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 — se conserva lo generado
+            logger.warning("narrative continuation failed", error=str(exc)[:150])
+        model_ms += (time.perf_counter() - continuation_started) * 1000
+    return NarrativeGeneration(
+        response=response,
+        provider_fallback=provider_fallback,
+        primary_latency_ms=primary_latency_ms,
+        fallback_latency_ms=fallback_latency_ms,
+        model_ms=model_ms,
+    )

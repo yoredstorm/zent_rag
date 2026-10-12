@@ -13,7 +13,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -4384,6 +4384,7 @@ class AgentRuntime:
                 entity_coverage_rows,
                 fast_path_overrun,
                 final_aspect_statuses,
+                generate_narrative_answer,
                 grounded_answer_policy,
                 jev_needed,
                 mark_partial_grounded,
@@ -4834,99 +4835,26 @@ class AgentRuntime:
                 getattr(settings, "RUNTIME_NARRATIVE_GENERATION_TIMEOUT_SECONDS", 0)
                 or 0
             )
-            provider_fallback = False
-            primary_latency_ms = 0.0
-            fallback_latency_ms = 0.0
-            model_started = time.perf_counter()
-            if narrative_timeout > 0:
-                try:
-                    response = await asyncio.wait_for(
-                        self._llm.generate(
-                            prompt=user_prompt,
-                            model=model_policy.model,
-                            max_tokens=call_plan.allowed_completion_tokens,
-                            temperature=0.2,
-                            system_prompt=system_prompt,
-                        ),
-                        timeout=narrative_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    primary_latency_ms = (time.perf_counter() - model_started) * 1000
-                    fallback_model = str(
-                        getattr(settings, "GATEWAY_FALLBACK_MODEL", "") or ""
-                    ).strip()
-                    if not fallback_model or fallback_model == model_policy.model:
-                        logger.warning(
-                            "narrative generation timeout without fallback",
-                            timeout_seconds=narrative_timeout,
-                            model=model_policy.model,
-                        )
-                        return _skip("timeout_no_fallback")
-                    provider_fallback = True
-                    fallback_started = time.perf_counter()
-                    response = await self._llm.generate(
-                        prompt=user_prompt,
-                        model=fallback_model,
-                        max_tokens=call_plan.allowed_completion_tokens,
-                        temperature=0.2,
-                        system_prompt=system_prompt,
-                    )
-                    fallback_latency_ms = (
-                        time.perf_counter() - fallback_started
-                    ) * 1000
-            else:
-                response = await self._llm.generate(
-                    prompt=user_prompt,
-                    model=model_policy.model,
-                    max_tokens=call_plan.allowed_completion_tokens,
-                    temperature=0.2,
-                    system_prompt=system_prompt,
-                )
-            model_ms = (time.perf_counter() - model_started) * 1000
-            # Respuesta cortada por tope de tokens: UNA continuación la cierra
-            # (sin repetir lo ya escrito). Los tokens se suman al run.
-            if (
-                str(getattr(response, "finish_reason", "") or "").lower() == "length"
-                and str(getattr(response, "content", "") or "").strip()
-                and ledger.remaining_tokens > 400
-            ):
-                continuation_started = time.perf_counter()
-                try:
-                    tail = str(response.content)[-1200:]
-                    continuation = await self._llm.generate(
-                        prompt=(
-                            f"{user_prompt}\n\nTu respuesta anterior quedó "
-                            "incompleta. Continuala EXACTAMENTE desde donde "
-                            "quedó, sin repetir lo ya escrito ni volver a "
-                            f"encabezar:\n...{tail}"
-                        ),
-                        model=model_policy.model,
-                        max_tokens=min(_answer_max_tokens(), 4096),
-                        temperature=0.2,
-                        system_prompt=system_prompt,
-                    )
-                    extra = str(getattr(continuation, "content", "") or "").strip()
-                    if extra:
-                        response = replace(
-                            response,
-                            content=str(response.content).rstrip() + "\n" + extra,
-                            prompt_tokens=int(getattr(response, "prompt_tokens", 0) or 0)
-                            + int(getattr(continuation, "prompt_tokens", 0) or 0),
-                            completion_tokens=int(
-                                getattr(response, "completion_tokens", 0) or 0
-                            )
-                            + int(getattr(continuation, "completion_tokens", 0) or 0),
-                            total_tokens=int(getattr(response, "total_tokens", 0) or 0)
-                            + int(getattr(continuation, "total_tokens", 0) or 0),
-                            finish_reason=str(
-                                getattr(continuation, "finish_reason", "") or "stop"
-                            ),
-                        )
-                except Exception as exc:  # noqa: BLE001 — se conserva lo generado
-                    logger.warning(
-                        "narrative continuation failed", error=str(exc)[:150]
-                    )
-                model_ms += (time.perf_counter() - continuation_started) * 1000
+            generation = await generate_narrative_answer(
+                self._llm,
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                model=model_policy.model,
+                max_tokens=call_plan.allowed_completion_tokens,
+                timeout_seconds=narrative_timeout,
+                fallback_model=str(
+                    getattr(settings, "GATEWAY_FALLBACK_MODEL", "") or ""
+                ).strip(),
+                continuation_allowed=ledger.remaining_tokens > 400,
+                continuation_max_tokens=min(_answer_max_tokens(), 4096),
+            )
+            if generation.skip_reason:
+                return _skip(generation.skip_reason)
+            response = generation.response
+            provider_fallback = generation.provider_fallback
+            primary_latency_ms = generation.primary_latency_ms
+            fallback_latency_ms = generation.fallback_latency_ms
+            model_ms = generation.model_ms
             await record_llm_call(
                 result,
                 ledger,

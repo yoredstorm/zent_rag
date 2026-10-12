@@ -453,3 +453,133 @@ class TestProyeccionesDeTraza:
             }
         ]
         assert narrative_frame_rows(None) == []
+
+
+class _FakeNarrativeLLM:
+    def __init__(self, responses: list[object]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict] = []
+
+    async def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.responses.pop(0)
+
+
+class _SlowThenFastLLM(_FakeNarrativeLLM):
+    async def generate(self, **kwargs):
+        import asyncio
+
+        self.calls.append(kwargs)
+        if kwargs.get("model") == "primary-model":
+            await asyncio.sleep(0.2)
+        return self.responses.pop(0)
+
+
+def _llm_response(content: str, *, finish: str = "stop", tokens: int = 10):
+    from src.core.domain.entities import LLMResponse
+
+    return LLMResponse(
+        content=content,
+        model="m",
+        prompt_tokens=tokens,
+        completion_tokens=tokens,
+        total_tokens=tokens * 2,
+        finish_reason=finish,
+    )
+
+
+class TestGeneracionExtraida:
+    """`generate_narrative_answer`: timeout, fallback y continuación."""
+
+    async def test_generacion_normal_una_llamada(self) -> None:
+        from src.runtime.narrative_fast_path import generate_narrative_answer
+
+        llm = _FakeNarrativeLLM([_llm_response("respuesta")])
+        result = await generate_narrative_answer(
+            llm,
+            user_prompt="p",
+            system_prompt="s",
+            model="primary-model",
+            max_tokens=512,
+        )
+        assert result.skip_reason == ""
+        assert result.response.content == "respuesta"
+        assert result.provider_fallback is False
+        assert [call["model"] for call in llm.calls] == ["primary-model"]
+        assert llm.calls[0]["max_tokens"] == 512
+
+    async def test_timeout_usa_el_fallback(self) -> None:
+        from src.runtime.narrative_fast_path import generate_narrative_answer
+
+        llm = _SlowThenFastLLM([_llm_response("desde fallback")])
+        result = await generate_narrative_answer(
+            llm,
+            user_prompt="p",
+            system_prompt="s",
+            model="primary-model",
+            max_tokens=512,
+            timeout_seconds=0.01,
+            fallback_model="fallback-model",
+        )
+        assert result.provider_fallback is True
+        assert result.response.content == "desde fallback"
+        assert [call["model"] for call in llm.calls] == [
+            "primary-model",
+            "fallback-model",
+        ]
+        assert result.primary_latency_ms > 0
+
+    async def test_timeout_sin_fallback_no_genera(self) -> None:
+        from src.runtime.narrative_fast_path import generate_narrative_answer
+
+        llm = _SlowThenFastLLM([_llm_response("no debería usarse")])
+        result = await generate_narrative_answer(
+            llm,
+            user_prompt="p",
+            system_prompt="s",
+            model="primary-model",
+            max_tokens=512,
+            timeout_seconds=0.01,
+            fallback_model="",
+        )
+        assert result.skip_reason == "timeout_no_fallback"
+        assert result.response is None
+        assert [call["model"] for call in llm.calls] == ["primary-model"]
+
+    async def test_continuacion_suma_tokens_y_cierra(self) -> None:
+        from src.runtime.narrative_fast_path import generate_narrative_answer
+
+        llm = _FakeNarrativeLLM(
+            [
+                _llm_response("parte 1", finish="length", tokens=10),
+                _llm_response("parte 2", tokens=5),
+            ]
+        )
+        result = await generate_narrative_answer(
+            llm,
+            user_prompt="p",
+            system_prompt="s",
+            model="primary-model",
+            max_tokens=512,
+            continuation_allowed=True,
+            continuation_max_tokens=256,
+        )
+        assert result.response.content == "parte 1\nparte 2"
+        assert result.response.total_tokens == 30
+        assert result.response.finish_reason == "stop"
+        assert llm.calls[1]["max_tokens"] == 256
+
+    async def test_continuacion_no_permitida_no_llama(self) -> None:
+        from src.runtime.narrative_fast_path import generate_narrative_answer
+
+        llm = _FakeNarrativeLLM([_llm_response("cortada", finish="length")])
+        result = await generate_narrative_answer(
+            llm,
+            user_prompt="p",
+            system_prompt="s",
+            model="primary-model",
+            max_tokens=512,
+            continuation_allowed=False,
+        )
+        assert len(llm.calls) == 1
+        assert result.response.content == "cortada"
