@@ -16,6 +16,7 @@ from src.runtime.run_accounting import (
     account_rag_result,
     record_judge_call,
     record_llm_call,
+    record_provider_attempt,
 )
 from src.runtime.run_budget import RunBudgetLedger
 
@@ -206,3 +207,28 @@ class TestAgentSingleWriter:
         assert ledger.llm_calls == result.llm_calls == 1
         assert [s for s in result.steps if s["type"] == "llm"]
         assert [s for s in result.steps if s["type"] == "jev_usage"]
+
+    def test_intento_fallido_de_provider_no_se_esconde(self) -> None:
+        result = AgentRunResult(
+            run_id=uuid4(),
+            agent_id=uuid4(),
+            organization_id=None,
+            status="completed",
+            answer="ok",
+        )
+        before_tokens = result.total_tokens
+        before_cost = result.cost
+        line = record_provider_attempt(
+            result,
+            provider="novita",
+            model="novita/model-a",
+            status="429",
+            latency_ms=120.5,
+            retry=True,
+        )
+        assert line["type"] == "provider_attempt"
+        assert line["status"] == "429"
+        assert line["retry"] is True
+        # El intento fallido se registra sin tocar tokens ni costo.
+        assert result.total_tokens == before_tokens
+        assert result.cost == before_cost

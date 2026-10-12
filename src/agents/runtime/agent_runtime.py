@@ -4441,6 +4441,23 @@ class AgentRuntime:
             primary_latency_ms = generation.primary_latency_ms
             fallback_latency_ms = generation.fallback_latency_ms
             model_ms = generation.model_ms
+            if provider_fallback:
+                from src.runtime.run_accounting import record_provider_attempt
+
+                primary_model = str(model_policy.model or "")
+                record_provider_attempt(
+                    result,
+                    provider=(
+                        primary_model.split("/", 1)[0] if "/" in primary_model else ""
+                    ),
+                    model=primary_model,
+                    status="timeout",
+                    latency_ms=primary_latency_ms,
+                    detail=(
+                        "primario agotó el tiempo; la generación siguió con el "
+                        "fallback"
+                    ),
+                )
             await record_llm_call(
                 result,
                 ledger,

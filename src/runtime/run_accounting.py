@@ -320,6 +320,37 @@ def record_charge(result: Any, ledger: Any, *, cost_usd: float, purpose: str) ->
     return step
 
 
+def record_provider_attempt(
+    result: Any,
+    *,
+    provider: str,
+    model: str,
+    status: str,
+    latency_ms: float = 0.0,
+    retry: bool = False,
+    detail: str = "",
+) -> dict[str, Any]:
+    """Intento de provider (fallido o fallback) como línea explícita.
+
+    No suma tokens ni costo (el intento fallido no siempre factura): deja el
+    primer intento reconstruible — el failover no se esconde.
+    """
+    step: dict[str, Any] = {
+        "type": "provider_attempt",
+        "provider": str(provider or ""),
+        "model": str(model or ""),
+        "status": str(status or ""),
+        "latency_ms": round(float(latency_ms or 0.0), 2),
+        "retry": bool(retry),
+        "cost_status": "unknown",
+        "cost_reason": "attempt_not_priced",
+    }
+    if detail:
+        step["detail"] = str(detail)[:200]
+    result.steps.append(step)
+    return step
+
+
 def record_jev_observation(
     result: Any,
     *,
