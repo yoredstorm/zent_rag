@@ -463,6 +463,66 @@ def coverage_gap_prompt_note(final_coverage: object) -> str:
     )
 
 
+def concept_coverage_rows(final_coverage: object) -> list[dict]:
+    """Filas de cobertura por concepto para la traza del fast path."""
+    return [
+        {
+            "id": item.concept_id,
+            "label": item.label,
+            "status": item.status,
+            "epistemic": item.epistemic,
+        }
+        for item in final_coverage or ()
+    ]
+
+
+def narrative_frame_rows(concept_plan: object) -> list[dict]:
+    """Filas de frames (entidad/aspecto/relación) para la traza."""
+    return [
+        {
+            "id": frame.frame_id,
+            "entity": frame.entity,
+            "aspect": frame.aspect,
+            "relation": frame.relation,
+        }
+        for frame in getattr(concept_plan, "frames", ()) or ()
+    ]
+
+
+def entity_coverage_rows(final_coverage: object) -> list[dict]:
+    """Filas de cobertura por entidad (rol QUALIFIER cuando hay aspecto)."""
+    from src.runtime.narrative_coverage import QUALIFIER
+
+    return [
+        {
+            "label": item.entity,
+            "status": item.entity_status,
+            "role": QUALIFIER if item.aspect else item.role,
+        }
+        for item in final_coverage or ()
+        if item.entity
+    ]
+
+
+def aspect_coverage_rows(final_coverage: object) -> list[dict]:
+    """Filas de cobertura por aspecto (status del aspecto o del concepto)."""
+    return [
+        {
+            "label": item.aspect or item.label,
+            "status": item.aspect_status or item.status,
+            "role": item.role,
+        }
+        for item in final_coverage or ()
+    ]
+
+
+def final_aspect_statuses(final_coverage: object) -> list[str]:
+    """Estados finales por aspecto para la traza (sin inventar)."""
+    return [
+        item.aspect_status or item.status for item in final_coverage or ()
+    ]
+
+
 def fast_path_overrun(overrun: dict, *, max_tokens: int) -> tuple[bool, str]:
     """¿El cierre narrativo se pasó del ledger? (tolerancia explícita).
 

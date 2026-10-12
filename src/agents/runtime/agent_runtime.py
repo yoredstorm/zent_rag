@@ -4376,15 +4376,20 @@ class AgentRuntime:
                 return False
             from src.runtime.narrative_fast_path import (
                 NARRATIVE_FAST_PATH,
+                aspect_coverage_rows,
                 completeness_for_finish,
                 compress_narrative_context,
+                concept_coverage_rows,
                 coverage_gap_prompt_note,
+                entity_coverage_rows,
                 fast_path_overrun,
+                final_aspect_statuses,
                 grounded_answer_policy,
                 jev_needed,
                 mark_partial_grounded,
                 narrative_context_blocks,
                 narrative_frame_lines,
+                narrative_frame_rows,
                 narrative_model_for,
                 narrative_route,
                 patch_narrative_verification,
@@ -4468,7 +4473,6 @@ class AgentRuntime:
                 MISSING,
                 NO_TARGET_QUERY,
                 PARTIAL_MATERIAL,
-                QUALIFIER,
                 apply_coverage_limitation,
                 coverage_needs_jev,
                 decide_coverage_round,
@@ -5017,46 +5021,12 @@ class AgentRuntime:
                     "verification_latency_ms": round(verification_ms, 2),
                     "fast_path_latency_ms": round((time.perf_counter() - fast_started) * 1000, 2),
                     "narrative_concepts": len(concept_plan.concepts),
-                    "concept_coverage": [
-                        {
-                            "id": item.concept_id,
-                            "label": item.label,
-                            "status": item.status,
-                            "epistemic": item.epistemic,
-                        }
-                        for item in final_coverage
-                    ],
-                    "narrative_frames": [
-                        {
-                            "id": frame.frame_id,
-                            "entity": frame.entity,
-                            "aspect": frame.aspect,
-                            "relation": frame.relation,
-                        }
-                        for frame in concept_plan.frames
-                    ],
-                    "entity_coverage": [
-                        {
-                            "label": item.entity,
-                            "status": item.entity_status,
-                            "role": QUALIFIER if item.aspect else item.role,
-                        }
-                        for item in final_coverage
-                        if item.entity
-                    ],
-                    "aspect_coverage": [
-                        {
-                            "label": item.aspect or item.label,
-                            "status": item.aspect_status or item.status,
-                            "role": item.role,
-                        }
-                        for item in final_coverage
-                    ],
+                    "concept_coverage": concept_coverage_rows(final_coverage),
+                    "narrative_frames": narrative_frame_rows(concept_plan),
+                    "entity_coverage": entity_coverage_rows(final_coverage),
+                    "aspect_coverage": aspect_coverage_rows(final_coverage),
                     "coverage_decision_reason": decision.stop_reason,
-                    "final_aspect_coverage": [
-                        item.aspect_status or item.status
-                        for item in final_coverage
-                    ],
+                    "final_aspect_coverage": final_aspect_statuses(final_coverage),
                     "coverage_rounds": coverage_rounds,
                     "coverage_queries": coverage_queries,
                     "coverage_evidence_added": coverage_added,

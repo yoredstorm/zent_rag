@@ -13,15 +13,20 @@ from src.runtime.narrative_fast_path import (
     ROUTE_SCENARIO,
     TIER_FAST_NARRATIVE,
     TIER_STANDARD,
+    aspect_coverage_rows,
     completeness_for_finish,
     compress_narrative_context,
+    concept_coverage_rows,
     coverage_gap_prompt_note,
+    entity_coverage_rows,
     fast_path_overrun,
+    final_aspect_statuses,
     grounded_answer_policy,
     jev_needed,
     mark_partial_grounded,
     narrative_context_blocks,
     narrative_frame_lines,
+    narrative_frame_rows,
     narrative_model_for,
     narrative_route,
     output_token_budget,
@@ -373,3 +378,78 @@ class TestCierreExtraido:
 
     def test_mark_partial_grounded_sin_step_devuelve_false(self) -> None:
         assert mark_partial_grounded([{"type": "final"}], ["x"]) is False
+
+
+class TestProyeccionesDeTraza:
+    """Filas del payload de traza (puras; el closure ya no las inline)."""
+
+    def _coverage(self):
+        return [
+            SimpleNamespace(
+                concept_id="c1",
+                label="cierre de fechas",
+                status="COVERED",
+                epistemic="DOCUMENTED",
+                entity="Record 2",
+                entity_status="COVERED",
+                aspect="cierre de fechas",
+                aspect_status="COVERED",
+                role="PRIMARY",
+            ),
+            SimpleNamespace(
+                concept_id="c2",
+                label="vigencia",
+                status="MISSING",
+                epistemic="UNKNOWN",
+                entity="",
+                entity_status="",
+                aspect="",
+                aspect_status="",
+                role="SECONDARY",
+            ),
+        ]
+
+    def test_concept_rows(self) -> None:
+        rows = concept_coverage_rows(self._coverage())
+        assert rows[0] == {
+            "id": "c1",
+            "label": "cierre de fechas",
+            "status": "COVERED",
+            "epistemic": "DOCUMENTED",
+        }
+        assert len(rows) == 2
+
+    def test_entity_rows_solo_con_entidad(self) -> None:
+        rows = entity_coverage_rows(self._coverage())
+        assert len(rows) == 1
+        assert rows[0]["label"] == "Record 2"
+        from src.runtime.narrative_coverage import QUALIFIER
+
+        assert rows[0]["role"] == QUALIFIER
+
+    def test_aspect_rows_y_status_final(self) -> None:
+        rows = aspect_coverage_rows(self._coverage())
+        assert rows[1]["label"] == "vigencia"
+        assert rows[1]["status"] == "MISSING"
+        assert final_aspect_statuses(self._coverage()) == ["COVERED", "MISSING"]
+
+    def test_frame_rows(self) -> None:
+        plan = SimpleNamespace(
+            frames=[
+                SimpleNamespace(
+                    frame_id="f1",
+                    entity="Record 2",
+                    aspect="cierre",
+                    relation="has_aspect",
+                )
+            ]
+        )
+        assert narrative_frame_rows(plan) == [
+            {
+                "id": "f1",
+                "entity": "Record 2",
+                "aspect": "cierre",
+                "relation": "has_aspect",
+            }
+        ]
+        assert narrative_frame_rows(None) == []
