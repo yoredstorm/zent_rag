@@ -4385,6 +4385,7 @@ class AgentRuntime:
                 mark_partial_grounded,
                 narrative_route,
                 patch_narrative_verification,
+                run_initial_narrative_search,
             )
             from src.runtime.run_budget import (
                 RunBudgetLedger,
@@ -4415,40 +4416,25 @@ class AgentRuntime:
                 org_config=ctx.org_config or {},
                 tenant_id=ctx.tenant_id,
             )
+            search_outcome = await run_initial_narrative_search(
+                plan=_search_plan,
+                search=lambda query, top_k: execute_tool_guarded(
+                    tool,
+                    ctx,
+                    {"query": query, "top_k": top_k},
+                    self._rate_limiter,
+                ),
+                registry=registry,
+                result=result,
+                ledger=ledger,
+            )
+            if search_outcome.skip_reason:
+                return _skip(search_outcome.skip_reason)
             semantic_plan = _search_plan.semantic_plan
-            search_query = _search_plan.search_query
             selection_question = _search_plan.selection_question
             narrative_top_k = _search_plan.top_k
             selection_max_items = _search_plan.max_items
-            search_started = time.perf_counter()
-            tool_result = await execute_tool_guarded(
-                tool,
-                ctx,
-                {"query": search_query, "top_k": narrative_top_k},
-                self._rate_limiter,
-            )
-            search_ms = (time.perf_counter() - search_started) * 1000
-            retrieval_ms += search_ms
-            before_evidence = registry.size
-            if not getattr(tool_result, "error", None):
-                registry.add_from_meta(
-                    tool_result.meta if isinstance(tool_result.meta, dict) else None
-                )
-            record_search_call(
-                result,
-                query=search_query,
-                latency_ms=search_ms,
-                evidence_added=max(0, registry.size - before_evidence),
-                result_count=evidence_count(
-                    tool_result.meta if isinstance(tool_result.meta, dict) else None
-                ),
-                error=str(getattr(tool_result, "error", "") or ""),
-            )
-            if getattr(tool_result, "error", None):
-                return _skip("search_error")
-            if registry.is_empty():
-                return _skip("no_evidence")
-            ledger.charge_tool_step()
+            retrieval_ms += search_outcome.retrieval_ms
             from src.runtime.evidence import assess_sufficiency, select_evidence
             from src.runtime.narrative_coverage import (
                 COVERAGE_COMPLETE,

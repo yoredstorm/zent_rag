@@ -455,6 +455,98 @@ class TestProyeccionesDeTraza:
         assert narrative_frame_rows(None) == []
 
 
+class TestSearchInicialExtraido:
+    """`run_initial_narrative_search`: registry + accounting + cargo del paso."""
+
+    def _registry(self):
+        class _Registry:
+            def __init__(self) -> None:
+                self.size = 0
+                self.added = None
+
+            def add_from_meta(self, meta):
+                self.added = meta
+                if isinstance(meta, dict):
+                    self.size = len(meta.get("evidence") or [])
+
+            def is_empty(self):
+                return self.size == 0
+
+        return _Registry()
+
+    def _ledger(self):
+        class _Ledger:
+            def __init__(self) -> None:
+                self.charged = 0
+
+            def charge_tool_step(self):
+                self.charged += 1
+
+        return _Ledger()
+
+    async def test_happy_path_registra_y_cobra_paso(self) -> None:
+        from src.runtime.narrative_fast_path import run_initial_narrative_search
+
+        plan = SimpleNamespace(search_query="q", top_k=8)
+        calls: list[tuple] = []
+
+        async def search(query, top_k):
+            calls.append((query, top_k))
+            return SimpleNamespace(
+                meta={"evidence": [{"ref": "a"}, {"ref": "b"}]}, error=None
+            )
+
+        registry, ledger = self._registry(), self._ledger()
+        result = SimpleNamespace(steps=[])
+        outcome = await run_initial_narrative_search(
+            plan=plan, search=search, registry=registry, result=result, ledger=ledger
+        )
+        assert outcome.skip_reason == ""
+        assert calls == [("q", 8)]
+        assert ledger.charged == 1
+        step = [s for s in result.steps if s["type"] == "tool_call"][0]
+        assert step["evidence_added"] == 2
+        assert outcome.retrieval_ms >= 0
+
+    async def test_error_no_cobra_y_skippea(self) -> None:
+        from src.runtime.narrative_fast_path import run_initial_narrative_search
+
+        async def search(query, top_k):
+            return SimpleNamespace(meta={}, error="boom")
+
+        registry, ledger = self._registry(), self._ledger()
+        result = SimpleNamespace(steps=[])
+        outcome = await run_initial_narrative_search(
+            plan=SimpleNamespace(search_query="q", top_k=5),
+            search=search,
+            registry=registry,
+            result=result,
+            ledger=ledger,
+        )
+        assert outcome.skip_reason == "search_error"
+        assert ledger.charged == 0
+        step = [s for s in result.steps if s["type"] == "tool_call"][0]
+        assert step["error"] == "boom"
+
+    async def test_sin_evidencia_skippea(self) -> None:
+        from src.runtime.narrative_fast_path import run_initial_narrative_search
+
+        async def search(query, top_k):
+            return SimpleNamespace(meta={}, error=None)
+
+        registry, ledger = self._registry(), self._ledger()
+        result = SimpleNamespace(steps=[])
+        outcome = await run_initial_narrative_search(
+            plan=SimpleNamespace(search_query="q", top_k=5),
+            search=search,
+            registry=registry,
+            result=result,
+            ledger=ledger,
+        )
+        assert outcome.skip_reason == "no_evidence"
+        assert ledger.charged == 0
+
+
 class TestFastPathStepExtraido:
     """`FastPathStep.to_step`: payload único del cierre narrativo."""
 

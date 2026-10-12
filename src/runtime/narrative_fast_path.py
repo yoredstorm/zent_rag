@@ -593,6 +593,66 @@ def mark_partial_grounded(steps: list[dict], gap_items: object) -> bool:
 
 
 @dataclass(frozen=True)
+class NarrativeSearchOutcome:
+    """Resultado del search inicial del fast path narrativo.
+
+    `skip_reason` vacío = hay evidencia usable y el ledger ya cobró el paso de
+    tool; no vacío = la ruta normal del loop debe seguir.
+    """
+
+    plan: object
+    retrieval_ms: float = 0.0
+    skip_reason: str = ""
+
+
+async def run_initial_narrative_search(
+    *,
+    plan: object,
+    search,
+    registry: object,
+    result: object,
+    ledger: object,
+) -> NarrativeSearchOutcome:
+    """Ejecuta la búsqueda inicial: registry + accounting + cargo del paso.
+
+    `search(query, top_k)` es el buscador ya guardado (tool permitida, rate
+    limiter y tenant los decide el caller). No resuelve el plan ni decide la
+    ruta: eso viene resuelto.
+    """
+    from src.runtime.run_accounting import evidence_count, record_search_call
+
+    search_query = str(getattr(plan, "search_query", "") or "")
+    search_started = time.perf_counter()
+    tool_result = await search(search_query, getattr(plan, "top_k", None))
+    search_ms = (time.perf_counter() - search_started) * 1000
+    before_evidence = int(getattr(registry, "size", 0) or 0)
+    if not getattr(tool_result, "error", None):
+        registry.add_from_meta(
+            tool_result.meta if isinstance(tool_result.meta, dict) else None
+        )
+    record_search_call(
+        result,
+        query=search_query,
+        latency_ms=search_ms,
+        evidence_added=max(0, int(getattr(registry, "size", 0) or 0) - before_evidence),
+        result_count=evidence_count(
+            tool_result.meta if isinstance(tool_result.meta, dict) else None
+        ),
+        error=str(getattr(tool_result, "error", "") or ""),
+    )
+    if getattr(tool_result, "error", None):
+        return NarrativeSearchOutcome(
+            plan=plan, retrieval_ms=search_ms, skip_reason="search_error"
+        )
+    if registry.is_empty():
+        return NarrativeSearchOutcome(
+            plan=plan, retrieval_ms=search_ms, skip_reason="no_evidence"
+        )
+    ledger.charge_tool_step()
+    return NarrativeSearchOutcome(plan=plan, retrieval_ms=search_ms)
+
+
+@dataclass(frozen=True)
 class FastPathStep:
     """Payload del step `narrative_fast_path` (observabilidad del cierre).
 
