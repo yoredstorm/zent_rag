@@ -1788,37 +1788,22 @@ class AgentRuntime:
             ),
             response_shape=_response_shape_block(run_plan),
         )
-        from src.runtime.run_budget import (
-            EXHAUSTED,
-            RunBudgetLedger,
-            estimate_prompt_tokens,
-            lookup_token_rates,
-            plan_response_budget,
-        )
+        from src.runtime.finalizer import plan_finalize_budget
 
-        configured_max_tokens = int(
-            getattr(get_settings(), "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0
-        )
-        per_call = configured_max_tokens or _answer_max_tokens()
-        model_limit = _answer_max_tokens()
-        ledger = RunBudgetLedger.from_config(result, config)
-        rates = await lookup_token_rates(str(config.get("model") or ""))
-        call_plan = plan_response_budget(
-            ledger,
-            estimated_prompt_tokens=estimate_prompt_tokens(prompt),
-            desired_completion_tokens=min(per_call, model_limit),
-            model_output_limit=model_limit,
+        finalize_budget = await plan_finalize_budget(
+            result,
+            config,
+            prompt=prompt,
             question=request.message,
-            followup_llm=False,
-            input_cost_per_1k=None if rates is None else rates[0],
-            output_cost_per_1k=None if rates is None else rates[1],
+            configured_max_tokens=int(
+                getattr(get_settings(), "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0
+            ),
+            answer_max_tokens=_answer_max_tokens(),
         )
-        if (
-            call_plan.budget_pressure == EXHAUSTED
-            or call_plan.allowed_completion_tokens <= 0
-        ):
+        if finalize_budget is None:
             return False
-        finalize_max_tokens = call_plan.allowed_completion_tokens
+        ledger = finalize_budget.ledger
+        finalize_max_tokens = finalize_budget.max_tokens
         state = getattr(result, "run_state", None)
         if state is not None:
             state.budget.ledger = ledger
