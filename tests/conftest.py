@@ -134,6 +134,10 @@ def _disable_narrative_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
     # prueba con su propio test, no activado por config de la máquina).
     monkeypatch.setattr(settings, "RUNTIME_JEV_SKIP_PHASES", "", raising=False)
     monkeypatch.setattr(settings, "RUNTIME_JEV_SKIP_SHADOW", "off", raising=False)
+    # El gate de respuesta también es hermético: su default real es "off"
+    # (`answer_gate_mode`), y un .env local con `on` cambiaría el flujo de los
+    # tests que no lo están ejercitando. Los tests del gate lo prenden solos.
+    monkeypatch.setattr(settings, "RUNTIME_ANSWER_GATE", "off", raising=False)
 
 
 @pytest_asyncio.fixture(autouse=True)
