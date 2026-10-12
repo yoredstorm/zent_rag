@@ -53,6 +53,11 @@ from src.runtime.deterministic_authority import (
     requires_deterministic_decision,
     undetermined_authoritative_answer,
 )
+from src.runtime.finalizer import (
+    citations_from_evidence,
+    finalize_answer_delivery,
+    limits_note,
+)
 from src.runtime.run_state import (
     AgentRunState,
     RunIdentity,
@@ -488,31 +493,6 @@ def _evidence_meta_for_flow(meta: Any, *, excerpt_chars: int = 400) -> Any:
             limpio["excerpt"] = " ".join(content.split())[:excerpt_chars]
         liviano.append(limpio)
     return {**meta, "evidence": liviano}
-
-
-def _citations_from_evidence(draft: str, selection: Any) -> list[dict[str, Any]]:
-    """Citas del run ligadas a `evidence_id` (la numeración no rompe provenance)."""
-    if selection is None or getattr(selection, "empty", True):
-        return []
-    cited: set[str] = set()
-    for match in re.finditer(r"\[(?:Doc|doc)\s*[: ]?\s*(\d{1,3})\b", draft or ""):
-        index = int(match.group(1)) - 1
-        if 0 <= index < len(selection.items):
-            cited.add(selection.items[index].evidence_id)
-    from src.runtime.evidence import citations_payload
-
-    return citations_payload(selection, cited_ids=cited)
-
-
-def _limits_note(missing_labels: list[str]) -> str:
-    """Nota determinista de límites: qué no está en las fuentes consultadas."""
-    if not missing_labels:
-        return ""
-    listed = ", ".join(str(label) for label in missing_labels[:4])
-    return (
-        "\n\nNota: las fuentes consultadas no cubren "
-        f"{listed}. Lo anterior responde sólo lo que sí está respaldado."
-    )
 
 
 def compose_agent_instructions(agent: Agent) -> str:
@@ -1910,16 +1890,9 @@ class AgentRuntime:
                 # Cierre del run: no hay otra pasada de generación, así que lo
                 # que se entrega declara explícitamente lo que quedó sin cubrir.
                 limits = list((run_sufficiency or {}).get("missing_entities") or ())
-                answer = f"{answer}{_limits_note(list(limits))}"
-        result.answer = answer
-        result.citations = _citations_from_evidence(answer, run_selection)
-        result.status = "completed"
-        result.steps.append(
-            {
-                "type": "final",
-                "answer": answer[:500],
-                "detail": f"finalized after {reason}",
-            }
+                answer = f"{answer}{limits_note(list(limits))}"
+        finalize_answer_delivery(
+            result, answer=answer, reason=reason, selection=run_selection
         )
         return True
 
@@ -3024,7 +2997,7 @@ class AgentRuntime:
             narrative_bound = True
             external_claims_removed = len(binding.external_claims)
             result.answer = binding.answer
-            result.citations = _citations_from_evidence(binding.answer, selection)
+            result.citations = citations_from_evidence(binding.answer, selection)
             cited = set(binding.cited_evidence_ids)
             used = set(binding.used_evidence_ids)
             _publish_evidence(cited, used)
@@ -5116,11 +5089,11 @@ class AgentRuntime:
                     # autoridad determinista antes de exponer el texto.
                     direct = _apply_derived_guard(direct)
                     limits = list((sufficiency.missing_entities if sufficiency else ()) or ())
-                    result.answer = f"{direct}{_limits_note(limits)}"
+                    result.answer = f"{direct}{limits_note(limits)}"
                     if not query_executable:
                         _bind_narrative_answer()
                     else:
-                        result.citations = _citations_from_evidence(result.answer, selection)
+                        result.citations = citations_from_evidence(result.answer, selection)
                         _publish_evidence(
                             {
                                 citation["evidence_id"]
@@ -5168,7 +5141,7 @@ class AgentRuntime:
                 if not query_executable:
                     _bind_narrative_answer()
                 else:
-                    result.citations = _citations_from_evidence(direct, selection)
+                    result.citations = citations_from_evidence(direct, selection)
                     _publish_evidence(
                         {
                             citation["evidence_id"]

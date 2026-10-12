@@ -6,7 +6,9 @@
 # presupuesto (RunBudgetLedger). La contabilidad sigue en `run_accounting`.
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -63,4 +65,49 @@ async def plan_finalize_budget(
         ledger=ledger,
         max_tokens=int(call_plan.allowed_completion_tokens),
         call_plan=call_plan,
+    )
+
+
+def citations_from_evidence(draft: str, selection: Any) -> list[dict[str, Any]]:
+    """Citas del run ligadas a `evidence_id` (la numeración no rompe provenance)."""
+    if selection is None or getattr(selection, "empty", True):
+        return []
+    cited: set[str] = set()
+    for match in re.finditer(r"\[(?:Doc|doc)\s*[: ]?\s*(\d{1,3})\b", draft or ""):
+        index = int(match.group(1)) - 1
+        if 0 <= index < len(selection.items):
+            cited.add(selection.items[index].evidence_id)
+    from src.runtime.evidence import citations_payload
+
+    return citations_payload(selection, cited_ids=cited)
+
+
+def limits_note(missing_labels: list[str]) -> str:
+    """Nota determinista de límites: qué no está en las fuentes consultadas."""
+    if not missing_labels:
+        return ""
+    listed = ", ".join(str(label) for label in missing_labels[:4])
+    return (
+        "\n\nNota: las fuentes consultadas no cubren "
+        f"{listed}. Lo anterior responde sólo lo que sí está respaldado."
+    )
+
+
+def finalize_answer_delivery(
+    result: object,
+    *,
+    answer: str,
+    reason: str,
+    selection: object = None,
+) -> None:
+    """Entrega final: answer + citas + status + step `final` (una sola fuente)."""
+    result.answer = answer
+    result.citations = citations_from_evidence(answer, selection)
+    result.status = "completed"
+    result.steps.append(
+        {
+            "type": "final",
+            "answer": answer[:500],
+            "detail": f"finalized after {reason}",
+        }
     )

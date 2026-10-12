@@ -5,7 +5,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.runtime.finalizer import FinalizeBudget, plan_finalize_budget
+from src.runtime.finalizer import (
+    FinalizeBudget,
+    citations_from_evidence,
+    finalize_answer_delivery,
+    limits_note,
+    plan_finalize_budget,
+)
 
 
 def _result():
@@ -69,3 +75,72 @@ class TestPlanFinalizeBudget:
             answer_max_tokens=1024,
         )
         assert budget is None
+
+
+def _selection():
+    from src.core.domain.adaptive import EvidenceItem
+    from src.runtime.evidence import EvidenceMatch, EvidenceSelection
+
+    item = EvidenceItem(
+        source_type="document",
+        content="contenido",
+        score=1.0,
+        evidence_id="e1",
+        document_id="d1",
+        chunk_id="c1",
+        title="Manual",
+        page=3,
+    )
+    match = EvidenceMatch(
+        evidence_id="e1",
+        match="narrative",
+        priority=1,
+        score=1.0,
+        chars=1,
+        content="contenido",
+    )
+    return EvidenceSelection(items=[item], matches=[match])
+
+
+class TestCitasYLimites:
+    def test_cita_doc_1_marca_cited(self) -> None:
+        payload = citations_from_evidence("ver [Doc: 1]", _selection())
+        assert payload[0]["evidence_id"] == "e1"
+        assert payload[0]["cited"] is True
+
+    def test_sin_cita_no_marca(self) -> None:
+        payload = citations_from_evidence("sin citas", _selection())
+        assert payload[0]["cited"] is False
+
+    def test_indice_fuera_de_rango_no_marca(self) -> None:
+        payload = citations_from_evidence("[Doc: 9]", _selection())
+        assert payload[0]["cited"] is False
+
+    def test_seleccion_vacia_o_none(self) -> None:
+        from src.runtime.evidence import EvidenceSelection
+
+        assert citations_from_evidence("[Doc: 1]", EvidenceSelection()) == []
+        assert citations_from_evidence("[Doc: 1]", None) == []
+
+    def test_limits_note(self) -> None:
+        assert limits_note([]) == ""
+        note = limits_note(["cierre de fechas", "vigencia"])
+        assert note.startswith("\n\nNota:")
+        assert "cierre de fechas" in note
+        assert "vigencia" in note
+
+    def test_delivery_entrega_completa(self) -> None:
+        result = SimpleNamespace(
+            steps=[], answer="", citations=None, status="error"
+        )
+        finalize_answer_delivery(
+            result,
+            answer="hola [Doc: 1]",
+            reason="termination",
+            selection=_selection(),
+        )
+        assert result.answer == "hola [Doc: 1]"
+        assert result.status == "completed"
+        assert result.citations[0]["cited"] is True
+        assert result.steps[0]["type"] == "final"
+        assert result.steps[0]["detail"] == "finalized after termination"
