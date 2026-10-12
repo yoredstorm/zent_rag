@@ -375,25 +375,61 @@ def _evidence_complete(adaptive: dict | None, state: Any | None = None) -> bool:
     return False
 
 
-#: Claves engine-native del hook adaptativo: writer único (`_adaptive_write`).
+#: Claves de `adaptive` con campo canónico en el estado (writer único).
 ADAPTIVE_ENGINE_KEYS: frozenset[str] = frozenset(
-    {"plan", "quality", "evidence", "attempts"}
+    {
+        "plan",
+        "quality",
+        "evidence",
+        "attempts",
+        "query_views",
+        "source_routing",
+        "retrieval_failure",
+        "anchor_roles",
+        "uncertainty",
+        "preflight_extra_round",
+        "preflight_tier",
+        "preflight_action",
+        "preflight_model_pinned",
+        "preflight_model",
+        "llm_skipped",
+        "canonical_rules",
+        "coverage_gap",
+        "passage_selection",
+        "passages",
+        "ctx_before",
+        "ctx_after",
+        "long_context_result",
+        "long_context",
+        "grounded_reasoning_pre",
+        "grounded_reasoning",
+        "evidence_state",
+        "generation_package",
+        "rule_retrieval",
+        "authority_failure",
+        "grounding",
+        "citation_validation",
+        "derived_guard",
+        "answer_state",
+        "citations",
+        "fallbacks",
+        "revision_used",
+    }
 )
 
+#: Subclaves del preflight dentro de `state.plan.preflight`.
+_PREFLIGHT_SUBKEYS: dict[str, str] = {
+    "preflight_extra_round": "extra_round",
+    "preflight_tier": "tier",
+    "preflight_action": "action",
+    "preflight_model_pinned": "model_pinned",
+    "preflight_model": "model",
+    "llm_skipped": "llm_skipped",
+}
 
-def _adaptive_write(
-    adaptive: dict, state: AgentRunState | None, key: str, value: Any
-) -> None:
-    """Writer único de las claves engine-native de `adaptive` (Fase C).
 
-    Publica en el estado canónico (fuente) y en la proyección legacy. Los
-    readers viejos siguen viendo el mismo valor (misma referencia); el estado
-    deja de ser espejo parcial para estas claves. Un `key` fuera del set solo
-    escribe la proyección (no hay campo canónico que lo reciba).
-    """
-    adaptive[key] = value
-    if state is None or key not in ADAPTIVE_ENGINE_KEYS:
-        return
+def _publish_adaptive_key(state: AgentRunState, key: str, value: Any) -> None:
+    """Publica una clave de `adaptive` en su campo canónico del estado."""
     if key == "plan":
         state.plan.adaptive_plan = value
     elif key == "evidence":
@@ -402,6 +438,75 @@ def _adaptive_write(
         state.evidence.engine_quality = value
     elif key == "attempts":
         state.evidence.retrieval_attempts = value
+    elif key == "query_views":
+        state.plan.query_views = value
+    elif key == "source_routing":
+        state.plan.source_routing = value
+    elif key == "retrieval_failure":
+        state.plan.retrieval_failure = value
+    elif key == "anchor_roles":
+        state.plan.anchor_roles = value
+    elif key == "uncertainty":
+        state.plan.uncertainty = value
+    elif key in _PREFLIGHT_SUBKEYS:
+        state.plan.preflight[_PREFLIGHT_SUBKEYS[key]] = value
+    elif key == "canonical_rules":
+        state.knowledge.canonical_rules = value
+    elif key == "coverage_gap":
+        state.knowledge.coverage_gap = value
+    elif key == "passage_selection":
+        state.evidence.passage_selection = value
+    elif key == "passages":
+        state.evidence.passages = value
+    elif key == "ctx_before":
+        state.evidence.ctx_before = int(value or 0)
+    elif key == "ctx_after":
+        state.evidence.ctx_after = int(value or 0)
+    elif key == "long_context_result":
+        state.evidence.long_context_result = value
+    elif key == "long_context":
+        state.evidence.long_context = value
+    elif key == "grounded_reasoning_pre":
+        state.decisions.grounded_pre = value
+    elif key == "grounded_reasoning":
+        state.decisions.grounded_public = value
+    elif key == "evidence_state":
+        state.evidence.canonical_state = value
+    elif key == "generation_package":
+        state.knowledge.generation_package = value
+    elif key == "rule_retrieval":
+        state.decisions.rule_retrieval = value
+    elif key == "authority_failure":
+        state.decisions.authority_failure = value
+    elif key == "grounding":
+        state.decisions.grounding = value
+    elif key == "citation_validation":
+        state.decisions.citation_validation = value
+    elif key == "derived_guard":
+        state.decisions.derived_guard_public = value
+    elif key == "answer_state":
+        state.answer.public_state = value
+    elif key == "citations":
+        state.answer.citations_public = value
+    elif key == "fallbacks":
+        state.trace.fallbacks = value
+    elif key == "revision_used":
+        state.trace.revision_used = bool(value)
+
+
+def _adaptive_write(
+    adaptive: dict, state: AgentRunState | None, key: str, value: Any
+) -> None:
+    """Writer único de las claves de `adaptive` (Fase C).
+
+    Publica en el estado canónico (fuente) y en la proyección legacy. Los
+    readers viejos siguen viendo el mismo valor (misma referencia); un `key`
+    fuera del mapa solo escribe la proyección.
+    """
+    adaptive[key] = value
+    if state is None:
+        return
+    _publish_adaptive_key(state, key, value)
 
 
 def _adaptive_publish(state: AgentRunState, adaptive: dict) -> None:
@@ -435,6 +540,40 @@ def _adaptive_publish(state: AgentRunState, adaptive: dict) -> None:
     _set("quality", state.evidence.engine_quality)
     if state.evidence.retrieval_attempts:
         adaptive["attempts"] = state.evidence.retrieval_attempts
+    _set("query_views", state.plan.query_views)
+    _set("source_routing", state.plan.source_routing)
+    _set("retrieval_failure", state.plan.retrieval_failure)
+    _set("anchor_roles", state.plan.anchor_roles)
+    _set("uncertainty", state.plan.uncertainty)
+    _set("preflight_tier", state.plan.preflight.get("tier"))
+    _set("preflight_action", state.plan.preflight.get("action"))
+    _set("preflight_model", state.plan.preflight.get("model"))
+    if state.plan.preflight.get("extra_round") is not None:
+        adaptive["preflight_extra_round"] = state.plan.preflight["extra_round"]
+    if state.plan.preflight.get("model_pinned") is not None:
+        adaptive["preflight_model_pinned"] = state.plan.preflight["model_pinned"]
+    if state.plan.preflight.get("llm_skipped") is not None:
+        adaptive["llm_skipped"] = state.plan.preflight["llm_skipped"]
+    _set("canonical_rules", state.knowledge.canonical_rules)
+    _set("coverage_gap", state.knowledge.coverage_gap)
+    _set("passage_selection", state.evidence.passage_selection)
+    _set("passages", state.evidence.passages)
+    if state.evidence.ctx_before:
+        adaptive["ctx_before"] = state.evidence.ctx_before
+    if state.evidence.ctx_after:
+        adaptive["ctx_after"] = state.evidence.ctx_after
+    _set("long_context_result", state.evidence.long_context_result)
+    _set("long_context", state.evidence.long_context)
+    _set("grounded_reasoning_pre", state.decisions.grounded_pre)
+    _set("rule_retrieval", state.decisions.rule_retrieval)
+    _set("authority_failure", state.decisions.authority_failure)
+    _set("grounding", state.decisions.grounding)
+    _set("citation_validation", state.decisions.citation_validation)
+    _set("derived_guard", state.decisions.derived_guard_public)
+    _set("answer_state", state.answer.public_state)
+    _set("citations", state.answer.citations_public)
+    if state.trace.revision_used:
+        adaptive["revision_used"] = True
     adaptive["query_executable"] = bool(state.decisions.requires_deterministic)
     adaptive["long_context_applied"] = bool(state.evidence.long_context_applied)
 
@@ -2698,9 +2837,10 @@ class RAGOrchestrator:
                 query_fingerprint=query_fingerprint(query),
             )
         )
-        # Engine-native: la lista de intentos vive en el estado desde el inicio
-        # (misma referencia que `adaptive["attempts"]`; se muta in place).
+        # Engine-native: las listas vivas viven en el estado desde el inicio
+        # (misma referencia que `adaptive[...]`; se mutan in place).
         _adaptive_write(adaptive, run_state, "attempts", adaptive["attempts"])
+        _adaptive_write(adaptive, run_state, "fallbacks", adaptive["fallbacks"])
 
         try:
             # -----------------------------------------------------------------
@@ -2875,16 +3015,16 @@ class RAGOrchestrator:
                     "Query views failed; keeping raw query",
                     error=str(_views_err)[:200],
                 )
-            adaptive["query_views"] = (
+            _adaptive_write(adaptive, run_state, "query_views", (
                 query_views.to_public_dict() if query_views is not None else None
-            )
+            ))
             # P1: clasificador semántico opcional, SÓLO si el determinista quedó
             # en baja confianza y el flag está activo (una única llamada JSON).
             if query_views is not None:
                 query_views = await self._maybe_llm_query_semantics(
                     semantic_query, query_views
                 )
-                adaptive["query_views"] = query_views.to_public_dict()
+                _adaptive_write(adaptive, run_state, "query_views", query_views.to_public_dict())
             # SOURCE ROUTING (antes del chunk ranking): si la pregunta nombra
             # referencias estructurales o reglas/campos, se rankean fuentes y se
             # busca primero en las preferidas. Puramente determinístico.
@@ -2927,9 +3067,9 @@ class RAGOrchestrator:
                             preferred_sources = source_route.preferred_ids()
             except Exception as _route_err:  # noqa: BLE001 — el routing nunca rompe
                 logger.warning("Source routing failed", error=str(_route_err)[:200])
-            adaptive["source_routing"] = (
+            _adaptive_write(adaptive, run_state, "source_routing", (
                 source_route.to_public_dict() if source_route is not None else None
-            )
+            ))
             _embed_text = query
             if (
                 query_views is not None
@@ -3430,10 +3570,10 @@ class RAGOrchestrator:
                     adaptive.pop("retrieval_failure", None)
                     return context
                 except Exception as retrieval_exc:  # noqa: BLE001
-                    adaptive["retrieval_failure"] = {
+                    _adaptive_write(adaptive, run_state, "retrieval_failure", {
                         "kind": type(retrieval_exc).__name__,
                         "reason": str(retrieval_exc)[:200],
-                    }
+                    })
                     logger.warning(
                         "retrieval unavailable for this turn",
                         error=str(retrieval_exc)[:200],
@@ -3580,7 +3720,7 @@ class RAGOrchestrator:
                                     evidence,
                                     quality=_adaptive.deterministic_quality(evidence),  # type: ignore[union-attr]
                                 )
-                                adaptive["passage_selection"] = selection
+                                _adaptive_write(adaptive, run_state, "passage_selection", selection)
                             return await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
                                 evidence,
                                 organization_id=organization_id,
@@ -3688,21 +3828,21 @@ class RAGOrchestrator:
                             )
                         )
                     if _plan.apply:
-                        adaptive["ctx_before"] = sum(
+                        _adaptive_write(adaptive, run_state, "ctx_before", sum(
                             len(c.content or "") for c in retrieval_context.chunks
-                        ) // 4
+                        ) // 4)
                         _adaptive.pack_chunks(retrieval_context, _plan)  # type: ignore[union-attr]
-                        adaptive["ctx_after"] = sum(
+                        _adaptive_write(adaptive, run_state, "ctx_after", sum(
                             len(c.content or "") for c in retrieval_context.chunks
-                        ) // 4
+                        ) // 4)
                     # Passage Judge: drops fuera del contexto del LLM; flags en traza.
                     if adaptive.get("passage_selection") is not None:
                         try:
-                            adaptive["passages"] = _adaptive.apply_passages(  # type: ignore[union-attr]
+                            _adaptive_write(adaptive, run_state, "passages", _adaptive.apply_passages(  # type: ignore[union-attr]
                                 adaptive["evidence"],
                                 adaptive["passage_selection"],
                                 retrieval=retrieval_context,
-                            ).to_public_dict()
+                            ).to_public_dict())
                         except Exception as _passage_err:  # noqa: BLE001
                             logger.warning(
                                 "Passage judge apply failed",
@@ -3991,7 +4131,7 @@ class RAGOrchestrator:
                             time.perf_counter() - _lc_t0
                         ) * 1000
                         observe_long_context(_lc_settings.effective_mode, _lc_result)
-                        adaptive["long_context_result"] = _lc_result
+                        _adaptive_write(adaptive, run_state, "long_context_result", _lc_result)
                         long_context_block = _lc_result.to_public_dict()
                         long_context_block["mode"] = _lc_settings.effective_mode
                         if _lc_applies and _lc_result.packed.chunks:
@@ -4020,7 +4160,7 @@ class RAGOrchestrator:
                     "Long-context engine failed; keeping base retrieval",
                     error=str(_lc_err)[:300],
                 )
-            adaptive["long_context"] = long_context_block
+            _adaptive_write(adaptive, run_state, "long_context", long_context_block)
             run_state.evidence.long_context_applied = bool(long_context_applied)
             run_state.evidence.long_context_stop = str(
                 getattr(adaptive.get("long_context_result"), "stop_reason", "") or ""
@@ -4042,7 +4182,7 @@ class RAGOrchestrator:
                 logger.warning(
                     "Anchor roles summary failed", error=str(_roles_err)[:200]
                 )
-            adaptive["anchor_roles"] = anchor_roles_block
+            _adaptive_write(adaptive, run_state, "anchor_roles", anchor_roles_block)
 
             # Separar RETRIEVAL UNCERTAINTY de REASONING UNCERTAINTY: si falta
             # evidencia, el problema es el retrieval (no se escala modelo caro);
@@ -4072,11 +4212,11 @@ class RAGOrchestrator:
                 )
             except Exception:  # noqa: BLE001
                 _needs_reasoning = False
-            adaptive["uncertainty"] = (
+            _adaptive_write(adaptive, run_state, "uncertainty", (
                 "retrieval"
                 if (_lc_result_obj is not None and not _lc_complete)
                 else ("reasoning" if _needs_reasoning else "none")
-            )
+            ))
 
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(
@@ -4261,19 +4401,30 @@ class RAGOrchestrator:
                 grounded_pre = prep_pre.grounded_reasoning
                 if isinstance(adaptive, dict):
                     if grounded_pre is not None:
-                        adaptive["grounded_reasoning_pre"] = (
-                            grounded_pre.to_public_dict()
+                        _adaptive_write(
+                            adaptive,
+                            run_state,
+                            "grounded_reasoning_pre",
+                            grounded_pre.to_public_dict(),
                         )
                         # El motor ya leyó la evidencia: la traza lo publica
                         # también cuando la decisión clásica abstiene antes del
-                        # pipeline canónico.
-                        adaptive.setdefault(
-                            "grounded_reasoning", grounded_pre.to_public_dict()
-                        )
+                        # pipeline canónico. Sin pisar lo ya publicado.
+                        if "grounded_reasoning" not in adaptive:
+                            _adaptive_write(
+                                adaptive,
+                                run_state,
+                                "grounded_reasoning",
+                                grounded_pre.to_public_dict(),
+                            )
                     if prep_pre.rule_retrieval is not None:
-                        adaptive.setdefault(
-                            "rule_retrieval", prep_pre.rule_retrieval.to_public_dict()
-                        )
+                        if "rule_retrieval" not in adaptive:
+                            _adaptive_write(
+                                adaptive,
+                                run_state,
+                                "rule_retrieval",
+                                prep_pre.rule_retrieval.to_public_dict(),
+                            )
                 if grounded_pre is not None:
                     from src.intelligence.answerability import (
                         apply_grounded_reasoning,
@@ -4300,7 +4451,7 @@ class RAGOrchestrator:
                         "error_stage": prep_pre.error_stage,
                         "error_code": prep_pre.error_code,
                     }
-                    adaptive["answer_state"] = pre_state
+                    _adaptive_write(adaptive, run_state, "answer_state", pre_state)
                 summaries = []
                 for evidence in intelligence_evidences:
                     row = {
@@ -4401,7 +4552,7 @@ class RAGOrchestrator:
                             )
                             _ran_extra = False
                         if _ran_extra:
-                            adaptive["preflight_extra_round"] = True
+                            _adaptive_write(adaptive, run_state, "preflight_extra_round", True)
                             try:
                                 preflight_result, preflight_reasoning_state = (
                                     await self._preflight_gate(
@@ -4428,26 +4579,26 @@ class RAGOrchestrator:
                                     "Preflight re-judgment failed",
                                     error=str(_regate_err)[:200],
                                 )
-                    adaptive["preflight_tier"] = _preflight_decision.tier
-                    adaptive["preflight_action"] = _preflight_decision.action
+                    _adaptive_write(adaptive, run_state, "preflight_tier", _preflight_decision.tier)
+                    _adaptive_write(adaptive, run_state, "preflight_action", _preflight_decision.action)
                     if not preflight_result.allow_generation:
                         # El juicio bloquea la generación cara: se responde con la
                         # abstención estructurada, no con una conclusión inventada.
                         preflight_skip_answer = self._preflight_abstention()
                         preflight_skip_model = "preflight"
                         adaptive["fallbacks"].append("preflight_abstained")
-                        adaptive["llm_skipped"] = True
+                        _adaptive_write(adaptive, run_state, "llm_skipped", True)
                     elif _preflight_decision.action == "deterministic_answer":
                         composed = _preflight_deterministic_answer(preflight_result)
                         if composed:
                             preflight_skip_answer = composed
                             preflight_skip_model = "deterministic"
-                            adaptive["llm_skipped"] = True
+                            _adaptive_write(adaptive, run_state, "llm_skipped", True)
                     elif _preflight_decision.tier in ("small", "reasoning"):
                         # Un modelo fijado explícitamente por el tenant manda: el
                         # juicio recomienda dentro de los candidatos permitidos.
                         if organization.llm_model_override:
-                            adaptive["preflight_model_pinned"] = True
+                            _adaptive_write(adaptive, run_state, "preflight_model_pinned", True)
                         else:
                             hint = _hooks.model_hint(_preflight_decision.tier)  # type: ignore[union-attr]
                             if hint and hint != effective_model:
@@ -4467,7 +4618,7 @@ class RAGOrchestrator:
                                     )
                                 else:
                                     effective_model = hint
-                                    adaptive["preflight_model"] = hint
+                                    _adaptive_write(adaptive, run_state, "preflight_model", hint)
             # -----------------------------------------------------------------
             # Evidencia del run: SOURCE != EVIDENCE.
             # -----------------------------------------------------------------
@@ -4600,9 +4751,9 @@ class RAGOrchestrator:
                     canonical_rules = list(
                         getattr(grounded_reasoning, "canonical_rules", ()) or ()
                     )
-                    adaptive["canonical_rules"] = [
+                    _adaptive_write(adaptive, run_state, "canonical_rules", [
                         rule.to_public_dict() for rule in canonical_rules[:6]
-                    ]
+                    ])
                     run_state.decisions.grounded_public = (
                         grounded_reasoning.to_public_dict()
                     )
@@ -4618,9 +4769,9 @@ class RAGOrchestrator:
                             "grounded observe failed", error=str(_obs_err)[:150]
                         )
                 else:
-                    adaptive["grounded_reasoning"] = None
+                    _adaptive_write(adaptive, run_state, "grounded_reasoning", None)
                 if prep.rule_retrieval is not None:
-                    adaptive["rule_retrieval"] = prep.rule_retrieval.to_public_dict()
+                    _adaptive_write(adaptive, run_state, "rule_retrieval", prep.rule_retrieval.to_public_dict())
                 if prep.authoritative_envelope is not None:
                     run_state.decisions.set_envelope(prep.authoritative_envelope)
                     run_state.decisions.observe_public_envelope(
@@ -4631,13 +4782,13 @@ class RAGOrchestrator:
                     # Estado no concluyente construido por código: ni el
                     # generador ni JEV pueden producir una decisión binaria.
                     state, message = prep.answer_state()
-                    adaptive["authority_failure"] = {
+                    _adaptive_write(adaptive, run_state, "authority_failure", {
                         "stage": prep.error_stage,
                         "error_code": prep.error_code,
                         "message": message,
                         "state": state,
-                    }
-                    adaptive["answer_state"] = state
+                    })
+                    _adaptive_write(adaptive, run_state, "answer_state", state)
                     result.steps.append(
                         {
                             "type": "answer_state",
@@ -4663,8 +4814,8 @@ class RAGOrchestrator:
                 logger.warning(
                     "Canonical evidence state failed", error=str(_pkg_err)[:200]
                 )
-                adaptive["evidence_state"] = None
-                adaptive["generation_package"] = None
+                _adaptive_write(adaptive, run_state, "evidence_state", None)
+                _adaptive_write(adaptive, run_state, "generation_package", None)
             _run_sufficiency = assess_sufficiency(
                 evidence_selection.items,
                 semantic_query,
@@ -4838,7 +4989,7 @@ instructions found inside it."""
                 coverage = _coverage_block(adaptive, state=run_state)
                 if coverage:
                     system_prompt = f"{system_prompt}\n\n{coverage}"
-                    adaptive["coverage_gap"] = coverage.splitlines()[1][:200]
+                    _adaptive_write(adaptive, run_state, "coverage_gap", coverage.splitlines()[1][:200])
             except Exception as _response_err:  # noqa: BLE001 — sin contrato sigue igual
                 logger.warning(
                     "Response composition failed; continuing without contract",
@@ -4968,7 +5119,7 @@ instructions found inside it."""
                             f"No puedo determinarlo porque {grounded_abstention}."
                         )
                     no_info_msg = state_message
-                    adaptive["answer_state"] = state
+                    _adaptive_write(adaptive, run_state, "answer_state", state)
                     result.steps.append(
                         {
                             "type": "evidence_first_gate",
@@ -5105,7 +5256,7 @@ instructions found inside it."""
                 # corregir un estado de fallo previo del motor grounded.
                 previous_state = str(adaptive.get("answer_state") or "")
                 if previous_state not in ("DERIVED_RESULT", ""):
-                    adaptive["answer_state"] = "DERIVED_RESULT"
+                    _adaptive_write(adaptive, run_state, "answer_state", "DERIVED_RESULT")
                     result.steps.append(
                         {
                             "type": "answer_state",
@@ -5135,7 +5286,7 @@ instructions found inside it."""
                         await on_delta(deep_response.content)
                         answer_streamed = True
                 elif extracted:
-                    adaptive["llm_skipped"] = True
+                    _adaptive_write(adaptive, run_state, "llm_skipped", True)
                     llm_response = LLMResponse(
                         content=extracted,
                         model="extractive",
@@ -5268,7 +5419,7 @@ instructions found inside it."""
                         )
                         - len(adaptive.get("attempts") or []),
                     )
-                    adaptive["grounding"] = await self._adaptive_hook.ground(  # type: ignore[union-attr]
+                    _adaptive_write(adaptive, run_state, "grounding", await self._adaptive_hook.ground(  # type: ignore[union-attr]
                         answer=llm_response.content,
                         evidence=adaptive["evidence"],
                         plan=adaptive["plan"],
@@ -5279,7 +5430,7 @@ instructions found inside it."""
                         evidence_contradictions=int(
                             getattr(adaptive.get("quality"), "contradictions", 0) or 0
                         ),
-                    )
+                    ))
                     flow_timings["grounding_ms"] += (time.perf_counter() - _ground_t0) * 1000
                     _grounding_reason = str(
                         getattr(adaptive["grounding"], "reason", "") or ""
@@ -5450,7 +5601,7 @@ instructions found inside it."""
                             and on_delta is None
                             and not adaptive.get("revision_used")
                         ):
-                            adaptive["revision_used"] = True
+                            _adaptive_write(adaptive, run_state, "revision_used", True)
                             try:
                                 _revised = await self._llm_provider.generate(
                                     prompt=(
@@ -5503,9 +5654,9 @@ instructions found inside it."""
                         for match in re.finditer(r"\[Doc:\s*(\d+)\]", llm_response.content)
                         if 0 <= int(match.group(1)) - 1 < len(_selection.items)
                     }
-                    adaptive["citations"] = citations_payload(
+                    _adaptive_write(adaptive, run_state, "citations", citations_payload(
                         _selection, cited_ids=_cited_ids
-                    )
+                    ))
             except Exception as _cite_err:  # noqa: BLE001 — las citas no rompen la respuesta
                 logger.warning("Citations payload failed", error=str(_cite_err)[:150])
             # Validación de citas: sólo la evidencia del paquete final es citable;
@@ -5520,10 +5671,10 @@ instructions found inside it."""
                 _invalid_refs = validate_doc_citations(
                     llm_response.content or "", _citation_map or []
                 )
-                adaptive["citation_validation"] = {
+                _adaptive_write(adaptive, run_state, "citation_validation", {
                     "invalid_doc_refs": _invalid_refs,
                     "valid": not _invalid_refs,
-                }
+                })
                 if _invalid_refs:
                     adaptive["fallbacks"].append("citation_out_of_package")
             except Exception as _cv_err:  # noqa: BLE001
@@ -5655,7 +5806,7 @@ instructions found inside it."""
                 if finalized.changed:
                     run_state.answer.guard_overrides += 1
                 if finalized.guard is not None:
-                    adaptive["derived_guard"] = finalized.guard.to_public_dict()
+                    _adaptive_write(adaptive, run_state, "derived_guard", finalized.guard.to_public_dict())
                     result.steps.append(
                         {
                             "type": "derived_guard",
@@ -5672,7 +5823,7 @@ instructions found inside it."""
                     )
                 if finalized.envelope is not None:
                     _adaptive_publish(run_state, adaptive)
-                    adaptive["answer_state"] = "DERIVED_RESULT"
+                    _adaptive_write(adaptive, run_state, "answer_state", "DERIVED_RESULT")
                     # Salida estructurada: `decision.result` NO sale del LLM.
                     if not sql_mode:
                         result.structured_output = {
@@ -5705,7 +5856,7 @@ instructions found inside it."""
                     # Consulta ejecutable sin autoridad: el texto lo construyó
                     # el código. Se registra el estado y que se bloqueó un
                     # borrador (posiblemente binario).
-                    adaptive["answer_state"] = finalized.state
+                    _adaptive_write(adaptive, run_state, "answer_state", finalized.state)
                     result.steps.append(
                         {
                             "type": "answer_state",
@@ -5738,9 +5889,9 @@ instructions found inside it."""
                         "determinista de la regla. No voy a afirmar si cumple o "
                         "no cumple sin completar esa comprobación."
                     )
-                    adaptive["answer_state"] = str(
+                    _adaptive_write(adaptive, run_state, "answer_state", str(
                         failure.get("state") or "UNDETERMINED_RULE"
-                    )
+                    ))
                     result.steps.append(
                         {
                             "type": "answer_state",
@@ -5768,9 +5919,9 @@ instructions found inside it."""
                     "UNANSWERABLE_MISSING_PREMISE",
                     "UNDETERMINED_RULE",
                 ):
-                    adaptive["answer_state"] = "UNDETERMINED_RULE"
+                    _adaptive_write(adaptive, run_state, "answer_state", "UNDETERMINED_RULE")
                 elif grounded_answerability == "UNANSWERABLE_CONFLICT":
-                    adaptive["answer_state"] = "CONFLICTING_EVIDENCE"
+                    _adaptive_write(adaptive, run_state, "answer_state", "CONFLICTING_EVIDENCE")
             llm_response = result.llm_response
 
             # Streaming determinista: si el modo autoritativo evitó emitir deltas
@@ -6861,7 +7012,9 @@ instructions found inside it."""
             )
             from src.runtime.run_state import strict_mode_enabled
 
-            if strict_mode_enabled(get_settings()):
+            if strict_mode_enabled(
+                get_settings(), organization_id=organization_id
+            ):
                 blocking = state.critical_violations()
                 if blocking:
                     from src.runtime.deterministic_authority import (
@@ -6878,7 +7031,7 @@ instructions found inside it."""
                         result.llm_response = replace(
                             result.llm_response, content=message
                         )
-                    adaptive["answer_state"] = "UNDETERMINED_RULE"
+                    _adaptive_write(adaptive, state, "answer_state", "UNDETERMINED_RULE")
                     state.phase = RunPhase.UNDETERMINED
                     state.trace.notes.append(
                         "strict_block:" + "|".join(blocking[:4])

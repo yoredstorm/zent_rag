@@ -261,6 +261,14 @@ class PlanningState:
     #: Plan del motor adaptativo (AdaptivePlan). Writer único: `_adaptive_write`
     #: (orquestador); `adaptive["plan"]` es proyección legacy del mismo objeto.
     adaptive_plan: Any | None = None
+    #: Planning de retrieval del camino RAG (proyección legacy `adaptive[...]`).
+    query_views: Any | None = None
+    source_routing: Any | None = None
+    retrieval_failure: Any | None = None
+    anchor_roles: Any | None = None
+    uncertainty: Any | None = None
+    #: Decisión del JEV preflight por subclave (tier/action/model/...).
+    preflight: dict = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)
@@ -276,6 +284,9 @@ class KnowledgeState:
     #: search pedido por cobertura con evidencia ya completa.
     coverage: tuple[Any, ...] = ()
     coverage_search_after_complete: bool = False
+    #: Reglas canónicas consultadas y gap de cobertura del camino RAG.
+    canonical_rules: Any | None = None
+    coverage_gap: Any | None = None
 
 
 @dataclass(kw_only=True)
@@ -305,6 +316,14 @@ class EvidenceView:
     #: Intentos de retrieval del motor adaptativo (misma lista que
     #: `adaptive["attempts"]`; se muta in place).
     retrieval_attempts: list = field(default_factory=list)
+    #: Passage judge y contexto empaquetado del motor adaptativo.
+    passage_selection: Any | None = None
+    passages: Any | None = None
+    ctx_before: int = 0
+    ctx_after: int = 0
+    #: Long-context: objeto del motor y bloque público.
+    long_context_result: Any | None = None
+    long_context: Any | None = None
     selected: frozenset[str] = frozenset()
     used: frozenset[str] = frozenset()
     cited: frozenset[str] = frozenset()
@@ -534,6 +553,15 @@ class DecisionState:
     finalization: dict | None = None
     #: OBSERVATIONAL: veredictos JEV (shadow incluido). Nunca deciden acá.
     jev: list[dict] = field(default_factory=list)
+    #: Grounded reasoning PRE y POST, grounding del motor, rule retrieval,
+    #: fallo de autoridad, validación de citas y guard derivado (proyección
+    #: legacy `adaptive[...]`; el escritor único es `_adaptive_write`).
+    grounded_pre: Any | None = None
+    grounding: Any | None = None
+    rule_retrieval: Any | None = None
+    authority_failure: Any | None = None
+    citation_validation: Any | None = None
+    derived_guard_public: Any | None = None
 
     @property
     def authoritative(self) -> bool:
@@ -619,6 +647,10 @@ class AnswerState:
     citations: tuple[str, ...] = ()
     gate: Any | None = None  # AnswerGateResult (observacional en esta capa)
     guard_overrides: int = 0
+    #: Vista pública del estado de respuesta (string o dict) y payload de citas
+    #: del camino RAG: proyección legacy `adaptive["answer_state"]`/`["citations"]`.
+    public_state: Any | None = None
+    citations_public: Any | None = None
 
     @property
     def present(self) -> bool:
@@ -645,6 +677,10 @@ class TraceState:
     steps_count: int = 0
     spans_count: int = 0
     latency_ms: float = 0.0
+    #: Fallbacks del camino RAG (misma lista que `adaptive["fallbacks"]`) y
+    #: bandera de revisión usada en el gate.
+    fallbacks: list = field(default_factory=list)
+    revision_used: bool = False
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
