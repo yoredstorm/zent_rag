@@ -263,6 +263,76 @@ class TestShadowDivergence:
         assert counter._value.get() == before + 1
 
 
+class TestEnforcement:
+    def test_stages_default_y_custom(self) -> None:
+        from types import SimpleNamespace
+
+        from src.runtime.finalization_policy import (
+            ENFORCE_STAGES,
+            enforced_stages,
+        )
+
+        # El default de producción vive en Settings; el helper sin atributo
+        # (doble de test) no enforza nada.
+        assert enforced_stages(SimpleNamespace()) == frozenset()
+        assert enforced_stages(
+            SimpleNamespace(RUNTIME_FINALIZATION_ENFORCE="off")
+        ) == frozenset()
+        assert enforced_stages(SimpleNamespace(RUNTIME_FINALIZATION_ENFORCE="")) == frozenset()
+        assert enforced_stages(
+            SimpleNamespace(
+                RUNTIME_FINALIZATION_ENFORCE="termination_trigger,draft_gate"
+            )
+        ) == ENFORCE_STAGES
+        assert enforced_stages(
+            SimpleNamespace(RUNTIME_FINALIZATION_ENFORCE="draft_gate,unknown")
+        ) == frozenset({"draft_gate"})
+
+    def test_should_hold_solo_retrieve_more_y_etapa_armada(self) -> None:
+        from src.runtime.finalization_policy import should_hold_trigger
+
+        retrieve = evaluate_finalization(
+            _state(evidence="insufficient"), retrieval_possible=True
+        )
+        finalize = evaluate_finalization(
+            _state(evidence="complete"), draft_available=True
+        )
+        enforced = frozenset({"termination_trigger"})
+        assert should_hold_trigger(
+            retrieve,
+            stage="termination_trigger",
+            enforced=enforced,
+        ) is True
+        assert should_hold_trigger(
+            retrieve,
+            stage="draft_gate",
+            enforced=enforced,
+        ) is False
+        assert should_hold_trigger(
+            finalize,
+            stage="termination_trigger",
+            enforced=enforced,
+        ) is False
+        assert should_hold_trigger(
+            None,
+            stage="termination_trigger",
+            enforced=enforced,
+        ) is False
+
+    def test_should_hold_acotado_por_max_holds(self) -> None:
+        from src.runtime.finalization_policy import should_hold_trigger
+
+        retrieve = evaluate_finalization(
+            _state(evidence="insufficient"), retrieval_possible=True
+        )
+        assert should_hold_trigger(
+            retrieve,
+            stage="termination_trigger",
+            enforced=frozenset({"termination_trigger"}),
+            holds_used=1,
+        ) is False
+
+
 class TestTriggerShadow:
     def test_termination_acompanado_por_la_politica(self) -> None:
         from src.infrastructure.observability.metrics import (

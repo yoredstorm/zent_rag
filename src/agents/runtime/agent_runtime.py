@@ -2756,18 +2756,18 @@ class AgentRuntime:
             *,
             termination_requested: bool = False,
             draft_available: bool = True,
-        ) -> None:
+        ):
             """Shadow del trigger (fail-soft): la ruta cierra; ¿la política acompaña?
 
-            Observabilidad pura: no cambia ninguna decisión. La divergencia queda
-            en `zent_finalization_shadow_divergence_total{stage=...}`.
+            Devuelve la resolución (o None si no se pudo evaluar). La divergencia
+            queda en `zent_finalization_shadow_divergence_total{stage=...}`.
             """
             if state is None:
-                return
+                return None
             try:
                 from src.runtime.finalization_policy import observe_trigger_shadow
 
-                observe_trigger_shadow(
+                return observe_trigger_shadow(
                     state,
                     stage=stage,
                     intended=intended,
@@ -2777,6 +2777,53 @@ class AgentRuntime:
                 )
             except Exception as exc:  # noqa: BLE001 — observabilidad, nunca rompe el run
                 logger.warning("trigger shadow failed", error=str(exc)[:150])
+                return None
+
+        enforced_stages_cache: dict[str, frozenset[str]] = {}
+        enforced_holds: dict[str, int] = {}
+
+        def _enforce_trigger(stage: str, decision: object | None) -> bool:
+            """Enforcement del shadow (fail-closed): el trigger espera si la
+            política pide RETRIEVE_MORE. Una vez por etapa, nunca rompe el run.
+            """
+            try:
+                from src.runtime.finalization_policy import (
+                    enforced_stages,
+                    should_hold_trigger,
+                )
+
+                enforced = enforced_stages_cache.get("stages")
+                if enforced is None:
+                    enforced = enforced_stages(settings)
+                    enforced_stages_cache["stages"] = enforced
+                held = should_hold_trigger(
+                    decision,
+                    stage=stage,
+                    enforced=enforced,
+                    holds_used=enforced_holds.get(stage, 0),
+                )
+            except Exception as exc:  # noqa: BLE001 — nunca rompe el run
+                logger.warning("finalization enforcement failed", error=str(exc)[:150])
+                return False
+            if held:
+                enforced_holds[stage] = enforced_holds.get(stage, 0) + 1
+                history.append(
+                    "OBSERVATION: the closing policy requires more retrieval "
+                    "before finishing (evidence still incomplete and search is "
+                    "available). Keep gathering evidence with the tools, then "
+                    "answer with what is supported."
+                )
+                result.steps.append(
+                    {
+                        "type": "finalization_enforced",
+                        "stage": stage,
+                        "detail": (
+                            "RETRIEVE_MORE: el cierre espera y sigue reuniendo "
+                            "evidencia (enforcement de la política)"
+                        ),
+                    }
+                )
+            return held
 
         revision_used = False
         pending_step_judgment = None
@@ -4887,7 +4934,7 @@ class AgentRuntime:
                     failure = result.answer_state or {}
                     authoritative_message = str(failure.get("message") or "")
                     failure_kind, reason = _retrieval_unavailable(failed_tools, retrieved_refs)
-                    _shadow_trigger(
+                    _draft_decision = _shadow_trigger(
                         "draft_gate",
                         (
                             "UNDETERMINED"
@@ -4896,6 +4943,8 @@ class AgentRuntime:
                         ),
                         draft_available=True,
                     )
+                    if _enforce_trigger("draft_gate", _draft_decision):
+                        continue
                     if authoritative_message:
                         # Fail-closed: la autoridad determinista ya declaró el
                         # estado (fallo de fase o regla indeterminada). Ese
@@ -5598,11 +5647,15 @@ class AgentRuntime:
                                 if held is not None:
                                     result.steps.append(held)
                                 else:
-                                    _shadow_trigger(
+                                    _termination_decision = _shadow_trigger(
                                         "termination_trigger",
                                         "FINALIZE",
                                         termination_requested=True,
                                     )
+                                    if _enforce_trigger(
+                                        "termination_trigger", _termination_decision
+                                    ):
+                                        continue
                                     await _finalize_with_authority(
                                         "agent_step_batched", reasoning=reasoning
                                     )
@@ -5636,11 +5689,15 @@ class AgentRuntime:
                                     }
                                 )
                                 if held is None:
-                                    _shadow_trigger(
+                                    _termination_decision = _shadow_trigger(
                                         "termination_trigger",
                                         "FINALIZE",
                                         termination_requested=True,
                                     )
+                                    if _enforce_trigger(
+                                        "termination_trigger", _termination_decision
+                                    ):
+                                        continue
                                     await _finalize_with_authority(
                                         "termination_gate", reasoning=reasoning
                                     )
@@ -5673,11 +5730,15 @@ class AgentRuntime:
                                 }
                             )
                             if held is None:
-                                _shadow_trigger(
+                                _termination_decision = _shadow_trigger(
                                     "termination_trigger",
                                     "FINALIZE",
                                     termination_requested=True,
                                 )
+                                if _enforce_trigger(
+                                    "termination_trigger", _termination_decision
+                                ):
+                                    continue
                                 await _finalize_with_authority(
                                     "termination_gate", reasoning=reasoning
                                 )

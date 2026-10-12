@@ -1405,6 +1405,15 @@ class Settings(BaseSettings):
             "answer_gate,agent_step,termination. Vacio = JEV corre siempre."
         ),
     )
+    RUNTIME_FINALIZATION_ENFORCE: str = Field(
+        default="termination_trigger,draft_gate",
+        description=(
+            "Etapas donde la política de finalización manda sobre la ruta "
+            "vigente (enforcement del shadow): un trigger que cierra cuando la "
+            "política resuelve RETRIEVE_MORE espera y sigue reuniendo evidencia "
+            "(una vez por etapa). Vacio u 'off' = solo shadow."
+        ),
+    )
     RUNTIME_JEV_SKIP_SHADOW: Literal["off", "on"] = Field(
         default="off",
         description=(

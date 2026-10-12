@@ -384,6 +384,45 @@ def decision_matches_terminal(
     return decision.action in expected
 
 
+#: Etapas de enforcement válidas (las mismas del shadow).
+ENFORCE_STAGES: frozenset[str] = frozenset({"termination_trigger", "draft_gate"})
+
+
+def enforced_stages(settings: object) -> frozenset[str]:
+    """Etapas con enforcement activo. 'off'/vacío = solo shadow."""
+    raw = str(
+        getattr(settings, "RUNTIME_FINALIZATION_ENFORCE", "") or ""
+    ).strip()
+    if not raw or raw.lower() in {"off", "0", "false", "no"}:
+        return frozenset()
+    return (
+        frozenset(part.strip() for part in raw.split(",") if part.strip())
+        & ENFORCE_STAGES
+    )
+
+
+def should_hold_trigger(
+    decision: FinalizationDecision | None,
+    *,
+    stage: str,
+    enforced: frozenset[str],
+    holds_used: int = 0,
+    max_holds: int = 1,
+) -> bool:
+    """¿El trigger debe esperar en vez de cerrar? (enforcement, fail-closed)
+
+    Se espera solo cuando la política resuelve RETRIEVE_MORE (evidencia
+    incompleta y búsqueda disponible) y la etapa está armada. Acotado por
+    `max_holds`: un trigger nunca queda bloqueado más de lo permitido.
+    """
+    return bool(
+        stage in enforced
+        and decision is not None
+        and decision.action is FinalizationAction.RETRIEVE_MORE
+        and int(holds_used) < int(max_holds)
+    )
+
+
 def _emit_divergence(stage: str, decision: FinalizationDecision) -> None:
     """Contador de divergencia shadow (fail-soft)."""
     try:
@@ -449,13 +488,16 @@ def observe_trigger_shadow(
 
 __all__ = [
     "AuthorityLevel",
+    "ENFORCE_STAGES",
     "FINALIZATION_POLICY_VERSION",
     "FinalizationAction",
     "FinalizationDecision",
     "decision_matches_terminal",
+    "enforced_stages",
     "evaluate_finalization",
     "expected_actions_for_phase",
     "gate_abstention_action",
     "observe_shadow_divergence",
     "observe_trigger_shadow",
+    "should_hold_trigger",
 ]
