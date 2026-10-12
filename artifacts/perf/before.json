@@ -1,0 +1,69 @@
+{
+  "label": "before",
+  "target": "rag",
+  "generated_at": "2026-10-12T13:36:08.481258+00:00",
+  "organization_id": "ef7e9a86-6a5b-465f-830c-04afaeada60f",
+  "queries_file": "D:\\zent_perf_before\\tests\\golden\\rag_retail.json",
+  "iterations": 1,
+  "summary": {
+    "runs": 3,
+    "errors": 0,
+    "latency_ms_p50": 282298.79,
+    "latency_ms_p95": 293603.63,
+    "latency_ms_mean": 206805.59,
+    "tokens_per_run": 0.0,
+    "cost_per_run": 0.0,
+    "llm_calls_per_run": 1.0,
+    "tool_calls_per_run": 0.0,
+    "retrieval_rounds_per_run": 0.0,
+    "tokens_total": 0,
+    "cost_total": 0.0
+  },
+  "cases": [
+    {
+      "latency_ms": 44514.36,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "status": "completed",
+      "error": "",
+      "question": "¿Cuáles son los productos más vendidos?",
+      "wall_ms": 44728.96,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 282298.79,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "status": "completed",
+      "error": "",
+      "question": "Muéstrame zapatos disponibles",
+      "wall_ms": 282426.41,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 293603.63,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "status": "completed",
+      "error": "",
+      "question": "¿Cuál es el precio de los productos en electrónica?",
+      "wall_ms": 293744.73,
+      "iteration": 0
+    }
+  ]
+}
