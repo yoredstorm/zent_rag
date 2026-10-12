@@ -1306,6 +1306,83 @@ def _mark_budget_stop(result: AgentRunResult, reason: str) -> None:
         state.budget.stop_reason = str(reason or "")
 
 
+def guard_verdict_for(state: AgentRunState | None, event: str, **signals: object):
+    """Veredicto de la tabla de guards para el estado actual (fail-soft).
+
+    No decide nada por sí: la tabla es la fuente declarada y esto solo la
+    consulta. Un estado ausente (dobles de test) devuelve None.
+    """
+    if state is None:
+        return None
+    try:
+        from src.runtime.run_guards import RunEvent, evaluate_transition
+
+        return evaluate_transition(state.phase, RunEvent(event), **signals)
+    except Exception as exc:  # noqa: BLE001 — observabilidad, nunca rompe el run
+        logger.warning("run guard evaluation failed", error=str(exc)[:120])
+        return None
+
+
+def emit_guard_divergence(
+    state: AgentRunState | None,
+    event: str,
+    *,
+    guard_reason: str,
+    legacy_reason: str,
+) -> None:
+    """Registra una divergencia tabla↔ruta para un veredicto ya calculado."""
+    logger.warning(
+        "run guard diverges from runtime decision",
+        guard_event=event,
+        guard_reason=guard_reason,
+        legacy_reason=legacy_reason,
+        phase=str(state.phase) if state is not None else "",
+    )
+    try:
+        from src.infrastructure.observability.metrics import (
+            zent_guard_divergence_total,
+        )
+
+        zent_guard_divergence_total.labels(
+            event=event,
+            guard_reason=guard_reason,
+            legacy_reason=legacy_reason,
+        ).inc()
+    except Exception:  # noqa: BLE001 — observabilidad, nunca rompe el run
+        pass
+
+
+def observe_guard_transition(
+    state: AgentRunState | None,
+    event: str,
+    *,
+    legacy_reason: str,
+    **signals: object,
+) -> bool:
+    """Shadow de la tabla de guards vs la ruta vigente.
+
+    Emite `zent_guard_divergence_total{event, guard_reason, legacy_reason}` y
+    devuelve True cuando divergen. Es observabilidad: nunca cambia el run.
+    """
+    verdict = guard_verdict_for(state, event, **signals)
+    if verdict is None:
+        return False
+    guard_reason = str(verdict.reason_code)
+    if guard_reason == str(legacy_reason or ""):
+        return False
+    emit_guard_divergence(
+        state, event, guard_reason=guard_reason, legacy_reason=str(legacy_reason)
+    )
+    return True
+
+
+def guards_enforced(settings: object) -> bool:
+    """¿El veredicto de los guards manda en ejecución? (flag, default off)."""
+    return str(
+        getattr(settings, "RUNTIME_RUN_GUARDS_ENFORCE", "off") or "off"
+    ).strip().lower() in {"on", "1", "true", "yes"}
+
+
 def _early_run_state(
     result: AgentRunResult,
     agent: Agent,
@@ -2757,6 +2834,23 @@ class AgentRuntime:
                     }
                 )
             return held
+
+        # ---------------------------------------------------------------------
+        # Run Guards (shadow + enforcement opcional): la tabla de transiciones
+        # (`src/runtime/run_guards.py`) es la fuente declarada; acá se compara
+        # su veredicto con la razón que la ruta vigente registra para el mismo
+        # evento. Una divergencia = deriva tabla↔loop. La comparación vive en
+        # funciones de módulo (`observe_guard_transition`) para ser testeable.
+        # ---------------------------------------------------------------------
+        def _guard_verdict(event: str, **signals: object):
+            return guard_verdict_for(state, event, **signals)
+
+        def _observe_guard_transition(
+            event: str, *, legacy_reason: str, **signals: object
+        ) -> None:
+            observe_guard_transition(
+                state, event, legacy_reason=legacy_reason, **signals
+            )
 
         revision_used = False
         pending_step_judgment = None
@@ -4961,6 +5055,11 @@ class AgentRuntime:
                                 "detail": "max_steps blocked retrieval",
                             }
                         )
+                        _observe_guard_transition(
+                            "REQUEST_RETRIEVAL",
+                            legacy_reason="BUDGET_EXHAUSTED",
+                            budget_exhausted=True,
+                        )
                         history.append(
                             "OBSERVATION: no quedan pasos del agente para otra "
                             "búsqueda. Responde con la evidencia que ya tienes."
@@ -5124,6 +5223,11 @@ class AgentRuntime:
                         "guard_reason": "TOOL_NOT_AUTHORIZED",
                     }
                 )
+                _observe_guard_transition(
+                    "REQUEST_TOOL",
+                    legacy_reason="TOOL_NOT_AUTHORIZED",
+                    tool_authorized=False,
+                )
                 continue
 
             # F3 (P1): el triple gate se re-evalúa EN EJECUCIÓN (no solo al
@@ -5141,6 +5245,11 @@ class AgentRuntime:
                         "error": "not permitted (RBAC/agent grants)",
                         "guard_reason": "TOOL_NOT_AUTHORIZED",
                     }
+                )
+                _observe_guard_transition(
+                    "REQUEST_TOOL",
+                    legacy_reason="TOOL_NOT_AUTHORIZED",
+                    tool_authorized=False,
                 )
                 continue
 
@@ -5186,6 +5295,12 @@ class AgentRuntime:
                         "guard_reason": "BUDGET_EXHAUSTED",
                         "detail": "budget exhausted: tool bloqueada antes de ejecutar",
                     }
+                )
+                _observe_guard_transition(
+                    "REQUEST_TOOL",
+                    legacy_reason="BUDGET_EXHAUSTED",
+                    tool_authorized=True,
+                    budget_exhausted=True,
                 )
                 await _finalize_with_authority("budget exhausted")
                 ensure_answer(result, history, reason="budget exhausted")
@@ -5254,6 +5369,12 @@ class AgentRuntime:
                         "detail": "loop prevention: duplicate tool call without new information",
                     }
                 )
+                _observe_guard_transition(
+                    "REQUEST_TOOL",
+                    legacy_reason="DUPLICATE_TOOL_CALL",
+                    tool_authorized=True,
+                    duplicate_tool_call=True,
+                )
                 continue
 
             # Tool que ya falló para esta pregunta: no se reintenta (evita
@@ -5276,6 +5397,30 @@ class AgentRuntime:
                     }
                 )
                 continue
+
+            _tool_verdict = _guard_verdict("REQUEST_TOOL", tool_authorized=True)
+            if _tool_verdict is not None:
+                if str(_tool_verdict.reason_code) != "TOOL_AUTHORIZED":
+                    emit_guard_divergence(
+                        state,
+                        "REQUEST_TOOL",
+                        guard_reason=str(_tool_verdict.reason_code),
+                        legacy_reason="TOOL_AUTHORIZED",
+                    )
+                if guards_enforced(settings) and not _tool_verdict.allowed:
+                    history.append(
+                        f"OBSERVATION: error: the execution guard denied "
+                        f"'{tool_name}'. Answer with what you already have."
+                    )
+                    result.steps.append(
+                        {
+                            "type": "guardrail",
+                            "tool": tool_name,
+                            "guard_reason": str(_tool_verdict.reason_code),
+                            "detail": "run guard denegó la ejecución (enforcement)",
+                        }
+                    )
+                    continue
 
             tool_result = await execute_tool_guarded(
                 tool,
@@ -5540,6 +5685,11 @@ class AgentRuntime:
                                             "type": "guardrail",
                                             "detail": "max_steps blocked retrieval",
                                         }
+                                    )
+                                    _observe_guard_transition(
+                                        "REQUEST_RETRIEVAL",
+                                        legacy_reason="BUDGET_EXHAUSTED",
+                                        budget_exhausted=True,
                                     )
                                     history.append(
                                         "OBSERVATION: no quedan pasos del agente para "
