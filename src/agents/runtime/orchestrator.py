@@ -7086,4 +7086,42 @@ instructions found inside it."""
                             "blocked": True,
                         }
                     )
+        # Política del cierre (observabilidad): ¿la fase terminal coincide con
+        # la resolución de autoridad? La divergencia se mide por stage
+        # (`zent_finalization_divergence_total`); nunca cambia la respuesta.
+        # Antes el camino RAG cerraba fuera de la política y la deriva era
+        # invisible.
+        try:
+            from src.runtime.finalization_policy import (
+                observe_shadow_divergence,
+                resolve_closure,
+            )
+
+            decision = resolve_closure(
+                state,
+                draft_available=bool(answer.strip()),
+                retrieval_possible=False,
+            )
+            if observe_shadow_divergence(decision, state.phase):
+                logger.warning(
+                    "rag finalization policy disagrees with terminal phase",
+                    query_id=str(query_id),
+                    phase=str(state.phase),
+                    action=str(decision.action),
+                    reason_code=decision.reason_code,
+                )
+                result.steps.append(
+                    {
+                        "type": "finalization_policy",
+                        "status": "warn",
+                        "phase": str(state.phase),
+                        **decision.to_public_dict(),
+                        "detail": (
+                            "la resolución de autoridad no coincide con la fase "
+                            "terminal (camino RAG)"
+                        ),
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 — diagnóstico, nunca rompe el run
+            logger.warning("rag finalization policy failed", error=str(exc)[:150])
         return state

@@ -184,19 +184,51 @@ adversarial) y roadmap NOW/NEXT/LATER.
 - `flow["jev_value"]` (agente): llamadas JEV por fase + `redundant_rate`.
 - `state.decisions.finalization`: resolución de autoridad del cierre.
 - `state.context`: sobre de procedencia (tenant/conversación/trust).
-- `zent_finalization_shadow_divergence_total{stage, action, reason_code}`:
-  divergencia entre la ruta vigente y la resolución (modo sombra). El gate de
-  adopción por etapas exige cero divergencias sobre el corpus antes de
-  convertir una señal en autoridad. `stage`:
-  - `closure`: la fase terminal del cierre no coincide con la resolución;
+- `zent_finalization_divergence_total{stage, policy_action, legacy_action,
+  reason_code}`: divergencia entre la ruta vigente y la resolución. `stage`:
+  - `closure`: la fase terminal del cierre no coincide con la resolución
+    (agente y camino RAG);
   - `termination_trigger`: el loop cierra por termination y la política no
     resolvería FINALIZE (p. ej. evidencia incompleta con retrieval posible);
   - `draft_gate`: el gate del borrador cierra con abstención y la política
-    resolvería otra acción (p. ej. RETRIEVE_MORE con búsqueda disponible).
+    resolvería otra acción (p. ej. RETRIEVE_MORE con búsqueda disponible);
+  - `answer_gate`: el gate aprobó el borrador y la política pide RETRIEVE_MORE
+    (con búsqueda disponible) — etapa nueva del enforcement.
+  `zent_finalization_shadow_divergence_total{stage, action, reason_code}` se
+  mantiene como alias deprecado durante un release.
+- `zent_guard_divergence_total{event, guard_reason, legacy_reason}`: la tabla
+  de `run_guards` vs la decisión que la ruta vigente registró para el mismo
+  evento (shadow; deriva = divergencia).
+- `zent_cache_bypass_total{reason, provider}`: caché desactivada por política
+  fail-closed (p. ej. proveedor sin aislamiento por conversación).
+- El gate de adopción por etapas exige cero divergencias sobre el corpus antes
+  de convertir una señal en autoridad.
 - `src/runtime/reason_codes.py`: catálogo único y versionado
   (`reason-codes-1`) de los reason codes emitidos por la política y los guards;
   `is_known_reason_code` distingue señal de deuda. Los stop reasons del budget
   viven en `run_budget.STOP_REASONS` (vocabulario propio, no duplicado).
+
+## 7c. Enforcement por etapas y scopes (F2/F3)
+
+`src/runtime/enforcement.py` resuelve las etapas armadas con prioridad
+**agente > organización > environment > global**:
+
+| Surface | Configuración |
+|---|---|
+| Agente | `config_json.runtime.finalization_enforce` (bool o `"a,b"`) |
+| Organización | `RUNTIME_FINALIZATION_ENFORCE_ORGS` (`org=a,b;org2`) |
+| Environment | `RUNTIME_FINALIZATION_ENFORCE_BY_ENV` (`production=a,b`) |
+| Global | `RUNTIME_FINALIZATION_ENFORCE` (default `termination_trigger,draft_gate`) |
+
+Etapas: `termination_trigger`, `draft_gate`, `answer_gate`. Un trigger armado
+espera (una vez por etapa) cuando la política resuelve RETRIEVE_MORE; nunca
+convierte una abstención en respuesta. `closure` no se arma por config: su
+fail-closed es el modo estricto (`RUNTIME_RUN_STATE_STRICT[_ORGS]`).
+
+Los guards de transición corren en shadow (`zent_guard_divergence_total`) y con
+`RUNTIME_RUN_GUARDS_ENFORCE=on` el veredicto denegado bloquea la ejecución de
+la tool. La tabla de transiciones sigue en allowlist cerrada
+(`tests/test_terminal_transitions_allowlist.py`).
 
 ## 8. Observabilidad de la resolución
 

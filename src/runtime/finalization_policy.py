@@ -25,6 +25,15 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from src.runtime.enforcement import (
+    ENFORCE_STAGES as ENFORCE_STAGES_IMPL,
+)
+from src.runtime.enforcement import (
+    enforcement_stages,
+)
+from src.runtime.enforcement import (
+    should_hold_trigger as _should_hold_trigger,
+)
 from src.runtime.reason_codes import (
     AUTHORITY_MISSING_FOR_EXECUTABLE,
     AUTHORITY_MISSING_RETRIEVE,
@@ -384,59 +393,89 @@ def decision_matches_terminal(
     return decision.action in expected
 
 
-#: Etapas de enforcement válidas (las mismas del shadow).
-ENFORCE_STAGES: frozenset[str] = frozenset({"termination_trigger", "draft_gate"})
+#: Etapas de enforcement válidas (mismas que el shadow). La resolución de scopes
+#: (agente > org > environment > global) vive en `src/runtime/enforcement.py`.
+ENFORCE_STAGES: frozenset[str] = ENFORCE_STAGES_IMPL
 
 
 def enforced_stages(settings: object) -> frozenset[str]:
-    """Etapas con enforcement activo. 'off'/vacío = solo shadow."""
-    raw = str(
-        getattr(settings, "RUNTIME_FINALIZATION_ENFORCE", "") or ""
-    ).strip()
-    if not raw or raw.lower() in {"off", "0", "false", "no"}:
-        return frozenset()
-    return (
-        frozenset(part.strip() for part in raw.split(",") if part.strip())
-        & ENFORCE_STAGES
-    )
+    """Etapas con enforcement activo para un scope global (compat/observabilidad).
 
-
-def should_hold_trigger(
-    decision: FinalizationDecision | None,
-    *,
-    stage: str,
-    enforced: frozenset[str],
-    holds_used: int = 0,
-    max_holds: int = 1,
-) -> bool:
-    """¿El trigger debe esperar en vez de cerrar? (enforcement, fail-closed)
-
-    Se espera solo cuando la política resuelve RETRIEVE_MORE (evidencia
-    incompleta y búsqueda disponible) y la etapa está armada. Acotado por
-    `max_holds`: un trigger nunca queda bloqueado más de lo permitido.
+    Para scopes por agente/org usar `enforcement.enforcement_stages`.
     """
-    return bool(
-        stage in enforced
-        and decision is not None
-        and decision.action is FinalizationAction.RETRIEVE_MORE
-        and int(holds_used) < int(max_holds)
-    )
+    return enforcement_stages(settings)
 
 
-def _emit_divergence(stage: str, decision: FinalizationDecision) -> None:
-    """Contador de divergencia shadow (fail-soft)."""
+def should_hold_trigger(*args: object, **kwargs: object) -> bool:
+    """Re-export del hold acotado (ver `src.runtime.enforcement`)."""
+    return _should_hold_trigger(*args, **kwargs)
+
+
+#: Acción que la ruta vigente ejecutaba por fase terminal. Solo alimenta la
+#: métrica de divergencia: la política nunca decide con esto.
+LEGACY_ACTION_BY_PHASE: dict[RunPhase, str] = {
+    RunPhase.FINALIZED: "FINALIZE",
+    RunPhase.LIMIT_REACHED: "FINALIZE",
+    RunPhase.ABSTAINED: "ABSTAIN",
+    RunPhase.UNDETERMINED: "UNDETERMINED",
+    RunPhase.BLOCKED: "BLOCK",
+    RunPhase.FAILED: "FAILED",
+}
+
+
+def legacy_action_for_phase(phase: RunPhase) -> str:
+    return LEGACY_ACTION_BY_PHASE.get(phase, "UNKNOWN")
+
+
+def _emit_divergence(
+    stage: str, decision: FinalizationDecision, *, legacy_action: str = ""
+) -> None:
+    """Contador de divergencia (fail-soft). Emite el contrato nuevo y el alias.
+
+    `policy_action` es lo que resolvió la política; `legacy_action` lo que la
+    ruta vigente ejecuta(ba). El alias `zent_finalization_shadow_divergence_total`
+    se mantiene 1 release para no romper scrapes existentes.
+    """
+    policy_action = str(decision.action)
     try:
         from src.infrastructure.observability.metrics import (
+            zent_finalization_divergence_total,
             zent_finalization_shadow_divergence_total,
         )
 
+        zent_finalization_divergence_total.labels(
+            stage=str(stage),
+            policy_action=policy_action,
+            legacy_action=str(legacy_action or ""),
+            reason_code=str(decision.reason_code),
+        ).inc()
         zent_finalization_shadow_divergence_total.labels(
             stage=str(stage),
-            action=str(decision.action),
+            action=policy_action,
             reason_code=str(decision.reason_code),
         ).inc()
     except Exception:  # noqa: BLE001 — observabilidad, nunca rompe el run
         pass
+
+
+def resolve_closure(
+    state: AgentRunState,
+    *,
+    draft_available: bool,
+    retrieval_possible: bool = False,
+) -> FinalizationDecision:
+    """Resuelve el cierre y publica la resolución en el estado (observabilidad).
+
+    No cambia la respuesta: el cambio, si corresponde, lo aplica el modo
+    estricto o el enforcement del trigger. Fuente única para agente y RAG.
+    """
+    decision = evaluate_finalization(
+        state,
+        draft_available=draft_available,
+        retrieval_possible=retrieval_possible,
+    )
+    state.decisions.finalization = decision.to_public_dict()
+    return decision
 
 
 def observe_shadow_divergence(
@@ -449,7 +488,9 @@ def observe_shadow_divergence(
     """
     if decision_matches_terminal(decision, phase):
         return False
-    _emit_divergence("closure", decision)
+    _emit_divergence(
+        "closure", decision, legacy_action=legacy_action_for_phase(phase)
+    )
     return True
 
 
@@ -468,10 +509,11 @@ def observe_trigger_shadow(
 
     `intended` es la acción que la ruta vigente ejecutará (FINALIZE para el
     trigger de termination; ABSTAIN/BLOCK/UNDETERMINED para el gate del
-    borrador). Divergencia = la política resuelve una acción distinta a la
-    esperada por el trigger. A diferencia del cierre (que evalúa con
-    `retrieval_possible=False`), acá el presupuesto de búsqueda todavía importa:
-    detecta cierres prematuros que el shadow del cierre no puede ver.
+    borrador; FINALIZE para la etapa answer_gate). Divergencia = la política
+    resuelve una acción distinta a la esperada por el trigger. A diferencia del
+    cierre (que evalúa con `retrieval_possible=False`), acá el presupuesto de
+    búsqueda todavía importa: detecta cierres prematuros que el shadow del
+    cierre no puede ver.
     """
     decision = evaluate_finalization(
         state,
@@ -482,7 +524,7 @@ def observe_trigger_shadow(
         draft_available=draft_available,
     )
     if str(decision.action) != str(intended):
-        _emit_divergence(stage, decision)
+        _emit_divergence(stage, decision, legacy_action=str(intended))
     return decision
 
 
@@ -492,12 +534,16 @@ __all__ = [
     "FINALIZATION_POLICY_VERSION",
     "FinalizationAction",
     "FinalizationDecision",
+    "LEGACY_ACTION_BY_PHASE",
     "decision_matches_terminal",
     "enforced_stages",
+    "enforcement_stages",
     "evaluate_finalization",
     "expected_actions_for_phase",
     "gate_abstention_action",
+    "legacy_action_for_phase",
     "observe_shadow_divergence",
     "observe_trigger_shadow",
+    "resolve_closure",
     "should_hold_trigger",
 ]

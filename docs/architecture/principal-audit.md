@@ -286,6 +286,21 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   línea del ledger; F1: harness de perf con tráfico real; F4: finalizer
   completo (parseo, prompt, generación, cierre determinista).
 
+**HECHO (hardening F0–F3, 2026-10-12)** — ver `hardening/00-audit.md` y
+`hardening/01-report.md`:
+- F1: cache fail-closed por conversación — sin soporte del proveedor NO hay
+  clave degradada (`None` = caché off) + `zent_cache_bypass_total`; test
+  adversarial ×100 (hallazgo 9).
+- F2: enforcement por etapas con scopes agente > org > environment > global
+  (`src/runtime/enforcement.py`), etapa `answer_gate`, métrica
+  `zent_finalization_divergence_total{stage, policy_action, legacy_action,
+  reason_code}` (alias deprecado) y resolución del cierre también en el camino
+  RAG (hallazgo 2: el RAG cerraba fuera de la política).
+- F3: `run_guards` con caller real en el loop: shadow medible
+  (`zent_guard_divergence_total`) + `RUNTIME_RUN_GUARDS_ENFORCE` (hallazgo 6).
+- F0: scripts `flags_inventory`/`simplification_score`/`finalization_audit`,
+  corpus dorado de la política (`tests/golden/finalization_cases.json`).
+
 **NEXT**
 11. Invariantes de texto para el resto de los estados de respuesta (ya
     cubiertos RETRIEVAL_UNAVAILABLE y UNDETERMINED).

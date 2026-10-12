@@ -1,0 +1,556 @@
+{
+  "version": "finalization-golden-1",
+  "cases": [
+    {
+      "id": "executable_without_authority_search_available",
+      "evidence": "insufficient",
+      "authority": "requires",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": true,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "RETRIEVE_MORE",
+        "reason_code": "AUTHORITY_MISSING_RETRIEVE",
+        "authority": "DETERMINISTIC",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "executable_without_authority_exhausted",
+      "evidence": "complete",
+      "authority": "requires",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "UNDETERMINED",
+        "reason_code": "AUTHORITY_MISSING_FOR_EXECUTABLE",
+        "authority": "DETERMINISTIC",
+        "limited": false,
+        "signals_ignored": [
+          "jev_only_negative_signal"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "authority_positive_jev_negative",
+      "evidence": "complete",
+      "authority": "positive",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": true,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "no",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "DETERMINISTIC_AUTHORITY",
+        "authority": "DETERMINISTIC",
+        "limited": false,
+        "signals_ignored": [
+          "jev_only_negative_signal"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "authority_negative_authoritative",
+      "evidence": "complete",
+      "authority": "negative",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "DETERMINISTIC_AUTHORITY",
+        "authority": "DETERMINISTIC",
+        "limited": false,
+        "signals_ignored": [
+          "jev_only_negative_signal"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "retrieval_failed_never_no_information",
+      "evidence": "failed",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": false,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "yes",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "BLOCK",
+        "reason_code": "RETRIEVAL_UNAVAILABLE",
+        "authority": "EVIDENCE",
+        "limited": false,
+        "signals_ignored": [
+          "jev_positive_without_evidence"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "retrieval_failed_with_draft",
+      "evidence": "failed",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "BLOCK",
+        "reason_code": "RETRIEVAL_UNAVAILABLE",
+        "authority": "EVIDENCE",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "budget_exhausted_with_evidence",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": true,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "BUDGET_EXHAUSTED_WITH_EVIDENCE",
+        "authority": "RESOURCE",
+        "limited": true,
+        "signals_ignored": [
+          "jev_only_negative_signal"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "budget_exhausted_without_evidence",
+      "evidence": "unknown",
+      "authority": "none",
+      "budget_exhausted": true,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "BLOCK",
+        "reason_code": "BUDGET_EXHAUSTED_WITHOUT_EVIDENCE",
+        "authority": "RESOURCE",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "evidence_insufficient_search_available",
+      "evidence": "insufficient",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": true,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "RETRIEVE_MORE",
+        "reason_code": "EVIDENCE_INCOMPLETE",
+        "authority": "EVIDENCE",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "evidence_insufficient_limited_answer",
+      "evidence": "insufficient",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "EVIDENCE_INCOMPLETE_LIMITED",
+        "authority": "EVIDENCE",
+        "limited": true,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "evidence_insufficient_without_draft",
+      "evidence": "insufficient",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": false,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "ABSTAIN",
+        "reason_code": "EVIDENCE_INSUFFICIENT",
+        "authority": "EVIDENCE",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "evidence_insufficient_jev_yes_ignored",
+      "evidence": "insufficient",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "yes",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "EVIDENCE_INCOMPLETE_LIMITED",
+        "authority": "EVIDENCE",
+        "limited": true,
+        "signals_ignored": [
+          "jev_positive_without_evidence"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "reasoning_incomplete_hold",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": true,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "CONTINUE",
+        "reason_code": "REASONING_INCOMPLETE",
+        "authority": "REASONING",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "reasoning_incomplete_beats_termination",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": true,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": true,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "CONTINUE",
+        "reason_code": "REASONING_INCOMPLETE",
+        "authority": "REASONING",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": [
+          "termination_vs_incomplete_reasoning"
+        ]
+      }
+    },
+    {
+      "id": "termination_satisfied_with_draft",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": true,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "TERMINATION_SATISFIED",
+        "authority": "TERMINATION",
+        "limited": false,
+        "signals_ignored": [
+          "jev_only_negative_signal"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "termination_without_draft",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": false,
+      "termination_requested": true,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "CONTINUE",
+        "reason_code": "TERMINATION_WITHOUT_DRAFT",
+        "authority": "TERMINATION",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ready_with_draft",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "READY",
+        "authority": "GENERATION",
+        "limited": false,
+        "signals_ignored": [
+          "jev_only_negative_signal"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "needs_draft",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": false,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "CONTINUE",
+        "reason_code": "NEED_DRAFT",
+        "authority": "GENERATION",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "unknown_evidence_ready",
+      "evidence": "unknown",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "READY",
+        "authority": "GENERATION",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "tool_authorized",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": true,
+      "tool_authorized": true,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "USE_TOOL",
+        "reason_code": "TOOL_AUTHORIZED",
+        "authority": "SAFETY",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "tool_not_authorized",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": true,
+      "tool_authorized": false,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "CONTINUE",
+        "reason_code": "TOOL_NOT_AUTHORIZED",
+        "authority": "SAFETY",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "tool_outside_allowlist_blocks",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "uncertain",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": true,
+      "expected": {
+        "action": "BLOCK",
+        "reason_code": "TOOL_OUTSIDE_ALLOWLIST",
+        "authority": "SAFETY",
+        "limited": false,
+        "signals_ignored": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "authority_positive_reasoning_incomplete",
+      "evidence": "complete",
+      "authority": "positive",
+      "budget_exhausted": false,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "no",
+      "reasoning_incomplete": true,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "DETERMINISTIC_AUTHORITY",
+        "authority": "DETERMINISTIC",
+        "limited": false,
+        "signals_ignored": [
+          "jev_only_negative_signal",
+          "reasoning_incomplete_overridden_by_authority"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "budget_exhausted_jev_negative_with_evidence",
+      "evidence": "complete",
+      "authority": "none",
+      "budget_exhausted": true,
+      "draft_available": true,
+      "termination_requested": false,
+      "retrieval_possible": false,
+      "tool_requested": false,
+      "tool_authorized": null,
+      "jev": "no",
+      "reasoning_incomplete": false,
+      "tool_outside_allowlist": false,
+      "expected": {
+        "action": "FINALIZE",
+        "reason_code": "BUDGET_EXHAUSTED_WITH_EVIDENCE",
+        "authority": "RESOURCE",
+        "limited": true,
+        "signals_ignored": [
+          "jev_only_negative_signal"
+        ],
+        "conflicts": []
+      }
+    }
+  ]
+}

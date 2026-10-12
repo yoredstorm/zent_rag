@@ -283,7 +283,8 @@ class TestEnforcement:
             SimpleNamespace(
                 RUNTIME_FINALIZATION_ENFORCE="termination_trigger,draft_gate"
             )
-        ) == ENFORCE_STAGES
+        ) == frozenset({"termination_trigger", "draft_gate"})
+        assert "answer_gate" in ENFORCE_STAGES
         assert enforced_stages(
             SimpleNamespace(RUNTIME_FINALIZATION_ENFORCE="draft_gate,unknown")
         ) == frozenset({"draft_gate"})

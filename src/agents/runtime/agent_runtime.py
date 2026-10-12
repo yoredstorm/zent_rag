@@ -1198,16 +1198,15 @@ def _record_finalization_decision(state: AgentRunState, result: AgentRunResult) 
     """
     try:
         from src.runtime.finalization_policy import (
-            evaluate_finalization,
             observe_shadow_divergence,
+            resolve_closure,
         )
 
-        decision = evaluate_finalization(
+        decision = resolve_closure(
             state,
             draft_available=bool((result.answer or "").strip()),
             retrieval_possible=False,
         )
-        state.decisions.finalization = decision.to_public_dict()
         if observe_shadow_divergence(decision, state.phase):
             logger.warning(
                 "finalization policy disagrees with terminal phase",
@@ -2710,16 +2709,25 @@ class AgentRuntime:
         def _enforce_trigger(stage: str, decision: object | None) -> bool:
             """Enforcement del shadow (fail-closed): el trigger espera si la
             política pide RETRIEVE_MORE. Una vez por etapa, nunca rompe el run.
+
+            Las etapas armadas se resuelven por scope: config del agente >
+            organización > environment > global (`src/runtime/enforcement.py`).
             """
             try:
-                from src.runtime.finalization_policy import (
-                    enforced_stages,
+                from src.runtime.enforcement import (
+                    enforcement_stages,
                     should_hold_trigger,
                 )
 
                 enforced = enforced_stages_cache.get("stages")
                 if enforced is None:
-                    enforced = enforced_stages(settings)
+                    enforced = enforcement_stages(
+                        settings,
+                        config_json=getattr(request.agent, "config_json", None),
+                        organization_id=getattr(
+                            request.agent, "organization_id", None
+                        ),
+                    )
                     enforced_stages_cache["stages"] = enforced
                 held = should_hold_trigger(
                     decision,
@@ -4872,6 +4880,18 @@ class AgentRuntime:
                     # exponga (incluye gate apagado): sin envelope no hay sí/no.
                     await _ensure_derived_claims()
                 gate_verdict = await _gate_draft(direct)
+                if gate_verdict in {"approve", "answer_with_limits"}:
+                    # Etapa answer_gate: la ruta va a FINALIZAR con el borrador.
+                    # Si la política pide RETRIEVE_MORE (evidencia incompleta y
+                    # búsqueda todavía disponible) el cierre espera y sigue
+                    # reuniendo evidencia en vez de cerrar con lo que hay.
+                    _answer_gate_decision = _shadow_trigger(
+                        "answer_gate",
+                        "FINALIZE",
+                        draft_available=bool((direct or "").strip()),
+                    )
+                    if _enforce_trigger("answer_gate", _answer_gate_decision):
+                        continue
                 if gate_verdict == "abstain":
                     failure = result.answer_state or {}
                     authoritative_message = str(failure.get("message") or "")

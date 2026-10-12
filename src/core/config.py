@@ -1411,7 +1411,31 @@ class Settings(BaseSettings):
             "Etapas donde la política de finalización manda sobre la ruta "
             "vigente (enforcement del shadow): un trigger que cierra cuando la "
             "política resuelve RETRIEVE_MORE espera y sigue reuniendo evidencia "
-            "(una vez por etapa). Vacio u 'off' = solo shadow."
+            "(una vez por etapa). Vacio u 'off' = solo shadow. "
+            "Etapas: termination_trigger, draft_gate, answer_gate."
+        ),
+    )
+    RUNTIME_FINALIZATION_ENFORCE_ORGS: str = Field(
+        default="",
+        description=(
+            "Override del enforcement por organización: 'org=etapas;org2' "
+            "(clave sin valor = etapas globales). Prioridad: agente > org > "
+            "environment > global."
+        ),
+    )
+    RUNTIME_FINALIZATION_ENFORCE_BY_ENV: str = Field(
+        default="",
+        description=(
+            "Override del enforcement por environment: 'production=etapas;"
+            "staging=etapas'. Aplica cuando RAG_ENVIRONMENT coincide."
+        ),
+    )
+    RUNTIME_RUN_GUARDS_ENFORCE: Literal["off", "on"] = Field(
+        default="off",
+        description=(
+            "on = el veredicto de la tabla de run_guards manda en ejecución "
+            "(una tool que el guard deniega no se ejecuta). off = solo shadow "
+            "medible (zent_guard_divergence_total)."
         ),
     )
     RUNTIME_RUN_STATE_STRICT_ORGS: str = Field(
