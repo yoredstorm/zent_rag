@@ -90,6 +90,11 @@ finaliza binario, análisis incompleto no finaliza, retry transitorio sí,
 permanente no, duplicado bloqueado en el run, y el mismo call en un run nuevo
 se permite (`LoopGuard` por run).
 
+Fuera de la tabla, las transiciones terminales del runtime están en una
+allowlist cerrada con justificación por sitio
+(`tests/test_terminal_transitions_allowlist.py`): una transición nueva rompe el
+test hasta rutearse por la política o documentarse.
+
 ## 4. JEV decision value (P4)
 
 `src/runtime/jev_value.py`: clasifica desde los `steps` (sin tocar decisiones):

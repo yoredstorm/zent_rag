@@ -56,9 +56,14 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   abstención si la evidencia es insuficiente o el retrieval falló (caso D de
   evidence-first preservado).
 - **Estado (shadow medible)**: `observe_shadow_divergence` emite
-  `zent_finalization_shadow_divergence_total{phase, action, reason_code}` cuando
-  la fase terminal no coincide con la resolución. Gate de adopción por etapas:
-  cero divergencias sobre el corpus antes de convertir una señal en autoridad.
+  `zent_finalization_shadow_divergence_total{stage, action, reason_code}` cuando
+  la ruta vigente no coincide con la resolución (`closure`,
+  `termination_trigger`, `draft_gate`). Gate de adopción por etapas: cero
+  divergencias sobre el corpus antes de convertir una señal en autoridad.
+- **Estado (allowlist de transiciones)**: `tests/test_terminal_transitions_allowlist.py`
+  fija la lista CERRADA de transiciones terminales fuera de la política (15
+  ocurrencias en 4 archivos, cada una con justificación). Cualquier transición
+  nueva rompe el test hasta rutearse por la política o documentarse.
 
 ### 3. Resiliencia de providers acoplada al modelo (P1)
 - **Evidence**: `_circuit_check` marca `_circuit_open` global por modelo;
