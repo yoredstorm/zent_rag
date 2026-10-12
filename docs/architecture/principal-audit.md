@@ -150,6 +150,17 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   ACTIVA (`test_narrative_runtime_regression`, top_k del agente incluido).
   La extracción completa del narrative fast path sigue con criterio explícito
   (módulo con parámetros, sin rewrite del ReAct).
+- **Estado (extracción por pasos, 2026-10-11)**: 6 pasos commiteados al módulo
+  `src/runtime/narrative_fast_path.py`, comportamiento idéntico y tests propios:
+  1) bloques puros (frames, context blocks, nota de gaps);
+  2) cierre (`fast_path_overrun`, `patch_narrative_verification`,
+  `mark_partial_grounded`); 3) proyecciones de traza (coverage/frames);
+  4) generación (`generate_narrative_answer`: timeout, fallback, continuación);
+  5) prompt + plan de presupuesto (`build_narrative_prompt_plan`);
+  6) payload del step (`FastPathStep.to_step`).
+  El closure bajó de ~780 a ~520 líneas. Resta el núcleo de búsqueda/cobertura
+  (etapas 1-3: registry, nonlocals `selection`/`selection_question`, freeze del
+  paquete) para una próxima sesión; es la parte más entrelazada.
 
 ### 7. Mezcla de contextos en prompt sin sobre (P2)
 - **Evidence**: `context_block`, company context, memory hits y evidencia
@@ -251,9 +262,9 @@ Solo hallazgos con evidencia en el repo. Ordenados por
    origen → trust) (7).
 
 **NEXT**
-6. Extracción narrative fast path (~780 líneas en `_run_loop`, 4369-5148) y
-   finalizador con parámetros explícitos; sesión propia con la suite verde como
-   red (6).
+6. Extracción narrative fast path: 6 pasos hechos (ver estado); resta el núcleo
+   de búsqueda/cobertura (~520 líneas restantes del closure) y el finalizador,
+   con parámetros explícitos; sesión propia con la suite verde como red (6).
 11. Invariantes de texto para el resto de los estados de respuesta (ya
     cubiertos RETRIEVAL_UNAVAILABLE y UNDETERMINED).
 12. Bloques memory/company del prompt desde el sobre (mismo mecanismo que los
