@@ -277,6 +277,15 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 7. Encabezados de bloque del prompt desde `ContextEnvelope` (fuente única
    origen → trust) (7).
 
+**HECHO (tercera pasada 2026-10-12)** — ver `v2-consolidation-report.md`:
+- A1: enforcement del resolver activo por defecto (termination/draft gate
+  esperan si la política pide RETRIEVE_MORE); A2: canary estricto por org.
+- E: migración completa de `adaptive` (37 claves modeladas, writers=1 global).
+- B1: bloques de contexto por origen (company/memoria/workflow).
+- C1: invariantes de texto en todos los estados; D1: intentos de provider como
+  línea del ledger; F1: harness de perf con tráfico real; F4: finalizer
+  completo (parseo, prompt, generación, cierre determinista).
+
 **NEXT**
 11. Invariantes de texto para el resto de los estados de respuesta (ya
     cubiertos RETRIEVAL_UNAVAILABLE y UNDETERMINED).
