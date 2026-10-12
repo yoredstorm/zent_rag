@@ -166,6 +166,14 @@ Solo hallazgos con evidencia en el repo. Ordenados por
   observaciones de tools «untrusted data», hechos del workspace con
   `[authority]`, evidencia desde el registry). Falta construir los bloques
   desde el sobre y migrar el portal a `story_view` (frontend, fuera del backend).
+- **Estado (encabezados desde el sobre)**: hecho — `PROMPT_BLOCK_HEADERS` +
+  `prompt_block_header(origin)` (`context_envelope`) son la fuente ÚNICA de las
+  etiquetas de procedencia del prompt (origen → trust); `agent_runtime` las usa
+  para el contexto de workflow y las observaciones de tools (strings idénticos:
+  cero cambio de comportamiento). Tests: `tests/test_prompt_block_headers.py`
+  (origen→trust, inyección en contexto de workflow queda como DATA, wiring).
+  Falta: construir memory/company blocks desde el sobre (mismo mecanismo) y la
+  extracción del narrative fast path (~780 líneas, sesión propia).
 
 ### 8. Story para humanos sin congelar (P3)
 - **Evidence**: `story_view.business_steps/technical_steps` implementados con
@@ -236,13 +244,20 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 10. Matriz adversarial de streaming por provider (429/timeout/circuit/fallback
     + estabilidad ×100) (hallazgo 10).
 
+**HECHO (segunda pasada 2026-10-11)**
+5. `adaptive` regenerado: `plan`, `quality`, `evidence`, `attempts` modeladas
+   en el estado; writer único `_adaptive_write`; writers=1 verificado (4).
+7. Encabezados de bloque del prompt desde `ContextEnvelope` (fuente única
+   origen → trust) (7).
+
 **NEXT**
-5. `adaptive` regenerado: modelar `plan`, `quality`, `evidence`, `attempts` en
-   el estado (4).
-6. Extracción narrative fast path y finalizador con parámetros explícitos (6).
-7. Prompt construido desde `ContextEnvelope` (7).
+6. Extracción narrative fast path (~780 líneas en `_run_loop`, 4369-5148) y
+   finalizador con parámetros explícitos; sesión propia con la suite verde como
+   red (6).
 11. Invariantes de texto para el resto de los estados de respuesta (ya
     cubiertos RETRIEVAL_UNAVAILABLE y UNDETERMINED).
+12. Bloques memory/company del prompt desde el sobre (mismo mecanismo que los
+    encabezados ya migrados).
 
 ## Regla
 
