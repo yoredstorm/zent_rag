@@ -4381,10 +4381,11 @@ class AgentRuntime:
                 completeness_for_finish,
                 fast_path_overrun,
                 generate_narrative_answer,
-                jev_needed,
+                language_bridge_step,
                 mark_partial_grounded,
                 narrative_route,
                 patch_narrative_verification,
+                prepare_narrative_coverage,
                 run_initial_narrative_search,
             )
             from src.runtime.run_budget import (
@@ -4435,7 +4436,6 @@ class AgentRuntime:
             narrative_top_k = _search_plan.top_k
             selection_max_items = _search_plan.max_items
             retrieval_ms += search_outcome.retrieval_ms
-            from src.runtime.evidence import assess_sufficiency, select_evidence
             from src.runtime.narrative_coverage import (
                 COVERAGE_COMPLETE,
                 COVERAGE_PARTIAL,
@@ -4444,96 +4444,40 @@ class AgentRuntime:
                 NO_TARGET_QUERY,
                 PARTIAL_MATERIAL,
                 apply_coverage_limitation,
-                coverage_needs_jev,
-                decide_coverage_round,
                 ensure_concept_representation,
-                extract_narrative_concepts,
-                headings_from_items,
                 measure_coverage,
-                narrative_coverage_applies,
                 prefer_aspect_items,
                 strip_generic_limitation,
-                vocabulary_from_items,
             )
             from src.runtime.narrative_package import freeze_narrative_package
 
-            if not narrative_coverage_applies(request.message):
-                return _skip("coverage_not_applicable")
-            probe = select_evidence(
-                registry.all_items(),
-                selection_question,
-                budget_chars=evidence_budget,
-                max_items=selection_max_items,
+            coverage_prep = await prepare_narrative_coverage(
+                message=request.message,
+                registry=registry,
+                selection_question=selection_question,
+                evidence_budget=evidence_budget,
+                selection_max_items=selection_max_items,
+                max_coverage_rounds=int(
+                    getattr(settings, "NARRATIVE_MAX_COVERAGE_ROUNDS", 1) or 0
+                ),
+                remaining_steps=ledger.remaining_steps,
+                over_budget=ledger.remaining_tokens <= 0
+                or (ledger.max_cost_usd is not None and ledger.remaining_cost_usd <= 0),
+                bridge=_bridge_language_gaps,
+                activated=getattr(semantic_plan, "activated", ()),
+                embedder=get_embedding_provider(),
             )
-            probe_sufficiency = assess_sufficiency(
-                probe.items,
-                request.message,
-                retrieval_rounds_left=0,
-            )
-            conflicts = int(getattr(probe_sufficiency, "conflicting_chunks", 0) or 0)
-            if not getattr(probe_sufficiency, "generate", False):
-                return _skip("sufficiency_no_generate")
-            if jev_needed(conflicts=conflicts) or coverage_needs_jev(conflicts=conflicts):
-                return _skip("jev_needed")
-            concept_plan = extract_narrative_concepts(
-                request.message,
-                vocabulary=vocabulary_from_items(registry.all_items()),
-            )
-            initial_coverage = measure_coverage(
-                concept_plan, registry.all_items(), searched=False
-            )
-            # Puente de idioma AUTOMÁTICO: si un aspecto no matchea léxicamente
-            # («cierre de fechas» vs «Discontinue Date»), el embedding
-            # multilingüe propone los términos del documento y la evidencia los
-            # ancla. Los packs quedan como precisión opcional, no requisito.
-            try:
-                concept_plan, initial_coverage, auto_aliases = (
-                    await _bridge_language_gaps(
-                        concept_plan,
-                        initial_coverage,
-                        registry.all_items(),
-                        activated=getattr(semantic_plan, "activated", ()),
-                        embedder=get_embedding_provider(),
+            if coverage_prep.skip_reason:
+                return _skip(coverage_prep.skip_reason)
+            concept_plan = coverage_prep.concept_plan
+            initial_coverage = coverage_prep.initial_coverage
+            decision = coverage_prep.decision
+            if coverage_prep.auto_aliases:
+                result.steps.append(
+                    language_bridge_step(
+                        coverage_prep.auto_aliases, stage="pre_coverage"
                     )
                 )
-                if auto_aliases:
-                    result.steps.append(
-                        {
-                            "type": "language_bridge",
-                            "status": "ok",
-                            "detail": (
-                                "puente de idioma por embedding: "
-                                + "; ".join(
-                                    f"{aspect} -> {', '.join(aliases)}"
-                                    for aspect, aliases in auto_aliases.items()
-                                )
-                            )[:240],
-                            "aliases": {
-                                aspect: list(aliases)
-                                for aspect, aliases in auto_aliases.items()
-                            },
-                        }
-                    )
-            except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
-                logger.warning("auto language bridge failed", error=str(exc)[:150])
-            max_coverage_rounds = int(
-                getattr(settings, "NARRATIVE_MAX_COVERAGE_ROUNDS", 1) or 0
-            )
-            over_budget = ledger.remaining_tokens <= 0 or (
-                ledger.max_cost_usd is not None and ledger.remaining_cost_usd <= 0
-            )
-            anchors = tuple(
-                item.label for item in initial_coverage if item.status == COVERED
-            )
-            decision = decide_coverage_round(
-                initial_coverage,
-                rounds_done=0,
-                max_rounds=max_coverage_rounds,
-                remaining_steps=ledger.remaining_steps,
-                anchors=anchors,
-                headings=headings_from_items(registry.all_items()),
-                over_budget=over_budget,
-            )
             if state is not None:
                 # Cobertura narrativa publicada en el estado (P3): el invariante
                 # detecta pedir búsqueda por cobertura con evidencia ya completa.
@@ -4610,21 +4554,7 @@ class AgentRuntime:
                 )
                 if final_aliases:
                     result.steps.append(
-                        {
-                            "type": "language_bridge",
-                            "status": "ok",
-                            "detail": (
-                                "puente de idioma por embedding (post-coverage): "
-                                + "; ".join(
-                                    f"{aspect} -> {', '.join(aliases)}"
-                                    for aspect, aliases in final_aliases.items()
-                                )
-                            )[:240],
-                            "aliases": {
-                                aspect: list(aliases)
-                                for aspect, aliases in final_aliases.items()
-                            },
-                        }
+                        language_bridge_step(final_aliases, stage="post_coverage")
                     )
             except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
                 logger.warning("auto language bridge failed", error=str(exc)[:150])

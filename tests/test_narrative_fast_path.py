@@ -455,6 +455,136 @@ class TestProyeccionesDeTraza:
         assert narrative_frame_rows(None) == []
 
 
+class TestCoberturaPrepExtraida:
+    """`prepare_narrative_coverage` + `language_bridge_step`."""
+
+    def _patch(self, monkeypatch, *, applies=True, generate=True, conflicts=0):
+        from src.runtime import evidence as evidence_module
+        from src.runtime import narrative_coverage as coverage_module
+
+        monkeypatch.setattr(
+            coverage_module, "narrative_coverage_applies", lambda message: applies
+        )
+        monkeypatch.setattr(
+            evidence_module,
+            "select_evidence",
+            lambda items, question, **kwargs: SimpleNamespace(items=list(items)),
+        )
+        monkeypatch.setattr(
+            evidence_module,
+            "assess_sufficiency",
+            lambda items, message, **kwargs: SimpleNamespace(
+                generate=generate, conflicting_chunks=conflicts
+            ),
+        )
+        monkeypatch.setattr(
+            coverage_module,
+            "extract_narrative_concepts",
+            lambda message, **kwargs: SimpleNamespace(concepts=[], frames=[]),
+        )
+        monkeypatch.setattr(
+            coverage_module, "vocabulary_from_items", lambda items: ()
+        )
+        monkeypatch.setattr(
+            coverage_module,
+            "measure_coverage",
+            lambda plan, items, **kwargs: [SimpleNamespace(status="COVERED", label="x")],
+        )
+        monkeypatch.setattr(
+            coverage_module, "headings_from_items", lambda items: ()
+        )
+        monkeypatch.setattr(
+            coverage_module, "coverage_needs_jev", lambda *, conflicts: False
+        )
+        monkeypatch.setattr(
+            coverage_module,
+            "decide_coverage_round",
+            lambda coverage, **kwargs: SimpleNamespace(
+                search=False, stop_reason="COMPLETE", coverage_search_skipped="",
+                query="",
+            ),
+        )
+
+    def _registry(self):
+        return SimpleNamespace(all_items=lambda: ["item-1"])
+
+    async def _run(self, *, bridge, activated=(), embedder=None):
+        from src.runtime.narrative_fast_path import prepare_narrative_coverage
+
+        return await prepare_narrative_coverage(
+            message="¿qué dice el record 2?",
+            registry=self._registry(),
+            selection_question="q",
+            evidence_budget=1000,
+            selection_max_items=5,
+            max_coverage_rounds=1,
+            remaining_steps=3,
+            over_budget=False,
+            bridge=bridge,
+            activated=activated,
+            embedder=embedder,
+        )
+
+    async def test_cobertura_no_aplicable_skippea(self, monkeypatch) -> None:
+        self._patch(monkeypatch, applies=False)
+        outcome = await self._run(bridge=lambda *a, **k: None)
+        assert outcome.skip_reason == "coverage_not_applicable"
+
+    async def test_suficiencia_sin_generate_skippea(self, monkeypatch) -> None:
+        self._patch(monkeypatch, generate=False)
+        outcome = await self._run(bridge=lambda *a, **k: None)
+        assert outcome.skip_reason == "sufficiency_no_generate"
+
+    async def test_jev_necesario_skippea(self, monkeypatch) -> None:
+        self._patch(monkeypatch, conflicts=1)
+        outcome = await self._run(bridge=lambda *a, **k: None)
+        assert outcome.skip_reason == "jev_needed"
+
+    async def test_happy_path_llama_al_puente_con_contexto(self, monkeypatch) -> None:
+        self._patch(monkeypatch)
+        seen: dict = {}
+
+        async def bridge(plan, coverage, items, *, activated, embedder):
+            seen["activated"] = activated
+            seen["embedder"] = embedder
+            return plan, coverage, {"cierre": ["Discontinue Date"]}
+
+        marker = object()
+        outcome = await self._run(
+            bridge=bridge, activated=("a",), embedder=marker
+        )
+        assert outcome.skip_reason == ""
+        assert outcome.auto_aliases == {"cierre": ["Discontinue Date"]}
+        assert outcome.decision is not None
+        assert seen["activated"] == ("a",)
+        assert seen["embedder"] is marker
+
+    async def test_puente_que_falla_sigue_sin_aliases(self, monkeypatch) -> None:
+        self._patch(monkeypatch)
+
+        async def bridge(*args, **kwargs):
+            raise RuntimeError("embedding caído")
+
+        outcome = await self._run(bridge=bridge)
+        assert outcome.skip_reason == ""
+        assert outcome.auto_aliases == {}
+        assert outcome.concept_plan is not None
+
+    def test_language_bridge_step_pre_y_post(self) -> None:
+        from src.runtime.narrative_fast_path import language_bridge_step
+
+        pre = language_bridge_step({"cierre": ["Discontinue Date"]})
+        assert pre["type"] == "language_bridge"
+        assert "puente de idioma por embedding: " in pre["detail"]
+        assert "post-coverage" not in pre["detail"]
+        assert pre["aliases"] == {"cierre": ["Discontinue Date"]}
+
+        post = language_bridge_step(
+            {"vigencia": ["Effective Date"]}, stage="post_coverage"
+        )
+        assert "post-coverage" in post["detail"]
+
+
 class TestSearchInicialExtraido:
     """`run_initial_narrative_search`: registry + accounting + cargo del paso."""
 

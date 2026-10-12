@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from src.core.domain.reasoning import QueryMode
 from src.infrastructure.observability.logging_config import get_logger
@@ -590,6 +590,130 @@ def mark_partial_grounded(steps: list[dict], gap_items: object) -> bool:
         recorded["grounding"] = "PARTIAL"
         return True
     return False
+
+
+@dataclass(frozen=True)
+class NarrativeCoveragePrep:
+    """Preparación de cobertura: plan de conceptos, cobertura inicial, decisión.
+
+    `skip_reason` no vacío = la ruta narrativa no aplica (cobertura, suficiencia
+    o JEV): el loop normal sigue.
+    """
+
+    concept_plan: object = None
+    initial_coverage: object = None
+    decision: object = None
+    auto_aliases: dict = field(default_factory=dict)
+    skip_reason: str = ""
+
+
+async def prepare_narrative_coverage(
+    *,
+    message: str,
+    registry: object,
+    selection_question: str,
+    evidence_budget: int,
+    selection_max_items: int,
+    max_coverage_rounds: int,
+    remaining_steps: int,
+    over_budget: bool,
+    bridge,
+    activated: tuple = (),
+    embedder: object = None,
+) -> NarrativeCoveragePrep:
+    """Probe + gates + concept plan + puente de idioma + decisión de cobertura.
+
+    `bridge` es el puente de idioma (embedding) del runtime; si falla, se sigue
+    con lo léxico (misma semántica que antes).
+    """
+    from src.runtime.evidence import assess_sufficiency, select_evidence
+    from src.runtime.narrative_coverage import (
+        COVERED,
+        coverage_needs_jev,
+        decide_coverage_round,
+        extract_narrative_concepts,
+        headings_from_items,
+        measure_coverage,
+        narrative_coverage_applies,
+        vocabulary_from_items,
+    )
+
+    if not narrative_coverage_applies(message):
+        return NarrativeCoveragePrep(skip_reason="coverage_not_applicable")
+    probe = select_evidence(
+        registry.all_items(),
+        selection_question,
+        budget_chars=evidence_budget,
+        max_items=selection_max_items,
+    )
+    probe_sufficiency = assess_sufficiency(
+        probe.items,
+        message,
+        retrieval_rounds_left=0,
+    )
+    conflicts = int(getattr(probe_sufficiency, "conflicting_chunks", 0) or 0)
+    if not getattr(probe_sufficiency, "generate", False):
+        return NarrativeCoveragePrep(skip_reason="sufficiency_no_generate")
+    if jev_needed(conflicts=conflicts) or coverage_needs_jev(conflicts=conflicts):
+        return NarrativeCoveragePrep(skip_reason="jev_needed")
+    concept_plan = extract_narrative_concepts(
+        message,
+        vocabulary=vocabulary_from_items(registry.all_items()),
+    )
+    initial_coverage = measure_coverage(
+        concept_plan, registry.all_items(), searched=False
+    )
+    auto_aliases: dict = {}
+    try:
+        concept_plan, initial_coverage, auto_aliases = await bridge(
+            concept_plan,
+            initial_coverage,
+            registry.all_items(),
+            activated=activated,
+            embedder=embedder,
+        )
+    except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
+        logger.warning("auto language bridge failed", error=str(exc)[:150])
+        auto_aliases = {}
+    anchors = tuple(
+        item.label for item in initial_coverage if item.status == COVERED
+    )
+    decision = decide_coverage_round(
+        initial_coverage,
+        rounds_done=0,
+        max_rounds=max_coverage_rounds,
+        remaining_steps=remaining_steps,
+        anchors=anchors,
+        headings=headings_from_items(registry.all_items()),
+        over_budget=over_budget,
+    )
+    return NarrativeCoveragePrep(
+        concept_plan=concept_plan,
+        initial_coverage=initial_coverage,
+        decision=decision,
+        auto_aliases=dict(auto_aliases or {}),
+    )
+
+
+def language_bridge_step(aliases: dict, *, stage: str = "pre_coverage") -> dict:
+    """Step `language_bridge` desde los aliases automáticos (texto único)."""
+    label = (
+        "puente de idioma por embedding: "
+        if stage == "pre_coverage"
+        else "puente de idioma por embedding (post-coverage): "
+    )
+    return {
+        "type": "language_bridge",
+        "status": "ok",
+        "detail": (
+            label
+            + "; ".join(
+                f"{aspect} -> {', '.join(values)}"
+                for aspect, values in aliases.items()
+            )
+        )[:240],
+        "aliases": {aspect: list(values) for aspect, values in aliases.items()},
+    }
 
 
 @dataclass(frozen=True)
