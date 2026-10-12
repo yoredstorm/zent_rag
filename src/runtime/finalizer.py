@@ -154,3 +154,94 @@ def finalize_answer_delivery(
             "detail": f"finalized after {reason}",
         }
     )
+
+
+def is_provider_failure(reason: str) -> bool:
+    """Fallo del proveedor de modelos, no un límite del agente."""
+    text = str(reason or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "todos los modelos del router fallaron",
+            "circuit breaker is open",
+            "ratelimiterror",
+            "notfounderror",
+            "model not found",
+            "engine_overloaded",
+            "model busy",
+        )
+    )
+
+
+def budget_answer(history: list[str], reason: str) -> str:
+    """Respuesta de cierre cuando el presupuesto se agotó: nunca vacía.
+
+    Determinista: junta EVIDENCIA real de las observaciones (las que traen
+    documentos), sin instrucciones internas ni inventos. Un fallo del
+    proveedor de modelos no se disfraza de límite del agente.
+    """
+    fragmentos: list[str] = []
+    for item in reversed(history):
+        if not item.startswith("OBSERVATION") or "[Doc" not in item:
+            continue
+        cuerpo = item.split(":", 1)[-1].strip() if ":" in item else item
+        # La primera línea suele ser la instrucción ("(untrusted data...)"); se
+        # arranca en el primer documento.
+        inicio = cuerpo.find("[Doc")
+        if inicio > 0:
+            cuerpo = cuerpo[inicio:]
+        if cuerpo:
+            fragmentos.append(cuerpo[:1200])
+        if len(fragmentos) >= 2:
+            break
+    if is_provider_failure(reason):
+        if not fragmentos:
+            return (
+                "No pude completar la respuesta: el proveedor de modelos no está "
+                "disponible (los modelos del router fallaron). Reintentá en unos "
+                "segundos."
+            )
+        evidencia = "\n\n".join(fragmentos)
+        return (
+            "No pude cerrar la explicación completa: el proveedor de modelos no "
+            "está disponible. Esto es lo que quedó reunido de las fuentes (sin "
+            f"agregar nada):\n\n{evidencia}"
+        )
+    motivo = {
+        "max_tokens exceeded": "el presupuesto de tokens del agente",
+        "max_execution_seconds exceeded": "el tiempo máximo de ejecución del agente",
+        "max_cost exceeded": "el costo máximo del agente",
+        "max_steps exceeded": "el máximo de pasos del agente",
+    }.get(reason, f"el límite del agente ({reason})")
+    if not fragmentos:
+        return (
+            f"No pude completar la respuesta: se alcanzó {motivo} antes de reunir "
+            "evidencia. Reformulá la pregunta o ampliá los límites del agente."
+        )
+    evidencia = "\n\n".join(fragmentos)
+    return (
+        f"No pude cerrar la explicación completa: se alcanzó {motivo}. "
+        "Esto es lo que quedó reunido de las fuentes (sin agregar nada):\n\n"
+        f"{evidencia}"
+    )
+
+
+def ensure_answer(result: object, history: list[str], *, reason: str) -> None:
+    """Cierra sin respuesta vacía: el usuario nunca ve "(sin respuesta)".
+
+    El finalize puede no correr (sin observaciones usables, error del provider,
+    presupuesto agotado). En ese caso se devuelve lo reunido, tal cual, marcado
+    como incompleto: nunca se inventa y nunca se deja el string vacío.
+    """
+    if (result.answer or "").strip():
+        return
+    if result.status not in ("limit_reached", "error", "completed"):
+        return
+    result.answer = budget_answer(history, reason)
+    result.steps.append(
+        {
+            "type": "final",
+            "answer": result.answer[:500],
+            "detail": f"cierre determinista ({reason})",
+        }
+    )

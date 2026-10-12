@@ -54,8 +54,10 @@ from src.runtime.deterministic_authority import (
     undetermined_authoritative_answer,
 )
 from src.runtime.finalizer import (
+    budget_answer,
     build_finalize_prompt,
     citations_from_evidence,
+    ensure_answer,
     finalize_answer_delivery,
     limits_note,
 )
@@ -317,76 +319,6 @@ def _decision_engine_or_none():
         return engine
     except Exception:  # noqa: BLE001 — sin engine decide la política de reglas
         return None
-
-
-def _is_provider_failure(reason: str) -> bool:
-    """Fallo del proveedor de modelos, no un límite del agente."""
-    text = str(reason or "").lower()
-    return any(
-        marker in text
-        for marker in (
-            "todos los modelos del router fallaron",
-            "circuit breaker is open",
-            "ratelimiterror",
-            "notfounderror",
-            "model not found",
-            "engine_overloaded",
-            "model busy",
-        )
-    )
-
-
-def _budget_answer(history: list[str], reason: str) -> str:
-    """Respuesta de cierre cuando el presupuesto se agotó: nunca vacía.
-
-    Determinista: junta EVIDENCIA real de las observaciones (las que traen
-    documentos), sin instrucciones internas ni inventos. Un fallo del
-    proveedor de modelos no se disfraza de límite del agente.
-    """
-    fragmentos: list[str] = []
-    for item in reversed(history):
-        if not item.startswith("OBSERVATION") or "[Doc" not in item:
-            continue
-        cuerpo = item.split(":", 1)[-1].strip() if ":" in item else item
-        # La primera línea suele ser la instrucción ("(untrusted data...)"); se
-        # arranca en el primer documento.
-        inicio = cuerpo.find("[Doc")
-        if inicio > 0:
-            cuerpo = cuerpo[inicio:]
-        if cuerpo:
-            fragmentos.append(cuerpo[:1200])
-        if len(fragmentos) >= 2:
-            break
-    if _is_provider_failure(reason):
-        if not fragmentos:
-            return (
-                "No pude completar la respuesta: el proveedor de modelos no está "
-                "disponible (los modelos del router fallaron). Reintentá en unos "
-                "segundos."
-            )
-        evidencia = "\n\n".join(fragmentos)
-        return (
-            "No pude cerrar la explicación completa: el proveedor de modelos no "
-            "está disponible. Esto es lo que quedó reunido de las fuentes (sin "
-            f"agregar nada):\n\n{evidencia}"
-        )
-    motivo = {
-        "max_tokens exceeded": "el presupuesto de tokens del agente",
-        "max_execution_seconds exceeded": "el tiempo máximo de ejecución del agente",
-        "max_cost exceeded": "el costo máximo del agente",
-        "max_steps exceeded": "el máximo de pasos del agente",
-    }.get(reason, f"el límite del agente ({reason})")
-    if not fragmentos:
-        return (
-            f"No pude completar la respuesta: se alcanzó {motivo} antes de reunir "
-            "evidencia. Reformulá la pregunta o ampliá los límites del agente."
-        )
-    evidencia = "\n\n".join(fragmentos)
-    return (
-        f"No pude cerrar la explicación completa: se alcanzó {motivo}. "
-        "Esto es lo que quedó reunido de las fuentes (sin agregar nada):\n\n"
-        f"{evidencia}"
-    )
 
 
 async def _bridge_language_gaps(
@@ -2213,7 +2145,7 @@ class AgentRuntime:
             )
             _mark_budget_stop(result, "TIME_BUDGET")
             # Sin respuesta vacía: se devuelve lo reunido hasta el corte.
-            self._ensure_answer(
+            ensure_answer(
                 result,
                 _runtime_scratch(result).get("history") or [],
                 reason="max_execution_seconds exceeded",
@@ -2229,7 +2161,7 @@ class AgentRuntime:
             result.answer = ""
             result.steps.append({"type": "error", "detail": str(exc)})
             logger.error("Agent run failed", agent_id=str(agent.id), error=str(exc))
-            self._ensure_answer(
+            ensure_answer(
                 result,
                 _runtime_scratch(result).get("history") or [],
                 reason=f"error: {str(exc)[:120]}",
@@ -4490,7 +4422,7 @@ class AgentRuntime:
             if prompt_plan.exhausted_reason:
                 _mark_budget_stop(result, prompt_plan.stop_reason)
                 result.status = "limit_reached"
-                result.answer = _budget_answer(
+                result.answer = budget_answer(
                     [f"OBSERVATION: {prompt_plan.context[:2000]}"],
                     prompt_plan.exhausted_reason,
                 )
@@ -4787,7 +4719,7 @@ class AgentRuntime:
                     }
                 )
                 await _finalize_with_authority(detail)
-                self._ensure_answer(result, history, reason=detail)
+                ensure_answer(result, history, reason=detail)
                 result.answer = _apply_derived_guard(result.answer)
                 return
             call_max_tokens = call_plan.allowed_completion_tokens
@@ -4867,7 +4799,7 @@ class AgentRuntime:
                     {"type": "guardrail", "detail": "max_tokens exceeded"}
                 )
                 await _finalize_with_authority("max_tokens exceeded")
-                self._ensure_answer(result, history, reason="max_tokens exceeded")
+                ensure_answer(result, history, reason="max_tokens exceeded")
                 result.answer = _apply_derived_guard(result.answer)
                 return
             if result.cost > max_cost:
@@ -4877,7 +4809,7 @@ class AgentRuntime:
                     {"type": "guardrail", "detail": "max_cost exceeded"}
                 )
                 await _ensure_derived_claims()
-                self._ensure_answer(result, history, reason="max_cost exceeded")
+                ensure_answer(result, history, reason="max_cost exceeded")
                 result.answer = _apply_derived_guard(result.answer)
                 return
 
@@ -5155,7 +5087,7 @@ class AgentRuntime:
                     {"type": "guardrail", "detail": "max_tool_calls exceeded"}
                 )
                 await _finalize_with_authority("max_tool_calls exceeded")
-                self._ensure_answer(result, history, reason="max_tool_calls exceeded")
+                ensure_answer(result, history, reason="max_tool_calls exceeded")
                 result.answer = _apply_derived_guard(result.answer)
                 return
 
@@ -5247,7 +5179,7 @@ class AgentRuntime:
                     }
                 )
                 await _finalize_with_authority("budget exhausted")
-                self._ensure_answer(result, history, reason="budget exhausted")
+                ensure_answer(result, history, reason="budget exhausted")
                 result.answer = _apply_derived_guard(result.answer)
                 return
             if state is not None:
@@ -5760,26 +5692,7 @@ class AgentRuntime:
         _mark_budget_stop(result, "STEP_BUDGET")
         result.steps.append({"type": "guardrail", "detail": "max_steps reached"})
         await _finalize_with_authority("max_steps reached", reasoning=reasoning)
-        self._ensure_answer(result, history, reason="max_steps reached")
+        ensure_answer(result, history, reason="max_steps reached")
         result.answer = _apply_derived_guard(result.answer)
 
-    @staticmethod
-    def _ensure_answer(result: AgentRunResult, history: list[str], *, reason: str) -> None:
-        """Cierra sin respuesta vacía: el usuario nunca ve "(sin respuesta)".
 
-        El finalize puede no correr (sin observaciones usables, error del provider,
-        presupuesto agotado). En ese caso se devuelve lo reunido, tal cual, marcado
-        como incompleto: nunca se inventa y nunca se deja el string vacío.
-        """
-        if (result.answer or "").strip():
-            return
-        if result.status not in ("limit_reached", "error", "completed"):
-            return
-        result.answer = _budget_answer(history, reason)
-        result.steps.append(
-            {
-                "type": "final",
-                "answer": result.answer[:500],
-                "detail": f"cierre determinista ({reason})",
-            }
-        )

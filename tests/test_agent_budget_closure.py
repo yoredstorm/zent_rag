@@ -12,9 +12,10 @@ import pytest
 
 from src.agents.runtime.agent_runtime import (
     AgentRunResult,
-    _budget_answer,
     _merge_evidence_refs,
 )
+from src.runtime.finalizer import budget_answer as _budget_answer
+from src.runtime.finalizer import ensure_answer
 
 
 class _ToolResult:
@@ -65,8 +66,6 @@ class TestRespuestaDeCierre:
         assert "Fee Application (byte 105)" in texto
 
     def test_ensure_answer_no_pisa_una_respuesta_existente(self) -> None:
-        from src.agents.runtime.agent_runtime import AgentRuntime
-
         result = AgentRunResult(
             run_id=uuid4(),
             agent_id=uuid4(),
@@ -75,13 +74,11 @@ class TestRespuestaDeCierre:
             answer="respuesta del modelo",
         )
 
-        AgentRuntime._ensure_answer(result, ["OBSERVATION: algo"], reason="max_tokens exceeded")
+        ensure_answer(result, ["OBSERVATION: algo"], reason="max_tokens exceeded")
 
         assert result.answer == "respuesta del modelo"
 
     def test_ensure_answer_completa_la_corrida_sin_respuesta(self) -> None:
-        from src.agents.runtime.agent_runtime import AgentRuntime
-
         result = AgentRunResult(
             run_id=uuid4(),
             agent_id=uuid4(),
@@ -90,9 +87,7 @@ class TestRespuestaDeCierre:
             answer="",
         )
 
-        AgentRuntime._ensure_answer(
-            result, ["OBSERVATION: dato útil"], reason="max_tokens exceeded"
-        )
+        ensure_answer(result, ["OBSERVATION: dato útil"], reason="max_tokens exceeded")
 
         assert result.answer.strip()
         assert any(p.get("detail", "").startswith("cierre determinista") for p in result.steps)
