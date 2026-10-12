@@ -1,0 +1,39 @@
+{
+  "label": "f0-before",
+  "target": "finalization",
+  "generated_at": "2026-10-12T20:55:22.887447+00:00",
+  "organization_id": "ef7e9a86-6a5b-465f-830c-04afaeada60f",
+  "queries_file": "D:\\zent_RAG\\tests\\golden\\rag_retail.json",
+  "iterations": 1,
+  "summary": {
+    "runs": 1,
+    "errors": 0,
+    "divergences": 0,
+    "divergences_by_phase": {},
+    "divergences_by_reason_code": {},
+    "phases": {
+      "FINALIZED": 1
+    },
+    "actions": {
+      "FINALIZE": 1
+    },
+    "without_resolution": 0
+  },
+  "cases": [
+    {
+      "phase": "FINALIZED",
+      "legacy_action": "FINALIZE",
+      "action": "FINALIZE",
+      "reason_code": "READY",
+      "authority": "GENERATION",
+      "limited": false,
+      "signals_ignored": [],
+      "divergent": false,
+      "warning_steps": 0,
+      "question": "¿Cuáles son los productos más vendidos?",
+      "status": "completed",
+      "latency_ms": 26199.03,
+      "iteration": 0
+    }
+  ]
+}
