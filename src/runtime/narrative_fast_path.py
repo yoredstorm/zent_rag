@@ -461,3 +461,67 @@ def coverage_gap_prompt_note(final_coverage: object) -> str:
         "ni los menciones al inicio o en la «Conclusión»: la frase de limitación "
         "la agrega el sistema, una sola vez, al final."
     )
+
+
+def fast_path_overrun(overrun: dict, *, max_tokens: int) -> tuple[bool, str]:
+    """¿El cierre narrativo se pasó del ledger? (tolerancia explícita).
+
+    Devuelve `(large_overrun, stop_reason)`: razón de corte vacía si no hay
+    corte. El costo manda sobre tokens cuando ambos se pasaron.
+    """
+    from src.runtime.run_budget import COST_BUDGET, TOKEN_BUDGET
+
+    tolerance = max(128, int(max_tokens or 0) // 50)
+    token_over = int((overrun or {}).get("token_overrun") or 0)
+    cost_over = float((overrun or {}).get("cost_overrun_usd") or 0)
+    if token_over > tolerance or cost_over > 0.01:
+        return True, COST_BUDGET if cost_over > 0.01 else TOKEN_BUDGET
+    return False, ""
+
+
+def patch_narrative_verification(
+    steps: list[dict], *, finish_reason: str, completeness: str
+) -> None:
+    """Completa el `verification_input` del step narrative_evidence (in place).
+
+    Sin step no hace nada: la traza es observacional, nunca rompe el cierre.
+    """
+    for step in reversed(steps or []):
+        if step.get("type") != "narrative_evidence":
+            continue
+        recorded = step.get("verification_input")
+        if isinstance(recorded, dict):
+            recorded["finish_reason"] = finish_reason
+            recorded["completeness"] = completeness
+            recorded["truncated"] = finish_reason.lower() in {"length", "max_tokens"}
+        break
+
+
+def mark_partial_grounded(steps: list[dict], gap_items: object) -> bool:
+    """Marca PARTIAL_GROUNDED y agrega los gaps como UNSUPPORTED (in place).
+
+    Devuelve True si aplicó (encontró el step de verificación).
+    """
+    for step in reversed(steps or []):
+        recorded = (
+            step.get("verification_input")
+            if step.get("type") == "narrative_evidence"
+            else None
+        )
+        if not isinstance(recorded, dict):
+            continue
+        supports = list(recorded.get("supports") or [])
+        for item in gap_items or ():
+            supports.append(
+                {
+                    "claim": item.aspect or item.label,
+                    "status": "UNSUPPORTED",
+                    "doc_number": None,
+                    "evidence_id": "",
+                }
+            )
+        recorded["supports"] = supports
+        recorded["verification"] = "PARTIAL"
+        recorded["grounding"] = "PARTIAL"
+        return True
+    return False

@@ -16,13 +16,16 @@ from src.runtime.narrative_fast_path import (
     completeness_for_finish,
     compress_narrative_context,
     coverage_gap_prompt_note,
+    fast_path_overrun,
     grounded_answer_policy,
     jev_needed,
+    mark_partial_grounded,
     narrative_context_blocks,
     narrative_frame_lines,
     narrative_model_for,
     narrative_route,
     output_token_budget,
+    patch_narrative_verification,
     prompt_char_budget,
     source_identity,
 )
@@ -308,3 +311,65 @@ class TestExtraccionPura:
             [SimpleNamespace(status=COVERED, aspect="", label="ok")]
         )
         assert "ninguno" in note
+
+
+class TestCierreExtraido:
+    """Helpers del cierre narrativo extraídos del closure."""
+
+    def test_overrun_dentro_de_tolerancia_no_corta(self) -> None:
+        assert fast_path_overrun({"token_overrun": 10}, max_tokens=4000) == (False, "")
+
+    def test_overrun_de_tokens_corta_por_token_budget(self) -> None:
+        # tolerancia = max(128, 4000 // 50) = 128; 200 la supera.
+        assert fast_path_overrun({"token_overrun": 200}, max_tokens=4000) == (
+            True,
+            "TOKEN_BUDGET",
+        )
+
+    def test_overrun_de_costo_manda_sobre_tokens(self) -> None:
+        assert fast_path_overrun(
+            {"token_overrun": 200, "cost_overrun_usd": 0.02}, max_tokens=4000
+        ) == (True, "COST_BUDGET")
+
+    def test_patch_verification_completa_el_ultimo_step(self) -> None:
+        steps = [
+            {
+                "type": "narrative_evidence",
+                "verification_input": {"supports": []},
+            },
+            {"type": "narrative_evidence", "verification_input": {"supports": ["a"]}},
+        ]
+        patch_narrative_verification(
+            steps, finish_reason="length", completeness="TRUNCATED"
+        )
+        recorded = steps[-1]["verification_input"]
+        assert recorded["finish_reason"] == "length"
+        assert recorded["completeness"] == "TRUNCATED"
+        assert recorded["truncated"] is True
+        # El step viejo no se toca.
+        assert "finish_reason" not in steps[0]["verification_input"]
+
+    def test_patch_verification_sin_step_no_rompe(self) -> None:
+        steps = [{"type": "final"}]
+        patch_narrative_verification(
+            steps, finish_reason="stop", completeness="COMPLETE"
+        )
+        assert steps == [{"type": "final"}]
+
+    def test_mark_partial_grounded_agrega_gaps(self) -> None:
+        steps = [
+            {
+                "type": "narrative_evidence",
+                "verification_input": {"supports": [], "verification": "COMPLETE"},
+            }
+        ]
+        gaps = [SimpleNamespace(aspect="cierre de fechas", label="")]
+        assert mark_partial_grounded(steps, gaps) is True
+        recorded = steps[0]["verification_input"]
+        assert recorded["verification"] == "PARTIAL"
+        assert recorded["grounding"] == "PARTIAL"
+        assert recorded["supports"][0]["claim"] == "cierre de fechas"
+        assert recorded["supports"][0]["status"] == "UNSUPPORTED"
+
+    def test_mark_partial_grounded_sin_step_devuelve_false(self) -> None:
+        assert mark_partial_grounded([{"type": "final"}], ["x"]) is False

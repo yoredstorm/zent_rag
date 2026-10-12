@@ -4379,12 +4379,15 @@ class AgentRuntime:
                 completeness_for_finish,
                 compress_narrative_context,
                 coverage_gap_prompt_note,
+                fast_path_overrun,
                 grounded_answer_policy,
                 jev_needed,
+                mark_partial_grounded,
                 narrative_context_blocks,
                 narrative_frame_lines,
                 narrative_model_for,
                 narrative_route,
+                patch_narrative_verification,
                 personality_instruction,
                 prompt_char_budget,
             )
@@ -4967,15 +4970,11 @@ class AgentRuntime:
                 finish_reason,
                 verification,
             )
-            for step in reversed(result.steps):
-                if step.get("type") != "narrative_evidence":
-                    continue
-                recorded = step.get("verification_input")
-                if isinstance(recorded, dict):
-                    recorded["finish_reason"] = finish_reason
-                    recorded["completeness"] = completeness
-                    recorded["truncated"] = finish_reason.lower() in {"length", "max_tokens"}
-                break
+            patch_narrative_verification(
+                result.steps,
+                finish_reason=finish_reason,
+                completeness=completeness,
+            )
             gap_items = [
                 item
                 for item in final_coverage
@@ -4987,36 +4986,15 @@ class AgentRuntime:
             )
             if any_grounded and gap_items:
                 overall = "PARTIAL_GROUNDED"
-                for step in reversed(result.steps):
-                    recorded = step.get("verification_input") if step.get("type") == "narrative_evidence" else None
-                    if not isinstance(recorded, dict):
-                        continue
-                    supports = list(recorded.get("supports") or [])
-                    for item in gap_items:
-                        supports.append(
-                            {
-                                "claim": item.aspect or item.label,
-                                "status": "UNSUPPORTED",
-                                "doc_number": None,
-                                "evidence_id": "",
-                            }
-                        )
-                    recorded["supports"] = supports
-                    recorded["verification"] = "PARTIAL"
-                    recorded["grounding"] = "PARTIAL"
-                    break
+                mark_partial_grounded(result.steps, gap_items)
             result.execution_mode = NARRATIVE_FAST_PATH
             overrun = budget_overrun(ledger)
-            tolerance = max(128, ledger.max_tokens // 50)
-            large_overrun = int(overrun.get("token_overrun") or 0) > tolerance or float(
-                overrun.get("cost_overrun_usd") or 0
-            ) > 0.01
+            large_overrun, stop_reason = fast_path_overrun(
+                overrun, max_tokens=ledger.max_tokens
+            )
             result.status = "limit_reached" if large_overrun else "completed"
-            if large_overrun:
-                _mark_budget_stop(
-                    result,
-                    "COST_BUDGET" if float(overrun.get("cost_overrun_usd") or 0) > 0.01 else "TOKEN_BUDGET",
-                )
+            if stop_reason:
+                _mark_budget_stop(result, stop_reason)
             result.steps.append(
                 {
                     "type": "narrative_fast_path",
