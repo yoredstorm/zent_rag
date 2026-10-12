@@ -54,6 +54,7 @@ from src.runtime.deterministic_authority import (
     undetermined_authoritative_answer,
 )
 from src.runtime.finalizer import (
+    build_finalize_prompt,
     citations_from_evidence,
     finalize_answer_delivery,
     limits_note,
@@ -96,29 +97,6 @@ _NEXT_STEP_TEMPLATE = """## HISTORY
 {history}
 
 Next step (JSON only):"""
-
-_FINALIZE_TEMPLATE = """You already collected tool observations. Answer the user now.
-
-Rules:
-- Write ONLY the final text for the user (Markdown allowed). No JSON, no wrappers,
-  no labels like "answer:" or "direct_answer:".
-- Do not call tools.
-- Domain facts and rules must be supported by the observations. User-provided
-  values are valid scenario data: apply them against documented rules; do not
-  treat them as missing evidence. Deterministic results derived from grounded
-  premises are valid even if not written verbatim.
-- If a domain premise is missing, state exactly which one; never fill it with
-  model knowledge.
-
-USER QUESTION: {question}
-
-{analytical_workspace}
-{response_shape}
-## HISTORY
-{history}
-
-Final answer (text only, no JSON):"""
-
 
 #: Polish del fast path: reemplazado por `src.runtime.response_composer`
 #: (DeterministicResponseFacts + PersonalityAwareComposer + validador semántico).
@@ -1760,11 +1738,13 @@ class AgentRuntime:
         # La respuesta final necesita su propio presupuesto: el del loop (o 512)
         # cortaba explicaciones técnicas y dejaba el JSON abierto. El techo del
         # run sigue siendo `config["max_tokens"]`; acá solo cabe lo que queda.
-        prompt = _FINALIZE_TEMPLATE.format(
+        prompt = build_finalize_prompt(
             question=request.message,
-            history="\n".join(history[-10:]),
+            history=history,
             analytical_workspace=(
-                f"{_reasoning_workspace_block(reasoning)}\n" if reasoning is not None else ""
+                f"{_reasoning_workspace_block(reasoning)}\n"
+                if reasoning is not None
+                else ""
             ),
             response_shape=_response_shape_block(run_plan),
         )

@@ -68,6 +68,49 @@ async def plan_finalize_budget(
     )
 
 
+FINALIZE_TEMPLATE = """You already collected tool observations. Answer the user now.
+
+Rules:
+- Write ONLY the final text for the user (Markdown allowed). No JSON, no wrappers,
+  no labels like "answer:" or "direct_answer:".
+- Do not call tools.
+- Domain facts and rules must be supported by the observations. User-provided
+  values are valid scenario data: apply them against documented rules; do not
+  treat them as missing evidence. Deterministic results derived from grounded
+  premises are valid even if not written verbatim.
+- If a domain premise is missing, state exactly which one; never fill it with
+  model knowledge.
+
+USER QUESTION: {question}
+
+{analytical_workspace}
+{response_shape}
+## HISTORY
+{history}
+
+Final answer (text only, no JSON):"""
+
+
+def build_finalize_prompt(
+    *,
+    question: str,
+    history: list[str],
+    analytical_workspace: str = "",
+    response_shape: str = "",
+) -> str:
+    """Prompt del cierre estándar: última generación sin tools.
+
+    El caller aporta el workspace analítico (si hay razonamiento) y el contrato
+    de forma; acá solo se formatea (misma plantilla de siempre).
+    """
+    return FINALIZE_TEMPLATE.format(
+        question=question,
+        history="\n".join(list(history or ())[-10:]),
+        analytical_workspace=analytical_workspace,
+        response_shape=response_shape,
+    )
+
+
 def citations_from_evidence(draft: str, selection: Any) -> list[dict[str, Any]]:
     """Citas del run ligadas a `evidence_id` (la numeración no rompe provenance)."""
     if selection is None or getattr(selection, "empty", True):

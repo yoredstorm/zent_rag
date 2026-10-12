@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from src.runtime.finalizer import (
     FinalizeBudget,
+    build_finalize_prompt,
     citations_from_evidence,
     finalize_answer_delivery,
     limits_note,
@@ -102,7 +103,25 @@ def _selection():
     return EvidenceSelection(items=[item], matches=[match])
 
 
-class TestCitasYLimites:
+class TestPromptDelCierre:
+    def test_incluye_pregunta_y_historial_reciente(self) -> None:
+        prompt = build_finalize_prompt(
+            question="¿qué dice el record 2?",
+            history=[f"turno {i}" for i in range(15)],
+            analytical_workspace="WORKSPACE\n",
+            response_shape="SHAPE",
+        )
+        assert "¿qué dice el record 2?" in prompt
+        assert "turno 14" in prompt
+        assert "turno 4" not in prompt  # solo los últimos 10
+        assert "WORKSPACE" in prompt
+        assert "SHAPE" in prompt
+        assert "Final answer (text only, no JSON):" in prompt
+
+    def test_sin_historial_ni_bloques(self) -> None:
+        prompt = build_finalize_prompt(question="q", history=[])
+        assert "USER QUESTION: q" in prompt
+        assert "## HISTORY" in prompt
     def test_cita_doc_1_marca_cited(self) -> None:
         payload = citations_from_evidence("ver [Doc: 1]", _selection())
         assert payload[0]["evidence_id"] == "e1"
