@@ -89,6 +89,39 @@ def prompt_block_header(origin: ContextOrigin) -> str:
     return PROMPT_BLOCK_HEADERS[origin]
 
 
+#: Claves de `request.context` que pertenecen al COMPANY_CONTEXT compilado
+#: (`CompiledCompanyContext.to_agent_context`).
+COMPANY_CONTEXT_KEYS: frozenset[str] = frozenset(
+    {
+        "organization_id",
+        "request_tokens",
+        "concepts",
+        "mappings",
+        "processes",
+        "systems",
+        "rules",
+        "authority",
+        "relationships",
+    }
+)
+
+#: Claves que son MEMORY (nunca evidencia documental).
+MEMORY_KEYS: frozenset[str] = frozenset({"memories", "memory", "memory_hits"})
+
+
+def context_origin(key: str) -> ContextOrigin:
+    """Origen de una clave de `request.context`: company, memoria o workflow.
+
+    Fuente única del etiquetado: el prompt y el sobre usan esta misma función.
+    """
+    name = str(key or "").strip()
+    if name in COMPANY_CONTEXT_KEYS:
+        return ContextOrigin.COMPANY_CONTEXT
+    if name in MEMORY_KEYS:
+        return ContextOrigin.MEMORY
+    return ContextOrigin.WORKFLOW
+
+
 @dataclass(frozen=True, kw_only=True)
 class ContextItem:
     origin: ContextOrigin
@@ -263,7 +296,9 @@ def build_context_envelope(
 
 
 __all__ = [
+    "COMPANY_CONTEXT_KEYS",
     "CONTEXT_ENVELOPE_VERSION",
+    "MEMORY_KEYS",
     "PROMPT_BLOCK_HEADERS",
     "ContextEnvelope",
     "ContextItem",
@@ -271,5 +306,6 @@ __all__ = [
     "ContextScope",
     "ContextTrust",
     "build_context_envelope",
+    "context_origin",
     "prompt_block_header",
 ]

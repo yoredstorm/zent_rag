@@ -40,6 +40,7 @@ from src.runtime.answer_gate import (
 )
 from src.runtime.context_envelope import (
     ContextOrigin,
+    context_origin,
     prompt_block_header,
 )
 from src.runtime.deterministic_authority import (
@@ -120,18 +121,44 @@ _OBSERVATION_HEADER = prompt_block_header(ContextOrigin.TOOL_OBSERVATION)
 
 
 def _render_context_block(context: dict) -> str:
-    """Bloque compacto y acotado del contexto del workflow.
+    """Bloques del contexto del run, separados por ORIGEN (sobre).
 
-    Los valores vienen de nodos/knowledge/negocio: se presentan como datos no
-    confiables, igual que las observaciones de tools.
+    `company_context` compilado y memorias llevan su encabezado del sobre; el
+    resto es data del negocio (workflow). Todos son DATOS, nunca instrucciones.
+    Sin company/memory el bloque es exactamente el de siempre.
     """
-    try:
-        body = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        body = str(context)
-    if len(body) > _CONTEXT_BLOCK_MAX_CHARS:
-        body = body[:_CONTEXT_BLOCK_MAX_CHARS] + "...(truncado)"
-    return f"{_CONTEXT_BLOCK_LABEL}\n{body}"
+    if not isinstance(context, dict):
+        try:
+            body = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            body = str(context)
+        if len(body) > _CONTEXT_BLOCK_MAX_CHARS:
+            body = body[:_CONTEXT_BLOCK_MAX_CHARS] + "...(truncado)"
+        return f"{_CONTEXT_BLOCK_LABEL}\n{body}"
+    groups: dict[ContextOrigin, dict] = {}
+    for key, value in context.items():
+        origin = context_origin(str(key))
+        groups.setdefault(origin, {})[str(key)] = value
+    parts: list[str] = []
+    for origin in (
+        ContextOrigin.COMPANY_CONTEXT,
+        ContextOrigin.MEMORY,
+        ContextOrigin.WORKFLOW,
+    ):
+        group = groups.get(origin)
+        if not group:
+            continue
+        try:
+            body = json.dumps(group, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            body = str(group)
+        parts.append(f"{prompt_block_header(origin)}:\n{body}")
+    if not parts:
+        return ""
+    rendered = "\n\n".join(parts)
+    if len(rendered) > _CONTEXT_BLOCK_MAX_CHARS:
+        rendered = rendered[:_CONTEXT_BLOCK_MAX_CHARS] + "...(truncado)"
+    return rendered
 
 
 def _reasoning_rule_text(reasoning: object | None) -> str:
@@ -1222,13 +1249,24 @@ def _publish_context_envelope(
         from src.runtime.context_envelope import build_context_envelope
 
         agent = request.agent
+        company_labels: list[str] = []
+        memory_labels: list[str] = []
+        workflow_keys: list[str] = []
+        for key in sorted(str(item) for item in (request.context or ())):
+            origin = context_origin(key)
+            if origin is ContextOrigin.COMPANY_CONTEXT:
+                company_labels.append(key)
+            elif origin is ContextOrigin.MEMORY:
+                memory_labels.append(key)
+            else:
+                workflow_keys.append(key)
         envelope = build_context_envelope(
             tenant_id=getattr(agent, "organization_id", "") or "",
             conversation_id=request.conversation_id,
             user_turn=bool((request.message or "").strip()),
-            workflow_keys=tuple(
-                sorted(str(key) for key in (request.context or ()))
-            ),
+            company_section_labels=tuple(company_labels),
+            memory_labels=tuple(memory_labels),
+            workflow_keys=tuple(workflow_keys),
             evidence_ids=tuple(
                 sorted(getattr(state.evidence, "selected", frozenset()) or ())
             ),
