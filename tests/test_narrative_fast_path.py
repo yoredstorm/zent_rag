@@ -455,6 +455,124 @@ class TestProyeccionesDeTraza:
         assert narrative_frame_rows(None) == []
 
 
+class TestPromptPlanExtraido:
+    """`build_narrative_prompt_plan`: prompt y tope de UNA llamada."""
+
+    def _active(self):
+        return SimpleNamespace(
+            items=[
+                SimpleNamespace(
+                    title="Manual",
+                    page=3,
+                    content="contenido",
+                    metadata={},
+                )
+            ],
+            matches=[SimpleNamespace(content="contenido del match")],
+        )
+
+    async def test_plan_con_presupuesto(self) -> None:
+        from src.core.config import get_settings
+        from src.runtime.narrative_fast_path import build_narrative_prompt_plan
+        from src.runtime.run_budget import RunBudgetLedger
+
+        result = SimpleNamespace(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost=0.0,
+            llm_calls=0,
+            logical_steps=0,
+            tool_calls=0,
+        )
+        ledger = RunBudgetLedger(
+            result, max_steps=10, max_tokens=8000, max_cost_usd=None
+        )
+        plan = await build_narrative_prompt_plan(
+            question="¿qué dice el record 2?",
+            agent_instructions="instrucciones",
+            agent_config=None,
+            active=self._active(),
+            concept_plan=SimpleNamespace(frames=[]),
+            final_coverage=[],
+            route=SimpleNamespace(blueprint="technical_explanation"),
+            run_plan=None,
+            settings=get_settings(),
+            ledger=ledger,
+            fallback_model="m1",
+        )
+        assert plan.exhausted_reason == ""
+        assert "Evidencia:" in plan.user_prompt
+        assert "[Doc: 1]" in plan.user_prompt
+        assert "Reglas de grounding documental" in plan.system_prompt
+        assert plan.model_policy.model == "m1"
+
+    async def test_plan_usa_modelo_narrativo_del_agente(self) -> None:
+        from src.core.config import get_settings
+        from src.runtime.narrative_fast_path import build_narrative_prompt_plan
+        from src.runtime.run_budget import RunBudgetLedger
+
+        result = SimpleNamespace(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost=0.0,
+            llm_calls=0,
+            logical_steps=0,
+            tool_calls=0,
+        )
+        ledger = RunBudgetLedger(
+            result, max_steps=10, max_tokens=8000, max_cost_usd=None
+        )
+        plan = await build_narrative_prompt_plan(
+            question="q",
+            agent_instructions="i",
+            agent_config={"narrative_model": "fast-model"},
+            active=self._active(),
+            concept_plan=SimpleNamespace(frames=[]),
+            final_coverage=[],
+            route=SimpleNamespace(blueprint=""),
+            run_plan=None,
+            settings=get_settings(),
+            ledger=ledger,
+            fallback_model="m1",
+        )
+        assert plan.model_policy.model == "fast-model"
+
+    async def test_plan_sin_presupuesto_no_genera(self) -> None:
+        from src.core.config import get_settings
+        from src.runtime.narrative_fast_path import build_narrative_prompt_plan
+        from src.runtime.run_budget import RunBudgetLedger
+
+        result = SimpleNamespace(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost=0.0,
+            llm_calls=0,
+            logical_steps=0,
+            tool_calls=0,
+        )
+        ledger = RunBudgetLedger(
+            result, max_steps=10, max_tokens=0, max_cost_usd=None
+        )
+        plan = await build_narrative_prompt_plan(
+            question="q",
+            agent_instructions="i",
+            agent_config=None,
+            active=self._active(),
+            concept_plan=SimpleNamespace(frames=[]),
+            final_coverage=[],
+            route=SimpleNamespace(blueprint=""),
+            run_plan=None,
+            settings=get_settings(),
+            ledger=ledger,
+            fallback_model="m1",
+        )
+        assert plan.exhausted_reason == "max_tokens exceeded"
+        assert plan.stop_reason == "TOKEN_BUDGET"
+
+
 class _FakeNarrativeLLM:
     def __init__(self, responses: list[object]) -> None:
         self.responses = list(responses)

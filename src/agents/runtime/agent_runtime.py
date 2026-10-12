@@ -4377,35 +4377,22 @@ class AgentRuntime:
             from src.runtime.narrative_fast_path import (
                 NARRATIVE_FAST_PATH,
                 aspect_coverage_rows,
+                build_narrative_prompt_plan,
                 completeness_for_finish,
-                compress_narrative_context,
                 concept_coverage_rows,
-                coverage_gap_prompt_note,
                 entity_coverage_rows,
                 fast_path_overrun,
                 final_aspect_statuses,
                 generate_narrative_answer,
-                grounded_answer_policy,
                 jev_needed,
                 mark_partial_grounded,
-                narrative_context_blocks,
-                narrative_frame_lines,
                 narrative_frame_rows,
-                narrative_model_for,
                 narrative_route,
                 patch_narrative_verification,
-                personality_instruction,
-                prompt_char_budget,
             )
-            from src.runtime.response_composer import personality_for_agent
             from src.runtime.run_budget import (
-                EXHAUSTED,
                 RunBudgetLedger,
                 budget_overrun,
-                estimate_prompt_tokens,
-                lookup_token_rates,
-                plan_response_budget,
-                signals_from_plan,
             )
 
             route = narrative_route(request.message)
@@ -4480,7 +4467,6 @@ class AgentRuntime:
                 ensure_concept_representation,
                 extract_narrative_concepts,
                 headings_from_items,
-                limitation_sentence,
                 measure_coverage,
                 narrative_coverage_applies,
                 prefer_aspect_items,
@@ -4709,113 +4695,41 @@ class AgentRuntime:
                     registry_version=registry.fingerprint(),
                 )
                 selection = active
-            blocks = narrative_context_blocks(active, question=request.message)
-            budget = prompt_char_budget(
-                request.message, evidence_items=len(active.items)
-            )
-            context = compress_narrative_context(
-                blocks,
-                max_chars=budget,
-                needles=tuple(question_needles(selection_question)),
-            )
-            if not context.strip():
-                return _skip("empty_context")
-            persona = personality_for_agent(
-                getattr(request.agent, "config_json", None),
-                message=request.message,
-            )
-            style = personality_instruction(
-                getattr(persona, "tone", ""),
-                getattr(persona, "block", "") or getattr(persona, "custom_instructions", ""),
-            )
-            signals = signals_from_plan(run_plan)
-            coverage_limit = limitation_sentence(final_coverage)
-            policy = grounded_answer_policy()
-            model_policy = narrative_model_for(
-                getattr(request.agent, "config_json", None),
-                str(config.get("model") or ""),
-            )
-            system_prompt = (
-                f"{agent_instructions}\n\n{style}\n{policy.instructions()}"
-            ).strip()
-            frame_lines = narrative_frame_lines(concept_plan)
-            if frame_lines:
-                system_prompt = (
-                    f"{system_prompt}\nLa pregunta pide:\n"
-                    + "\n".join(frame_lines)
-                    + "\nExplicá cada aspecto en su sentido material con la "
-                    "terminología de la evidencia. No declares limitaciones vos: "
-                    "si un aspecto no tiene respaldo, el sistema agrega la frase "
-                    "al final."
-                )
-            if coverage_limit:
-                system_prompt = (
-                    f"{system_prompt}\n{coverage_gap_prompt_note(final_coverage)}"
-                )
-            user_prompt = f"Pregunta:\n{request.message}\n\nEvidencia:\n{context}"
-            rates = await lookup_token_rates(model_policy.model)
-            call_plan = plan_response_budget(
-                ledger,
-                estimated_prompt_tokens=estimate_prompt_tokens(
-                    f"{system_prompt}\n{user_prompt}"
-                ),
-                blueprint=str(signals.get("blueprint") or route.blueprint),
+            prompt_plan = await build_narrative_prompt_plan(
                 question=request.message,
-                detail_level=str(
-                    signals.get("detail_level") or getattr(persona, "detail", "") or ""
-                ),
-                concept_count=signals.get("concept_count"),
-                evidence_count=len(active.items),
-                needs_table=bool(signals.get("needs_table")),
-                needs_list=bool(signals.get("needs_list")),
-                needs_example=bool(signals.get("needs_example")),
-                needs_definition=bool(signals.get("needs_definition")),
-                personality=" ".join(
-                    part
-                    for part in (
-                        style,
-                        str(signals.get("personality") or ""),
-                        str(getattr(persona, "detail", "") or ""),
-                    )
-                    if part
-                ),
-                model_output_limit=_answer_max_tokens(),
-                # Tope por respuesta generoso: el heurístico por blueprint
-                # cortaba explicaciones técnicas largas a mitad de tabla.
-                desired_completion_tokens=min(
-                    int(getattr(settings, "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0)
-                    or _answer_max_tokens(),
-                    _answer_max_tokens(),
-                ),
-                followup_llm=False,
-                input_cost_per_1k=None if rates is None else rates[0],
-                output_cost_per_1k=None if rates is None else rates[1],
+                agent_instructions=agent_instructions,
+                agent_config=getattr(request.agent, "config_json", None),
+                active=active,
+                concept_plan=concept_plan,
+                final_coverage=final_coverage,
+                route=route,
+                run_plan=run_plan,
+                settings=settings,
+                ledger=ledger,
+                fallback_model=str(config.get("model") or ""),
+                needles=tuple(question_needles(selection_question)),
+                answer_max_tokens=_answer_max_tokens(),
             )
-            budget_public = call_plan.to_public_dict()
-            if (
-                call_plan.budget_pressure == EXHAUSTED
-                or call_plan.allowed_completion_tokens <= 0
-            ):
-                reason = (
-                    "max_cost exceeded"
-                    if "cost" in call_plan.budget_reason
-                    else "max_tokens exceeded"
-                )
-                _mark_budget_stop(
-                    result,
-                    "COST_BUDGET" if "cost" in call_plan.budget_reason else "TOKEN_BUDGET",
-                )
+            if not prompt_plan.context.strip():
+                return _skip("empty_context")
+            system_prompt = prompt_plan.system_prompt
+            user_prompt = prompt_plan.user_prompt
+            call_plan = prompt_plan.call_plan
+            budget_public = prompt_plan.budget_public
+            model_policy = prompt_plan.model_policy
+            if prompt_plan.exhausted_reason:
+                _mark_budget_stop(result, prompt_plan.stop_reason)
                 result.status = "limit_reached"
                 result.answer = _budget_answer(
-                    [f"OBSERVATION: {context[:2000]}"],
-                    reason,
+                    [f"OBSERVATION: {prompt_plan.context[:2000]}"],
+                    prompt_plan.exhausted_reason,
                 )
                 result.execution_mode = NARRATIVE_FAST_PATH
                 result.steps.append(
                     {
                         "type": "narrative_fast_path",
                         "status": "warn",
-                        "detail": reason,
+                        "detail": prompt_plan.exhausted_reason,
                         **route.to_public_dict(),
                         **budget_public,
                         **semantic_plan.to_public_dict(),
@@ -4980,7 +4894,7 @@ class AgentRuntime:
                     "narrative_output_tokens": int(
                         getattr(response, "completion_tokens", 0) or 0
                     ),
-                    "narrative_context_chars": len(context),
+                    "narrative_context_chars": len(prompt_plan.context),
                     "evidence_package_size": len(active.items),
                     "completeness": completeness,
                     "verification": overall,

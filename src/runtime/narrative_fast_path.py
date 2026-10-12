@@ -593,6 +593,149 @@ def mark_partial_grounded(steps: list[dict], gap_items: object) -> bool:
 
 
 @dataclass(frozen=True)
+class NarrativePromptPlan:
+    """Prompt + plan de presupuesto de la generación narrativa.
+
+    `exhausted_reason` no vacío = el ledger no da para generar: el caller
+    publica el cierre degradado (`_budget_answer`) y devuelve True.
+    """
+
+    context: str
+    system_prompt: str
+    user_prompt: str
+    call_plan: object
+    budget_public: dict
+    model_policy: object
+    exhausted_reason: str = ""
+    stop_reason: str = ""
+
+
+async def build_narrative_prompt_plan(
+    *,
+    question: str,
+    agent_instructions: str,
+    agent_config: object,
+    active: object,
+    concept_plan: object,
+    final_coverage: object,
+    route: object,
+    run_plan: object,
+    settings: object,
+    ledger: object,
+    fallback_model: str = "",
+    needles: tuple[str, ...] = (),
+    answer_max_tokens: int = 2048,
+) -> NarrativePromptPlan:
+    """Arma el prompt (system + user) y el tope de UNA llamada desde el ledger.
+
+    Puro respecto del run: no toca `result`; el cierre degradado lo decide el
+    caller con `exhausted_reason`.
+    """
+    from src.runtime.narrative_coverage import limitation_sentence
+    from src.runtime.response_composer import personality_for_agent
+    from src.runtime.run_budget import (
+        EXHAUSTED,
+        estimate_prompt_tokens,
+        lookup_token_rates,
+        plan_response_budget,
+        signals_from_plan,
+    )
+
+    evidence_items = len(list(getattr(active, "items", ()) or ()))
+    blocks = narrative_context_blocks(active, question=question)
+    budget = prompt_char_budget(question, evidence_items=evidence_items)
+    context = compress_narrative_context(blocks, max_chars=budget, needles=needles)
+    persona = personality_for_agent(agent_config, message=question)
+    style = personality_instruction(
+        getattr(persona, "tone", ""),
+        getattr(persona, "block", "") or getattr(persona, "custom_instructions", ""),
+    )
+    signals = signals_from_plan(run_plan)
+    coverage_limit = limitation_sentence(final_coverage)
+    policy = grounded_answer_policy()
+    model_policy = narrative_model_for(agent_config, str(fallback_model or ""))
+    system_prompt = (
+        f"{agent_instructions}\n\n{style}\n{policy.instructions()}"
+    ).strip()
+    frame_lines = narrative_frame_lines(concept_plan)
+    if frame_lines:
+        system_prompt = (
+            f"{system_prompt}\nLa pregunta pide:\n"
+            + "\n".join(frame_lines)
+            + "\nExplicá cada aspecto en su sentido material con la "
+            "terminología de la evidencia. No declares limitaciones vos: "
+            "si un aspecto no tiene respaldo, el sistema agrega la frase "
+            "al final."
+        )
+    if coverage_limit:
+        system_prompt = f"{system_prompt}\n{coverage_gap_prompt_note(final_coverage)}"
+    user_prompt = f"Pregunta:\n{question}\n\nEvidencia:\n{context}"
+    rates = await lookup_token_rates(model_policy.model)
+    call_plan = plan_response_budget(
+        ledger,
+        estimated_prompt_tokens=estimate_prompt_tokens(
+            f"{system_prompt}\n{user_prompt}"
+        ),
+        blueprint=str(signals.get("blueprint") or getattr(route, "blueprint", "")),
+        question=question,
+        detail_level=str(
+            signals.get("detail_level") or getattr(persona, "detail", "") or ""
+        ),
+        concept_count=signals.get("concept_count"),
+        evidence_count=evidence_items,
+        needs_table=bool(signals.get("needs_table")),
+        needs_list=bool(signals.get("needs_list")),
+        needs_example=bool(signals.get("needs_example")),
+        needs_definition=bool(signals.get("needs_definition")),
+        personality=" ".join(
+            part
+            for part in (
+                style,
+                str(signals.get("personality") or ""),
+                str(getattr(persona, "detail", "") or ""),
+            )
+            if part
+        ),
+        model_output_limit=answer_max_tokens,
+        # Tope por respuesta generoso: el heurístico por blueprint cortaba
+        # explicaciones técnicas largas a mitad de tabla.
+        desired_completion_tokens=min(
+            int(getattr(settings, "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0)
+            or answer_max_tokens,
+            answer_max_tokens,
+        ),
+        followup_llm=False,
+        input_cost_per_1k=None if rates is None else rates[0],
+        output_cost_per_1k=None if rates is None else rates[1],
+    )
+    budget_public = call_plan.to_public_dict()
+    exhausted_reason = ""
+    stop_reason = ""
+    if (
+        call_plan.budget_pressure == EXHAUSTED
+        or call_plan.allowed_completion_tokens <= 0
+    ):
+        exhausted_reason = (
+            "max_cost exceeded"
+            if "cost" in call_plan.budget_reason
+            else "max_tokens exceeded"
+        )
+        stop_reason = (
+            "COST_BUDGET" if "cost" in call_plan.budget_reason else "TOKEN_BUDGET"
+        )
+    return NarrativePromptPlan(
+        context=context,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        call_plan=call_plan,
+        budget_public=budget_public,
+        model_policy=model_policy,
+        exhausted_reason=exhausted_reason,
+        stop_reason=stop_reason,
+    )
+
+
+@dataclass(frozen=True)
 class NarrativeGeneration:
     """Resultado de la generación narrativa (una llamada, con cierre)."""
 
