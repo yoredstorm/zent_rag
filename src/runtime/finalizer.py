@@ -157,6 +157,36 @@ def parse_finalize_answer(content: str) -> str | None:
     return direct_answer(parse_action(content))
 
 
+def fact_check_enabled(settings: Any) -> bool:
+    """Chequeo determinista de figuras encendido (default on)."""
+    return str(
+        getattr(settings, "RUNTIME_ANSWER_FACT_CHECK", "on") or "on"
+    ).strip().lower() not in {"off", "0", "false", "no"}
+
+
+def figure_check(answer: str, history: list[str], question: str) -> list[str]:
+    """Figuras/fechas del texto que la evidencia del run no contiene (sin LLM)."""
+    from src.intelligence.response.entities import ungrounded_figures
+
+    return list(ungrounded_figures(answer, "\n".join(history or ()), question) or ())
+
+
+def figures_revision_step(figures: list[str]) -> dict:
+    """Step `answer_revision` por figuras sin respaldo (mismo formato)."""
+    return {
+        "type": "answer_revision",
+        "detail": f"figuras sin respaldo: {', '.join(figures[:5])}",
+        "figures": figures[:5],
+    }
+
+
+def figures_feedback_note(figures: list[str]) -> str:
+    """Observación untrusted con la corrección pedida al modelo."""
+    from src.intelligence.response.entities import figures_note
+
+    return f"OBSERVATION (untrusted): {figures_note(figures)}"
+
+
 @dataclass(frozen=True)
 class FinalizeBudget:
     """Presupuesto aprobado para la llamada de cierre."""

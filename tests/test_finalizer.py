@@ -11,6 +11,10 @@ from src.runtime.finalizer import (
     citations_from_evidence,
     clean_answer,
     direct_answer,
+    fact_check_enabled,
+    figure_check,
+    figures_feedback_note,
+    figures_revision_step,
     finalize_answer_delivery,
     generate_finalize_response,
     limits_note,
@@ -136,6 +140,49 @@ class TestParseoDelCierre:
 
     def test_clean_answer_pasa_texto_simple(self) -> None:
         assert clean_answer("texto simple") == "texto simple"
+
+
+class TestFactCheckDelCierre:
+    """Chequeo determinista de figuras (movido desde agent_runtime)."""
+
+    EVIDENCIA = (
+        "Implementation date 30 June 2024. Original ticket issue date 15 May 2024. "
+        "NEW Category 31 system assumption in effect on 10 July 2024 applies."
+    )
+
+    def test_figura_sin_respaldo_se_marca(self) -> None:
+        figures = figure_check(
+            "A partir del 12 de julio de 2026 cambiará.",
+            [f"OBSERVATION: {self.EVIDENCIA}"],
+            "¿cuándo cambia?",
+        )
+        assert any("2026" in figure for figure in figures)
+
+    def test_figura_respaldada_no_se_marca(self) -> None:
+        assert (
+            figure_check(
+                "El cambio fue el 10 de julio de 2024.",
+                [f"OBSERVATION: {self.EVIDENCIA}"],
+                "¿cuándo?",
+            )
+            == []
+        )
+
+    def test_revision_step_y_nota_untrusted(self) -> None:
+        step = figures_revision_step(["2026-07-12"])
+        assert step["type"] == "answer_revision"
+        assert step["figures"] == ["2026-07-12"]
+        note = figures_feedback_note(["2026-07-12"])
+        assert note.startswith("OBSERVATION (untrusted):")
+
+    def test_fact_check_enabled_default_y_off(self) -> None:
+        from types import SimpleNamespace
+
+        assert fact_check_enabled(SimpleNamespace()) is True
+        assert (
+            fact_check_enabled(SimpleNamespace(RUNTIME_ANSWER_FACT_CHECK="off"))
+            is False
+        )
 
 
 class TestGeneracionDelCierre:

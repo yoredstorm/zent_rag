@@ -59,6 +59,10 @@ from src.runtime.finalizer import (
     clean_answer,
     direct_answer,
     ensure_answer,
+    fact_check_enabled,
+    figure_check,
+    figures_feedback_note,
+    figures_revision_step,
     finalize_answer_delivery,
     generate_finalize_response,
     limits_note,
@@ -1639,23 +1643,11 @@ class AgentRuntime:
         # Mismo chequeo determinista que en el loop: figuras sin respaldo se
         # corrigen una vez (sin inventar ni borrar en silencio) y, si persisten,
         # quedan visibles en el flujo.
-        if fact_retry and str(getattr(get_settings(), "RUNTIME_ANSWER_FACT_CHECK", "on")).lower() not in (
-            "off",
-            "0",
-            "false",
-        ):
-            from src.intelligence.response.entities import figures_note, ungrounded_figures
-
-            figures = ungrounded_figures(answer, "\n".join(history), request.message)
+        if fact_retry and fact_check_enabled(get_settings()):
+            figures = figure_check(answer, history, request.message)
             if figures:
-                result.steps.append(
-                    {
-                        "type": "answer_revision",
-                        "detail": f"figuras sin respaldo: {', '.join(figures[:5])}",
-                        "figures": figures[:5],
-                    }
-                )
-                history.append(f"OBSERVATION (untrusted): {figures_note(figures)}")
+                result.steps.append(figures_revision_step(figures))
+                history.append(figures_feedback_note(figures))
                 return await self._try_finalize_answer(
                     request,
                     history,
