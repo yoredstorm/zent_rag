@@ -455,6 +455,73 @@ class TestProyeccionesDeTraza:
         assert narrative_frame_rows(None) == []
 
 
+class TestFastPathStepExtraido:
+    """`FastPathStep.to_step`: payload único del cierre narrativo."""
+
+    def _step(self, **overrides):
+        from src.runtime.narrative_fast_path import FastPathStep
+
+        base = dict(
+            route=SimpleNamespace(
+                to_public_dict=lambda: {"route": "NARRATIVE_FAST_PATH"}
+            ),
+            semantic_plan=SimpleNamespace(to_public_dict=lambda: {"activated": []}),
+            coverage_rounds=1,
+            narrative_top_k=12,
+            retrieval_ms=10.0,
+            model_ms=20.0,
+            verification_ms=3.0,
+            fast_path_ms=40.0,
+            concept_plan=SimpleNamespace(concepts=[1, 2], frames=[]),
+            final_coverage=[],
+            coverage_decision_reason="NO_TARGET_QUERY",
+            coverage_queries=["q"],
+            coverage_added=2,
+            coverage_stop="COVERAGE_PARTIAL",
+            coverage_skipped="",
+            external_claims_removed=0,
+            provider_fallback=False,
+            primary_latency_ms=0.0,
+            fallback_latency_ms=0.0,
+            model_policy=SimpleNamespace(
+                to_public_dict=lambda: {"narrative_model": "m"}
+            ),
+            prompt_tokens=100,
+            completion_tokens=50,
+            context_chars=1234,
+            evidence_package_size=3,
+            completeness="COMPLETE",
+            overall="VERIFIED_GROUNDED",
+            budget_public={"allowed_completion_tokens": 500},
+            overrun={},
+        )
+        base.update(overrides)
+        return FastPathStep(**base)
+
+    def test_arma_el_payload_completo(self) -> None:
+        payload = self._step().to_step()
+        assert payload["type"] == "narrative_fast_path"
+        assert payload["status"] == "ok"
+        assert payload["retrieval_rounds"] == 2
+        assert payload["narrative_concepts"] == 2
+        assert payload["narrative_input_tokens"] == 100
+        assert payload["narrative_output_tokens"] == 50
+        assert payload["narrative_context_chars"] == 1234
+        assert payload["evidence_package_size"] == 3
+        assert payload["allowed_completion_tokens"] == 500
+        assert payload["route"] == "NARRATIVE_FAST_PATH"
+        assert payload["coverage_stop_reason"] == "COVERAGE_PARTIAL"
+
+    def test_overrun_marca_warn_y_se_fusiona(self) -> None:
+        payload = self._step(overrun={"token_overrun": 999}).to_step()
+        assert payload["status"] == "warn"
+        assert payload["token_overrun"] == 999
+
+    def test_detalle_menciona_verificacion(self) -> None:
+        payload = self._step().to_step()
+        assert "Verification:\nVERIFIED_GROUNDED" in payload["detail"]
+
+
 class TestPromptPlanExtraido:
     """`build_narrative_prompt_plan`: prompt y tope de UNA llamada."""
 

@@ -593,6 +593,103 @@ def mark_partial_grounded(steps: list[dict], gap_items: object) -> bool:
 
 
 @dataclass(frozen=True)
+class FastPathStep:
+    """Payload del step `narrative_fast_path` (observabilidad del cierre).
+
+    Un solo lugar para el detalle legible y las filas de cobertura; el caller
+    aporta latencias y contadores, acá no se recalcula nada del run.
+    """
+
+    route: object
+    semantic_plan: object
+    coverage_rounds: int
+    narrative_top_k: int
+    retrieval_ms: float
+    model_ms: float
+    verification_ms: float
+    fast_path_ms: float
+    concept_plan: object
+    final_coverage: object
+    coverage_decision_reason: str
+    coverage_queries: list
+    coverage_added: int
+    coverage_stop: str
+    coverage_skipped: str
+    external_claims_removed: int
+    provider_fallback: bool
+    primary_latency_ms: float
+    fallback_latency_ms: float
+    model_policy: object
+    prompt_tokens: int
+    completion_tokens: int
+    context_chars: int
+    evidence_package_size: int
+    completeness: str
+    overall: str
+    budget_public: dict
+    overrun: dict
+
+    def to_step(self) -> dict:
+        return {
+            "type": "narrative_fast_path",
+            "status": "warn" if self.overrun else "ok",
+            "detail": (
+                "Ruta:\nDocumentos\n\n"
+                f"Modo:\n{NARRATIVE_FAST_PATH}\n\n"
+                "Query mode:\nINFORMATIONAL\n\n"
+                f"Retrieval:\n{1 + self.coverage_rounds} ronda(s)\n\n"
+                "JEV:\nNo necesario\n\n"
+                "LLM:\n1 llamada narrativa\n\n"
+                f"Verification:\n{self.overall}"
+            ),
+            **self.route.to_public_dict(),
+            **self.semantic_plan.to_public_dict(),
+            "retrieval_rounds": 1 + self.coverage_rounds,
+            "retrieval_top_k": self.narrative_top_k,
+            "retrieval_latency_ms": round(self.retrieval_ms, 2),
+            "model_latency_ms": round(self.model_ms, 2),
+            "verification_latency_ms": round(self.verification_ms, 2),
+            "fast_path_latency_ms": round(self.fast_path_ms, 2),
+            "narrative_concepts": len(getattr(self.concept_plan, "concepts", ()) or ()),
+            "concept_coverage": concept_coverage_rows(self.final_coverage),
+            "narrative_frames": narrative_frame_rows(self.concept_plan),
+            "entity_coverage": entity_coverage_rows(self.final_coverage),
+            "aspect_coverage": aspect_coverage_rows(self.final_coverage),
+            "coverage_decision_reason": self.coverage_decision_reason,
+            "final_aspect_coverage": final_aspect_statuses(self.final_coverage),
+            "coverage_rounds": self.coverage_rounds,
+            "coverage_queries": self.coverage_queries,
+            "coverage_evidence_added": self.coverage_added,
+            "coverage_stop_reason": self.coverage_stop,
+            "coverage_search_skipped": self.coverage_skipped,
+            "external_claims_removed": self.external_claims_removed,
+            "provider_fallback": self.provider_fallback,
+            "primary_latency_ms": round(self.primary_latency_ms, 2),
+            "fallback_latency_ms": round(self.fallback_latency_ms, 2),
+            **self.model_policy.to_public_dict(),
+            "jev_calls": 0,
+            "jev_avoided": 1,
+            "llm_calls": 1,
+            "reasoning_steps_avoided": [
+                "scenario_parse",
+                "timeline",
+                "state_reconstruction",
+                "hypothesis_test",
+                "premise_closure",
+                "decision_envelope",
+            ],
+            "narrative_input_tokens": self.prompt_tokens,
+            "narrative_output_tokens": self.completion_tokens,
+            "narrative_context_chars": self.context_chars,
+            "evidence_package_size": self.evidence_package_size,
+            "completeness": self.completeness,
+            "verification": self.overall,
+            **self.budget_public,
+            **self.overrun,
+        }
+
+
+@dataclass(frozen=True)
 class NarrativePromptPlan:
     """Prompt + plan de presupuesto de la generación narrativa.
 

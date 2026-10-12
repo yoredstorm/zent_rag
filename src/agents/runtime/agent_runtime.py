@@ -4376,17 +4376,13 @@ class AgentRuntime:
                 return False
             from src.runtime.narrative_fast_path import (
                 NARRATIVE_FAST_PATH,
-                aspect_coverage_rows,
+                FastPathStep,
                 build_narrative_prompt_plan,
                 completeness_for_finish,
-                concept_coverage_rows,
-                entity_coverage_rows,
                 fast_path_overrun,
-                final_aspect_statuses,
                 generate_narrative_answer,
                 jev_needed,
                 mark_partial_grounded,
-                narrative_frame_rows,
                 narrative_route,
                 patch_narrative_verification,
             )
@@ -4842,65 +4838,38 @@ class AgentRuntime:
             if stop_reason:
                 _mark_budget_stop(result, stop_reason)
             result.steps.append(
-                {
-                    "type": "narrative_fast_path",
-                    "status": "warn" if overrun else "ok",
-                    "detail": (
-                        "Ruta:\nDocumentos\n\n"
-                        f"Modo:\n{NARRATIVE_FAST_PATH}\n\n"
-                        "Query mode:\nINFORMATIONAL\n\n"
-                        f"Retrieval:\n{1 + coverage_rounds} ronda(s)\n\n"
-                        "JEV:\nNo necesario\n\n"
-                        "LLM:\n1 llamada narrativa\n\n"
-                        f"Verification:\n{overall}"
-                    ),
-                    **route.to_public_dict(),
-                    **semantic_plan.to_public_dict(),
-                    "retrieval_rounds": 1 + coverage_rounds,
-                    "retrieval_top_k": narrative_top_k,
-                    "retrieval_latency_ms": round(retrieval_ms, 2),
-                    "model_latency_ms": round(model_ms, 2),
-                    "verification_latency_ms": round(verification_ms, 2),
-                    "fast_path_latency_ms": round((time.perf_counter() - fast_started) * 1000, 2),
-                    "narrative_concepts": len(concept_plan.concepts),
-                    "concept_coverage": concept_coverage_rows(final_coverage),
-                    "narrative_frames": narrative_frame_rows(concept_plan),
-                    "entity_coverage": entity_coverage_rows(final_coverage),
-                    "aspect_coverage": aspect_coverage_rows(final_coverage),
-                    "coverage_decision_reason": decision.stop_reason,
-                    "final_aspect_coverage": final_aspect_statuses(final_coverage),
-                    "coverage_rounds": coverage_rounds,
-                    "coverage_queries": coverage_queries,
-                    "coverage_evidence_added": coverage_added,
-                    "coverage_stop_reason": coverage_stop,
-                    "coverage_search_skipped": coverage_skipped,
-                    "external_claims_removed": external_claims_removed,
-                    "provider_fallback": provider_fallback,
-                    "primary_latency_ms": round(primary_latency_ms, 2),
-                    "fallback_latency_ms": round(fallback_latency_ms, 2),
-                    **model_policy.to_public_dict(),
-                    "jev_calls": 0,
-                    "jev_avoided": 1,
-                    "llm_calls": 1,
-                    "reasoning_steps_avoided": [
-                        "scenario_parse",
-                        "timeline",
-                        "state_reconstruction",
-                        "hypothesis_test",
-                        "premise_closure",
-                        "decision_envelope",
-                    ],
-                    "narrative_input_tokens": int(getattr(response, "prompt_tokens", 0) or 0),
-                    "narrative_output_tokens": int(
+                FastPathStep(
+                    route=route,
+                    semantic_plan=semantic_plan,
+                    coverage_rounds=coverage_rounds,
+                    narrative_top_k=narrative_top_k,
+                    retrieval_ms=retrieval_ms,
+                    model_ms=model_ms,
+                    verification_ms=verification_ms,
+                    fast_path_ms=(time.perf_counter() - fast_started) * 1000,
+                    concept_plan=concept_plan,
+                    final_coverage=final_coverage,
+                    coverage_decision_reason=decision.stop_reason,
+                    coverage_queries=coverage_queries,
+                    coverage_added=coverage_added,
+                    coverage_stop=coverage_stop,
+                    coverage_skipped=coverage_skipped,
+                    external_claims_removed=external_claims_removed,
+                    provider_fallback=provider_fallback,
+                    primary_latency_ms=primary_latency_ms,
+                    fallback_latency_ms=fallback_latency_ms,
+                    model_policy=model_policy,
+                    prompt_tokens=int(getattr(response, "prompt_tokens", 0) or 0),
+                    completion_tokens=int(
                         getattr(response, "completion_tokens", 0) or 0
                     ),
-                    "narrative_context_chars": len(prompt_plan.context),
-                    "evidence_package_size": len(active.items),
-                    "completeness": completeness,
-                    "verification": overall,
-                    **budget_public,
-                    **budget_overrun(ledger),
-                }
+                    context_chars=len(prompt_plan.context),
+                    evidence_package_size=len(active.items),
+                    completeness=completeness,
+                    overall=overall,
+                    budget_public=budget_public,
+                    overrun=overrun,
+                ).to_step()
             )
             result.steps.append(
                 {
