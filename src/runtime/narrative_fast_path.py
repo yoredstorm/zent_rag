@@ -593,6 +593,202 @@ def mark_partial_grounded(steps: list[dict], gap_items: object) -> bool:
 
 
 @dataclass(frozen=True)
+class CoverageRoundOutcome:
+    """Ronda dirigida de cobertura (una búsqueda extra por aspecto faltante)."""
+
+    coverage_rounds: int = 0
+    coverage_queries: list = field(default_factory=list)
+    coverage_added: int = 0
+    coverage_stop: str = ""
+    coverage_skipped: str = ""
+    retrieval_ms: float = 0.0
+
+
+async def run_coverage_round(
+    *,
+    message: str,
+    decision: object,
+    search,
+    narrative_top_k: int,
+    registry: object,
+    result: object,
+    ledger: object,
+) -> CoverageRoundOutcome:
+    """Ejecuta la ronda de cobertura: nunca repite la pregunta original.
+
+    `search(query, top_k)` es el buscador guardado (el caller decide tool,
+    tenant y rate limiter). El accounting y el cargo del paso son acá.
+    """
+    from src.runtime.narrative_coverage import NO_TARGET_QUERY
+    from src.runtime.run_accounting import evidence_count, record_search_call
+
+    coverage_stop = str(getattr(decision, "stop_reason", "") or "")
+    coverage_skipped = str(getattr(decision, "coverage_search_skipped", "") or "")
+    query = str(getattr(decision, "query", "") or "")
+    if getattr(decision, "search", False) and (
+        not query.strip() or query.strip() == str(message or "").strip()
+    ):
+        coverage_stop = NO_TARGET_QUERY
+        coverage_skipped = NO_TARGET_QUERY
+    if (
+        not getattr(decision, "search", False)
+        or coverage_stop == NO_TARGET_QUERY
+        or not query.strip()
+    ):
+        return CoverageRoundOutcome(
+            coverage_stop=coverage_stop, coverage_skipped=coverage_skipped
+        )
+    before_size = int(getattr(registry, "size", 0) or 0)
+    follow_started = time.perf_counter()
+    follow = await search(query, narrative_top_k)
+    follow_ms = (time.perf_counter() - follow_started) * 1000
+    coverage_added = 0
+    coverage_rounds = 0
+    coverage_queries: list = []
+    if getattr(follow, "error", None):
+        coverage_stop = "search_error"
+    else:
+        registry.add_from_meta(
+            follow.meta if isinstance(follow.meta, dict) else None
+        )
+        coverage_added = max(
+            0, int(getattr(registry, "size", 0) or 0) - before_size
+        )
+        ledger.charge_tool_step()
+        coverage_rounds = 1
+        coverage_queries = [query]
+    record_search_call(
+        result,
+        query=query,
+        latency_ms=follow_ms,
+        evidence_added=coverage_added,
+        result_count=evidence_count(
+            follow.meta if isinstance(follow.meta, dict) else None
+        ),
+        error=str(getattr(follow, "error", "") or ""),
+    )
+    return CoverageRoundOutcome(
+        coverage_rounds=coverage_rounds,
+        coverage_queries=coverage_queries,
+        coverage_added=coverage_added,
+        coverage_stop=coverage_stop,
+        coverage_skipped=coverage_skipped,
+        retrieval_ms=follow_ms,
+    )
+
+
+@dataclass(frozen=True)
+class NarrativePackageOutcome:
+    """Cobertura final + representación de conceptos sobre la selección activa.
+
+    `reordered` = los items/matches de `active` cambiaron; el caller decide
+    version/freeze/selection (una sola fuente de freeze).
+    """
+
+    concept_plan: object = None
+    final_coverage: object = None
+    final_aliases: dict = field(default_factory=dict)
+    coverage_stop: str = ""
+    reordered: bool = False
+
+
+async def finalize_narrative_coverage(
+    *,
+    registry: object,
+    concept_plan: object,
+    coverage_rounds: int,
+    coverage_stop: str,
+    active: object,
+    bridge,
+    activated: tuple = (),
+    embedder: object = None,
+) -> NarrativePackageOutcome:
+    """Cobertura final, segunda pasada del puente y representación de conceptos.
+
+    Los matches viajan con su item: reordenar sólo `items` dejaría
+    `match.content` de otro fragmento (contexto desalineado).
+    """
+    from src.runtime.evidence import EvidenceMatch
+    from src.runtime.narrative_coverage import (
+        COVERAGE_COMPLETE,
+        COVERAGE_PARTIAL,
+        MISSING,
+        PARTIAL_MATERIAL,
+        ensure_concept_representation,
+        measure_coverage,
+        prefer_aspect_items,
+    )
+
+    searched = int(coverage_rounds or 0) > 0
+    final_coverage = measure_coverage(
+        concept_plan, registry.all_items(), searched=searched
+    )
+    final_aliases: dict = {}
+    try:
+        concept_plan, final_coverage, final_aliases = await bridge(
+            concept_plan,
+            final_coverage,
+            registry.all_items(),
+            activated=activated,
+            embedder=embedder,
+            searched=searched,
+        )
+    except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
+        logger.warning("auto language bridge failed", error=str(exc)[:150])
+        final_aliases = {}
+    if searched:
+        coverage_stop = (
+            COVERAGE_COMPLETE
+            if all(
+                item.status not in {MISSING, PARTIAL_MATERIAL}
+                for item in final_coverage
+            )
+            else COVERAGE_PARTIAL
+        )
+    concepts = getattr(concept_plan, "concepts", ())
+    represented = prefer_aspect_items(
+        ensure_concept_representation(
+            list(getattr(active, "items", ()) or ()),
+            registry.all_items(),
+            concepts,
+        ),
+        concepts,
+    )
+    reordered = False
+    if [item.evidence_id for item in represented] != [
+        item.evidence_id for item in getattr(active, "items", ()) or ()
+    ]:
+        matches_by_id = {
+            match.evidence_id: match
+            for match in getattr(active, "matches", ()) or ()
+        }
+        rebuilt_matches = []
+        for item in represented:
+            match = matches_by_id.get(item.evidence_id)
+            if match is None:
+                match = EvidenceMatch(
+                    evidence_id=item.evidence_id,
+                    match="narrative",
+                    priority=1,
+                    score=float(item.score or 0.0),
+                    chars=len(item.content or ""),
+                    content=item.content or "",
+                    complete=True,
+                )
+            rebuilt_matches.append(match)
+        active.items = represented
+        active.matches = rebuilt_matches
+        reordered = True
+    return NarrativePackageOutcome(
+        concept_plan=concept_plan,
+        final_coverage=final_coverage,
+        final_aliases=dict(final_aliases or {}),
+        coverage_stop=coverage_stop,
+        reordered=reordered,
+    )
+
+
+@dataclass(frozen=True)
 class NarrativeCoveragePrep:
     """Preparación de cobertura: plan de conceptos, cobertura inicial, decisión.
 

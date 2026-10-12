@@ -2956,7 +2956,6 @@ class AgentRuntime:
         # generador, JEV, las citas y «Ver flujo» miran la MISMA evidencia; el
         # texto se recorta por presupuesto y relevancia, nunca por posición.
         from src.runtime.evidence import (
-            EvidenceMatch,
             EvidenceRegistry,
             assess_sufficiency,
             observe_selection,
@@ -4380,12 +4379,14 @@ class AgentRuntime:
                 build_narrative_prompt_plan,
                 completeness_for_finish,
                 fast_path_overrun,
+                finalize_narrative_coverage,
                 generate_narrative_answer,
                 language_bridge_step,
                 mark_partial_grounded,
                 narrative_route,
                 patch_narrative_verification,
                 prepare_narrative_coverage,
+                run_coverage_round,
                 run_initial_narrative_search,
             )
             from src.runtime.run_budget import (
@@ -4396,7 +4397,7 @@ class AgentRuntime:
             route = narrative_route(request.message)
             if not route.eligible:
                 return _skip("route_ineligible")
-            from src.runtime.run_accounting import evidence_count, record_llm_call, record_search_call
+            from src.runtime.run_accounting import record_llm_call
 
             ledger = RunBudgetLedger.from_config(result, config)
             fast_started = time.perf_counter()
@@ -4437,16 +4438,10 @@ class AgentRuntime:
             selection_max_items = _search_plan.max_items
             retrieval_ms += search_outcome.retrieval_ms
             from src.runtime.narrative_coverage import (
-                COVERAGE_COMPLETE,
-                COVERAGE_PARTIAL,
                 COVERED,
                 MISSING,
-                NO_TARGET_QUERY,
                 PARTIAL_MATERIAL,
                 apply_coverage_limitation,
-                ensure_concept_representation,
-                measure_coverage,
-                prefer_aspect_items,
                 strip_generic_limitation,
             )
             from src.runtime.narrative_package import freeze_narrative_package
@@ -4484,122 +4479,47 @@ class AgentRuntime:
                 state.knowledge.coverage = tuple(initial_coverage)
                 if decision.search and state.evidence.complete:
                     state.knowledge.coverage_search_after_complete = True
-            coverage_rounds = 0
-            coverage_queries: list[str] = []
-            coverage_added = 0
-            # PARTIAL_MATERIAL ya no es "suficiente": decide_coverage_round lo
-            # trata como gap material y pide una búsqueda dirigida al aspecto.
-            coverage_stop = decision.stop_reason
-            coverage_skipped = decision.coverage_search_skipped
-            if decision.search and (
-                not decision.query.strip()
-                or decision.query.strip() == request.message.strip()
-            ):
-                # Nunca repetir la pregunta original como búsqueda dirigida.
-                coverage_stop = NO_TARGET_QUERY
-                coverage_skipped = NO_TARGET_QUERY
-            if (
-                decision.search
-                and coverage_stop != NO_TARGET_QUERY
-                and decision.query.strip()
-            ):
-                before_size = registry.size
-                follow_started = time.perf_counter()
-                follow = await execute_tool_guarded(
+            coverage_outcome = await run_coverage_round(
+                message=request.message,
+                decision=decision,
+                search=lambda query, top_k: execute_tool_guarded(
                     tool,
                     ctx,
-                    {"query": decision.query, "top_k": narrative_top_k},
+                    {"query": query, "top_k": top_k},
                     self._rate_limiter,
-                )
-                follow_ms = (time.perf_counter() - follow_started) * 1000
-                retrieval_ms += follow_ms
-                if getattr(follow, "error", None):
-                    coverage_stop = "search_error"
-                else:
-                    registry.add_from_meta(
-                        follow.meta if isinstance(follow.meta, dict) else None
-                    )
-                    coverage_added = max(0, registry.size - before_size)
-                    ledger.charge_tool_step()
-                    coverage_rounds = 1
-                    coverage_queries.append(decision.query)
-                record_search_call(
-                    result,
-                    query=decision.query,
-                    latency_ms=follow_ms,
-                    evidence_added=coverage_added,
-                    result_count=evidence_count(
-                        follow.meta if isinstance(follow.meta, dict) else None
-                    ),
-                    error=str(getattr(follow, "error", "") or ""),
-                )
-            final_coverage = measure_coverage(
-                concept_plan,
-                registry.all_items(),
-                searched=coverage_rounds > 0,
-            )
-            # Segunda pasada del puente: la búsqueda de cobertura pudo traer
-            # términos nuevos del documento (p. ej. «Discontinue Date») que el
-            # embedding puede proponer ahora.
-            try:
-                concept_plan, final_coverage, final_aliases = (
-                    await _bridge_language_gaps(
-                        concept_plan,
-                        final_coverage,
-                        registry.all_items(),
-                        activated=getattr(semantic_plan, "activated", ()),
-                        embedder=get_embedding_provider(),
-                        searched=coverage_rounds > 0,
-                    )
-                )
-                if final_aliases:
-                    result.steps.append(
-                        language_bridge_step(final_aliases, stage="post_coverage")
-                    )
-            except Exception as exc:  # noqa: BLE001 — sin puente sigue lo léxico
-                logger.warning("auto language bridge failed", error=str(exc)[:150])
-            if coverage_rounds:
-                if all(
-                    item.status not in {MISSING, PARTIAL_MATERIAL}
-                    for item in final_coverage
-                ):
-                    coverage_stop = COVERAGE_COMPLETE
-                else:
-                    coverage_stop = COVERAGE_PARTIAL
-            active = _refresh_selection()
-            represented = prefer_aspect_items(
-                ensure_concept_representation(
-                    list(active.items),
-                    registry.all_items(),
-                    concept_plan.concepts,
                 ),
-                concept_plan.concepts,
+                narrative_top_k=narrative_top_k,
+                registry=registry,
+                result=result,
+                ledger=ledger,
             )
-            if [item.evidence_id for item in represented] != [
-                item.evidence_id for item in active.items
-            ]:
-                # Los matches viajan con su item: reordenar sólo `items` dejaba
-                # `match.content` de otro fragmento (contexto desalineado) y los
-                # items agregados por cobertura se perdían en el zip.
-                matches_by_id = {
-                    match.evidence_id: match for match in active.matches
-                }
-                rebuilt_matches = []
-                for item in represented:
-                    match = matches_by_id.get(item.evidence_id)
-                    if match is None:
-                        match = EvidenceMatch(
-                            evidence_id=item.evidence_id,
-                            match="narrative",
-                            priority=1,
-                            score=float(item.score or 0.0),
-                            chars=len(item.content or ""),
-                            content=item.content or "",
-                            complete=True,
-                        )
-                    rebuilt_matches.append(match)
-                active.items = represented
-                active.matches = rebuilt_matches
+            coverage_rounds = coverage_outcome.coverage_rounds
+            coverage_queries = coverage_outcome.coverage_queries
+            coverage_added = coverage_outcome.coverage_added
+            coverage_stop = coverage_outcome.coverage_stop
+            coverage_skipped = coverage_outcome.coverage_skipped
+            retrieval_ms += coverage_outcome.retrieval_ms
+            active = _refresh_selection()
+            package_outcome = await finalize_narrative_coverage(
+                registry=registry,
+                concept_plan=concept_plan,
+                coverage_rounds=coverage_rounds,
+                coverage_stop=coverage_stop,
+                active=active,
+                bridge=_bridge_language_gaps,
+                activated=getattr(semantic_plan, "activated", ()),
+                embedder=get_embedding_provider(),
+            )
+            concept_plan = package_outcome.concept_plan
+            final_coverage = package_outcome.final_coverage
+            coverage_stop = package_outcome.coverage_stop
+            if package_outcome.final_aliases:
+                result.steps.append(
+                    language_bridge_step(
+                        package_outcome.final_aliases, stage="post_coverage"
+                    )
+                )
+            if package_outcome.reordered:
                 narrative_version += 1
                 narrative_package = freeze_narrative_package(
                     active,

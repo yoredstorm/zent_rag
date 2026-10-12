@@ -455,6 +455,223 @@ class TestProyeccionesDeTraza:
         assert narrative_frame_rows(None) == []
 
 
+class TestRondaDeCoberturaExtraida:
+    """`run_coverage_round`: búsqueda dirigida, accounting y cargo del paso."""
+
+    def _ledger(self):
+        class _Ledger:
+            def __init__(self) -> None:
+                self.charged = 0
+
+            def charge_tool_step(self):
+                self.charged += 1
+
+        return _Ledger()
+
+    def _registry(self):
+        class _Registry:
+            def __init__(self) -> None:
+                self.size = 1
+
+            def add_from_meta(self, meta):
+                if isinstance(meta, dict):
+                    self.size += len(meta.get("evidence") or [])
+
+        return _Registry()
+
+    def _decision(self, *, search=True, query="aspecto faltante"):
+        return SimpleNamespace(
+            search=search,
+            query=query,
+            stop_reason="COVERAGE_PARTIAL",
+            coverage_search_skipped="",
+        )
+
+    async def test_sin_search_no_busca(self) -> None:
+        from src.runtime.narrative_fast_path import run_coverage_round
+
+        calls = []
+
+        async def search(query, top_k):
+            calls.append(query)
+            return SimpleNamespace(meta={}, error=None)
+
+        outcome = await run_coverage_round(
+            message="pregunta",
+            decision=self._decision(search=False),
+            search=search,
+            narrative_top_k=8,
+            registry=self._registry(),
+            result=SimpleNamespace(steps=[]),
+            ledger=self._ledger(),
+        )
+        assert calls == []
+        assert outcome.coverage_rounds == 0
+        assert outcome.coverage_stop == "COVERAGE_PARTIAL"
+
+    async def test_query_igual_a_la_pregunta_no_repite(self) -> None:
+        from src.runtime.narrative_fast_path import run_coverage_round
+
+        calls = []
+
+        async def search(query, top_k):
+            calls.append(query)
+            return SimpleNamespace(meta={}, error=None)
+
+        outcome = await run_coverage_round(
+            message="pregunta original",
+            decision=self._decision(query="pregunta original"),
+            search=search,
+            narrative_top_k=8,
+            registry=self._registry(),
+            result=SimpleNamespace(steps=[]),
+            ledger=self._ledger(),
+        )
+        assert calls == []
+        assert outcome.coverage_stop == "NO_TARGET_QUERY"
+        assert outcome.coverage_skipped == "NO_TARGET_QUERY"
+
+    async def test_happy_path_busca_y_cobra(self) -> None:
+        from src.runtime.narrative_fast_path import run_coverage_round
+
+        ledger = self._ledger()
+
+        async def search(query, top_k):
+            assert (query, top_k) == ("aspecto faltante", 8)
+            return SimpleNamespace(meta={"evidence": [{"ref": "n1"}]}, error=None)
+
+        result = SimpleNamespace(steps=[])
+        outcome = await run_coverage_round(
+            message="pregunta",
+            decision=self._decision(),
+            search=search,
+            narrative_top_k=8,
+            registry=self._registry(),
+            result=result,
+            ledger=ledger,
+        )
+        assert outcome.coverage_rounds == 1
+        assert outcome.coverage_queries == ["aspecto faltante"]
+        assert outcome.coverage_added == 1
+        assert ledger.charged == 1
+        assert [s for s in result.steps if s["type"] == "tool_call"]
+
+    async def test_error_marca_search_error_sin_cobrar(self) -> None:
+        from src.runtime.narrative_fast_path import run_coverage_round
+
+        ledger = self._ledger()
+
+        async def search(query, top_k):
+            return SimpleNamespace(meta={}, error="timeout")
+
+        outcome = await run_coverage_round(
+            message="pregunta",
+            decision=self._decision(),
+            search=search,
+            narrative_top_k=8,
+            registry=self._registry(),
+            result=SimpleNamespace(steps=[]),
+            ledger=ledger,
+        )
+        assert outcome.coverage_stop == "search_error"
+        assert outcome.coverage_rounds == 0
+        assert ledger.charged == 0
+
+
+class TestPaqueteFinalExtraido:
+    """`finalize_narrative_coverage`: cobertura final y representación."""
+
+    def _patch(self, monkeypatch, *, represented_order=None, status="COVERED"):
+        from src.runtime import narrative_coverage as coverage_module
+
+        coverage = [
+            SimpleNamespace(status=status, label="x", evidence_id="e1"),
+        ]
+        monkeypatch.setattr(
+            coverage_module, "measure_coverage", lambda plan, items, **kwargs: coverage
+        )
+        monkeypatch.setattr(
+            coverage_module,
+            "ensure_concept_representation",
+            lambda items, all_items, concepts: list(items),
+        )
+
+        def _prefer(items, concepts):
+            if represented_order is None:
+                return list(items)
+            return represented_order
+
+        monkeypatch.setattr(coverage_module, "prefer_aspect_items", _prefer)
+        return coverage
+
+    def _active(self):
+        return SimpleNamespace(
+            items=[SimpleNamespace(evidence_id="e1", score=1.0, content="c1")],
+            matches=[SimpleNamespace(evidence_id="e1", content="match e1")],
+        )
+
+    async def _run(self, monkeypatch, *, coverage_rounds=0, active=None, bridge=None):
+        from src.runtime.narrative_fast_path import finalize_narrative_coverage
+
+        return await finalize_narrative_coverage(
+            registry=SimpleNamespace(all_items=lambda: ["i"]),
+            concept_plan=SimpleNamespace(concepts=[]),
+            coverage_rounds=coverage_rounds,
+            coverage_stop="COVERAGE_PARTIAL",
+            active=active if active is not None else self._active(),
+            bridge=bridge
+            or (lambda plan, cov, items, **kwargs: (plan, cov, {})),
+        )
+
+    async def test_sin_reorden_no_toca_matches(self, monkeypatch) -> None:
+        self._patch(monkeypatch)
+        active = self._active()
+        outcome = await self._run(monkeypatch, active=active)
+        assert outcome.reordered is False
+        assert outcome.coverage_stop == "COVERAGE_PARTIAL"
+
+    async def test_coverage_completa_con_ronda(self, monkeypatch) -> None:
+        self._patch(monkeypatch, status="COVERED")
+        outcome = await self._run(monkeypatch, coverage_rounds=1)
+        from src.runtime.narrative_coverage import COVERAGE_COMPLETE
+
+        assert outcome.coverage_stop == COVERAGE_COMPLETE
+
+    async def test_reorden_reconstruye_matches_y_marca(self, monkeypatch) -> None:
+        active = self._active()
+        reordered_items = [
+            SimpleNamespace(evidence_id="e2", score=0.5, content="c2"),
+            SimpleNamespace(evidence_id="e1", score=1.0, content="c1"),
+        ]
+        self._patch(monkeypatch, represented_order=reordered_items)
+        outcome = await self._run(monkeypatch, active=active)
+        assert outcome.reordered is True
+        assert [i.evidence_id for i in active.items] == ["e2", "e1"]
+        # e1 conserva su match; e2 recibe uno nuevo (narrative).
+        assert [m.evidence_id for m in active.matches] == ["e2", "e1"]
+        assert active.matches[0].match == "narrative"
+        assert active.matches[1].content == "match e1"
+
+    async def test_puente_devuelve_aliases(self, monkeypatch) -> None:
+        self._patch(monkeypatch)
+
+        async def bridge(plan, cov, items, **kwargs):
+            return plan, cov, {"cierre": ["Discontinue Date"]}
+
+        outcome = await self._run(monkeypatch, bridge=bridge)
+        assert outcome.final_aliases == {"cierre": ["Discontinue Date"]}
+
+    async def test_puente_caido_sigue_sin_aliases(self, monkeypatch) -> None:
+        self._patch(monkeypatch)
+
+        async def bridge(*args, **kwargs):
+            raise RuntimeError("embedding caído")
+
+        outcome = await self._run(monkeypatch, bridge=bridge)
+        assert outcome.final_aliases == {}
+        assert outcome.final_coverage is not None
+
+
 class TestCoberturaPrepExtraida:
     """`prepare_narrative_coverage` + `language_bridge_step`."""
 
