@@ -89,10 +89,23 @@ Decisiones fijadas con el usuario:
 Estado de las corridas en este pase:
 
 - suites focales (nuevas + afectadas): **verdes**;
+- lote de regresión (13 suites: agent runtime, flow v2, run state, rag query,
+  runtime policies, budget stop reasons, adaptive projection, allowlist de
+  transiciones, budget closure, evidence-first gate, narrative regression,
+  answer state texts, finalizer): **275 passed, 0 failed** (12:47 min);
 - `ruff check src/ tests/ sdk/python`: **verde**;
 - smoke real (`perf_traffic --limit 1` + `finalization_audit --limit 1`):
   pipeline completo OK; cierre RAG `phase=FINALIZED action=FINALIZE
   divergent=False` (`artifacts/finalization-audit/f0-before.json`).
+
+Commits de este pase (rama `master`, sin push):
+
+| Commit | Contenido |
+|---|---|
+| `8d96bc6` | `audit:` scripts F0 + `00-audit.md` + baseline en `artifacts/` |
+| `42d48ba` | `hardening(cache):` fail-closed por conversación + métricas |
+| `6c8dbaf` | `runtime(finalization):` scopes, `answer_gate`, cierre RAG, corpus dorado |
+| `2368e3a` | `runtime(guards):` caller real + shadow + flag + `01-report.md` |
 
 ---
 
