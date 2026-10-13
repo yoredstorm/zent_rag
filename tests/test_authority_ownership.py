@@ -366,3 +366,36 @@ def test_authority_registry_declara_estados_criticos() -> None:
         "El registro de autoridad perdió estados críticos: "
         f"{sorted(required - set(AUTHORITY_REGISTRY))}"
     )
+
+
+# -----------------------------------------------------------------------------
+# El mapa de ownership es parte del contrato: si el registro gana un estado,
+# el documento tiene que declararlo en el mismo commit.
+# -----------------------------------------------------------------------------
+def test_ownership_map_declara_el_registro() -> None:
+    ownership = ROOT / "docs" / "architecture" / "ownership"
+    map_doc = ownership / "01-ownership-map-before.md"
+    baseline_doc = ownership / "00-baseline.md"
+    duplicates_doc = ownership / "02-duplicated-authorities.md"
+    adr_doc = ownership / "03-adr-decisions.md"
+    missing = [
+        path.name for path in (map_doc, baseline_doc, duplicates_doc, adr_doc)
+        if not path.exists()
+    ]
+    assert not missing, f"documentos de ownership faltantes: {missing}"
+
+    baseline_text = baseline_doc.read_text(encoding="utf-8")
+    assert "5cd3dec1812955c28dd6ce338f56322022a2079c" in baseline_text, (
+        "00-baseline.md debe declarar el BASELINE_SHA verificado con CI verde"
+    )
+
+    map_text = map_doc.read_text(encoding="utf-8")
+    absent = [state for state in AUTHORITY_REGISTRY if state not in map_text]
+    assert not absent, (
+        "01-ownership-map-before.md no declara estos estados críticos del "
+        f"registro: {absent}"
+    )
+    assert "tests/test_authority_ownership.py" in map_text, (
+        "el mapa debe referenciar el ratchet que lo protege"
+    )
+
