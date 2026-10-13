@@ -242,11 +242,19 @@ class TestRetrievalOverrides:
         assert captured["top_k"] == 3  # min(10, 3)
         assert captured["score_threshold"] == 0.4
 
-    def test_no_overrides_falls_back_to_defaults(self) -> None:
+    def test_no_overrides_falls_back_to_defaults(self, monkeypatch) -> None:
         import asyncio
 
         from src.agents.tools.base import ToolContext
         from src.agents.tools.tools_builtin import SearchKnowledgeTool
+        from src.core.config import get_settings
+
+        # Hermético al entorno: el default documentado es `vector`; un .env
+        # local con RAG_RAG_RETRIEVAL_STRATEGY=hybrid no debe cambiar lo que
+        # este test verifica (fallback del tool sin overrides).
+        monkeypatch.setattr(
+            get_settings(), "RAG_RETRIEVAL_STRATEGY", "vector", raising=False
+        )
 
         captured: dict = {}
 
