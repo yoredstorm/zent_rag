@@ -1,9 +1,9 @@
-# Hardening ZENT — Reporte final del programa (F0–F8, F12–F13)
+# Hardening ZENT — Reporte final del programa (F0–F13)
 
-Base: `3d24057`. HEAD al cierre de este reporte: `eb5d6da` (+ F12/F13 docs).
-Fases ejecutadas: **F0–F8 (F8 como auditoría), F12, F13**. Pendientes: **F9–F11**
-(perf/load/chaos con entorno) y el cierre de F14 (tabla de performance con
-baseline de producción).
+Base: `3d24057`. Fases ejecutadas: **F0–F8 (F8 como auditoría), F9–F11 (harness
++ corridas locales acotadas; corrida completa en staging), F12, F13**.
+Pendiente: cerrar la tabla de performance con el baseline de staging
+(comandos en `09-11-perf-load-chaos.md`).
 
 ---
 
@@ -111,44 +111,50 @@ flowchart TD
 
 ## 7. Performance
 
-- Harness: `src/scripts/perf_traffic.py` (p50/p95, tokens, costo, llamadas,
-  errores) + `src/scripts/finalization_audit.py` (divergencia).
-- Smoke local de este programa: 1 run, 60.5 s, pipeline completo
-  (`artifacts/perf/f0-before.json`); audit de cierre: `divergences=0`
-  (`artifacts/finalization-audit/f0-before.json`).
-- **F9 pendiente**: corpus A (30 simple) / B (50 RAG) / C (30 agentic), ≥30
-  iteraciones, cold/warm separados, cache on/off, before/after con metadata
-  (`perf-baseline.md`). Sin ese baseline, los p95 de SLO quedan provisionales.
+- Harness: `perf_traffic.py` (p50/p95, tokens, costo, llamadas, errores),
+  `finalization_audit.py` (divergencia) y `load_test.py` (concurrencia,
+  throughput, p99, rate-limited, amplificación, latencia de infra).
+- **Corrida local acotada** (corpus A, 3 queries, mismo entorno):
+  p50 31,8 s · p95 100,2 s (cold de reranker) · media 52,3 s · 0 errores ·
+  1 llamada LLM/run; audit de cierre 3/3 `FINALIZE`, 0 divergencias.
+- **Load local** (niveles 1 y 2): p50 23,5/27,7 s, p95 40,4/39,7 s, 0 errores,
+  0 `rate_limited`, Postgres 14–25 ms, Redis 1,6–3,8 ms.
+- **Pendiente (staging)**: corpus A/B/C con 30 iteraciones, cold vs warm, cache
+  on/off y concurrencia 25/50; con eso se fijan los p95 del SLO (§13).
 
 ## 8. Reliability
 
 - Fallos de provider clasificados y visibles; retries acotados (1 por candidato
-  + fallback) y medidos (`zent_provider_attempts_total`).
+  + fallback; ≤ 4 intentos con 2 candidatos) y medidos.
 - Circuit breaker por (modelo, tenant) con métrica de aperturas.
 - `RETRIEVAL_UNAVAILABLE` nunca se reporta como ausencia de datos.
-- **F10/F11 pendientes**: load harness (concurrencia 1/5/10/25/50, backpressure)
-  y chaos subset (Redis/Postgres/Qdrant/LLM/JEV/reranker/tool) — requieren
-  entorno; el criterio de retiro y las políticas (retry/fallback/degrade/block)
-  están documentados en los runbooks.
+- **Chaos hermético (F11, 10 tests)**: LLM caído/429, timeout y fallo permanente
+  de tools, engine JEV roto, Redis caído, reranker caído, circuit abierto y
+  amplificación de retry. Hallazgo corregido: la caché Redis no era fail-soft
+  si la conexión fallaba (ahora sí; `incr` sigue fail-closed).
+- **Pendiente (staging)**: load 25/50 con backpressure real y chaos de
+  infraestructura (matar Redis/Qdrant) para validar timeouts y reconexión.
 
 ## 9. Testing
 
-- 80 tests nuevos (7 archivos) + suites existentes actualizadas.
-- Regresiones ejecutadas en este programa: 275 passed (F0–F3), 183 (F4), 118
-  (F7), 61/46/35/34/31/29/14/5/2 en lotes focales; `ruff check src/ tests/
-  sdk/python` verde.
+- 80+ tests nuevos (F0–F7) + F9–F11: chaos (10), provider attempts de stream
+  (2), flags inventory (5), ratchet de excepciones (3), config/env.
+- Regresiones ejecutadas en este programa: 275 (F0–F3), 183 (F4), 118 (F7),
+  216 (invariantes CI), 34/31/29/14/10/5/3/2 en lotes focales; `ruff check
+  src/ tests/ sdk/python` verde.
 - Invariantes en CI (required, PR) + nightly (suite completa, adversarial,
   estabilidad ×100).
 
 ## 10. Deuda (P0–P3)
 
 - **P0**: ninguna demostrada.
-- **P1**: ninguna abierta (cache, RAG/policy y guards cerradas).
-- **P2**: F9-F11 (baseline/load/chaos); intentos del stream y de embeddings no
-  visibles; SLO de latencia sin baseline; 25 `except` sin certificar; drift de
-  `.env.example` (106 flags); `decision.reason_codes` fuera de `reason-codes-1`;
-  dashboards como código pendientes del stack; branch protection se configura
-  en GitHub.
+- **P1**: ninguna abierta.
+- **P2**: corrida completa F9/F10 y chaos de infraestructura en staging;
+  intentos de embeddings como líneas del ledger (la ruta servida ya se publica);
+  SLO de latencia sin baseline; 20 `except Exception` sin certificar (ratchet en
+  CI, número no puede crecer); `decision.reason_codes` fuera de `reason-codes-1`;
+  dashboards como código pendientes del stack; branch protection se configura en
+  GitHub.
 - **P3**: providers de cache sin `_hash_query` (clave local segura); early
   returns operativos por diseño; `request_cost` sin tokens (documentado).
 

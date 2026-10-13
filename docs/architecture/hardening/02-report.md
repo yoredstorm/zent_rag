@@ -52,6 +52,20 @@ Continúan `00-audit.md` y `01-report.md` (F0–F3).
   `reason-codes-1` rompe el test. Sin strings paralelos en el catálogo.
 - Doc: `docs/architecture/failure-taxonomy.md`.
 
+## F5b — Intentos del stream y cierre de la deuda de accounting
+
+- `generate_stream` publica los intentos del failover en el payload `done`
+  (status, fallback, latencia, error) y el error los adjunta como
+  `llm_attempts` si todos los candidatos fallan.
+- `agent_runtime._stream_response` y el camino RAG llevan esos intentos al
+  `LLMResponse` → `record_llm_call` los materializa como líneas
+  `provider_attempt` (aún sin tokens ni costo). Si el stream falla antes del
+  primer token y se reintenta sin stream, los intentos del stream se anteponen
+  a los del fallback (`_merge_stream_attempts`).
+- `_attempt_status` también reconoce 429 por mensaje (no solo por clase o
+  `status_code`).
+- Tests: `test_provider_attempts.py::TestStreamAttempts`.
+
 ## F7 — Métricas run-level
 
 - `src/runtime/run_metrics.py`: `publish_run_metrics(state, path, result)` es el
@@ -92,8 +106,11 @@ Continúan `00-audit.md` y `01-report.md` (F0–F3).
 
 ## Deuda
 
-- Stream: los intentos del stream no viajan en el payload `done` (P2).
-- Embeddings: el failover de embeddings no registra líneas de intento (P2).
+- Stream: **cerrado en F5b** (los intentos del stream viajan en el payload
+  `done` y llegan al ledger).
+- Embeddings: la ruta servida se publica (`embedding_route` en los steps), pero
+  los intentos individuales (status/latencia por intento) todavía no son líneas
+  del ledger (P2).
 - `reasoning_workspace` se renderiza sin encabezado (excepción documentada del
   contrato: es derivado del run, no contexto de entrada).
 - `decision.reason_codes` (motor RAG) fuera de `reason-codes-1` (P2).
