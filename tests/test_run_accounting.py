@@ -113,7 +113,9 @@ async def test_unknown_cost_is_not_a_silent_zero() -> None:
 
     original = run_accounting.resolve_call_cost
 
-    async def _unknown(model, prompt_tokens, completion_tokens, *, provider_cost=None):
+    async def _unknown(
+        model, prompt_tokens, completion_tokens, *, provider_cost=None, **_kwargs
+    ):
         if provider_cost is None:
             return None, "unknown", "pricing down"
         return await original(
@@ -121,6 +123,7 @@ async def test_unknown_cost_is_not_a_silent_zero() -> None:
             prompt_tokens,
             completion_tokens,
             provider_cost=provider_cost,
+            **_kwargs,
         )
 
     run_accounting.resolve_call_cost = _unknown
