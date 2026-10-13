@@ -2227,6 +2227,9 @@ class AgentRuntime:
                 _record_finalization_decision(state, result)
                 if state.trace.violations and _strict_run_state_enabled(request):
                     _strict_block_run_state(state, result)
+                from src.runtime.run_metrics import publish_run_metrics
+
+                publish_run_metrics(state, path="agent", result=result)
             except Exception as exc:  # noqa: BLE001 — diagnóstico, nunca rompe el run
                 logger.warning("run state finalize failed", error=str(exc)[:150])
         try:

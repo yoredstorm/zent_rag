@@ -424,6 +424,65 @@ zent_provider_attempts_total = Counter(
     labelnames=["provider", "status", "retry"],
 )
 
+# -----------------------------------------------------------------------------
+# Run-level (F7): un run cierra y publica UNA vez. Labels acotados:
+# path (agent|rag), phase, status, kind, action, reason_code. Nunca ids.
+# -----------------------------------------------------------------------------
+zent_runs_total = Counter(
+    "zent_runs_total",
+    "Runs cerrados por fase terminal",
+    labelnames=["path", "phase"],
+)
+
+zent_run_latency_seconds = Histogram(
+    "zent_run_latency_seconds",
+    "Duración total del run",
+    labelnames=["path"],
+    buckets=(0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 40.0, 60.0, 120.0, 300.0),
+)
+
+zent_llm_calls_total = Counter(
+    "zent_llm_calls_total",
+    "Llamadas LLM contabilizadas por el ledger del run",
+    labelnames=["path"],
+)
+
+zent_llm_tokens_total = Counter(
+    "zent_llm_tokens_total",
+    "Tokens LLM del run (prompt/completion)",
+    labelnames=["path", "kind"],
+)
+
+zent_run_tool_calls_total = Counter(
+    "zent_run_tool_calls_total",
+    "Tool calls ejecutadas en el run",
+    labelnames=["path"],
+)
+
+zent_run_cost_usd_total = Counter(
+    "zent_run_cost_usd_total",
+    "Costo USD conocido acumulado de los runs",
+    labelnames=["path"],
+)
+
+zent_run_cost_unknown_total = Counter(
+    "zent_run_cost_unknown_total",
+    "Runs con costo desconocido (unknown != 0)",
+    labelnames=["path"],
+)
+
+zent_run_evidence_total = Counter(
+    "zent_run_evidence_total",
+    "Suficiencia de evidencia al cierre del run",
+    labelnames=["path", "status"],  # complete | insufficient | failed | unknown
+)
+
+zent_finalization_actions_total = Counter(
+    "zent_finalization_actions_total",
+    "Acción resuelta por la política de finalización al cierre",
+    labelnames=["action", "reason_code"],
+)
+
 # Circuit breaker de modelos con scope: global (provider caído) o tenant
 # (aislamiento: los fallos de una org no bloquean a las demás).
 zent_model_circuit_failures_total = Counter(

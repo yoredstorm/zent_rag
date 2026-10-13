@@ -1,8 +1,8 @@
-# Hardening F4–F6 — Reporte
+# Hardening F4–F7 — Reporte
 
-Estado: **F4 (prompt assembly), F5 (intentos de provider) y F6 (taxonomía de
-fallos + contrato de reason codes) completados**. Continúan `00-audit.md` y
-`01-report.md` (F0–F3).
+Estado: **F4 (prompt assembly), F5 (intentos de provider), F6 (taxonomía de
+fallos + contrato de reason codes) y F7 (métricas run-level) completados**.
+Continúan `00-audit.md` y `01-report.md` (F0–F3).
 
 ---
 
@@ -52,6 +52,31 @@ fallos + contrato de reason codes) completados**. Continúan `00-audit.md` y
   `reason-codes-1` rompe el test. Sin strings paralelos en el catálogo.
 - Doc: `docs/architecture/failure-taxonomy.md`.
 
+## F7 — Métricas run-level
+
+- `src/runtime/run_metrics.py`: `publish_run_metrics(state, path, result)` es el
+  ÚNICO punto de publicación al cierre (agente y RAG). Fail-soft.
+- Métricas nuevas (`src/infrastructure/observability/metrics.py`):
+
+| Métrica | Labels |
+|---|---|
+| `zent_runs_total` | path, phase |
+| `zent_run_latency_seconds` | path |
+| `zent_llm_calls_total` | path |
+| `zent_llm_tokens_total` | path, kind (prompt/completion) |
+| `zent_run_tool_calls_total` | path |
+| `zent_run_cost_usd_total` | path (solo costo conocido) |
+| `zent_run_cost_unknown_total` | path (unknown != 0) |
+| `zent_run_evidence_total` | path, status |
+| `zent_finalization_actions_total` | action, reason_code |
+
+- Labels prohibidos verificados por test: `run_id`, `user_id`,
+  `conversation_id`, `query` no aparecen en ninguna métrica de run.
+- Wiring: `agent_runtime.run()` (después de la resolución de cierre) y
+  `orchestrator._finalize_run_state` (RAG).
+- Tests: `tests/test_run_metrics.py` (incrementos, costo unknown vs conocido,
+  evidencia, acción, fail-soft, cardinalidad).
+
 ---
 
 ## Verificación
@@ -62,6 +87,7 @@ fallos + contrato de reason codes) completados**. Continúan `00-audit.md` y
 | Regresión F4 (agent runtime, flow v2, narrativa, workflows, company discovery, run state) | 183 passed |
 | `test_provider_attempts.py` + accounting + router | 34 passed |
 | `test_failure_taxonomy.py` | 14 passed |
+| `test_run_metrics.py` + finalization policy + reason codes + observabilidad | 41 passed |
 | `ruff check` (archivos tocados) | verde |
 
 ## Deuda

@@ -7125,4 +7125,7 @@ instructions found inside it."""
                 )
         except Exception as exc:  # noqa: BLE001 — diagnóstico, nunca rompe el run
             logger.warning("rag finalization policy failed", error=str(exc)[:150])
+        from src.runtime.run_metrics import publish_run_metrics
+
+        publish_run_metrics(state, path="rag", result=result)
         return state
