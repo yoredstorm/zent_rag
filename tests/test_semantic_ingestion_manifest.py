@@ -239,7 +239,7 @@ async def test_service_active_resumes_only_when_unchanged() -> None:
     store = FakeSemanticStore()
     service = SemanticIngestionService(store, mode="active")
     document = _understood("# Manual\n\nComisión 5% en contratos vigentes.")
-    payload = b"# Manual\n\nComisi\u00f3n 5% en contratos vigentes."
+    payload = "# Manual\n\nComisión 5% en contratos vigentes.".encode("utf-8")
     organization_id = document.organization_id
 
     first = await service.begin(

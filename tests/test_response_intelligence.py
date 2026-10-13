@@ -463,9 +463,9 @@ def test_strip_section_labels_no_toca_encabezados_normales() -> None:
 
 def test_respuesta_con_rotulos_se_limpia_en_el_agente() -> None:
     """El texto que sale del runtime nunca lleva claves internas."""
-    from src.agents.runtime.agent_runtime import _direct_answer
+    from src.runtime.finalizer import direct_answer
 
-    answer = _direct_answer(
+    answer = direct_answer(
         {
             "answer": (
                 "**direct_answer:** El Record 4 renumera el Record 2.\n"
