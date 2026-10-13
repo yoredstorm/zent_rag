@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -70,6 +69,7 @@ from src.runtime.finalizer import (
     parse_action,
     parse_finalize_answer,
 )
+from src.runtime.prompt_assembly import tool_observation_block
 from src.runtime.run_state import (
     AgentRunState,
     RunIdentity,
@@ -123,42 +123,12 @@ _OBSERVATION_HEADER = prompt_block_header(ContextOrigin.TOOL_OBSERVATION)
 def _render_context_block(context: dict) -> str:
     """Bloques del contexto del run, separados por ORIGEN (sobre).
 
-    `company_context` compilado y memorias llevan su encabezado del sobre; el
-    resto es data del negocio (workflow). Todos son DATOS, nunca instrucciones.
-    Sin company/memory el bloque es exactamente el de siempre.
+    El render vive en `src/runtime/prompt_assembly.py` (contrato del prompt);
+    acá solo se fija el presupuesto de caracteres del bloque.
     """
-    if not isinstance(context, dict):
-        try:
-            body = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
-        except (TypeError, ValueError):
-            body = str(context)
-        if len(body) > _CONTEXT_BLOCK_MAX_CHARS:
-            body = body[:_CONTEXT_BLOCK_MAX_CHARS] + "...(truncado)"
-        return f"{_CONTEXT_BLOCK_LABEL}\n{body}"
-    groups: dict[ContextOrigin, dict] = {}
-    for key, value in context.items():
-        origin = context_origin(str(key))
-        groups.setdefault(origin, {})[str(key)] = value
-    parts: list[str] = []
-    for origin in (
-        ContextOrigin.COMPANY_CONTEXT,
-        ContextOrigin.MEMORY,
-        ContextOrigin.WORKFLOW,
-    ):
-        group = groups.get(origin)
-        if not group:
-            continue
-        try:
-            body = json.dumps(group, ensure_ascii=False, sort_keys=True, default=str)
-        except (TypeError, ValueError):
-            body = str(group)
-        parts.append(f"{prompt_block_header(origin)}:\n{body}")
-    if not parts:
-        return ""
-    rendered = "\n\n".join(parts)
-    if len(rendered) > _CONTEXT_BLOCK_MAX_CHARS:
-        rendered = rendered[:_CONTEXT_BLOCK_MAX_CHARS] + "...(truncado)"
-    return rendered
+    from src.runtime.prompt_assembly import render_context_blocks
+
+    return render_context_blocks(context, max_chars=_CONTEXT_BLOCK_MAX_CHARS)
 
 
 def _reasoning_rule_text(reasoning: object | None) -> str:
@@ -5473,18 +5443,17 @@ class AgentRuntime:
                 if registrados:
                     active = _refresh_selection()
                     history.append(
-                        f"{_OBSERVATION_HEADER}:\n"
-                        + (
+                        tool_observation_block(
                             narrative_package.rendered_context
                             if narrative_package is not None
                             else render_evidence(active, tag_style="citations")
-                        )
+                        ).render()
                     )
                     step_record["evidence"] = active.to_public_dict()
                 else:
                     _publish_evidence()
                     history.append(
-                        f"{_OBSERVATION_HEADER}:\n{tool_result.output[:3000]}"
+                        tool_observation_block(tool_result.output[:3000]).render()
                     )
                 # Cobertura: si la pregunta nombra algo que la evidencia no trae,
                 # se dice como DATO para que el agente (o el finalize) no lo

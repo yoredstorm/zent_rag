@@ -1008,7 +1008,11 @@ class TestPromptPlanExtraido:
             fallback_model="m1",
         )
         assert plan.exhausted_reason == ""
-        assert "Evidencia:" in plan.user_prompt
+        # El prompt narrativo usa el sobre: turno del usuario + evidencia.
+        from src.runtime.context_envelope import ContextOrigin, prompt_block_header
+
+        assert prompt_block_header(ContextOrigin.EVIDENCE) in plan.user_prompt
+        assert prompt_block_header(ContextOrigin.USER_TURN) in plan.user_prompt
         assert "[Doc: 1]" in plan.user_prompt
         assert "Reglas de grounding documental" in plan.system_prompt
         assert plan.model_policy.model == "m1"

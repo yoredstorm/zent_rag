@@ -1109,6 +1109,7 @@ async def build_narrative_prompt_plan(
     caller con `exhausted_reason`.
     """
     from src.runtime.narrative_coverage import limitation_sentence
+    from src.runtime.prompt_assembly import narrative_user_prompt
     from src.runtime.response_composer import personality_for_agent
     from src.runtime.run_budget import (
         EXHAUSTED,
@@ -1146,7 +1147,7 @@ async def build_narrative_prompt_plan(
         )
     if coverage_limit:
         system_prompt = f"{system_prompt}\n{coverage_gap_prompt_note(final_coverage)}"
-    user_prompt = f"Pregunta:\n{question}\n\nEvidencia:\n{context}"
+    user_prompt = narrative_user_prompt(question, context)
     rates = await lookup_token_rates(model_policy.model)
     call_plan = plan_response_budget(
         ledger,
