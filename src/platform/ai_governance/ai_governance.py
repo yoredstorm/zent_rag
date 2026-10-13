@@ -10,7 +10,6 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from src.core.config import get_settings
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
 
@@ -173,9 +172,6 @@ async def _insert_anomaly(
 
 
 async def run_anomaly_checks(organization_id: UUID | None = None) -> list[dict]:
-    settings = get_settings()
-    created: list[dict] = []
-
     session = await get_async_session()
     try:
         orgs = (
@@ -187,9 +183,17 @@ async def run_anomaly_checks(organization_id: UUID | None = None) -> list[dict]:
                 {"oid": organization_id},
             )
         ).fetchall()
+        return await _run_anomaly_checks_for_orgs(session, orgs)
     finally:
+        # Una sola sesión, poseída y cerrada acá: las consultas por
+        # organización corren sobre la misma conexión. Antes se cerraba a
+        # mitad de camino y se reutilizaba: la conexión reabierta quedaba sin
+        # dueño y el GC la reportaba como non-checked-in.
         await session.close()
 
+
+async def _run_anomaly_checks_for_orgs(session, orgs: list) -> list[dict]:
+    created: list[dict] = []
     for org in orgs:
         oid = org.id
 

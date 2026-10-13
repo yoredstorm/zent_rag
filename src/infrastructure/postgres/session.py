@@ -22,6 +22,26 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 _engine_loop_id: int | None = None
 
 
+def _engine_options(settings) -> dict:
+    """Opciones de pool por entorno.
+
+    En development/test no se usa pool: cada sesión abre y cierra su propia
+    conexión en el loop vigente. Sin conexiones idle, un engine abandonado por
+    cambio de loop no deja sockets colgados (`Event loop is closed`, SAWarning
+    del GC); el costo de una conexión por sesión es el correcto en ese ámbito.
+    """
+    from sqlalchemy.pool import NullPool
+
+    environment = str(getattr(settings, "ENVIRONMENT", "development") or "").strip().lower()
+    if environment == "development":
+        return {"poolclass": NullPool}
+    return {
+        "pool_size": settings.POSTGRES_MIN_CONNECTIONS,
+        "max_overflow": settings.POSTGRES_MAX_CONNECTIONS - settings.POSTGRES_MIN_CONNECTIONS,
+        "pool_pre_ping": True,
+    }
+
+
 async def get_async_session() -> AsyncSession:
     """Retorna una sesión asíncrona de SQLAlchemy desde el pool.
 
@@ -41,15 +61,15 @@ async def _ensure_engine():
     import asyncio as _asyncio
     current_loop_id = id(_asyncio.get_running_loop())
     if _engine is None or _engine_loop_id != current_loop_id:
-        if _engine is not None:
-            await _engine.dispose()
+        # Un engine del loop anterior no se dispone desde acá: `dispose()`
+        # intentaría cerrar conexiones de un loop que ya no corre. En
+        # development el engine no acumula conexiones idle (NullPool); en
+        # production el loop es único y el cierre lo hace el lifespan.
         settings = get_settings()
         _engine = create_async_engine(
             settings.POSTGRES_DSN,
-            pool_size=settings.POSTGRES_MIN_CONNECTIONS,
-            max_overflow=settings.POSTGRES_MAX_CONNECTIONS - settings.POSTGRES_MIN_CONNECTIONS,
-            pool_pre_ping=True,
             echo=False,
+            **_engine_options(settings),
         )
         _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
         _engine_loop_id = current_loop_id

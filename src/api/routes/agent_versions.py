@@ -195,61 +195,64 @@ async def _check_promotion_gate(
                 {"oid": organization_id, "vid": str(version_id)},
             )
         ).fetchone()
-    finally:
-        await session.close()
 
-    if row is None:
-        raise HTTPException(
-            409,
-            "Promotion blocked: no hay evaluación completada para esta versión "
-            "(el promotion gate está activo).",
-        )
-    summary = row.summary if isinstance(row.summary, dict) else {}
-    candidate_quality = summary.get("quality") or {}
-
-    # Gate configurado por org (y por workspace del agente si existe).
-    workspace_id = None
-    try:
-        agent = await get_agent_repo().get_agent(organization_id, agent_id)
-        workspace_id = getattr(agent, "workspace_id", None)
-    except Exception:  # noqa: BLE001
-        pass
-    gate = await get_gate(organization_id, workspace_id)
-
-    reasons = await gate_blocked(candidate_quality, gate)
-
-    # Regresión vs la versión desplegada (S5): comparar candidata contra la
-    # eval de la versión production actual del agente.
-    baseline_quality = None
-    if not reasons:
-        base = (
-            await session.execute(
-                text(
-                    "SELECT v.id FROM agent_versions v "
-                    "WHERE v.agent_id = :aid AND v.status = 'production' "
-                    "ORDER BY v.version_number DESC LIMIT 1"
-                ),
-                {"aid": str(agent_id)},
+        if row is None:
+            raise HTTPException(
+                409,
+                "Promotion blocked: no hay evaluación completada para esta versión "
+                "(el promotion gate está activo).",
             )
-        ).fetchone()
-        if base is not None:
-            baseline = (
+        summary = row.summary if isinstance(row.summary, dict) else {}
+        candidate_quality = summary.get("quality") or {}
+
+        # Gate configurado por org (y por workspace del agente si existe).
+        workspace_id = None
+        try:
+            agent = await get_agent_repo().get_agent(organization_id, agent_id)
+            workspace_id = getattr(agent, "workspace_id", None)
+        except Exception:  # noqa: BLE001
+            pass
+        gate = await get_gate(organization_id, workspace_id)
+
+        reasons = await gate_blocked(candidate_quality, gate)
+
+        # Regresión vs la versión desplegada (S5): comparar candidata contra la
+        # eval de la versión production actual del agente.
+        baseline_quality = None
+        if not reasons:
+            base = (
                 await session.execute(
                     text(
-                        "SELECT summary FROM eval_runs "
-                        "WHERE organization_id = :oid AND version_id = :vid "
-                        "AND target_type = 'agent' AND status = 'completed' "
-                        "ORDER BY created_at DESC LIMIT 1"
+                        "SELECT v.id FROM agent_versions v "
+                        "WHERE v.agent_id = :aid AND v.status = 'production' "
+                        "ORDER BY v.version_number DESC LIMIT 1"
                     ),
-                    {"oid": organization_id, "vid": str(base["id"])},
+                    {"aid": str(agent_id)},
                 )
             ).fetchone()
-            if baseline is not None and isinstance(baseline.summary, dict):
-                baseline_quality = baseline.summary.get("quality") or {}
-        reasons = await regression_blocked(candidate_quality, baseline_quality, gate)
+            if base is not None:
+                baseline = (
+                    await session.execute(
+                        text(
+                            "SELECT summary FROM eval_runs "
+                            "WHERE organization_id = :oid AND version_id = :vid "
+                            "AND target_type = 'agent' AND status = 'completed' "
+                            "ORDER BY created_at DESC LIMIT 1"
+                        ),
+                        {"oid": organization_id, "vid": str(base["id"])},
+                    )
+                ).fetchone()
+                if baseline is not None and isinstance(baseline.summary, dict):
+                    baseline_quality = baseline.summary.get("quality") or {}
+            reasons = await regression_blocked(candidate_quality, baseline_quality, gate)
 
-    if reasons:
-        raise HTTPException(
-            409,
-            "Promotion blocked: " + "; ".join(reasons[:6]),
-        )
+        if reasons:
+            raise HTTPException(
+                409,
+                "Promotion blocked: " + "; ".join(reasons[:6]),
+            )
+    finally:
+        # Una sola sesión, poseída por la función y cerrada pase lo que pase.
+        # Antes se cerraba a mitad y se reutilizaba: la conexión reabierta
+        # quedaba sin dueño.
+        await session.close()

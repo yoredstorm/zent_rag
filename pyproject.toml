@@ -223,6 +223,10 @@ skips = ["B101", "B603"]  # assert (tests) y subprocess sin shell=True
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Scope explícito (pytest-asyncio 1.x lo exige para determinismo): los tests
+# corren con loop por función; las fixtures async declaran el suyo si lo
+# necesitan. Evita el warning de configuración sin declarar.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 # Guard anti-cuelgues: ningún test (ni sus fixtures) puede pasar de 5 minutos.
 # pytest-timeout usa "thread" en Windows (signal no está disponible).

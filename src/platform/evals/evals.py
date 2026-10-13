@@ -199,33 +199,36 @@ async def trigger_run(
                 {"did": dataset_id},
             )
         ).fetchall()
+        if not items:
+            return {"status": "empty_dataset"}
+
+        agent = await PostgresAgentRepository().get_agent(organization_id, agent_id)
+        if agent is None:
+            return {"status": "agent_not_found"}
+
+        run_id = (
+            await session.execute(
+                text(
+                    "INSERT INTO eval_v2_runs (id, organization_id, dataset_id, dataset_version, "
+                    "agent_id, model, created_by) VALUES (gen_random_uuid(), :oid, :did, :dv, "
+                    ":aid, :model, :by) RETURNING id"
+                ),
+                {
+                    "oid": organization_id,
+                    "did": dataset_id,
+                    "dv": int(dataset.version),
+                    "aid": agent_id,
+                    "model": agent.model,
+                    "by": created_by,
+                },
+            )
+        ).scalar()
+        await session.commit()
     finally:
+        # Una sola sesión, poseída y cerrada al final: el INSERT del run vive
+        # en la misma conexión que la lectura (antes se reabría después del
+        # close y quedaba sin dueño).
         await session.close()
-    if not items:
-        return {"status": "empty_dataset"}
-
-    agent = await PostgresAgentRepository().get_agent(organization_id, agent_id)
-    if agent is None:
-        return {"status": "agent_not_found"}
-
-    run_id = (
-        await session.execute(
-            text(
-                "INSERT INTO eval_v2_runs (id, organization_id, dataset_id, dataset_version, "
-                "agent_id, model, created_by) VALUES (gen_random_uuid(), :oid, :did, :dv, "
-                ":aid, :model, :by) RETURNING id"
-            ),
-            {
-                "oid": organization_id,
-                "did": dataset_id,
-                "dv": int(dataset.version),
-                "aid": agent_id,
-                "model": agent.model,
-                "by": created_by,
-            },
-        )
-    ).scalar()
-    await session.commit()
 
     asyncio.get_running_loop().create_task(
         _execute_run(

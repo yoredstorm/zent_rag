@@ -162,6 +162,22 @@ async def _reset_rate_limits() -> AsyncGenerator[None, None]:
     await close_redis_connection()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _close_async_db_engine_at_session_end() -> None:
+    """La suite posee y cierra el engine async que abre.
+
+    Sync a propósito: en development el engine usa NullPool (sin conexiones
+    idle) y `dispose()` es un no-op barato; no exige un event loop de sesión.
+    Evita engines vivos al terminar el proceso con conexiones de loops muertos.
+    """
+    yield
+    import asyncio
+
+    from src.infrastructure.postgres.session import close_db_connections
+
+    asyncio.run(close_db_connections())
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _ensure_developer_scopes() -> None:
     """Inserta rag:read / rag:write / agents:execute si la DB local es anterior."""

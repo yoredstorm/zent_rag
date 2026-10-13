@@ -879,15 +879,19 @@ async def _classify_source_ids(ctx, source_ids: list[UUID]) -> tuple[list, list[
     if not pending:
         return found, missing, foreign
     session = await get_async_session()
-    rows = (
-        await session.execute(
-            sql_text(
-                "SELECT id::text AS id, organization_id::text AS organization_id "
-                "FROM kb_sources WHERE id::text IN :ids"
-            ).bindparams(bindparam("ids", expanding=True)),
-            {"ids": [str(item) for item in pending]},
-        )
-    ).fetchall()
+    try:
+        rows = (
+            await session.execute(
+                sql_text(
+                    "SELECT id::text AS id, organization_id::text AS organization_id "
+                    "FROM kb_sources WHERE id::text IN :ids"
+                ).bindparams(bindparam("ids", expanding=True)),
+                {"ids": [str(item) for item in pending]},
+            )
+        ).fetchall()
+    finally:
+        # La función posee la sesión: se cierra siempre (antes quedaba abierta).
+        await session.close()
     owners = {str(row[0]): str(row[1]) for row in rows}
     for source_id in pending:
         owner = owners.get(str(source_id))
