@@ -139,6 +139,23 @@ async def record_llm_call(
             if key not in {"type", "purpose"}:
                 step[key] = value
     result.steps.append(step)
+    # El failover del router no se esconde: cada intento fallido queda como
+    # línea `provider_attempt` (sin tokens ni costo: intento no facturado).
+    for attempt in list(getattr(response, "attempts", None) or ()):
+        if not isinstance(attempt, dict):
+            continue
+        status = str(attempt.get("status") or "")
+        if status in {"", "success"}:
+            continue
+        record_provider_attempt(
+            result,
+            provider=str(attempt.get("provider") or ""),
+            model=str(attempt.get("model") or ""),
+            status=status,
+            latency_ms=float(attempt.get("latency_ms") or 0.0),
+            retry=bool(attempt.get("retry")),
+            detail=str(attempt.get("error") or ""),
+        )
     spans = getattr(result, "spans", None)
     if isinstance(spans, list):
         spans.append(
@@ -348,6 +365,18 @@ def record_provider_attempt(
     if detail:
         step["detail"] = str(detail)[:200]
     result.steps.append(step)
+    try:
+        from src.infrastructure.observability.metrics import (
+            zent_provider_attempts_total,
+        )
+
+        zent_provider_attempts_total.labels(
+            provider=step["provider"] or "unknown",
+            status=step["status"] or "unknown",
+            retry="1" if step["retry"] else "0",
+        ).inc()
+    except Exception:  # noqa: BLE001 — observabilidad, nunca rompe la contabilidad
+        pass
     return step
 
 

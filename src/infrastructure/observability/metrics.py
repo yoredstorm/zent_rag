@@ -416,6 +416,14 @@ zent_cache_bypass_total = Counter(
     labelnames=["reason", "provider"],
 )
 
+# Intentos de provider del router de gateway (incluye reintentos y fallback).
+# No suman tokens ni costo: la línea del ledger es la que factura.
+zent_provider_attempts_total = Counter(
+    "zent_provider_attempts_total",
+    "Intentos de provider registrados por el router de gateway",
+    labelnames=["provider", "status", "retry"],
+)
+
 # Circuit breaker de modelos con scope: global (provider caído) o tenant
 # (aislamiento: los fallos de una org no bloquean a las demás).
 zent_model_circuit_failures_total = Counter(

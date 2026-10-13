@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -124,12 +125,19 @@ async def generate_routed(
     Un 429/overloaded transitorio reintenta UNA vez el mismo modelo tras una
     pausa corta; si sigue fallando, pasa al fallback. El circuit breaker es por
     modelo: un primario caído no bloquea al fallback.
+
+    Cada intento queda registrado en `response.attempts` (incluido el éxito):
+    el failover no se esconde y el ledger puede reconstruir «429 → 429 →
+    success» sin inventar tokens ni costo por intento fallido.
     """
+    attempts: list[dict] = []
     last_error: Exception | None = None
-    for index, model in enumerate(route.candidates()):
+    candidates = route.candidates()
+    for index, model in enumerate(candidates):
         for retry in range(2):
+            started = time.perf_counter()
             try:
-                return await generate(
+                response = await generate(
                     prompt,
                     model=model,
                     max_tokens=max_tokens,
@@ -138,17 +146,101 @@ async def generate_routed(
                 )
             except Exception as exc:
                 last_error = exc
+                attempts.append(
+                    _attempt_record(
+                        model=model,
+                        status=_attempt_status(exc),
+                        retry=bool(retry),
+                        fallback=index > 0,
+                        latency_ms=(time.perf_counter() - started) * 1000,
+                        error=str(exc),
+                    )
+                )
                 logger.warning(
                     "Gateway model attempt failed",
                     model=model,
                     attempt=index + 1,
                     retry=retry,
-                    has_fallback=index == 0 and len(route.candidates()) > 1,
+                    has_fallback=index == 0 and len(candidates) > 1,
                     error=str(exc),
                 )
                 if retry == 0 and _retryable_provider_error(exc):
                     await asyncio.sleep(_TRANSIENT_RETRY_SECONDS)
                     continue
                 break
+            attempts.append(
+                _attempt_record(
+                    model=model,
+                    status="success",
+                    retry=bool(retry),
+                    fallback=index > 0,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                )
+            )
+            _attach_attempts(response, attempts)
+            return response
     assert last_error is not None
+    try:
+        last_error.llm_attempts = list(attempts)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — el error original manda
+        pass
     raise last_error
+
+
+def _provider_of(model: str) -> str:
+    text = str(model or "")
+    return text.split("/", 1)[0] if "/" in text else ""
+
+
+def _attempt_status(exc: Exception) -> str:
+    """Clasifica el fallo del intento (sin exponer secretos ni payloads)."""
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    if "circuitbreaker" in name:
+        return "circuit_open"
+    if getattr(exc, "status_code", None) == 429 or "ratelimit" in name:
+        return "rate_limited"
+    if "timeout" in name or "timeout" in message or "timed out" in message:
+        return "timeout"
+    code = getattr(exc, "status_code", None)
+    if code in (401, 403) or "authentication" in name:
+        return "auth_error"
+    if isinstance(code, int) and code >= 500:
+        return "provider_error"
+    if "overloaded" in name or "model busy" in message or "overloaded" in message:
+        return "provider_error"
+    return "error"
+
+
+def _attempt_record(
+    *,
+    model: str,
+    status: str,
+    retry: bool,
+    fallback: bool,
+    latency_ms: float,
+    error: str = "",
+) -> dict:
+    record: dict = {
+        "provider": _provider_of(model),
+        "model": str(model or ""),
+        "status": status,
+        "retry": bool(retry),
+        "fallback": bool(fallback),
+        "latency_ms": round(float(latency_ms or 0.0), 2),
+    }
+    if error:
+        record["error"] = error[:200]
+    return record
+
+
+def _attach_attempts(response: LLMResponse, attempts: list[dict]) -> None:
+    """Adjunta los intentos a la respuesta (fail-soft si el doble no los acepta)."""
+    try:
+        existing = getattr(response, "attempts", None)
+        if isinstance(existing, list):
+            existing.extend(attempts)
+        else:
+            response.attempts = list(attempts)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — observabilidad, nunca rompe la generación
+        pass

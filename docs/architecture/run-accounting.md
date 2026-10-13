@@ -55,9 +55,20 @@ histórica, idempotencia, tarifa desconocida, líneas de embedding/rerank/JEV).
   presupuesto corta; no-transitorio no reintenta).
 - Router no-streaming: `tests/test_llm_router.py` (retry transitorio, fallback,
   cuota directa al fallback, breaker por modelo).
+- **Intentos visibles (F5)**: `generate_routed` registra cada intento en
+  `LLMResponse.attempts` (provider, model, status, retry, fallback, latency_ms,
+  error) y `record_llm_call` los materializa como líneas `provider_attempt`
+  (sin tokens ni costo: intento no facturado) + métrica
+  `zent_provider_attempts_total{provider,status,retry}`. Si todos los
+  candidatos fallan, el error propaga `llm_attempts`. Test:
+  `tests/test_provider_attempts.py` (429 → 429 → success con 2 líneas
+  `provider_attempt` y 1 `llm`; ledger == éxito; error no reintentable va
+  directo al fallback).
 - Streaming: `tests/test_llm_stream_fallback.py` (429/timeout/circuit antes del
   primer token → fallback; tras emitir → error; todos fallan → propaga;
-  estabilidad ×100).
+  estabilidad ×100). Los intentos del stream aún no viajan en el payload
+  `done` (deuda P2: la línea `provider_attempt` cubre hoy el camino
+  no-streaming y el timeout de la ruta narrativa).
 - Regla: el intento fallido se registra con su modelo/proveedor; el failover no
   esconde el primer intento.
 
