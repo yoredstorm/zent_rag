@@ -26,7 +26,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -38,6 +38,10 @@ from src.runtime.enforcement import (
 )
 from src.runtime.enforcement import (
     should_hold_trigger as _should_hold_trigger,
+)
+from src.runtime.evidence_semantics import (
+    classify_evidence_condition,
+    condition_conflict,
 )
 from src.runtime.reason_codes import (
     AUTHORITY_MISSING_FOR_EXECUTABLE,
@@ -460,6 +464,10 @@ class ClosureResolution:
     kind: str = "agreed"
     mismatch: str = ""
     operational: bool = False
+    #: Condición de evidencia medida (`evidence_semantics`): vocabulario único,
+    #: low-cardinality, publicado para observabilidad y adopción por canary.
+    condition: str = ""
+    evidence_conflict: str = ""
 
     @property
     def consistent(self) -> bool:
@@ -473,6 +481,8 @@ class ClosureResolution:
             "operational": self.operational,
             "consistent": self.consistent,
             "mismatch": self.mismatch or None,
+            "condition": self.condition or None,
+            "evidence_conflict": self.evidence_conflict or None,
             "action": (
                 str(self.decision.action) if self.decision is not None else None
             ),
@@ -531,8 +541,35 @@ def resolve_closure_phase(
 
     `terminal_phase_for` sigue calculando el oráculo legacy: si ambos difieren,
     la divergencia se registra como violación crítica y la fase aplicada es la
-    de la autoridad (fail-closed: nunca se inventa un FINALIZED).
+    de la autoridad (fail-closed: nunca se inventa un FINALIZED). Publica
+    además la condición de evidencia medida (`evidence_semantics`).
     """
+    resolution = _resolve_closure_phase_impl(
+        state,
+        status=status,
+        answer=answer,
+        answer_state=answer_state,
+        retrieval_possible=retrieval_possible,
+    )
+    if resolution.condition or resolution.evidence_conflict:
+        return resolution
+    condition = classify_evidence_condition(state, answer_state=answer_state)
+    return replace(
+        resolution,
+        condition=str(condition),
+        evidence_conflict=condition_conflict(state, condition),
+    )
+
+
+def _resolve_closure_phase_impl(
+    state: AgentRunState,
+    *,
+    status: str,
+    answer: str,
+    answer_state: dict | None,
+    retrieval_possible: bool = False,
+) -> ClosureResolution:
+    """Cuerpo del reducer (sin clasificación de evidencia)."""
     legacy = terminal_phase_for(
         status=status, answer=answer, answer_state=answer_state
     )

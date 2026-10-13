@@ -130,3 +130,39 @@ fallback legacy declarando su fuente.
 - Contadores de requests (`COUNT(*)` sobre `usage_events`) siguen incluyendo
   eventos por fase: métrica distinta de facturación, deuda P2-8 documentada.
 
+---
+
+## S4 — Evidencia: vocabulario único y conflictos medidos (este slice)
+
+### Cambios de autoridad
+
+| Antes | Después |
+|---|---|
+| Cada capa traducía las señales de evidencia a su manera (`retrieval_failed`, `insufficient`, `complete`, `canonical_state`, `long_context_stop`, premisas, conflictos) | `evidence_semantics.classify_evidence_condition` clasifica UNA condición canónica con prioridad explícita y determinista (9 condiciones) |
+| Los stops del motor long-context vivían duplicados (orquestador) | `COMPLETE_STOPS` en `evidence_semantics` debe ser igual al conjunto del orquestador y disjunto de `PARTIAL_STOPS`: un test rompe CI si divergen |
+| La conversión de cobertura parcial en certeza era invisible | `condition_conflict` mide `partial_coverage_declared_complete` y `retrieval_failure_reported_as_insufficiency`; se publican como contadores low-cardinality (`zent_evidence_condition_total`, `zent_evidence_condition_conflicts_total`) |
+| La resolución del cierre no publicaba la condición de evidencia | `ClosureResolution.condition` y `.evidence_conflict` viajan en `decisions.closure` (observabilidad, sin cambiar la respuesta) |
+
+### Alcance deliberado
+
+No se cambia el resultado de producto: la condición se mide y se publica. La
+corrección de un caso medido (p. ej. cobertura parcial declarada completa) es una
+decisión de adopción con datos, coherente con la postura ADR-001 (construir +
+canary). La clasificación es determinista: 100 iteraciones y matriz de casos.
+
+### Ratchets
+
+- `COMPLETE_STOPS == orchestrator._CANONICAL_COMPLETE_STOPS`.
+- `COMPLETE_STOPS ∩ PARTIAL_STOPS == ∅` y ambos ⊆ stops reales del motor, cuya
+  unión cubre el vocabulario completo (`STOP_*`).
+- `PRIORITY` cubre exactamente las 9 condiciones, sin duplicados.
+
+### Tests nuevos
+
+`tests/test_evidence_semantics.py` (21 casos): cada condición canónica,
+autoridad por encima de la insuficiencia, premisa faltante ≠ insuficiencia
+documental, ausencia ≠ insuficiencia, contradicción por fuentes y por estado,
+cobertura completa vs parcial, los dos conflictos medidos, pin del vocabulario
+de stops, determinismo ×100 y matriz de 11 casos ×20.
+
+

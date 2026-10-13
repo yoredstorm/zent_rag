@@ -13,7 +13,7 @@ Estado por entrada (actualizado en cada slice): `ABIERTO`, `EN CURSO`,
 | P0-1 | RESUELTO en S2 (campo estricto real; cierre por autoridad) |
 | P0-2 | RESUELTO en S2 (reducer + invariante de construcción) |
 | P0-3 | EN CURSO (S4/S8) |
-| P0-4 | ABIERTO (S4) |
+| P0-4 | RESUELTO en S4 (vocabulario único de evidencia + conflictos medidos; la corrección de la cobertura parcial se adopta por canary) |
 | P0-5 | RESUELTO en S5 (ledger como escritor único; sin doble conteo de tokens del juez) |
 | P1-1..P1-7 | ABIERTO (S6/S7/S8/S9/S11) |
 | P2-1..P2-6 | ABIERTO |

@@ -408,6 +408,22 @@ zent_guard_divergence_total = Counter(
     labelnames=["event", "guard_reason", "legacy_reason"],
 )
 
+# Condición de evidencia del run (vocabulario único de `evidence_semantics`).
+# `condition` es low-cardinality (enum cerrado); el conflicto marca la
+# incoherencia medida (p. ej. cobertura parcial declarada completa) sin cambiar
+# la respuesta: alimenta la decisión de adopción por canary.
+zent_evidence_condition_total = Counter(
+    "zent_evidence_condition_total",
+    "Condición de evidencia clasificada al cierre del run",
+    labelnames=["path", "condition"],
+)
+
+zent_evidence_condition_conflicts_total = Counter(
+    "zent_evidence_condition_conflicts_total",
+    "Conflictos entre la condición de evidencia medida y lo declarado por el run",
+    labelnames=["path", "condition", "kind"],
+)
+
 # Cache de respuestas desactivada por política fail-closed (no por fallo):
 # p. ej. el proveedor de caché no soporta aislamiento por conversación.
 zent_cache_bypass_total = Counter(

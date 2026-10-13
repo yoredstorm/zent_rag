@@ -1036,6 +1036,13 @@ def finalize_state(
             state, status=status, answer=answer, answer_state=answer_state
         )
         state.decisions.observe_closure(resolution)
+        from src.runtime.evidence_semantics import observe_condition
+
+        observe_condition(
+            state,
+            resolution.condition,
+            conflict=resolution.evidence_conflict,
+        )
     except Exception as exc:  # noqa: BLE001 — diagnóstico: nunca rompe el cierre
         state.trace.notes.append(f"closure_authority_failed:{str(exc)[:120]}")
     state.finish(
