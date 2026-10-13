@@ -46,7 +46,7 @@ labels.
 
 ## 3. Runbooks
 
-Ver `docs/runbooks/README.md` (índice + 9 incidentes).
+Ver `docs/architecture/runbooks/README.md` (índice + 9 incidentes).
 
 ## 4. Dashboards (F13, propuesta)
 
