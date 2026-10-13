@@ -134,11 +134,16 @@ def _allowed_transitions(current: RunPhase) -> frozenset[RunPhase]:
 
 #: Invariantes que, en modo estricto (`RUNTIME_RUN_STATE_STRICT=on`), bloquean
 #: la respuesta por riesgo de corrección (no por bookkeeping).
+#: Los kinds `closure_*` los emite el reducer del cierre
+#: (`finalization_policy.CLOSURE_NOT_AUTHORIZED` / `CLOSURE_AUTHORITY_MISMATCH`);
+#: un test compara los literales para que no puedan divergir.
 CRITICAL_INVARIANTS: frozenset[str] = frozenset(
     {
         "authoritative_decision_contradicted",
         "authoritative_decision_replaced",
         "deterministic_finalized_without_envelope",
+        "closure_not_authorized",
+        "closure_authority_mismatch",
     }
 )
 
@@ -556,6 +561,9 @@ class DecisionState:
     envelope_conflict: bool = False
     #: Resolución de autoridad del cierre (finalization_policy, observabilidad).
     finalization: dict | None = None
+    #: Resolución del cierre aplicada por el estado (fase, oráculo legacy,
+    #: mismatch). Escritor único: `observe_closure` desde `finalize_state`.
+    closure: dict | None = None
     #: OBSERVATIONAL: veredictos JEV (shadow incluido). Nunca deciden acá.
     jev: list[dict] = field(default_factory=list)
     #: Grounded reasoning PRE y POST, grounding del motor, rule retrieval,
@@ -610,6 +618,16 @@ class DecisionState:
         if value:
             self.external_authority = value
 
+    def observe_closure(self, resolution: Any | None) -> None:
+        """Publica la resolución del cierre aplicada por el estado.
+
+        Escritor único del campo `closure` (el reducer vive en
+        `finalization_policy.resolve_closure_phase`).
+        """
+        if resolution is None or not hasattr(resolution, "to_public_dict"):
+            return
+        self.closure = resolution.to_public_dict()
+
     def observe_finalized(self, finalized: FinalizedAnswer | None) -> None:
         if finalized is None:
             return
@@ -650,6 +668,7 @@ class DecisionState:
             ),
             "guard_action": getattr(self.guard, "action", None),
             "envelope_conflict": self.envelope_conflict,
+            "closure": dict(self.closure) if self.closure else None,
         }
 
 
@@ -748,9 +767,33 @@ class AgentRunState:
         )
         return True
 
-    def finish(self, *, status: str, answer: str, answer_state: dict | None) -> RunPhase:
-        """Cierra el run con la fase terminal que corresponde al resultado real."""
-        terminal = terminal_phase_for(status=status, answer=answer, answer_state=answer_state)
+    def finish(
+        self,
+        *,
+        status: str,
+        answer: str,
+        answer_state: dict | None,
+        phase_override: RunPhase | None = None,
+        oracle_phase: RunPhase | None = None,
+    ) -> RunPhase:
+        """Cierra el run con la fase terminal que corresponde al resultado real.
+
+        La fase la decide la AUTORIDAD del cierre (`phase_override`, resuelta por
+        `finalization_policy.resolve_closure_phase`). El mapper
+        (`terminal_phase_for`) queda como oráculo: si difiere, se registra la
+        divergencia y manda la autoridad, nunca el texto.
+        """
+        terminal = (
+            oracle_phase
+            if oracle_phase is not None
+            else terminal_phase_for(status=status, answer=answer, answer_state=answer_state)
+        )
+        if phase_override is not None and phase_override in TERMINAL_PHASES:
+            if phase_override is not terminal:
+                self.trace.notes.append(
+                    f"closure_oracle:{terminal}->{phase_override}"
+                )
+            terminal = phase_override
         if self.phase not in TERMINAL_PHASES:
             self.try_advance(terminal, detail=f"status={status}")
         else:
@@ -960,7 +1003,12 @@ def finalize_state(
     spans_count: int = 0,
     latency_ms: float = 0.0,
 ) -> tuple[str, ...]:
-    """Cierra el estado y evalúa invariantes. Devuelve las violaciones."""
+    """Cierra el estado y evalúa invariantes. Devuelve las violaciones.
+
+    El cierre pasa por el reducer de autoridad (`resolve_closure_phase`): la fase
+    aplicada sale de la resolución, no del texto. Cualquier divergencia entre la
+    autoridad y el oráculo legacy queda como violación crítica trazable.
+    """
     state.answer.text = str(answer or "")
     state.answer.status = str(status or "")
     state.answer.answer_state = dict(answer_state or {})
@@ -980,12 +1028,30 @@ def finalize_state(
             state.answer.citations = tuple(sorted(cited_ids))
             if not state.evidence.cited:
                 state.evidence.observe_usage(cited=frozenset(cited_ids))
-    state.finish(status=status, answer=answer, answer_state=answer_state)
-    violations = state.check_invariants()
-    state.trace.violations[:] = list(violations)
+    resolution = None
+    try:
+        from src.runtime.finalization_policy import resolve_closure_phase
+
+        resolution = resolve_closure_phase(
+            state, status=status, answer=answer, answer_state=answer_state
+        )
+        state.decisions.observe_closure(resolution)
+    except Exception as exc:  # noqa: BLE001 — diagnóstico: nunca rompe el cierre
+        state.trace.notes.append(f"closure_authority_failed:{str(exc)[:120]}")
+    state.finish(
+        status=status,
+        answer=answer,
+        answer_state=answer_state,
+        phase_override=(resolution.phase if resolution is not None else None),
+        oracle_phase=(resolution.legacy_phase if resolution is not None else None),
+    )
+    violations = list(state.check_invariants())
+    if resolution is not None and resolution.mismatch:
+        violations.append(resolution.mismatch)
+    state.trace.violations[:] = violations
     if violations:
         state.trace.notes.append("invariants_violated:" + "|".join(violations[:4]))
-    return violations
+    return tuple(violations)
 
 
 __all__ = [

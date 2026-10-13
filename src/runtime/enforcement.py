@@ -9,7 +9,9 @@
 #   agent config > organización > environment > global
 #
 # `closure` NO se arma acá: su fail-closed es el modo estricto del estado
-# (`RUNTIME_RUN_STATE_STRICT` / orgs canary).
+# (`RUNTIME_RUN_STATE_STRICT` / orgs canary), campo real desde S2 de la fase de
+# convergencia de autoridad. La fase terminal la aplica la resolución del cierre
+# (`finalization_policy.resolve_closure_phase`), no el hold de un trigger.
 # =============================================================================
 from __future__ import annotations
 

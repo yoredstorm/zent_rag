@@ -48,6 +48,7 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
         r"\.decisions\.(requires_deterministic|external_authority)\s*="
     ),
     "terminal_mapper": re.compile(r"terminal_phase_for\("),
+    "closure_writes": re.compile(r"\.closure\s*="),
 }
 
 # -----------------------------------------------------------------------------
@@ -86,14 +87,16 @@ RESULT_TOTALS: dict[str, tuple[int, str]] = {
     ),
     "src/runtime/run_accounting.py": (
         7,
-        "Deuda P0 (S5): record_judge_call suma tokens del juez fuera del ledger "
-        "y escribe cost_status. Debe pasar por account_llm_usage y bajar a 0.",
+        "Deuda P0 (S5): `record_judge_call` suma los tokens del juez fuera del "
+        "ledger (los otros hits son cost_status y el camino canónico). Debe "
+        "pasar por un método del ledger y bajar a los hits de cost_status.",
     ),
     "src/runtime/answer_gate.py": (
         2,
-        "Deuda P0 (S5): el juez de la respuesta escribe prompt/completion_tokens "
-        "del usage del juez sobre el result. Tercer writer de totales no "
-        "declarado; debe pasar por el ledger.",
+        "`AnswerGateResult` (no el run): el gate guarda el usage del juez en su "
+        "propio veredicto. No es un writer de los totales del run; el patrón "
+        "matchea porque el objeto local se llama `result`. Documentado para que "
+        "un writer real del run acá rompa CI con revisión.",
     ),
 }
 
@@ -136,9 +139,23 @@ AUTHORITY_FLAG_WRITES: dict[str, tuple[int, str]] = {
 TERMINAL_MAPPER: dict[str, tuple[int, str]] = {
     "src/runtime/run_state.py": (
         2,
-        "Definición del mapper + una llamada (finish). Deuda P0 (S2): el cierre "
-        "debe consumir la resolución de la política y el mapper quedar como "
-        "oráculo de consistencia con allowlist cerrada.",
+        "Definición del mapper + la llamada de respaldo en `finish()`. La fase la "
+        "aplica la autoridad del cierre (`phase_override`); el oráculo solo se "
+        "computa acá cuando `finish()` se invoca sin resolución (tests).",
+    ),
+    "src/runtime/finalization_policy.py": (
+        1,
+        "Oráculo legacy dentro de `resolve_closure_phase`: la divergencia contra "
+        "la resolución es un invariante crítico, nunca la fuente de la fase.",
+    ),
+}
+
+#: Escritor del campo de resolución del cierre (`DecisionState.closure`).
+CLOSURE_WRITES: dict[str, tuple[int, str]] = {
+    "src/runtime/run_state.py": (
+        1,
+        "`DecisionState.observe_closure` es el escritor único del campo `closure`; "
+        "el reducer vive en `finalization_policy.resolve_closure_phase`.",
     ),
 }
 
@@ -245,6 +262,10 @@ def test_terminal_mapper_call_sites_match_allowlist() -> None:
     )
 
 
+def test_closure_writers_match_allowlist() -> None:
+    _assert_family("closure_writes", CLOSURE_WRITES, _PATTERNS["closure_writes"])
+
+
 def test_allowlists_declaran_justificacion() -> None:
     for family, allowlist in (
         ("phase_writes", PHASE_WRITES),
@@ -253,6 +274,7 @@ def test_allowlists_declaran_justificacion() -> None:
         ("decision_writes", DECISION_WRITES),
         ("authority_flag_writes", AUTHORITY_FLAG_WRITES),
         ("terminal_mapper", TERMINAL_MAPPER),
+        ("closure_writes", CLOSURE_WRITES),
     ):
         assert allowlist, f"{family}: allowlist vacía"
         for path, (count, justification) in allowlist.items():

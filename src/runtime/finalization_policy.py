@@ -9,6 +9,11 @@
 # NO reimplementa gates: no recalcula evidencia, no juzga, no genera.
 # Es el punto único donde se resuelve QUIÉN manda entre señales contradictorias.
 #
+# Además resuelve el CIERRE (`resolve_closure_phase`): la fase terminal del run
+# se aplica desde esta resolución, nunca desde el texto de la respuesta. Un
+# cierre FINALIZED sin autorización de la política es imposible por
+# construcción (`closure_not_authorized` / `closure_authority_mismatch`).
+#
 # Jerarquía (mayor manda): SAFETY > DETERMINISTIC > EVIDENCE > REASONING >
 # TERMINATION > GENERATION. El nivel RESOURCE cubre cortes por presupuesto.
 #
@@ -57,7 +62,12 @@ from src.runtime.reason_codes import (
     TOOL_NOT_AUTHORIZED,
     TOOL_OUTSIDE_ALLOWLIST,
 )
-from src.runtime.run_state import TERMINAL_PHASES, AgentRunState, RunPhase
+from src.runtime.run_state import (
+    TERMINAL_PHASES,
+    AgentRunState,
+    RunPhase,
+    terminal_phase_for,
+)
 
 FINALIZATION_POLICY_VERSION = "finalization-policy-1"
 
@@ -399,6 +409,234 @@ def decision_matches_terminal(
     return decision.action in expected
 
 
+# =============================================================================
+# Cierre: la fase terminal la decide la resolución, no el texto.
+# =============================================================================
+# `finish()` derivaba la fase del texto y del dict `answer_state`: quien
+# escribía último el texto decidía el cierre. Acá vive el reducer explícito:
+#
+#   status operativo  -> fase operativa (circuito, timeout, límite): no hay
+#                        claim de respuesta.
+#   familia del answer_state = fallo operativo -> BLOCKED (retrieval/reglas/
+#                        derivación jamás se presentan como respuesta).
+#   política resuelve FINALIZE/ABSTAIN/BLOCK/UNDETERMINED -> esa fase manda
+#                        (autoridad sobre la derivación por texto).
+#   política resuelve CONTINUE/RETRIEVE_MORE/USE_TOOL -> no autorizó cierre:
+#                        un cierre FINALIZED se convierte en BLOCKED.
+#
+# Cualquier divergencia queda como `mismatch` trazable y es un invariante
+# crítico: por construcción no existe un cierre FINALIZED sin autoridad.
+# =============================================================================
+#: Status operativos: la fase la decide el resultado, no la answerability.
+_OPERATIONAL_STATUS_PHASE: dict[str, RunPhase] = {
+    "error": RunPhase.FAILED,
+    "failed": RunPhase.FAILED,
+    "limit_reached": RunPhase.LIMIT_REACHED,
+    "awaiting_approval": RunPhase.BLOCKED,
+    "blocked": RunPhase.BLOCKED,
+}
+
+#: Acción de la política -> fase terminal. Las acciones no terminales
+#: (CONTINUE/RETRIEVE_MORE/USE_TOOL) no autorizan un cierre.
+_ACTION_PHASE: dict[FinalizationAction, RunPhase] = {
+    FinalizationAction.FINALIZE: RunPhase.FINALIZED,
+    FinalizationAction.ABSTAIN: RunPhase.ABSTAINED,
+    FinalizationAction.BLOCK: RunPhase.BLOCKED,
+    FinalizationAction.UNDETERMINED: RunPhase.UNDETERMINED,
+}
+
+#: Kinds de violación del cierre (invariantes críticos en modo estricto).
+CLOSURE_NOT_AUTHORIZED = "closure_not_authorized"
+CLOSURE_AUTHORITY_MISMATCH = "closure_authority_mismatch"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClosureResolution:
+    """Resolución del cierre: fase aplicada, oráculo legacy y autoridad."""
+
+    phase: RunPhase
+    legacy_phase: RunPhase
+    decision: FinalizationDecision | None = None
+    kind: str = "agreed"
+    mismatch: str = ""
+    operational: bool = False
+
+    @property
+    def consistent(self) -> bool:
+        return not self.mismatch
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "phase": str(self.phase),
+            "legacy_phase": str(self.legacy_phase),
+            "kind": self.kind,
+            "operational": self.operational,
+            "consistent": self.consistent,
+            "mismatch": self.mismatch or None,
+            "action": (
+                str(self.decision.action) if self.decision is not None else None
+            ),
+            "reason_code": (
+                self.decision.reason_code if self.decision is not None else None
+            ),
+            "authority": (
+                str(self.decision.authority) if self.decision is not None else None
+            ),
+        }
+
+
+def _answer_family(answer_state: dict | None) -> str:
+    """Familia del estado de respuesta (vocabulario único de answer_state)."""
+    from src.runtime.answer_state import (
+        ABSTAINED_STATES,
+        OPERATIONAL_FAILURE_STATES,
+        UNDETERMINED_STATES,
+    )
+
+    state = str((answer_state or {}).get("state") or "").strip()
+    if not state:
+        return ""
+    if state in OPERATIONAL_FAILURE_STATES:
+        return "operational_failure"
+    if state in ABSTAINED_STATES:
+        return "abstained"
+    if state in UNDETERMINED_STATES:
+        return "undetermined"
+    return "answered"
+
+
+def _veto_phase(answer_state: dict | None) -> RunPhase | None:
+    from src.runtime.answer_state import (
+        ANSWER_STATE_CONFLICTING,
+        ANSWER_STATE_CONFLICTING_RULE,
+    )
+
+    state = str((answer_state or {}).get("state") or "").strip()
+    if state == ANSWER_STATE_CONFLICTING:
+        return RunPhase.ABSTAINED
+    if state == ANSWER_STATE_CONFLICTING_RULE:
+        return RunPhase.UNDETERMINED
+    return None
+
+
+def resolve_closure_phase(
+    state: AgentRunState,
+    *,
+    status: str,
+    answer: str,
+    answer_state: dict | None,
+    retrieval_possible: bool = False,
+) -> ClosureResolution:
+    """Resuelve la fase terminal del run desde la autoridad (reducer único).
+
+    `terminal_phase_for` sigue calculando el oráculo legacy: si ambos difieren,
+    la divergencia se registra como violación crítica y la fase aplicada es la
+    de la autoridad (fail-closed: nunca se inventa un FINALIZED).
+    """
+    legacy = terminal_phase_for(
+        status=status, answer=answer, answer_state=answer_state
+    )
+    key = str(status or "").strip().lower()
+    if key in _OPERATIONAL_STATUS_PHASE:
+        return ClosureResolution(
+            phase=legacy,
+            legacy_phase=legacy,
+            decision=None,
+            kind="operational",
+            operational=True,
+        )
+    family = _answer_family(answer_state)
+    decision = evaluate_finalization(
+        state,
+        draft_available=bool(str(answer or "").strip()),
+        retrieval_possible=retrieval_possible,
+    )
+    policy_phase = _ACTION_PHASE.get(decision.action)
+
+    # 1. Fallo operativo declarado por el vocabulario de respuesta: nunca
+    #    FINALIZED, aunque la política vea evidencia (fail-closed).
+    if family == "operational_failure":
+        mismatch = ""
+        if legacy is not RunPhase.BLOCKED:
+            mismatch = f"{CLOSURE_AUTHORITY_MISMATCH}:{legacy}->BLOCKED"
+        if policy_phase is RunPhase.FINALIZED:
+            mismatch = (
+                f"{CLOSURE_AUTHORITY_MISMATCH}:policy_finalize_over_operational_failure"
+            )
+        return ClosureResolution(
+            phase=RunPhase.BLOCKED,
+            legacy_phase=legacy,
+            decision=decision,
+            kind=(CLOSURE_AUTHORITY_MISMATCH if mismatch else "operational_failure"),
+            mismatch=mismatch,
+        )
+
+    # 1b. Conflicto declarado (fuentes o reglas): veta la respuesta binaria,
+    #     incluso con evidencia "completa". La política no ve la contradicción
+    #     (`conflicting_chunks` no tiene writer): la familia es la autoridad acá.
+    veto = _veto_phase(answer_state)
+    if veto is not None:
+        mismatch = ""
+        if policy_phase is RunPhase.FINALIZED:
+            mismatch = (
+                f"{CLOSURE_AUTHORITY_MISMATCH}:policy_finalize_over_conflict"
+            )
+        elif legacy is not veto:
+            mismatch = f"{CLOSURE_AUTHORITY_MISMATCH}:{legacy}->{veto}"
+        return ClosureResolution(
+            phase=veto,
+            legacy_phase=legacy,
+            decision=decision,
+            kind=(CLOSURE_AUTHORITY_MISMATCH if mismatch else "conflict"),
+            mismatch=mismatch,
+        )
+
+    # 2. La política no autorizó un cierre: un FINALIZED es ilegítimo.
+    if policy_phase is None:
+        if legacy is RunPhase.FINALIZED:
+            return ClosureResolution(
+                phase=RunPhase.BLOCKED,
+                legacy_phase=legacy,
+                decision=decision,
+                kind=CLOSURE_NOT_AUTHORIZED,
+                mismatch=(
+                    f"{CLOSURE_NOT_AUTHORIZED}:{decision.action}:{decision.reason_code}"
+                ),
+            )
+        return ClosureResolution(
+            phase=legacy,
+            legacy_phase=legacy,
+            decision=decision,
+            kind="continue",
+        )
+
+    # 3. La resolución manda sobre la derivación por texto. Divergencia crítica
+    #    solo cuando una de las dos partes afirma una respuesta (FINALIZED): una
+    #    diferencia entre no-concluyentes es refinamiento de clasificación.
+    if policy_phase is legacy:
+        return ClosureResolution(
+            phase=legacy, legacy_phase=legacy, decision=decision
+        )
+    if legacy is RunPhase.FINALIZED or policy_phase is RunPhase.FINALIZED:
+        return ClosureResolution(
+            phase=policy_phase,
+            legacy_phase=legacy,
+            decision=decision,
+            kind=CLOSURE_AUTHORITY_MISMATCH,
+            mismatch=(
+                f"{CLOSURE_AUTHORITY_MISMATCH}:{legacy}->{policy_phase}"
+                f":{decision.reason_code}"
+            ),
+        )
+    return ClosureResolution(
+        phase=policy_phase,
+        legacy_phase=legacy,
+        decision=decision,
+        kind="classification_refined",
+    )
+
+
+
 #: Etapas de enforcement válidas (mismas que el shadow). La resolución de scopes
 #: (agente > org > environment > global) vive en `src/runtime/enforcement.py`.
 ENFORCE_STAGES: frozenset[str] = ENFORCE_STAGES_IMPL
@@ -536,6 +774,9 @@ def observe_trigger_shadow(
 
 __all__ = [
     "AuthorityLevel",
+    "CLOSURE_AUTHORITY_MISMATCH",
+    "CLOSURE_NOT_AUTHORIZED",
+    "ClosureResolution",
     "ENFORCE_STAGES",
     "FINALIZATION_POLICY_VERSION",
     "FinalizationAction",
@@ -551,5 +792,6 @@ __all__ = [
     "observe_shadow_divergence",
     "observe_trigger_shadow",
     "resolve_closure",
+    "resolve_closure_phase",
     "should_hold_trigger",
 ]

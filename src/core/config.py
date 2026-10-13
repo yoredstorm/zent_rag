@@ -1438,6 +1438,16 @@ class Settings(BaseSettings):
             "medible (zent_guard_divergence_total)."
         ),
     )
+    RUNTIME_RUN_STATE_STRICT: Literal["off", "on"] = Field(
+        default="off",
+        description=(
+            "on = modo estricto global del estado del run: una violación de "
+            "invariante crítico (autoridad contradicha/reemplazada, cierre no "
+            "autorizado por la política) reemplaza la respuesta por el mensaje "
+            "no concluyente. off = las violaciones se registran y se publican "
+            "sin bloquear (default)."
+        ),
+    )
     RUNTIME_RUN_STATE_STRICT_ORGS: str = Field(
         default="",
         description=(

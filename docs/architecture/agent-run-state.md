@@ -158,6 +158,11 @@ CREATED → CLASSIFIED → PLANNED → EVIDENCE_REQUIRED → RETRIEVING → REAS
 Terminales: `FINALIZED`, `ABSTAINED`, `BLOCKED`, `FAILED`, `LIMIT_REACHED`,
 `UNDETERMINED`. Mapeo por código en `terminal_phase_for` (§2.4, invariante 1).
 
+Desde la fase de convergencia de autoridad, `terminal_phase_for` es el
+**oráculo** del cierre: la fase aplicada sale de
+`finalization_policy.resolve_closure_phase` (§2.4, invariantes 11 y 12). El
+texto de la respuesta no decide la fase.
+
 Transiciones válidas (tabla `_TRANSITIONS`, `run_state.py`):
 
 | Desde | Hacia |
@@ -189,6 +194,20 @@ y generan un step `run_invariants` solo cuando existen.
 | 8 | `retrieval_failed != evidence_insufficient` | `retrieval_failure_reported_as_insufficiency` |
 | 9 | La autoridad no se reemplaza con contenido distinto | `authoritative_decision_replaced` |
 | 10 | Cobertura narrativa no pide búsqueda con evidencia completa | `coverage_search_after_evidence_complete` |
+| 11 | Un cierre `FINALIZED` exige autorización de la política de cierre | `closure_not_authorized:<acción>:<reason_code>` |
+| 12 | La fase aplicada no puede diferir del oráculo sin quedar registrada | `closure_authority_mismatch:<oráculo>-><fase>:<reason_code>` |
+
+Notas de autoridad (fase de convergencia, ADR-004):
+
+- La fase terminal la aplica `finish(phase_override=...)` desde
+  `finalization_policy.resolve_closure_phase` (reducer único). `terminal_phase_for`
+  queda como **oráculo de consistencia**: si difiere, manda la autoridad y la
+  divergencia es una violación crítica (11/12). Los invariantes 2 y 7 quedan
+  inalcanzables en caminos productivos y siguen vigentes como defensa.
+- `decisions.closure` publica la resolución aplicada (fase, oráculo, kind,
+  mismatch, acción y autoridad). Escritor único: `observe_closure`.
+- `RUNTIME_RUN_STATE_STRICT` es un campo real de `Settings` (default `off`); el
+  fail-closed del cierre es ese modo (global o canary por org/agente).
 
 ### 2.5 Diagrama del estado propuesto
 

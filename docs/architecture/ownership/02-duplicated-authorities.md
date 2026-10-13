@@ -4,6 +4,20 @@ Cada entrada declara: síntoma, evidencia (`file:line`), autoridad canónica
 propuesta y slice que la resuelve. **No** se refactoriza nada hasta que esta
 lista existe (requisito de la fase).
 
+Estado por entrada (actualizado en cada slice): `ABIERTO`, `EN CURSO`,
+`RESUELTO`. El detalle del cambio vive en `04-slice-log.md`; la matriz final en
+`05-ownership-map-after.md`.
+
+| ID | Estado |
+|---|---|
+| P0-1 | RESUELTO en S2 (campo estricto real; cierre por autoridad) |
+| P0-2 | RESUELTO en S2 (reducer + invariante de construcción) |
+| P0-3 | EN CURSO (S4/S8) |
+| P0-4 | ABIERTO (S4) |
+| P0-5 | ABIERTO (S5) |
+| P1-1..P1-7 | ABIERTO (S6/S7/S8/S9/S11) |
+| P2-1..P2-6 | ABIERTO |
+
 ## P0 — la respuesta a "quién decide" es ambigua
 
 ### P0-1. El cierre no tiene enforcement, y el fail-closed global está muerto

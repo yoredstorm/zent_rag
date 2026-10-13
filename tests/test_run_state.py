@@ -215,11 +215,22 @@ class TestInvariants:
         assert violations == ()
         assert state.phase is RunPhase.FINALIZED
 
-    def test_determinista_sin_envelope_viola(self) -> None:
+    def test_determinista_sin_envelope_no_finaliza(self) -> None:
+        """La autoridad manda: sin envelope no hay FINALIZED (por construcción)."""
         state = _state()
         state.decisions.requires_deterministic = True
         violations = finalize_state(state, status="completed", answer="MATCH", answer_state=None)
-        assert "deterministic_finalized_without_envelope" in violations
+        assert state.phase is RunPhase.UNDETERMINED
+        assert any(v.startswith("closure_authority_mismatch") for v in violations)
+        assert "deterministic_finalized_without_envelope" not in violations
+
+    def test_invariante_determinista_sin_envelope_sigue_vigente(self) -> None:
+        """Defensa en profundidad: una ruta que fuerza FINALIZED viola igual."""
+        state = _state()
+        state.decisions.requires_deterministic = True
+        state.answer.text = "MATCH"
+        state.phase = RunPhase.FINALIZED
+        assert "deterministic_finalized_without_envelope" in state.check_invariants()
 
     def test_determinista_con_autoridad_externa_es_consistente(self) -> None:
         state = _state()
@@ -266,7 +277,7 @@ class TestInvariants:
         violations = finalize_state(state, status="completed", answer="ok", answer_state=None)
         assert "evidence_chain:used_not_selected" in violations
 
-    def test_analisis_incompleto_no_cierra_normal(self) -> None:
+    def test_analisis_incompleto_no_autoriza_cierre(self) -> None:
         state = _state()
         state.reasoning.run = SimpleNamespace(
             enabled=True,
@@ -275,7 +286,21 @@ class TestInvariants:
             blocks_early_answer=True,
         )
         violations = finalize_state(state, status="completed", answer="ok", answer_state=None)
-        assert "incomplete_analysis_finalized" in violations
+        assert state.phase is RunPhase.BLOCKED
+        assert any(v.startswith("closure_not_authorized") for v in violations)
+
+    def test_invariante_de_analisis_incompleto_sigue_vigente(self) -> None:
+        """Defensa en profundidad: una ruta que fuerza FINALIZED viola igual."""
+        state = _state()
+        state.reasoning.run = SimpleNamespace(
+            enabled=True,
+            is_complex=True,
+            analysis_complete=False,
+            blocks_early_answer=True,
+        )
+        state.answer.text = "ok"
+        state.phase = RunPhase.FINALIZED
+        assert "incomplete_analysis_finalized" in state.check_invariants()
 
     def test_analisis_incompleto_con_limite_no_viola(self) -> None:
         state = _state()
