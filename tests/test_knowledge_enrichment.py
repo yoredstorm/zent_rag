@@ -61,8 +61,15 @@ def _understood(text: str = MANUAL, external_id: str = "manual.md"):
 
 @pytest.fixture(scope="module")
 def enrichment():
+    from src.knowledge.enrichment.profiling import generic_profile_pack
+
     document = _understood()
-    return document, enrich_document(document)
+    # Hermético al entorno: este archivo verifica las reglas genéricas
+    # deterministas. Un .env que cargue packs de dominio (p. ej.
+    # RAG_KNOWLEDGE_ENRICHMENT_PROFILE_PACKS=src.verticals.atpco.enrichment)
+    # no debe cambiar el resultado; los packs propios se testean aparte con
+    # `packs=[pack]` explícito.
+    return document, enrich_document(document, packs=[generic_profile_pack()])
 
 
 def _all_items(result):
