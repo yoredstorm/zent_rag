@@ -80,16 +80,15 @@ PHASE_WRITES: dict[str, tuple[int, str]] = {
 
 RESULT_TOTALS: dict[str, tuple[int, str]] = {
     "src/runtime/run_budget.py": (
-        7,
-        "RunBudgetLedger: writer canónico (account_llm_usage/account_embedding_"
-        "usage). Los 7 hits son la implementación de la autoridad, no writers "
-        "competidores.",
+        10,
+        "RunBudgetLedger: escritura canónica de totales (account_llm_usage, "
+        "account_embedding_usage, account_judge_usage, account_charge). Los hits "
+        "son la implementación de la autoridad, no writers competidores.",
     ),
     "src/runtime/run_accounting.py": (
-        7,
-        "Deuda P0 (S5): `record_judge_call` suma los tokens del juez fuera del "
-        "ledger (los otros hits son cost_status y el camino canónico). Debe "
-        "pasar por un método del ledger y bajar a los hits de cost_status.",
+        4,
+        "Solo `cost_status` (procedencia del precio). Los totales del run y del "
+        "juez pasan por el ledger desde S5: el juez ya no escribe tokens acá.",
     ),
     "src/runtime/answer_gate.py": (
         2,

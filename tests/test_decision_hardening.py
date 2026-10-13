@@ -407,8 +407,12 @@ async def test_usage_event_de_judge_lleva_provider_model_y_phase(
     assert event.event_type == "jev_judge:evidence"
     assert event.request_id == rid and event.organization_id == org
     assert event.provider == "jev" and event.model == "jev-latest"
-    assert event.prompt_tokens == 10 and event.completion_tokens == 4
-    assert event.total_tokens == 14
+    # Autoridad única del consumo (S5): los tokens del juez viajan en el evento
+    # del run; acá quedan solo como detalle del juicio.
+    assert event.prompt_tokens == 0 and event.completion_tokens == 0
+    assert event.total_tokens == 0
+    assert event.routing["judge_tokens"] == 14
+    assert event.routing["token_accounting"] == "run_event"
     assert event.estimated_cost == pytest.approx(0.002)
     assert event.routing["phase"] == PHASE_EVIDENCE
     assert event.routing["capability"] == "knowledge.answer"

@@ -48,14 +48,22 @@ Estado: `aceptado` salvo indicación.
   `jev_judge:*` (`decision/usage.py:75-94`), mientras el evento `agent_run`
   incluye `result.total_tokens`. Sumar eventos duplica el consumo.
 - **Decisión**: el total viaja **solo** por el ledger
-  (`RunBudgetLedger.account_llm_usage`); los eventos por fase se conservan para
-  trazabilidad con `billable=false` explícito y quedan excluidos de las
-  agregaciones facturables (`cost_breakdown`, `aggregation`, invoices). Las
-  líneas del juez pasan por el ledger: `record_judge_call` y
-  `answer_gate.py:712-713` dejan de escribir totales.
-- **Consecuencias**: sin cambio en los números facturados; el desglose sigue
-  disponible; una sola autoridad de consumo para enforcement, observabilidad y
-  billing.
+  (`RunBudgetLedger`); los eventos por fase se conservan para
+  trazabilidad del juez (modelo, latencia, costo estimado y su procedencia)
+  **sin repetir tokens**. Las líneas del juez pasan por el ledger:
+  `record_judge_call` deja de escribir totales.
+- **Refinamiento registrado en S5 (implementación)**: un único booleano
+  `billable` no expresa la realidad medida: los *tokens* del juez ya viajan en
+  el evento del run (duplicarlos infla cualquier suma), pero el *costo
+  estimado* del juez NO está en el costo del run (es la única fuente de ese
+  costo). Se resolvió en la fuente: el evento del juez escribe 0 tokens con
+  `routing["token_accounting"]="run_event"` y `routing["judge_tokens"]=<n>`,
+  y conserva `estimated_cost` + `routing["cost_source"]`. Sin migración de
+  esquema y sin sweep de 40+ agregaciones: la duplicación desaparece donde se
+  producía.
+- **Consecuencias**: sin cambio en los números facturados de dinero; el
+  desglose del juez sigue disponible; una sola autoridad de consumo para
+  enforcement, observabilidad y billing.
 - **Descartado**: eliminar los eventos por fase (pierde desglose) y arreglar
   solo la agregación (deja la ambigüedad de autoridad).
 

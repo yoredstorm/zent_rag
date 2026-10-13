@@ -204,21 +204,22 @@ def record_judge_call(
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
 ) -> None:
-    """Suma tokens JEV al run (única vía; el precio del juez puede ser desconocido).
+    """Suma tokens JEV al run por el LEDGER (única vía; sin costo inventado).
 
-    El ledger lee `result.*` dinámicamente: desde la próxima construcción el
-    presupuesto TOTAL ve estos tokens (antes JEV quedaba fuera del ledger).
-    No estima costo: sin tarifa conocida el costo del juez no se inventa.
+    El ledger es el escritor de los totales: el juez aporta tokens al total del
+    run y el presupuesto TOTAL los ve (antes JEV quedaba fuera del ledger).
+    No estima costo: sin tarifa conocida el costo del juez no se inventa. El
+    evento de uso por fase NO repite estos tokens (`decision/usage.py`).
     """
     prompt = max(0, int(prompt_tokens or 0))
     completion = max(0, int(completion_tokens or 0))
     if prompt + completion <= 0:
         return
-    result.prompt_tokens = int(getattr(result, "prompt_tokens", 0) or 0) + prompt
-    result.completion_tokens = int(
-        getattr(result, "completion_tokens", 0) or 0
-    ) + completion
-    result.total_tokens = int(getattr(result, "total_tokens", 0) or 0) + prompt + completion
+    from src.runtime.run_budget import RunBudgetLedger
+
+    RunBudgetLedger.for_totals(result).account_judge_usage(
+        prompt_tokens=prompt, completion_tokens=completion
+    )
     result.steps.append(
         {
             "type": "jev_usage",

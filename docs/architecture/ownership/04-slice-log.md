@@ -95,3 +95,38 @@ modo estricto global y canary por org, y contrato del campo en `Settings`.
   contradicciones de excerpt (la familia de conflicto las cubre a nivel estado).
 - P0-5 (tres writers de costo): S5.
 - P1-3/P1-4/P1-5: S6/S7/S9.
+
+---
+
+## S5 — Costo: un solo escritor de los totales (este slice)
+
+### Cambios de autoridad
+
+| Antes | Después |
+|---|---|
+| `record_judge_call` sumaba tokens del juez escribiendo `result.*` directo | `RunBudgetLedger.account_judge_usage` es el escritor; `record_judge_call` solo invoca la autoridad |
+| Los tokens del juez se contabilizaban dos veces (evento `jev_judge:*` + evento del run) | El evento del juez escribe 0 tokens (`routing["token_accounting"]="run_event"`) y conserva el detalle (`judge_tokens`, `cost_source`, latencia, costo) |
+| El costo del juez solo vivía en el evento por fase | Igual (es su única fuente), ahora explícito en `routing["cost_source"]` |
+| Semántica de intento/costo desconocido dispersa | `RunBudgetLedger.for_totals` para escrituras sin topes; intento de provider sigue sin tokens ni costo; unknown nunca se presenta como precio conocido (`DecisionCost.source`) |
+
+### Ratchets
+
+- `result_totals`: `run_accounting` 7 → 4 (solo `cost_status`); `run_budget`
+  7 → 10 (los 3 hits nuevos son la implementación de `account_judge_usage`).
+  Un writer nuevo fuera del ledger rompe CI.
+
+### Tests nuevos
+
+`tests/test_cost_authority.py` (11 casos): ledger como autoridad, tokens del
+juez por el ledger, juez sin llamada/paso, sin costo inventado, propiedad
+ledger-vs-total, evento del juez sin tokens duplicados, evento sin tenant,
+`unknown` vs `zero` en la resolución de precio del juez, registry caído y
+fallback legacy declarando su fuente.
+
+### Deuda que queda
+
+- P0-4 (sufficiency): S4.
+- `decision/usage.py::DecisionUsageRecorder.record` sin call sites (P2-7).
+- Contadores de requests (`COUNT(*)` sobre `usage_events`) siguen incluyendo
+  eventos por fase: métrica distinta de facturación, deuda P2-8 documentada.
+

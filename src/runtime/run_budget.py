@@ -212,6 +212,11 @@ class RunBudgetLedger:
         self.max_cost_usd = None if max_cost_usd is None else float(max_cost_usd)
 
     @classmethod
+    def for_totals(cls, result: Any) -> RunBudgetLedger:
+        """Ledger sin topes: solo escritura de totales (juez, cargos externos)."""
+        return cls(result, max_steps=0, max_tokens=0, max_cost_usd=None)
+
+    @classmethod
     def from_config(cls, result: Any, config: Mapping[str, Any]) -> RunBudgetLedger:
         if "max_cost_usd" in config:
             max_cost: float | None = float(config.get("max_cost_usd") or 0)
@@ -310,6 +315,28 @@ class RunBudgetLedger:
         added = max(0, int(tokens or 0))
         self.result.embedding_tokens = self.consumed_embedding_tokens + added
         self.result.cost = round(self.consumed_cost_usd + max(0.0, float(cost_usd or 0.0)), 6)
+
+    def account_judge_usage(
+        self,
+        *,
+        prompt_tokens: int,
+        completion_tokens: int,
+    ) -> None:
+        """Tokens del juez JEV: suman al total del run, sin costo inventado.
+
+        El juez no es una llamada del loop (no incrementa `llm_calls` ni pasos) y
+        su costo puede ser desconocido: no se estima acá. Escritor único de los
+        totales cuando el juez consumió tokens.
+        """
+        prompt = max(0, int(prompt_tokens or 0))
+        completion = max(0, int(completion_tokens or 0))
+        if prompt + completion <= 0:
+            return
+        self.result.prompt_tokens = self.consumed_prompt_tokens + prompt
+        self.result.completion_tokens = self.consumed_completion_tokens + completion
+        self.result.total_tokens = (
+            self.consumed_total_tokens + prompt + completion
+        )
 
     def account_charge(self, *, cost_usd: float) -> None:
         """Cargo externo ya reportado (p. ej. DAG cognitivo). Solo costo."""

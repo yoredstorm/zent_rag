@@ -50,7 +50,14 @@ class DecisionUsageRecorder:
         context: JudgmentContext,
         payload: dict,
     ) -> None:
-        """Usage event por juicio JEV. Sin tenant/request no hay evento."""
+        """Usage event por juicio JEV (sin tokens: ya viajan en el evento del run).
+
+        Autoridad única del consumo: el evento del run (`agent_run`/`query`)
+        incluye los tokens del juez (el ledger los suma). Este evento conserva
+        la trazabilidad por fase (modelo, latencia, costo estimado del juez y su
+        procedencia) y NO repite tokens: repetirlos duplicaba el consumo en
+        cualquier suma sobre `usage_events`.
+        """
         if not isinstance(payload, dict):
             return
         request_id = context.effective_request_id
@@ -60,12 +67,23 @@ class DecisionUsageRecorder:
             from src.platform.usage.usage_engine import UsageEvent, record_event
 
             usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-            prompt_tokens = max(0, int(usage.get("input_tokens") or 0))
-            completion_tokens = max(0, int(usage.get("output_tokens") or 0))
+            judge_tokens = max(0, int(usage.get("input_tokens") or 0)) + max(
+                0, int(usage.get("output_tokens") or 0)
+            )
             from src.decision.judgment import usage_phase_label
 
             phase = usage_phase_label(context.phase)[:17]
-            routing: dict = {"phase": context.phase}
+            routing: dict = {
+                "phase": context.phase,
+                # El consumo de tokens vive en el evento del run (una sola
+                # autoridad); acá solo queda el detalle del juez.
+                "token_accounting": "run_event",
+            }
+            if judge_tokens:
+                routing["judge_tokens"] = judge_tokens
+            cost_source = str(payload.get("cost_source") or "")
+            if cost_source:
+                routing["cost_source"] = cost_source
             if context.capability:
                 routing["capability"] = context.capability
             if context.workflow_id is not None:
@@ -82,9 +100,9 @@ class DecisionUsageRecorder:
                     event_type=f"{JUDGE_EVENT_PREFIX}:{phase}"[:30],
                     model=str(payload.get("model") or context.model or context.provider)[:120],
                     provider=str(payload.get("provider") or context.provider or "jev")[:60],
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=prompt_tokens + completion_tokens,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
                     latency_ms=float(payload.get("latency_ms") or 0.0),
                     status="completed",
                     estimated_cost=float(payload.get("estimated_cost") or 0.0),
