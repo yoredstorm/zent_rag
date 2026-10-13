@@ -545,6 +545,11 @@ class DecisionState:
     guard: DerivedGuardOutcome | None = None
     finalized: FinalizedAnswer | None = None
     requires_deterministic: bool = False
+    #: Autoridad determinista externa al gate grounded (SQL-first, DAG
+    #: cognitivo, fast path extractivo, skip determinista). El pipeline la
+    #: registra explícitamente: un cierre determinista sin envelope no es un
+    #: bypass implícito, es una autoridad nombrada y trazable.
+    external_authority: str = ""
     authority_prepared: bool = False
     final_state: str = ""
     terminal_message: str = ""
@@ -595,6 +600,16 @@ class DecisionState:
         )
         self.set_envelope(getattr(prep, "authoritative_envelope", None))
 
+    def observe_external_authority(self, kind: str) -> None:
+        """Registra la autoridad determinista externa que produjo el resultado.
+
+        Valores del pipeline: `sql`, `cognitive_deep`, `extractive`,
+        `deterministic_skip`. No reemplaza un envelope autoritativo.
+        """
+        value = str(kind or "").strip()
+        if value:
+            self.external_authority = value
+
     def observe_finalized(self, finalized: FinalizedAnswer | None) -> None:
         if finalized is None:
             return
@@ -617,6 +632,7 @@ class DecisionState:
         return {
             "authoritative": self.authoritative,
             "requires_deterministic": self.requires_deterministic,
+            "external_authority": self.external_authority or None,
             "state": (
                 self.final_state
                 or str(getattr(envelope, "state", "") or "")
@@ -760,11 +776,14 @@ class AgentRunState:
         ) and not answer.present:
             violations.append(f"terminal_phase_without_answer:{self.phase}")
 
-        # 2. DETERMINISTIC_DECISION => DecisionEnvelope existe.
+        # 2. DETERMINISTIC_DECISION => DecisionEnvelope existe (o una autoridad
+        #    determinista externa quedó registrada explícitamente: SQL-first,
+        #    DAG cognitivo, extractivo, skip determinista).
         if (
             self.phase == RunPhase.FINALIZED
             and decisions.requires_deterministic
             and not decisions.authoritative
+            and not decisions.external_authority
         ):
             violations.append("deterministic_finalized_without_envelope")
 

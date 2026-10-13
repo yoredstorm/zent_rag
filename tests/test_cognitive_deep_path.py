@@ -229,6 +229,9 @@ async def test_active_l3_usa_el_dag(monkeypatch) -> None:
     assert cognitive["run_id"]
     assert cognitive["deep"]["metrics"]["tokens"] == 120
     assert service.calls and executor.calls
+    # Autoridad determinista externa explícita: sin warning de invariantes.
+    invariants = [s for s in result.steps if s.get("type") == "run_invariants"]
+    assert invariants == []
 
 
 @pytest.mark.asyncio

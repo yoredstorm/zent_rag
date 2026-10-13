@@ -221,6 +221,14 @@ class TestInvariants:
         violations = finalize_state(state, status="completed", answer="MATCH", answer_state=None)
         assert "deterministic_finalized_without_envelope" in violations
 
+    def test_determinista_con_autoridad_externa_es_consistente(self) -> None:
+        state = _state()
+        state.decisions.requires_deterministic = True
+        state.decisions.observe_external_authority("cognitive_deep")
+        violations = finalize_state(state, status="completed", answer="MATCH", answer_state=None)
+        assert violations == ()
+        assert state.decisions.to_public_dict()["external_authority"] == "cognitive_deep"
+
     def test_envelope_autoritativo_contradicho_viola(self) -> None:
         state = _state()
         state.decisions.set_envelope(SimpleNamespace(authoritative=True, state="MATCH"))

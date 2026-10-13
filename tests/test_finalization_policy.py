@@ -117,6 +117,15 @@ class TestPromptCases:
         assert decision.action is FinalizationAction.FINALIZE
         assert decision.reason_code == "DETERMINISTIC_AUTHORITY"
 
+    def test_autoridad_externa_finaliza_determinista_sin_envelope(self) -> None:
+        state = _state(requires_deterministic=True)
+        state.decisions.observe_external_authority("cognitive_deep")
+        decision = evaluate_finalization(state, draft_available=True)
+        assert decision.action is FinalizationAction.FINALIZE
+        assert decision.authority is AuthorityLevel.DETERMINISTIC
+        assert decision.reason_code == "DETERMINISTIC_AUTHORITY"
+        assert decision.signals["authority"] == "external"
+
     def test_retrieval_fallido_no_es_insuficiencia(self) -> None:
         decision = evaluate_finalization(
             _state(evidence="failed"), jev_verdict="approve"

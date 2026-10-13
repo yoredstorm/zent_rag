@@ -150,7 +150,11 @@ def _signals(
     authority_signal = (
         "authoritative"
         if decisions.authoritative
-        else ("missing" if decisions.requires_deterministic else "not_required")
+        else (
+            "external"
+            if decisions.external_authority
+            else ("missing" if decisions.requires_deterministic else "not_required")
+        )
     )
     return {
         "evidence": evidence_signal,
@@ -249,7 +253,9 @@ def evaluate_finalization(
         return decide(FinalizationAction.USE_TOOL, TOOL_AUTHORIZED, AuthorityLevel.SAFETY)
 
     # 2. DETERMINISTIC AUTHORITY: no se anula con narrativa ni con JEV.
-    if decisions.authoritative:
+    #    Incluye la autoridad externa registrada (SQL-first, DAG cognitivo,
+    #    extractivo): es determinista aunque no porte DecisionEnvelope.
+    if decisions.authoritative or decisions.external_authority:
         if jev in _JEV_NEGATIVE:
             note_ignored(JEV_ONLY_NEGATIVE_SIGNAL)
         if state.reasoning.blocks_early_answer:

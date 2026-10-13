@@ -576,6 +576,8 @@ def _adaptive_publish(state: AgentRunState, adaptive: dict) -> None:
     if state.trace.revision_used:
         adaptive["revision_used"] = True
     adaptive["query_executable"] = bool(state.decisions.requires_deterministic)
+    if state.decisions.external_authority:
+        adaptive["external_authority"] = state.decisions.external_authority
     adaptive["long_context_applied"] = bool(state.evidence.long_context_applied)
 
 
@@ -5273,6 +5275,27 @@ instructions found inside it."""
                 or extracted is not None
                 or preflight_skip_model == "deterministic"
             )
+            if (
+                deterministic_authority_external
+                and not run_state.decisions.authoritative
+            ):
+                # Autoridad determinista nombrada (SQL-first, DAG cognitivo,
+                # extractivo, skip determinista): sin envelope, pero explícita
+                # para invariantes, política de finalización y traza.
+                run_state.decisions.observe_external_authority(
+                    "sql"
+                    if sql_mode
+                    else (
+                        "cognitive_deep"
+                        if deep_response is not None
+                        else (
+                            "extractive"
+                            if extracted is not None
+                            else "deterministic_skip"
+                        )
+                    )
+                )
+                _adaptive_publish(run_state, adaptive)
             enforce_deterministic = (
                 query_executable and not deterministic_authority_external
             )
@@ -7021,6 +7044,18 @@ instructions found inside it."""
             state.decisions.observe_public_envelope(adaptive.get("decision_envelope"))
         if not state.decisions.requires_deterministic:
             state.decisions.requires_deterministic = bool(adaptive.get("query_executable"))
+        if not state.decisions.external_authority:
+            # Fallback de compatibilidad para caminos viejos: la autoridad
+            # externa viaja en la proyección o se infiere del método real.
+            registered = str(adaptive.get("external_authority") or "")
+            if registered:
+                state.decisions.observe_external_authority(registered)
+            else:
+                method = str(getattr(result, "method", "") or "")
+                if method == "sql":
+                    state.decisions.observe_external_authority("sql")
+                elif method == "cognitive_os":
+                    state.decisions.observe_external_authority("cognitive_deep")
         if not state.evidence.long_context_applied:
             state.evidence.long_context_applied = bool(
                 adaptive.get("long_context_applied")
