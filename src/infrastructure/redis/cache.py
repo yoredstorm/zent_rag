@@ -157,7 +157,7 @@ class RedisCache(CacheProvider):
     async def set(self, key: str, value: str, ttl_seconds: int = 300) -> None:
         try:
             client = await _get_redis()
-            await client.setex(key, ttl_seconds, value)
+            await client.set(key, value, ex=ttl_seconds)
         except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis SET failed", key=key, error=str(exc))
 

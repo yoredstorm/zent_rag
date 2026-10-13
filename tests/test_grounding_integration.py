@@ -323,7 +323,7 @@ class TestPromptContract:
         assert "conocimiento propio" in GROUNDING_RULE
 
     def test_agent_runtime_finalize_rule(self) -> None:
-        from src.agents.runtime.agent_runtime import _FINALIZE_TEMPLATE
+        from src.runtime.finalizer import FINALIZE_TEMPLATE
 
-        assert "valid scenario data" in _FINALIZE_TEMPLATE
-        assert "model knowledge" in _FINALIZE_TEMPLATE
+        assert "valid scenario data" in FINALIZE_TEMPLATE
+        assert "model knowledge" in FINALIZE_TEMPLATE

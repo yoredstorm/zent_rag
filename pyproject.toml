@@ -233,3 +233,11 @@ testpaths = ["tests"]
 # Override puntual: pytest -o timeout=600 (o -o timeout=0 para desactivar).
 timeout = 300
 timeout_method = "thread"
+filterwarnings = [
+    # Qdrant local/CI corre HTTP (sin TLS) con api key de desarrollo: el aviso
+    # del cliente es esperado y acotado a ese entorno; producción usa TLS.
+    "ignore:Api key is used with an insecure connection:UserWarning",
+    # Ratchet: `setex` fue reemplazado por `set(key, value, ex=...)` en la
+    # cache Redis; si vuelve a aparecer, la suite falla.
+    "error:Call to deprecated setex:DeprecationWarning",
+]

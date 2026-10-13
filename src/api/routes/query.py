@@ -370,7 +370,11 @@ async def rag_query(
     # nunca elevar (customer -> admin).
     from src.api.security import resolve_effective_role
 
-    requested_role = body.role if body.role else x_user_role
+    # `RAGQueryRequest.role` está deprecado (pydantic emite DeprecationWarning
+    # en cada acceso al atributo): se lee del dump. Precedencia histórica: el
+    # valor del body (default "admin") manda; el header X-User-Role queda como
+    # canal legacy documentado, nunca eleva (degradación la resuelve el bearer).
+    requested_role = str(body.model_dump().get("role") or "admin")
     role = await resolve_effective_role(request, requested_role)
     workspace_id = await _resolve_workspace_filter(request)
 
@@ -566,7 +570,11 @@ async def rag_query_stream(
 
     from src.api.security import resolve_effective_role
 
-    requested_role = body.role if body.role else x_user_role
+    # `RAGQueryRequest.role` está deprecado (pydantic emite DeprecationWarning
+    # en cada acceso al atributo): se lee del dump. Precedencia histórica: el
+    # valor del body (default "admin") manda; el header X-User-Role queda como
+    # canal legacy documentado, nunca eleva (degradación la resuelve el bearer).
+    requested_role = str(body.model_dump().get("role") or "admin")
     role = await resolve_effective_role(request, requested_role)
     workspace_id = await _resolve_workspace_filter(request)
 

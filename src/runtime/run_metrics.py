@@ -48,11 +48,11 @@ def publish_run_metrics(
 
 def _publish(state: Any, *, path: str, result: Any) -> None:
     from src.infrastructure.observability.metrics import (
-        zent_run_evidence_total,
         zent_llm_calls_total,
         zent_llm_tokens_total,
         zent_run_cost_unknown_total,
         zent_run_cost_usd_total,
+        zent_run_evidence_total,
         zent_run_latency_seconds,
         zent_run_tool_calls_total,
         zent_runs_total,
