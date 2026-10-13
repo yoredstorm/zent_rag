@@ -209,6 +209,36 @@ _rate_limiter: AsyncRateLimiter | None = None
 _rate_limiter_rpm = -1
 
 
+def _stream_attempt(
+    model: str,
+    *,
+    status: str,
+    fallback: bool,
+    latency_ms: float,
+    error: str = "",
+) -> dict:
+    """Intento del stream (antes del primer token): failover visible.
+
+    Igual que el camino no-streaming: el intento no suma tokens ni costo; el
+    payload `done` lleva la lista completa y `record_llm_call` la materializa.
+    """
+    text = str(model or "")
+    provider = text.split("/", 1)[0] if "/" in text else ""
+    record: dict = {
+        "provider": provider,
+        "model": text,
+        "status": str(status or ""),
+        # El stream no reintenta el mismo modelo: antes del primer token pasa al
+        # fallback (el retry transitorio vive en el camino no-streaming).
+        "retry": False,
+        "fallback": bool(fallback),
+        "latency_ms": round(float(latency_ms or 0.0), 2),
+    }
+    if error:
+        record["error"] = str(error)[:200]
+    return record
+
+
 def _llm_rate_limiter() -> AsyncRateLimiter:
     global _rate_limiter, _rate_limiter_rpm
     rpm = int(getattr(get_settings(), "LITELLM_MAX_RPM", 0) or 0)
@@ -323,7 +353,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         temperature: float = 0.3,
         system_prompt: str | None = None,
     ):
-        from src.infrastructure.llm.router import resolve_route
+        from src.infrastructure.llm.router import _attempt_status, resolve_route
 
         settings = get_settings()
         candidates = resolve_route(requested=model).candidates()
@@ -333,6 +363,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        attempts: list[dict] = []
         start = time.perf_counter()
         for attempt, model_name in enumerate(candidates):
             llm_kwargs = {**_get_llm_kwargs(model_name), **_thinking_kwargs()}
@@ -340,6 +371,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
             usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
             finish_reason = "stop"
             emitted = False
+            attempt_started = time.perf_counter()
             try:
                 await _llm_rate_limiter().acquire()
                 response = await _circuit_breaker.call(
@@ -372,6 +404,14 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
                 # El breaker abierto del primario ES la señal de failover, no
                 # un aborto: si no se emitió nada, se prueba el siguiente
                 # candidato. Con tokens ya emitidos no hay failover posible.
+                attempts.append(
+                    _stream_attempt(
+                        model_name,
+                        status="circuit_open",
+                        fallback=attempt > 0,
+                        latency_ms=(time.perf_counter() - attempt_started) * 1000,
+                    )
+                )
                 has_fallback = attempt + 1 < len(candidates)
                 if emitted or not has_fallback:
                     logger.warning(
@@ -386,6 +426,15 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
                 )
                 continue
             except Exception as exc:
+                attempts.append(
+                    _stream_attempt(
+                        model_name,
+                        status=_attempt_status(exc),
+                        fallback=attempt > 0,
+                        latency_ms=(time.perf_counter() - attempt_started) * 1000,
+                        error=str(exc),
+                    )
+                )
                 # Con tokens ya emitidos no hay failover posible: el cliente vio
                 # texto y cambiar de modelo duplicaría la respuesta.
                 has_fallback = attempt + 1 < len(candidates)
@@ -397,6 +446,10 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
                         error=str(exc),
                         exc_info=True,
                     )
+                    try:
+                        exc.llm_attempts = list(attempts)  # type: ignore[attr-defined]
+                    except Exception:  # noqa: BLE001
+                        pass
                     raise
                 logger.warning(
                     "LLM streaming failed before first token; trying fallback model",
@@ -407,6 +460,14 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
                 continue
 
             latency_ms = (time.perf_counter() - start) * 1000
+            attempts.append(
+                _stream_attempt(
+                    model_name,
+                    status="success",
+                    fallback=attempt > 0,
+                    latency_ms=(time.perf_counter() - attempt_started) * 1000,
+                )
+            )
             yield {
                 "type": "done",
                 "content": "".join(content_parts),
@@ -418,6 +479,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
                 },
                 "finish_reason": finish_reason,
                 "latency_ms": round(latency_ms, 2),
+                "attempts": attempts,
             }
             return
 

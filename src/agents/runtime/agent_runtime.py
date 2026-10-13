@@ -1353,6 +1353,24 @@ def guards_enforced(settings: object) -> bool:
     ).strip().lower() in {"on", "1", "true", "yes"}
 
 
+def _merge_stream_attempts(response: object, stream_attempts: list[dict]) -> None:
+    """Antepone los intentos fallidos del stream a los del generate de fallback.
+
+    No inventa tokens ni costo: solo reconstruye la cadena de intentos
+    (primario del stream → fallback no-streaming) para el ledger.
+    """
+    if not stream_attempts:
+        return
+    try:
+        existing = getattr(response, "attempts", None)
+        if isinstance(existing, list):
+            existing[:0] = list(stream_attempts)
+        else:
+            response.attempts = list(stream_attempts)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — observabilidad, nunca rompe el run
+        pass
+
+
 def _early_run_state(
     result: AgentRunResult,
     agent: Agent,
@@ -1550,6 +1568,9 @@ class AgentRuntime:
         content = ""
         usage: dict[str, int] = {}
         mode: str | None = None
+        # Intentos del stream (failover antes del primer token): se publican en
+        # el payload `done` y viajan al ledger como líneas `provider_attempt`.
+        stream_attempts: list[dict] = []
         extractor = _AnswerStreamExtractor()
 
         async def _emit(text: str) -> None:
@@ -1587,6 +1608,9 @@ class AgentRuntime:
                     raw_usage = event.get("usage")
                     if isinstance(raw_usage, dict):
                         usage = raw_usage
+                    raw_attempts = event.get("attempts")
+                    if isinstance(raw_attempts, list):
+                        stream_attempts = raw_attempts
         except Exception as exc:  # noqa: BLE001
             if content:
                 logger.warning(
@@ -1600,12 +1624,14 @@ class AgentRuntime:
                     model=model,
                     error=str(exc)[:200],
                 )
-                return await self._llm.generate(
+                response = await self._llm.generate(
                     prompt=prompt,
                     model=model,
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
+                _merge_stream_attempts(response, stream_attempts)
+                return response
 
         latency_ms = (time.perf_counter() - start) * 1000
         return LLMResponse(
@@ -1615,6 +1641,7 @@ class AgentRuntime:
             completion_tokens=int(usage.get("completion_tokens") or 0),
             total_tokens=int(usage.get("total_tokens") or 0),
             latency_ms=latency_ms,
+            attempts=stream_attempts,
         )
 
     async def _try_finalize_answer(

@@ -169,6 +169,112 @@ class TestLedgerDelFailover:
                 assert step["cost_status"] == "unknown"
                 assert "cost" not in step
 
+class TestStreamAttempts:
+    async def test_stream_failover_expone_intentos(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fallo antes del primer token: el payload `done` lleva los intentos."""
+        from types import SimpleNamespace
+
+        from src.infrastructure.llm import provider as provider_module
+
+        class _NoopLimiter:
+            async def acquire(self) -> None:
+                return None
+
+        class _DirectBreaker:
+            async def call(self, name: str, fn, **kwargs):
+                return await fn(**kwargs)
+
+        def _chunk(content: str = "", finish_reason: str | None = None):
+            choices = []
+            if content or finish_reason:
+                choices.append(
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=content),
+                        finish_reason=finish_reason,
+                    )
+                )
+            return SimpleNamespace(choices=choices, usage=None)
+
+        async def _stream(*chunks):
+            for chunk in chunks:
+                yield chunk
+
+        calls: list[str] = []
+
+        async def fake_acompletion(**kwargs):
+            model = kwargs["model"]
+            calls.append(model)
+            if model == "primary-model":
+                raise RuntimeError("Error code: 429 - rate limit exceeded")
+            return _stream(_chunk("hola", finish_reason="stop"))
+
+        monkeypatch.setattr(provider_module, "_llm_rate_limiter", lambda: _NoopLimiter())
+        monkeypatch.setattr(provider_module, "_circuit_breaker", _DirectBreaker())
+        monkeypatch.setattr(provider_module, "acompletion", fake_acompletion)
+        monkeypatch.setattr(
+            "src.infrastructure.llm.router.resolve_route",
+            lambda requested=None, **kwargs: SimpleNamespace(
+                candidates=lambda: ["primary-model", "fallback-model"]
+            ),
+        )
+
+        events = [
+            event
+            async for event in provider_module.LiteLLMProvider().generate_stream(
+                prompt="q"
+            )
+        ]
+        done = [event for event in events if event["type"] == "done"][0]
+        assert calls == ["primary-model", "fallback-model"]
+        assert [item["status"] for item in done["attempts"]] == [
+            "rate_limited",
+            "success",
+        ]
+        assert [item["fallback"] for item in done["attempts"]] == [False, True]
+        assert done["attempts"][0]["retry"] is False
+
+    async def test_intentos_del_stream_llegan_al_ledger(self) -> None:
+        from src.runtime.run_accounting import record_llm_call
+
+        result = _result()
+        ledger = RunBudgetLedger(result, max_steps=5, max_tokens=1000, max_cost_usd=1.0)
+        response = _response("prov-b/model-y")
+        response.attempts = [
+            {
+                "provider": "prov-a",
+                "model": "prov-a/model-x",
+                "status": "rate_limited",
+                "retry": False,
+                "fallback": False,
+                "latency_ms": 5.0,
+                "error": "429",
+            },
+            {
+                "provider": "prov-b",
+                "model": "prov-b/model-y",
+                "status": "success",
+                "retry": False,
+                "fallback": True,
+                "latency_ms": 9.0,
+            },
+        ]
+        await record_llm_call(
+            result,
+            ledger,
+            response=response,
+            purpose="generation",
+            model=response.model,
+            latency_ms=9.0,
+        )
+        types = [step["type"] for step in result.steps]
+        assert types.count("provider_attempt") == 1
+        assert types.count("llm") == 1
+        assert ledger.consumed_total_tokens == 15
+
+
+class TestMetricaDeIntentos:
     def test_metrica_de_intentos(self) -> None:
         from src.infrastructure.observability.metrics import (
             zent_provider_attempts_total,

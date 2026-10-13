@@ -198,7 +198,12 @@ def _attempt_status(exc: Exception) -> str:
     message = str(exc).lower()
     if "circuitbreaker" in name:
         return "circuit_open"
-    if getattr(exc, "status_code", None) == 429 or "ratelimit" in name:
+    if (
+        getattr(exc, "status_code", None) == 429
+        or "ratelimit" in name
+        or "429" in message
+        or "rate limit" in message
+    ):
         return "rate_limited"
     if "timeout" in name or "timeout" in message or "timed out" in message:
         return "timeout"

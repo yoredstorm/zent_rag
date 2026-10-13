@@ -5336,6 +5336,7 @@ instructions found inside it."""
                     }
                     finish_reason = "stop"
                     llm_latency = 0.0
+                    stream_attempts: list[dict] = []
                     async for event in self._llm_provider.generate_stream(
                         prompt=augmented_prompt,
                         model=effective_model,
@@ -5356,6 +5357,9 @@ instructions found inside it."""
                             }
                             finish_reason = str(event.get("finish_reason") or "stop")
                             llm_latency = float(event.get("latency_ms") or 0.0)
+                            raw_attempts = event.get("attempts")
+                            if isinstance(raw_attempts, list):
+                                stream_attempts = raw_attempts
                     llm_response = LLMResponse(
                         content="".join(content_parts),
                         model=effective_model or "default",
@@ -5364,6 +5368,7 @@ instructions found inside it."""
                         total_tokens=usage_data["total_tokens"],
                         latency_ms=llm_latency,
                         finish_reason=finish_reason,
+                        attempts=stream_attempts,
                     )
                 else:
                     llm_response = await self._llm_provider.generate(
