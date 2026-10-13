@@ -1,0 +1,165 @@
+# Hardening ZENT — Reporte final del programa (F0–F8, F12–F13)
+
+Base: `3d24057`. HEAD al cierre de este reporte: `eb5d6da` (+ F12/F13 docs).
+Fases ejecutadas: **F0–F8 (F8 como auditoría), F12, F13**. Pendientes: **F9–F11**
+(perf/load/chaos con entorno) y el cierre de F14 (tabla de performance con
+baseline de producción).
+
+---
+
+## 1. Executive summary
+
+ZENT endureció autoridad, aislamiento, contabilidad y observabilidad sin
+agregar agentes, motores ni abstracciones nuevas. La cache de respuestas ya no
+puede degradar el aislamiento por conversación (fail-closed, métrica de bypass).
+La política de finalización se aplica por etapas con scopes (agente > org >
+environment > global) y el camino RAG dejó de cerrar fuera de la política. La
+tabla de guards tiene caller real y divergencia medible. El prompt se ensambla
+desde el ContextEnvelope: solo política y contrato pueden instruir; tool outputs,
+memoria, company, evidencia y workflow son DATO con encabezado de origen. Los
+reintentos del router son visibles en el ledger sin doble conteo. La taxonomía
+de fallos es única y el catálogo de reason codes tiene contrato CI. Las métricas
+run-level salen de un publisher con labels acotados y `unknown != 0`. CI separa
+invariantes rápidos (required en PR) de la suite completa, adversarial y
+estabilidad ×100 (nightly). SLOs, matriz de alertas con runbook y 9 runbooks
+quedan documentados. 43 archivos, +5.024/−129 líneas, 80 tests nuevos; sin
+cambios de arquitectura aspiracional ni reescrituras.
+
+## 2. Arquitectura antes / después
+
+Antes (V2): la política resolvía en observabilidad + strict; guards sin caller;
+cache con degradación legacy; prompt con etiquetas ad-hoc; retries invisibles;
+contabilidad y métricas dispersas.
+
+```mermaid
+flowchart TD
+  U[User Request] --> CE[ContextEnvelope]
+  CE --> PA[PromptAssembly<br/>F4: bloques por origen]
+  CE --> AS[AgentRunState canonical]
+  AS --> P[Planner]
+  P --> R[Retrieval]
+  P --> T[Tools]
+  T --> G[RunGuards<br/>F3: veredicto + divergencia]
+  R --> E[Evidence]
+  T --> O[Observations untrusted]
+  E --> FP[FinalizationPolicy<br/>F2: etapas + scopes]
+  O --> FP
+  B[Budget / RunBudgetLedger] --> FP
+  FP -->|FINALIZE/RETRIEVE/ABSTAIN/BLOCK/UNDETERMINED| DE[DecisionEnvelope]
+  DE --> F[Finalizer]
+  F --> AL[Authority Lock]
+  AL --> A[Answer]
+  A --> RM[RunMetrics<br/>F7: runs, latencia, tokens, costo, evidencia, accion]
+  RM --> OBS[Metrics + Alertas + Runbooks F13]
+  subgraph Transversal
+    SEC[Security / tenancy]
+    ACC[Accounting unico<br/>F5: attempts visibles]
+    TAX[Failure taxonomy F6 + reason codes CI]
+    PROM[Prometheus /metrics]
+  end
+  ACC -.-> RM
+  TAX -.-> FP
+```
+
+## 3. Cambios
+
+- 43 archivos: 25 agregados, 18 modificados, 0 eliminados. +5.024/−129 líneas.
+- Commits (por fase, sin mega commits): `8d96bc6` audit · `42d48ba`
+  hardening(cache) · `6c8dbaf` runtime(finalization) · `2368e3a`
+  runtime(guards) · `afbc657` docs · `77e9fa7` runtime(context) · `d0a3606`
+  runtime(accounting) · `2348b76` runtime(failures) · `eb5d6da` +
+  observability/refactor/docs de F7-F13.
+- Módulos nuevos: `enforcement.py`, `prompt_assembly.py`, `run_metrics.py`,
+  `failure_taxonomy.py`; scripts `flags_inventory.py`, `simplification_score.py`,
+  `finalization_audit.py`.
+
+## 4. Hardening
+
+| Área | Antes | Después |
+|---|---|---|
+| Conversación | clave degradada posible (legacy) | fail-closed + `zent_cache_bypass_total`; ×100 sin hits cruzados |
+| Tenant | aislamiento con tests por subsistema | invariantes + circuit breaker por (modelo, tenant) |
+| Autoridad | RAG fuera de la política; guards sin caller | RAG resuelto por política; guards con shadow y flag |
+| Finalización | 2 etapas | 3 etapas (`answer_gate`), scopes por agente/org/env |
+| Prompt | 3 etiquetas ad-hoc | 1 fuente (envelope); inyección en datos no instruye |
+| Provider | failover invisible | intentos en el ledger + `zent_provider_attempts_total` |
+| Fallos | mezcla posible | taxonomía única + contrato CI de reason codes |
+
+## 5. Simplificación (medido)
+
+| Métrica | Before (F0) | After |
+|---|---:|---:|
+| `agent_runtime.py` LOC | 5.699 | 5.841 (helpers F3 + publisher) |
+| `src/runtime` LOC | 28.411 | 29.300 (+889 en 4 contratos nuevos) |
+| Writers directos de `adaptive` fuera de la proyección | 0 (ya migrado) | 0 (test de writers) |
+| Transiciones terminales fuera de policy | 15 allowlisted | 15 allowlisted (RAG ahora resuelto por policy) |
+| Fuentes de etiquetas del prompt | 3 (ad-hoc) | 1 (`prompt_assembly`) |
+| Fallbacks inseguros de cache | 1 | 0 |
+| Contadores paralelos de accounting | 0 (ledger único) | 0 (attempts tampoco suman) |
+| `except Exception` sin comentario (caminos críticos) | 25 | 25 (deuda P2 declarada) |
+| Tests nuevos | — | 80 |
+
+## 6. Accounting
+
+- Un ledger, un writer (`run_accounting`); el evento de uso LEE.
+- Líneas: `llm`, `embedding`, `rerank`, `charge`, `jev_usage`, `tool_call`,
+  `provider_attempt`.
+- Intentos del router: visibles (provider/model/status/retry/fallback/latencia),
+  sin tokens ni costo; el `llm` factura solo el éxito.
+- JEV: tokens/costo reportado si existe; sin tarifa → `unknown`, nunca 0.
+- `unknown != 0` explícito en métricas (`zent_run_cost_unknown_total`).
+
+## 7. Performance
+
+- Harness: `src/scripts/perf_traffic.py` (p50/p95, tokens, costo, llamadas,
+  errores) + `src/scripts/finalization_audit.py` (divergencia).
+- Smoke local de este programa: 1 run, 60.5 s, pipeline completo
+  (`artifacts/perf/f0-before.json`); audit de cierre: `divergences=0`
+  (`artifacts/finalization-audit/f0-before.json`).
+- **F9 pendiente**: corpus A (30 simple) / B (50 RAG) / C (30 agentic), ≥30
+  iteraciones, cold/warm separados, cache on/off, before/after con metadata
+  (`perf-baseline.md`). Sin ese baseline, los p95 de SLO quedan provisionales.
+
+## 8. Reliability
+
+- Fallos de provider clasificados y visibles; retries acotados (1 por candidato
+  + fallback) y medidos (`zent_provider_attempts_total`).
+- Circuit breaker por (modelo, tenant) con métrica de aperturas.
+- `RETRIEVAL_UNAVAILABLE` nunca se reporta como ausencia de datos.
+- **F10/F11 pendientes**: load harness (concurrencia 1/5/10/25/50, backpressure)
+  y chaos subset (Redis/Postgres/Qdrant/LLM/JEV/reranker/tool) — requieren
+  entorno; el criterio de retiro y las políticas (retry/fallback/degrade/block)
+  están documentados en los runbooks.
+
+## 9. Testing
+
+- 80 tests nuevos (7 archivos) + suites existentes actualizadas.
+- Regresiones ejecutadas en este programa: 275 passed (F0–F3), 183 (F4), 118
+  (F7), 61/46/35/34/31/29/14/5/2 en lotes focales; `ruff check src/ tests/
+  sdk/python` verde.
+- Invariantes en CI (required, PR) + nightly (suite completa, adversarial,
+  estabilidad ×100).
+
+## 10. Deuda (P0–P3)
+
+- **P0**: ninguna demostrada.
+- **P1**: ninguna abierta (cache, RAG/policy y guards cerradas).
+- **P2**: F9-F11 (baseline/load/chaos); intentos del stream y de embeddings no
+  visibles; SLO de latencia sin baseline; 25 `except` sin certificar; drift de
+  `.env.example` (106 flags); `decision.reason_codes` fuera de `reason-codes-1`;
+  dashboards como código pendientes del stack; branch protection se configura
+  en GitHub.
+- **P3**: providers de cache sin `_hash_query` (clave local segura); early
+  returns operativos por diseño; `request_cost` sin tokens (documentado).
+
+## 11. Recomendación
+
+**READY FOR INTERNAL** — con evidencia: contratos de autoridad, aislamiento,
+contabilidad, prompt y fallos verificados por tests e invariantes en CI;
+smokes reales verdes (perf/audit). No READY FOR CANARY todavía: faltan el
+baseline de performance (F9), load/chaos (F10–F11), dashboards/alertas
+desplegados y el error budget calibrado (F13).
+
+Para promover a CANARY: F9 con corpus real + F10 en staging + alertas
+conectadas + los p95 fijados con baseline (una corrida por corpus, mismo
+entorno, mismo hash de corpus).
