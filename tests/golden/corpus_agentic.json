@@ -1,0 +1,272 @@
+[
+  {
+    "id": "agentic-001",
+    "question": "Calculá el total de ventas del último trimestre agrupado por categoría",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "analisis",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-002",
+    "question": "Compará los ingresos de las dos últimas campañas y explicá la diferencia",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "analisis",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-003",
+    "question": "¿Cuántos clientes superaron el límite de crédito este mes?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "agregacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-004",
+    "question": "Sumá los importes de las facturas pendientes y decime el total",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "agregacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-005",
+    "question": "Armá un plan de acción para reducir reclamos repetidos",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "planificacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-006",
+    "question": "Diseñá un procedimiento de control para evitar duplicados",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "planificacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-007",
+    "question": "Analizá este escenario: cliente nuevo, pedido grande, pago a 60 días",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "escenario",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-008",
+    "question": "¿Qué pasaría si subimos 10% los precios? Analizá con los datos que tenés",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "escenario",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-009",
+    "question": "Investigá por qué cayeron las ventas del canal online",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "investigacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-010",
+    "question": "Buscá las causas raíz de los conflictos de reglas detectados",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "investigacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-011",
+    "question": "Consultá la base y decime los pendientes del área",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "tool_sql",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-012",
+    "question": "¿Cuántos registros hay en la tabla de clientes?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "tool_sql",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-013",
+    "question": "Traé el detalle de los movimientos y resumilo",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "tool_sql",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-014",
+    "question": "¿Qué preguntas debería hacerle al negocio para cerrar este análisis?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "razonamiento",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-015",
+    "question": "Si la regla dice A y el proceso dice B, ¿cómo lo resolvés?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "razonamiento",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-016",
+    "question": "¿Qué evidencia falta para concluir sobre esta política?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "razonamiento",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-017",
+    "question": "Explicá paso a paso cómo auditarías un cambio de tarifa",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "tutorial",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-018",
+    "question": "Enseñame a validar una regla desde cero",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "tutorial",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-019",
+    "question": "¿Qué métricas recomendarías vigilar para la calidad del conocimiento?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "recomendacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-020",
+    "question": "¿Qué alertas configurarías para detectar proveedores degradados?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "recomendacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-021",
+    "question": "Compará esta política con la de la competencia según las fuentes",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "comparacion",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-022",
+    "question": "Hacé una tabla con los estados posibles y su significado",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "formato",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-023",
+    "question": "Armá un checklist para publicar una regla nueva",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "formato",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-024",
+    "question": "Ejecutá esta condición: si el monto es mayor a 10000 y el plazo supera 30 días",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "ejecutable",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-025",
+    "question": "¿El cliente 105 cumple con la política vigente?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "ejecutable",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-026",
+    "question": "Calculá la fecha límite según la regla de vencimiento",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "ejecutable",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-027",
+    "question": "¿Qué información consultaste para responder eso?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "meta",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-028",
+    "question": "¿Cuánto tardó y cuánto costó esta consulta?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "meta",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-029",
+    "question": "¿Podés hacerlo de nuevo con más profundidad?",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "followup",
+      "target": "agent"
+    }
+  },
+  {
+    "id": "agentic-030",
+    "question": "Seguí el análisis anterior y amplialo con ejemplos",
+    "metadata": {
+      "corpus": "agentic",
+      "class": "followup",
+      "target": "agent"
+    }
+  }
+]

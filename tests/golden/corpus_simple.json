@@ -1,0 +1,272 @@
+[
+  {
+    "id": "simple-001",
+    "question": "¿Qué es ZENT?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-002",
+    "question": "¿Qué es un agente de conocimiento?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-003",
+    "question": "¿Qué significa RBAC?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-004",
+    "question": "¿Qué es un embedding?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-005",
+    "question": "¿Qué es un chunk en un documento?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-006",
+    "question": "¿Qué es el grounding documental?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-007",
+    "question": "¿Qué es una regla canónica?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-008",
+    "question": "¿Qué es el presupuesto de tokens de un run?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-009",
+    "question": "¿Qué es una abstención?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-010",
+    "question": "¿Qué es el retrieval híbrido?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "definicion",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-011",
+    "question": "¿Qué información hay en el catálogo?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "catalogo",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-012",
+    "question": "¿Cuántos documentos cargados tenés disponibles?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "catalogo",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-013",
+    "question": "Mostrame los productos disponibles",
+    "metadata": {
+      "corpus": "simple",
+      "class": "catalogo",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-014",
+    "question": "¿Qué categorías de documentos existen?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "catalogo",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-015",
+    "question": "¿Cuál es la estructura de una fuente de datos?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "catalogo",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-016",
+    "question": "Hola, ¿qué podés hacer?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "conversacional",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-017",
+    "question": "Gracias por la ayuda",
+    "metadata": {
+      "corpus": "simple",
+      "class": "conversacional",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-018",
+    "question": "¿Qué herramientas tenés configuradas?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "capacidad",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-019",
+    "question": "¿Podés consultar bases de datos?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "capacidad",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-020",
+    "question": "¿Con qué modelos trabajás?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "capacidad",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-021",
+    "question": "¿Qué pasa si no encuentro la información?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "capacidad",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-022",
+    "question": "¿Cómo se calcula un precio de venta?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-023",
+    "question": "¿Cuál es la política de devoluciones?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-024",
+    "question": "¿Cuál es el horario de atención?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-025",
+    "question": "¿Cuál es la fecha de vigencia de la tarifa?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-026",
+    "question": "¿Quién es el responsable del área comercial?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-027",
+    "question": "¿Cuál es el límite de crédito del cliente?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-028",
+    "question": "¿Dónde se define el estado del pedido?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-029",
+    "question": "¿Qué significa el código de estado?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  },
+  {
+    "id": "simple-030",
+    "question": "¿Cuál es la moneda de facturación?",
+    "metadata": {
+      "corpus": "simple",
+      "class": "factual",
+      "target": "rag"
+    }
+  }
+]

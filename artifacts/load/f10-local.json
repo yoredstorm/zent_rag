@@ -1,0 +1,143 @@
+{
+  "label": "f10-local",
+  "target": "rag-load",
+  "generated_at": "2026-10-13T06:24:12.909510+00:00",
+  "organization_id": "ef7e9a86-6a5b-465f-830c-04afaeada60f",
+  "queries_file": "tests\\golden\\corpus_simple.json",
+  "levels": [
+    {
+      "concurrency": 1,
+      "requests": 2,
+      "errors": 0,
+      "error_rate": 0.0,
+      "wall_seconds": 63.88,
+      "throughput_rps": 0.031,
+      "latency_ms_p50": 23517.64,
+      "latency_ms_p95": 40359.78,
+      "latency_ms_p99": 40359.78,
+      "latency_ms_mean": 31938.71,
+      "provider_attempts": 0,
+      "provider_rate_limited": 0,
+      "retry_amplification": 0.0,
+      "infra_before": {
+        "postgres_ms": 20.82,
+        "redis_ms": 19.43
+      },
+      "infra_after": {
+        "postgres_ms": 15.62,
+        "redis_ms": 1.63
+      }
+    },
+    {
+      "concurrency": 2,
+      "requests": 2,
+      "errors": 0,
+      "error_rate": 0.0,
+      "wall_seconds": 39.71,
+      "throughput_rps": 0.05,
+      "latency_ms_p50": 27682.58,
+      "latency_ms_p95": 39705.84,
+      "latency_ms_p99": 39705.84,
+      "latency_ms_mean": 33694.21,
+      "provider_attempts": 0,
+      "provider_rate_limited": 0,
+      "retry_amplification": 0.0,
+      "infra_before": {
+        "postgres_ms": 13.75,
+        "redis_ms": 2.84
+      },
+      "infra_after": {
+        "postgres_ms": 25.37,
+        "redis_ms": 3.8
+      }
+    }
+  ],
+  "details": [
+    {
+      "summary": {
+        "concurrency": 1,
+        "requests": 2,
+        "errors": 0,
+        "error_rate": 0.0,
+        "wall_seconds": 63.88,
+        "throughput_rps": 0.031,
+        "latency_ms_p50": 23517.64,
+        "latency_ms_p95": 40359.78,
+        "latency_ms_p99": 40359.78,
+        "latency_ms_mean": 31938.71,
+        "provider_attempts": 0,
+        "provider_rate_limited": 0,
+        "retry_amplification": 0.0,
+        "infra_before": {
+          "postgres_ms": 20.82,
+          "redis_ms": 19.43
+        },
+        "infra_after": {
+          "postgres_ms": 15.62,
+          "redis_ms": 1.63
+        }
+      },
+      "cases": [
+        {
+          "wall_ms": 40359.78,
+          "status": "completed",
+          "latency_ms": 40052.1,
+          "tokens": 0,
+          "attempts": {},
+          "question": "¿Qué es ZENT?"
+        },
+        {
+          "wall_ms": 23517.64,
+          "status": "completed",
+          "latency_ms": 23370.47,
+          "tokens": 0,
+          "attempts": {},
+          "question": "¿Qué es un agente de conocimiento?"
+        }
+      ]
+    },
+    {
+      "summary": {
+        "concurrency": 2,
+        "requests": 2,
+        "errors": 0,
+        "error_rate": 0.0,
+        "wall_seconds": 39.71,
+        "throughput_rps": 0.05,
+        "latency_ms_p50": 27682.58,
+        "latency_ms_p95": 39705.84,
+        "latency_ms_p99": 39705.84,
+        "latency_ms_mean": 33694.21,
+        "provider_attempts": 0,
+        "provider_rate_limited": 0,
+        "retry_amplification": 0.0,
+        "infra_before": {
+          "postgres_ms": 13.75,
+          "redis_ms": 2.84
+        },
+        "infra_after": {
+          "postgres_ms": 25.37,
+          "redis_ms": 3.8
+        }
+      },
+      "cases": [
+        {
+          "wall_ms": 39705.84,
+          "status": "completed",
+          "latency_ms": 39475.87,
+          "tokens": 0,
+          "attempts": {},
+          "question": "¿Qué es ZENT?"
+        },
+        {
+          "wall_ms": 27682.58,
+          "status": "completed",
+          "latency_ms": 27534.66,
+          "tokens": 0,
+          "attempts": {},
+          "question": "¿Qué es un agente de conocimiento?"
+        }
+      ]
+    }
+  ]
+}

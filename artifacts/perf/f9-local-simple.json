@@ -1,0 +1,69 @@
+{
+  "label": "f9-local-simple",
+  "target": "rag",
+  "generated_at": "2026-10-13T06:32:18.499868+00:00",
+  "organization_id": "ef7e9a86-6a5b-465f-830c-04afaeada60f",
+  "queries_file": "tests\\golden\\corpus_simple.json",
+  "iterations": 1,
+  "summary": {
+    "runs": 3,
+    "errors": 0,
+    "latency_ms_p50": 31838.4,
+    "latency_ms_p95": 100206.95,
+    "latency_ms_mean": 52344.14,
+    "tokens_per_run": 0.0,
+    "cost_per_run": 0.0,
+    "llm_calls_per_run": 1.0,
+    "tool_calls_per_run": 0.0,
+    "retrieval_rounds_per_run": 0.0,
+    "tokens_total": 0,
+    "cost_total": 0.0
+  },
+  "cases": [
+    {
+      "latency_ms": 31838.4,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "status": "completed",
+      "error": "",
+      "question": "¿Qué es ZENT?",
+      "wall_ms": 32035.32,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 24987.07,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "status": "completed",
+      "error": "",
+      "question": "¿Qué es un agente de conocimiento?",
+      "wall_ms": 25173.75,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 100206.95,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "status": "completed",
+      "error": "",
+      "question": "¿Qué significa RBAC?",
+      "wall_ms": 100382.98,
+      "iteration": 0
+    }
+  ]
+}
