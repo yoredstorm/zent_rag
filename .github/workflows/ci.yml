@@ -127,6 +127,40 @@ jobs:
       - name: Apply Alembic migrations
         run: alembic upgrade head
 
+      - name: Architecture invariants (fast, required)
+        run: |
+          # Invariantes de arquitectura y contratos: rápido y obligatorio en PR.
+          # Un fallo acá es un cambio de contrato, no un test flaky.
+          set -o pipefail
+          pytest \
+            tests/test_architecture.py \
+            tests/test_terminal_transitions_allowlist.py \
+            tests/test_reason_codes.py \
+            tests/test_failure_taxonomy.py \
+            tests/test_adaptive_projection.py \
+            tests/test_finalization_policy.py \
+            tests/test_finalization_enforcement_scopes.py \
+            tests/test_finalization_golden.py \
+            tests/test_run_guards_shadow.py \
+            tests/test_prompt_assembly.py \
+            tests/test_prompt_block_headers.py \
+            tests/test_conversation_isolation.py \
+            tests/test_run_accounting.py \
+            tests/test_run_accounting_rag.py \
+            tests/test_provider_attempts.py \
+            tests/test_run_metrics.py \
+            tests/test_run_state.py \
+            -q --no-header 2>&1 | tee /tmp/invariants.log
+
+      - name: Annotate invariant failure
+        if: failure()
+        run: |
+          if [ -f /tmp/invariants.log ]; then
+            grep -E "^(FAILED|ERROR) " /tmp/invariants.log | head -n 5 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+
       - name: Run tests
         run: |
           set -o pipefail

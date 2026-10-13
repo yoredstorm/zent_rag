@@ -1,0 +1,120 @@
+name: Nightly
+
+on:
+  schedule:
+    # 06:00 UTC todos los días.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    env:
+      RAG_POSTGRES_HOST: localhost
+      RAG_POSTGRES_PORT: "5432"
+      RAG_POSTGRES_USER: rag_user
+      RAG_POSTGRES_PASSWORD: changeme_in_production
+      RAG_POSTGRES_DB: rag_platform
+      RAG_REDIS_URL: redis://localhost:6379/0
+      RAG_QDRANT_HOST: localhost
+      RAG_QDRANT_PORT: "6333"
+      RAG_BILLING_ENABLED: "false"
+      RAG_ENVIRONMENT: development
+      RAG_SEED_DEMO_DATA: "true"
+      RAG_LITELLM_DEFAULT_MODEL: gpt-4o
+      RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      PYTHONPATH: ${{ github.workspace }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: rag_user
+          POSTGRES_PASSWORD: changeme_in_production
+          POSTGRES_DB: rag_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      qdrant:
+        image: qdrant/qdrant:v1.13.4
+        ports:
+          - 6333:6333
+          - 6334:6334
+        options: >-
+          --health-cmd "bash -c ': > /dev/tcp/127.0.0.1/6333'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Init DB schema
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          export PGPASSWORD=changeme_in_production
+          for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
+            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Install deps
+        run: pip install -e ".[prod,dev]"
+
+      - name: Apply Alembic migrations
+        run: alembic upgrade head
+
+      - name: "Full suite (sin -x: todos los fallos visibles)"
+        run: |
+          set -o pipefail
+          pytest tests/ -q --tb=short --timeout=600 2>&1 | tee /tmp/nightly-full.log
+
+      - name: Adversarial matrix
+        run: |
+          set -o pipefail
+          pytest \
+            tests/test_adversarial_matrix.py \
+            tests/test_adversarial_generalization.py \
+            tests/test_llm_stream_fallback.py \
+            tests/test_llm_embed_retry.py \
+            -q --tb=short 2>&1 | tee /tmp/nightly-adversarial.log
+
+      - name: Stability x100 (3 pasadas de las suites de estabilidad)
+        run: |
+          set -o pipefail
+          for i in 1 2 3; do
+            echo "== pasada $i =="
+            pytest \
+              tests/test_finalization_golden.py::test_estabilidad_cien_runs_por_caso \
+              tests/test_adversarial_matrix.py::test_resolucion_estable_100_runs \
+              -q --tb=short
+          done
+
+      - name: Annotate failures
+        if: failure()
+        run: |
+          for log in /tmp/nightly-full.log /tmp/nightly-adversarial.log; do
+            if [ -f "$log" ]; then
+              grep -E "^(FAILED|ERROR) " "$log" | head -n 10 | while IFS= read -r line; do
+                echo "::error::$line"
+              done
+            fi
+          done
+
+      # Perf/load/chaos: el harness vive en src/scripts (perf_traffic,
+      # finalization_audit, load_test) y requiere LLM real + corpus; se corre
+      # en staging, no en el runner. Ver hardening/12-ci.md.
