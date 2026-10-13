@@ -4,6 +4,11 @@
 # Reduce latencia y costes de LLM cacheando resultados de consultas
 # idénticas. TTL configurable. Las claves incluyen organization_id para
 # mantener el aislamiento multi-organization.
+#
+# Política de fallos (F11):
+#   - Lecturas/escrituras de caché son fail-SOFT: sin Redis el run sigue
+#     (get → None, listas → [], escrituras no-op).
+#   - `incr` es fail-CLOSED: un contador de rate limit nunca falla abierto.
 # =============================================================================
 from __future__ import annotations
 
@@ -40,7 +45,7 @@ async def _aclose_quietly(client: Any) -> None:
             await result
     except RuntimeError:
         pass
-    except Exception:
+    except Exception:  # noqa: BLE001 — cierre best-effort del cliente
         pass
 
 
@@ -75,7 +80,7 @@ async def _get_redis() -> aioredis.Redis:
         )
         try:
             await client.ping()
-        except Exception:
+        except Exception:  # noqa: BLE001 — ping falla: no se retiene el cliente
             await _aclose_quietly(client)
             raise
         _redis = client
@@ -142,66 +147,67 @@ class RedisCache(CacheProvider):
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
     async def get(self, key: str) -> str | None:
-        client = await _get_redis()
         try:
+            client = await _get_redis()
             return await client.get(key)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis GET failed", key=key, error=str(exc))
             return None
 
     async def set(self, key: str, value: str, ttl_seconds: int = 300) -> None:
-        client = await _get_redis()
         try:
+            client = await _get_redis()
             await client.setex(key, ttl_seconds, value)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis SET failed", key=key, error=str(exc))
 
     async def delete(self, key: str) -> None:
-        client = await _get_redis()
         try:
+            client = await _get_redis()
             await client.delete(key)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis DELETE failed", key=key, error=str(exc))
 
     async def exists(self, key: str) -> bool:
-        client = await _get_redis()
         try:
+            client = await _get_redis()
             return bool(await client.exists(key))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis EXISTS failed", key=key, error=str(exc))
             return False
 
     async def append_to_list(
         self, key: str, value: str, ttl_seconds: int = 3600
     ) -> None:
-        client = await _get_redis()
         try:
+            client = await _get_redis()
             async with client.pipeline() as pipe:
                 pipe.rpush(key, value)
                 pipe.expire(key, ttl_seconds)
                 await pipe.execute()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis RPUSH failed", key=key, error=str(exc))
 
     async def get_list(self, key: str) -> list[str]:
-        client = await _get_redis()
         try:
+            client = await _get_redis()
             items = await client.lrange(key, 0, -1)
             return list(items) if items else []
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis LRANGE failed", key=key, error=str(exc))
             return []
 
     async def trim_list(self, key: str, max_items: int) -> None:
-        client = await _get_redis()
         try:
+            client = await _get_redis()
             await client.ltrim(key, -max_items, -1)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis LTRIM failed", key=key, error=str(exc))
 
     async def incr(self, key: str, ttl_seconds: int | None = None, by: int = 1) -> int:
-        client = await _get_redis()
+        """INCR es fail-CLOSED: un contador de rate limit no puede fallar abierto."""
         try:
+            client = await _get_redis()
             if by == 1:
                 count = await client.incr(key)
             else:
@@ -209,6 +215,6 @@ class RedisCache(CacheProvider):
             if ttl_seconds is not None and (count == by or by != 1):
                 await client.expire(key, ttl_seconds)
             return int(count)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — política del módulo
             logger.warning("Redis INCR failed", key=key, error=str(exc))
             raise
