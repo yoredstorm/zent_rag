@@ -255,6 +255,7 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
                 organization_id=organization_id,
                 workspace_id=row.workspace_id,
                 actor_type="event_dispatcher",
+                system_context=True,
                 correlation_id=f"evt:{event_type}:{event_id}",
             )
             fired += 1

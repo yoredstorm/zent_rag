@@ -165,4 +165,32 @@ documental, ausencia ≠ insuficiencia, contradicción por fuentes y por estado,
 cobertura completa vs parcial, los dos conflictos medidos, pin del vocabulario
 de stops, determinismo ×100 y matriz de 11 casos ×20.
 
+---
+
+## S7 — Plano de acción: permisos explícitos (este slice, alcance acotado)
+
+### Cambios de autoridad
+
+| Antes | Después |
+|---|---|
+| `run_workflow` con `permissions` vacío/NULL escalaba en silencio a `_SYSTEM_NODE_PERMS` (incluye `external_actions:execute`) | `resolve_workflow_permissions` es la autoridad: permisos explícitos nunca se amplían; contexto de sistema se declara con `system_context=True`; sin ninguno, set VACÍO (fail-closed) |
+| El contexto de sistema era implícito | Los 4 disparadores internos (scheduler, webhook con secret verificado, evento de negocio, reanudación aprobada) lo declaran explícitamente |
+| La autorización por handler era un supuesto | Contrato testeado: cada handler del dispatcher verifica su permiso (`agents:execute`, `workflows:run`, `agents:execute` + `tool.permission`) y el inventario de callers de sistema está fijado |
+
+### Alcance deliberado
+
+No se agregó un segundo punto de enforcement: el dispatcher sigue delegando la
+autorización al handler (una sola decisión), pero ahora el contrato es explícito
+y un caller nuevo no puede heredar permisos por accidente. Las formas delegadas
+del embed/cognitive/event dispatcher quedan documentadas como riesgo aceptado
+(token/secret a nivel de trigger) en la deuda P1-4.
+
+### Tests nuevos
+
+`tests/test_action_plane_authority.py` (6 casos): handlers declaran y verifican
+su permiso, el dispatch no trata la ausencia de `authorized` como autorización,
+workflow sin permisos es fail-closed, contexto de sistema explícito, permisos
+explícitos nunca se amplían, e inventario de callers de sistema fijado.
+
+
 

@@ -259,6 +259,37 @@ async def _preload_run_outputs(
     }
 
 
+#: Permisos del contexto de sistema de workflows: los disparadores internos
+#: (scheduler, webhook con secret verificado, evento de negocio, reanudación
+#: aprobada) los declaran explícitamente con `system_context=True`.
+SYSTEM_NODE_PERMS: frozenset[str] = frozenset(
+    {
+        "workflows:run",
+        "agents:execute",
+        "external_actions:execute",
+        "integrations:use",
+        "workflow_secrets:manage",
+    }
+)
+
+
+def resolve_workflow_permissions(
+    permissions: frozenset[str] | None, *, system_context: bool = False
+) -> frozenset[str]:
+    """Resuelve los permisos efectivos de un run de workflow (fail-closed).
+
+    * permisos explícitos del caller → esos (nunca se amplían);
+    * sin permisos y con `system_context=True` → permisos de sistema;
+    * sin permisos y sin contexto de sistema → conjunto VACÍO: un caller nuevo
+      que olvide permisos no hereda `external_actions:execute` por accidente.
+    """
+    if permissions:
+        return frozenset(permissions)
+    if system_context:
+        return SYSTEM_NODE_PERMS
+    return frozenset()
+
+
 async def run_workflow(
     workflow_id: UUID,
     payload: dict | None = None,
@@ -269,6 +300,7 @@ async def run_workflow(
     actor_type: str = "system",
     actor_id: UUID | None = None,
     permissions: frozenset[str] | None = None,
+    system_context: bool = False,
     correlation_id: str | None = None,
     simulate: bool = False,
     resume: bool = False,
@@ -450,16 +482,13 @@ async def run_workflow(
     if run_mode in ("node", "until_node"):
         stop_after = str(target_node_id)
 
-    _SYSTEM_NODE_PERMS = frozenset(
-        {
-            "workflows:run",
-            "agents:execute",
-            "external_actions:execute",
-            "integrations:use",
-            "workflow_secrets:manage",
-        }
-    )
-    perms = frozenset(permissions or _SYSTEM_NODE_PERMS)
+    _SYSTEM_NODE_PERMS = SYSTEM_NODE_PERMS
+    # Autoridad de permisos EXPLÍCITA: los disparadores de sistema (scheduler,
+    # webhook con secret verificado, evento de negocio, reanudación aprobada)
+    # declaran `system_context=True`. Sin permisos y sin contexto de sistema el
+    # set queda VACÍO (fail-closed): un caller nuevo que olvide permisos no
+    # hereda `external_actions:execute` por accidente.
+    perms = resolve_workflow_permissions(permissions, system_context=system_context)
     exec_ctx = ExecutionContext(
         organization_id=eff_org,
         workspace_id=eff_ws,
@@ -1427,6 +1456,7 @@ async def run_due_scheduled_workflows(
                 organization_id=row.organization_id,
                 workspace_id=row.workspace_id,
                 actor_type="scheduler",
+                system_context=True,
                 correlation_id=f"sched:{row.id}:{int(now.timestamp())}",
             )
         except WorkflowAccessError:
@@ -1492,6 +1522,7 @@ async def run_workflow_from_hook(workflow_id: UUID, secret: str, payload: dict |
         organization_id=row.organization_id,
         workspace_id=row.workspace_id,
         actor_type="webhook",
+        system_context=True,
         correlation_id=f"hook:{workflow_id}",
     )
 
@@ -1613,6 +1644,7 @@ async def decide_approval(
         workspace_id=None,
         actor_type="approval",
         actor_id=decided_by,
+        system_context=True,
         correlation_id=corr,
         resume=True,
         run_id=run_id,
