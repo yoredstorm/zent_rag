@@ -443,9 +443,11 @@ Guías: [sdk/python/README.md](sdk/python/README.md) · [sdk/node/README.md](sdk
 docker compose logs -f api
 docker compose up -d --build api
 
-pip install -e ".[dev]"
-pytest tests/ -v
-ruff check src/ tests/ sdk/python
+# Toolchain reproducible (Python 3.11 + uv.lock):
+# ver docs/architecture/hardening/15-toolchain-reproducible.md
+uv sync --frozen --extra prod --extra dev
+uv run --frozen --no-sync pytest tests/ -v
+uv run --frozen --no-sync ruff check src/ tests/ sdk/python
 ```
 
 <details>

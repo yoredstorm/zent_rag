@@ -26,8 +26,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check src/ tests/ sdk/python
+      - name: Install uv (versión fijada)
+        run: python -m pip install "uv==0.12.13"
+      - name: Lock alineado con pyproject (frozen)
+        run: uv lock --check
+      - name: Toolchain desde el lock (frozen)
+        run: uv sync --frozen --extra dev
+      - run: uv run --frozen --no-sync ruff check src/ tests/ sdk/python
 
   pip-audit:
     runs-on: ubuntu-latest
@@ -51,7 +56,7 @@ jobs:
       RAG_POSTGRES_HOST: localhost
       RAG_POSTGRES_PORT: "5432"
       RAG_POSTGRES_USER: rag_user
-      RAG_POSTGRES_PASSWORD: changeme_in_production
+      RAG_POSTGRES_PASSWORD: zent_ci_password
       RAG_POSTGRES_DB: rag_platform
       RAG_REDIS_URL: redis://localhost:6379/0
       RAG_QDRANT_HOST: localhost
@@ -71,12 +76,12 @@ jobs:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: rag_user
-          POSTGRES_PASSWORD: changeme_in_production
+          POSTGRES_PASSWORD: zent_ci_password
           POSTGRES_DB: rag_platform
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U rag_user -d rag_platform"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
@@ -109,9 +114,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-          export PGPASSWORD=changeme_in_production
+          export PGPASSWORD=zent_ci_password
           # Baseline scripts only (01–31). Incremental schema (Alembic 002+,
-          # e.g. organizations.primary_region_id) is applied after pip via
+          # e.g. organizations.primary_region_id) is applied after uv sync via
           # `alembic upgrade head`, matching Dockerfile.api / docker compose.
           for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
             psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
@@ -119,20 +124,22 @@ jobs:
 
       - name: Seed dev key (CI-only, mirrors 07-dev-seed.sh)
         run: |
-          PGPASSWORD=changeme_in_production psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
+          PGPASSWORD=zent_ci_password psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
 
-      - name: Install deps
-        run: pip install -e ".[prod,dev]"
+      - name: Install deps (lock reproducible)
+        run: |
+          python -m pip install "uv==0.12.13"
+          uv sync --frozen --extra prod --extra dev
 
       - name: Apply Alembic migrations
-        run: alembic upgrade head
+        run: uv run --frozen --no-sync alembic upgrade head
 
       - name: Architecture invariants (fast, required)
         run: |
           # Invariantes de arquitectura y contratos: rápido y obligatorio en PR.
           # Un fallo acá es un cambio de contrato, no un test flaky.
           set -o pipefail
-          pytest \
+          uv run --frozen --no-sync pytest \
             tests/test_architecture.py \
             tests/test_terminal_transitions_allowlist.py \
             tests/test_reason_codes.py \
@@ -150,10 +157,12 @@ jobs:
             tests/test_provider_attempts.py \
             tests/test_run_metrics.py \
             tests/test_run_state.py \
+            tests/test_openapi_contract.py \
+            tests/test_db_lifecycle.py \
             tests/test_chaos_resilience.py \
             tests/test_flags_inventory.py \
             tests/test_exception_certification.py \
-            -q --no-header 2>&1 | tee /tmp/invariants.log
+            -q --no-header --junitxml=artifacts/junit-invariants.xml 2>&1 | tee /tmp/invariants.log
 
       - name: Annotate invariant failure
         if: failure()
@@ -167,7 +176,15 @@ jobs:
       - name: Run tests
         run: |
           set -o pipefail
-          pytest tests/ -v --tb=short --timeout=300 -x 2>&1 | tee /tmp/pytest.log
+          # PR: fail-fast (-x) para feedback corto. Push a master: suite completa
+          # sin -x — todos los fallos visibles sobre el mismo SHA.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            XFLAG="-x"
+          else
+            XFLAG=""
+          fi
+          uv run --frozen --no-sync pytest tests/ -v --tb=short --timeout=300 $XFLAG \
+            --junitxml=artifacts/junit-tests.xml 2>&1 | tee /tmp/pytest.log
 
       - name: Annotate test failure
         if: failure()
@@ -180,6 +197,14 @@ jobs:
           } | while IFS= read -r line; do
             echo "::error::$(echo "$line" | cut -c1-220)"
           done
+
+      - name: Upload JUnit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-ci
+          path: artifacts/junit-*.xml
+          if-no-files-found: ignore
 
   sdk-python:
     runs-on: ubuntu-latest
@@ -227,7 +252,7 @@ jobs:
       RAG_POSTGRES_HOST: localhost
       RAG_POSTGRES_PORT: "5432"
       RAG_POSTGRES_USER: rag_user
-      RAG_POSTGRES_PASSWORD: changeme_in_production
+      RAG_POSTGRES_PASSWORD: zent_ci_password
       RAG_POSTGRES_DB: rag_platform
       RAG_REDIS_URL: redis://localhost:6379/0
       RAG_QDRANT_HOST: localhost
@@ -245,12 +270,12 @@ jobs:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: rag_user
-          POSTGRES_PASSWORD: changeme_in_production
+          POSTGRES_PASSWORD: zent_ci_password
           POSTGRES_DB: rag_platform
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U rag_user -d rag_platform"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
@@ -288,24 +313,26 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-          export PGPASSWORD=changeme_in_production
+          export PGPASSWORD=zent_ci_password
           for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
             psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
           done
 
       - name: Seed dev key (mirrors 07-dev-seed.sh)
         run: |
-          PGPASSWORD=changeme_in_production psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
+          PGPASSWORD=zent_ci_password psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
 
-      - name: Install deps
-        run: pip install -e ".[prod,dev]"
+      - name: Install deps (lock reproducible)
+        run: |
+          python -m pip install "uv==0.12.13"
+          uv sync --frozen --extra prod --extra dev
 
       - name: Apply Alembic migrations
-        run: alembic upgrade head
+        run: uv run --frozen --no-sync alembic upgrade head
 
       - name: Start API
         run: |
-          nohup uvicorn src.api.main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
+          nohup uv run --frozen --no-sync uvicorn src.api.main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
           for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:8000/health > /dev/null; then break; fi
             sleep 2

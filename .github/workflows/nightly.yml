@@ -13,7 +13,7 @@ jobs:
       RAG_POSTGRES_HOST: localhost
       RAG_POSTGRES_PORT: "5432"
       RAG_POSTGRES_USER: rag_user
-      RAG_POSTGRES_PASSWORD: changeme_in_production
+      RAG_POSTGRES_PASSWORD: zent_ci_password
       RAG_POSTGRES_DB: rag_platform
       RAG_REDIS_URL: redis://localhost:6379/0
       RAG_QDRANT_HOST: localhost
@@ -29,12 +29,12 @@ jobs:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: rag_user
-          POSTGRES_PASSWORD: changeme_in_production
+          POSTGRES_PASSWORD: zent_ci_password
           POSTGRES_DB: rag_platform
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U rag_user -d rag_platform"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
@@ -67,26 +67,29 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-          export PGPASSWORD=changeme_in_production
+          export PGPASSWORD=zent_ci_password
           for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
             psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
           done
 
-      - name: Install deps
-        run: pip install -e ".[prod,dev]"
+      - name: Install deps (lock reproducible)
+        run: |
+          python -m pip install "uv==0.12.13"
+          uv sync --frozen --extra prod --extra dev
 
       - name: Apply Alembic migrations
-        run: alembic upgrade head
+        run: uv run --frozen --no-sync alembic upgrade head
 
       - name: "Full suite (sin -x: todos los fallos visibles)"
         run: |
           set -o pipefail
-          pytest tests/ -q --tb=short --timeout=600 2>&1 | tee /tmp/nightly-full.log
+          uv run --frozen --no-sync pytest tests/ -q --tb=short --timeout=600 \
+            --junitxml=artifacts/junit-nightly-full.xml 2>&1 | tee /tmp/nightly-full.log
 
       - name: Adversarial matrix
         run: |
           set -o pipefail
-          pytest \
+          uv run --frozen --no-sync pytest \
             tests/test_adversarial_matrix.py \
             tests/test_adversarial_generalization.py \
             tests/test_llm_stream_fallback.py \
@@ -98,11 +101,19 @@ jobs:
           set -o pipefail
           for i in 1 2 3; do
             echo "== pasada $i =="
-            pytest \
+            uv run --frozen --no-sync pytest \
               tests/test_finalization_golden.py::test_estabilidad_cien_runs_por_caso \
               tests/test_adversarial_matrix.py::test_resolucion_estable_100_runs \
               -q --tb=short
           done
+
+      - name: Upload JUnit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-nightly
+          path: artifacts/junit-*.xml
+          if-no-files-found: ignore
 
       - name: Annotate failures
         if: failure()

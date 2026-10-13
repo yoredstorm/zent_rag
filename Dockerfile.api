@@ -16,46 +16,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Toolchain reproducible: mismas versiones exactas que CI/tests (uv.lock).
+COPY --from=ghcr.io/astral-sh/uv:0.12.13 /uv /uvx /bin/
+
 # Virtualenv en ruta accesible por cualquier usuario (no bajo /root)
 RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV PATH="/opt/venv/bin:$PATH" \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 COPY sdk/python ./sdk/python
 
-RUN pip install --no-cache-dir \
-    fastapi>=0.115.0 \
-    uvicorn[standard]>=0.30.0 \
-    pydantic>=2.0.0 \
-    pydantic-settings>=2.0.0 \
-    sqlalchemy[asyncio]~=2.0.30 \
-    asyncpg>=0.29.0 \
-    psycopg2-binary>=2.9.0 \
-    redis[hiredis]>=5.0.0 \
-    litellm>=1.40.0 \
-    qdrant-client>=1.9.0 \
-    structlog>=24.0.0 \
-    prometheus-fastapi-instrumentator>=7.0.0 \
-    prometheus-client>=0.20.0 \
-    httpx>=0.27.0 \
-    pyyaml>=6.0 \
-    alembic>=1.14.0 \
-    sqlglot>=26.0.0 \
-    hvac>=2.0.0 \
-    opentelemetry-api>=1.30.0 \
-    opentelemetry-sdk>=1.30.0 \
-    opentelemetry-exporter-otlp>=1.30.0 \
-    opentelemetry-instrumentation-fastapi>=0.51b0 \
-    cryptography>=42.0.0 \
-    bcrypt>=4.1.0 \
-    pyotp>=2.9.0 \
-    markitdown[pdf,docx]>=0.1.3 \
-    pdfplumber>=0.11.0 \
-    python-docx>=1.1.0 \
-    openpyxl>=3.1.0 \
-    boto3>=1.34.0 \
-    python-multipart>=0.0.9 \
-    mcp>=2.0 \
+# Deps de producción desde el lock (frozen). El proyecto en sí no se instala:
+# el runtime copia el código y usa PYTHONPATH (mismo contrato que CI).
+RUN uv sync --frozen --extra prod --no-install-project \
     && pip install --no-cache-dir ./sdk/python
 # JEV SDK opcional: el adapter HTTP (src/decision/providers/jev.py) ya usa
 # httpx, instalado arriba. Para el cliente oficial, agregar a la lista
