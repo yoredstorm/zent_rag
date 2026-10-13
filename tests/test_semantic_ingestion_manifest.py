@@ -518,7 +518,20 @@ async def _create_job(ctx) -> uuid.UUID:
 
 
 @pytest.mark.asyncio
-async def test_engine_writes_manifest_and_skips_unchanged_source(semantic_context) -> None:
+async def test_engine_writes_manifest_and_skips_unchanged_source(
+    semantic_context, monkeypatch
+) -> None:
+    # Hermético al entorno local: la representación densa por defecto es
+    # `content`; el test de `semantic` la fija explícitamente aparte. Sin esto,
+    # un .env con RAG_EMBEDDING_DENSE_REPRESENTATION=semantic cambia el payload.
+    from src.core.config import get_settings
+
+    monkeypatch.setattr(
+        get_settings(),
+        "EMBEDDING_DENSE_REPRESENTATION",
+        "content",
+        raising=False,
+    )
     structured_repo = FakeStructuredDocRepo()
     store = PostgresSemanticIngestionStore()
     engine = KnowledgeIngestionEngine(
