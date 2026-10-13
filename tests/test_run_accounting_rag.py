@@ -62,6 +62,23 @@ def _rag_result(
     )
 
 
+def _total_only_result(
+    *, cognitive: float = 0.0, total_tokens: int = 120
+) -> RAGQueryResult:
+    """Provider que reporta SOLO total (deep DAG / providers sin split)."""
+    return RAGQueryResult(
+        query="q" * 16,
+        llm_response=LLMResponse(
+            content="respuesta",
+            model="test-model",
+            total_tokens=total_tokens,
+            latency_ms=1.0,
+        ),
+        retrieval_context=_Chunks(),
+        cognitive_cost_usd=cognitive,
+    )
+
+
 class TestRagLedgerEqualsEvent:
     @pytest.mark.asyncio
     async def test_ledger_totales_igualan_el_evento(self, monkeypatch) -> None:
@@ -166,6 +183,120 @@ class TestRagLineasExplicitas:
         )
         assert event.cost_tags.get("jev_tokens") == 15
         assert event.total_tokens == 1500
+
+
+class TestRagPricingSinSplit:
+    """C9: el asiento base entra al ledger aunque el provider no mande split.
+
+    Regresión: `resolve_call_cost` cortaba con `no_tokens` cuando
+    prompt/completion eran 0 (LLMResponse con solo `total_tokens`), y el evento
+    terminaba leyendo únicamente el cargo cognitivo.
+    """
+
+    @staticmethod
+    def _fake_estimate(base: float = 0.001):
+        async def _fake(model: str, **kwargs) -> float:
+            return base
+
+        return _fake
+
+    @staticmethod
+    def _sin_pricing():
+        async def _boom(model: str) -> PriceRecord:
+            raise RuntimeError("no pricing")
+
+        return _boom
+
+    @pytest.mark.asyncio
+    async def test_total_sin_split_cotiza_base_y_suma_cognitivo(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            "src.platform.billing.pricing.estimate_cost", self._fake_estimate()
+        )
+        monkeypatch.setattr(
+            "src.platform.billing.pricing.get_price", self._sin_pricing()
+        )
+        result = _total_only_result(cognitive=0.01)
+        await account_rag_result(result, query=result.query, model="test-model")
+
+        ledger = RunBudgetLedger(result, max_steps=0, max_tokens=0, max_cost_usd=None)
+        event = _build_usage_event(
+            result,
+            organization_id=uuid4(),
+            user_id=uuid4(),
+            effective_model="test-model",
+        )
+
+        assert result.cost == pytest.approx(0.011)
+        assert ledger.consumed_cost_usd == pytest.approx(0.011)
+        assert event.estimated_cost == pytest.approx(0.011)
+        assert event.actual_cost == pytest.approx(0.011)
+        assert event.estimated_cost == pytest.approx(ledger.consumed_cost_usd)
+        assert event.cost_tags == {"cognitive_deep": True}
+
+        charges = [s for s in result.steps if s.get("purpose") == "cognitive_deep"]
+        assert len(charges) == 1
+        assert charges[0]["type"] == "charge"
+        assert charges[0]["cost"] == pytest.approx(0.01)
+
+    @pytest.mark.asyncio
+    async def test_una_sola_linea_cognitiva_y_doble_llamada_no_duplica(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            "src.platform.billing.pricing.estimate_cost", self._fake_estimate()
+        )
+        monkeypatch.setattr(
+            "src.platform.billing.pricing.get_price", self._sin_pricing()
+        )
+        result = _total_only_result(cognitive=0.01)
+        await account_rag_result(result, query=result.query, model="test-model")
+        primero = (result.cost, result.total_tokens, result.llm_calls)
+
+        # El proceso es idempotente: la segunda llamada es no-op.
+        await account_rag_result(result, query=result.query, model="test-model")
+
+        assert (result.cost, result.total_tokens, result.llm_calls) == primero
+        charges = [s for s in result.steps if s.get("purpose") == "cognitive_deep"]
+        assert len(charges) == 1
+
+    @pytest.mark.asyncio
+    async def test_costo_desconocido_sigue_unknown_no_cero(self, monkeypatch) -> None:
+        async def _boom_estimate(model: str, **kwargs) -> float:
+            raise RuntimeError("no pricing")
+
+        monkeypatch.setattr(
+            "src.platform.billing.pricing.estimate_cost", _boom_estimate
+        )
+        monkeypatch.setattr(
+            "src.platform.billing.pricing.get_price", self._sin_pricing()
+        )
+        result = _total_only_result(cognitive=0.0)
+        await account_rag_result(result, query=result.query, model="test-model")
+
+        assert result.cost == 0.0
+        assert result.cost_status == "unknown"
+        llm = [s for s in result.steps if s["type"] == "llm"][0]
+        assert llm["cost_status"] == "unknown"
+        assert "cost" not in llm
+
+    @pytest.mark.asyncio
+    async def test_suma_de_lineas_igual_al_total_sin_doble_billing(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr("src.platform.billing.pricing.get_price", _fake_price())
+        result = _rag_result(cognitive=0.002)
+        await account_rag_result(result, query=result.query, model="test-model")
+
+        lineas = [s for s in result.steps if s["type"] in {"llm", "embedding", "charge"}]
+        assert sum(float(s.get("cost") or 0.0) for s in lineas) == pytest.approx(
+            result.cost
+        )
+        # El guard anti-doble-billing: un único cargo cognitivo por run.
+        cognitivos = [s for s in lineas if s.get("purpose") == "cognitive_deep"]
+        assert len(cognitivos) == 1
+        assert cognitivos[0]["cost"] == pytest.approx(0.002)
 
 
 class TestAgentSingleWriter:

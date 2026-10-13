@@ -511,6 +511,11 @@ async def test_deep_path_suma_costo_cognitivo_al_usage(monkeypatch) -> None:
     assert event.estimated_cost == pytest.approx(0.011)
     assert event.actual_cost == pytest.approx(0.011)
     assert event.cost_tags == {"cognitive_deep": True}
+    # Una sola línea cognitiva y proyección canónica: ledger == result == evento.
+    charges = [s for s in result.steps if s.get("purpose") == "cognitive_deep"]
+    assert len(charges) == 1
+    assert event.estimated_cost == pytest.approx(result.cost)
+    assert event.actual_cost == pytest.approx(result.cost)
 
 
 @pytest.mark.asyncio

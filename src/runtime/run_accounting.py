@@ -44,11 +44,32 @@ async def resolve_call_cost(
     completion_tokens: int,
     *,
     provider_cost: Any = None,
+    total_tokens: int = 0,
 ) -> tuple[float | None, str, str]:
     """(costo, known|unknown, razón). UNKNOWN no se disfraza de cero."""
     if isinstance(provider_cost, (int, float)) and not isinstance(provider_cost, bool):
         return float(provider_cost), "known", "provider"
     if prompt_tokens <= 0 and completion_tokens <= 0:
+        if int(total_tokens or 0) > 0:
+            # El provider reportó tokens totales sin split (p. ej. DAG cognitivo).
+            # Se cotiza la línea por la entrada canónica de pricing (request
+            # cost); el split desconocido NO se inventa ni se cobra como tokens.
+            try:
+                from src.platform.billing.pricing import estimate_cost
+
+                return (
+                    float(
+                        await estimate_cost(
+                            model or "default",
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                        )
+                    ),
+                    "known",
+                    "pricing_table",
+                )
+            except Exception as exc:  # noqa: BLE001 — sin precio, unknown (nunca 0)
+                return None, "unknown", type(exc).__name__
         return None, "unknown", "no_tokens"
     try:
         from src.runtime.run_budget import usage_cost
@@ -102,6 +123,7 @@ async def record_llm_call(
         prompt,
         completion,
         provider_cost=getattr(response, "cost", None) if response is not None else None,
+        total_tokens=total,
     )
     ledger.account_llm_usage(
         prompt_tokens=prompt,
