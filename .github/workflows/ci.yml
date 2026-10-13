@@ -150,6 +150,9 @@ jobs:
             tests/test_provider_attempts.py \
             tests/test_run_metrics.py \
             tests/test_run_state.py \
+            tests/test_chaos_resilience.py \
+            tests/test_flags_inventory.py \
+            tests/test_exception_certification.py \
             -q --no-header 2>&1 | tee /tmp/invariants.log
 
       - name: Annotate invariant failure

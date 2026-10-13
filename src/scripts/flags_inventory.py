@@ -32,7 +32,10 @@ FLAG_PREFIXES = (
     "LLM_",
     "CACHE_",
 )
-SECRET_MARKERS = ("API_KEY", "SECRET", "PASSWORD", "TOKEN")
+#: Las claves documentadas en `.env.example` llevan el prefijo del modelo.
+ENV_FLAG_PREFIXES = tuple(f"RAG_{prefix}" for prefix in FLAG_PREFIXES)
+#: Sufijos que marcan un campo como secreto (no se inventarían en el ejemplo).
+SECRET_SUFFIXES = ("_API_KEY", "_SECRET", "_PASSWORD", "_TOKEN", "_KEY")
 
 
 def _default_of(field: object) -> str:
@@ -53,9 +56,19 @@ def collect_flags() -> list[dict]:
 
     flags: list[dict] = []
     for name, field in Settings.model_fields.items():
-        if not name.startswith(FLAG_PREFIXES):
+        alias = getattr(field, "validation_alias", None)
+        choices = getattr(alias, "choices", None) or ()
+        aliases = sorted(str(choice).upper() for choice in choices)
+        # Un campo cuenta si su nombre canónico o un alias es un flag de env.
+        if not (
+            name.startswith(FLAG_PREFIXES)
+            or any(alias.startswith(ENV_FLAG_PREFIXES) for alias in aliases)
+        ):
             continue
-        if any(marker in name for marker in SECRET_MARKERS):
+        if (
+            any(marker in name for marker in ("API_KEY", "SECRET", "PASSWORD"))
+            or name.endswith(SECRET_SUFFIXES)
+        ):
             continue
         flags.append(
             {
@@ -63,6 +76,7 @@ def collect_flags() -> list[dict]:
                 "field": name,
                 "default": _default_of(field),
                 "purpose": str(getattr(field, "description", "") or "").strip(),
+                "aliases": aliases,
             }
         )
     return sorted(flags, key=lambda item: item["field"])
@@ -82,13 +96,27 @@ def collect_env_example() -> dict[str, str]:
 
 
 def compute_drift(flags: list[dict], env_keys: dict[str, str]) -> dict[str, list[str]]:
+    """Drift entre Settings y `.env.example`.
+
+    Un flag cuenta como documentado si su nombre canónico (`RAG_<campo>`) o uno
+    de sus alias aparece en el ejemplo: el alias es el nombre real de la env.
+    """
     flag_names = {item["flag"] for item in flags}
+    alias_names = {
+        alias for item in flags for alias in (item.get("aliases") or ())
+    }
     env_flags = {
-        key for key in env_keys if key.startswith(FLAG_PREFIXES)
+        key for key in env_keys if key.startswith(ENV_FLAG_PREFIXES)
+    }
+    documented = {
+        item["flag"]
+        for item in flags
+        if item["flag"] in env_flags
+        or (set(item.get("aliases") or ()) & env_flags)
     }
     return {
-        "en_env_sin_setting": sorted(env_flags - flag_names),
-        "setting_sin_env_example": sorted(flag_names - env_flags),
+        "en_env_sin_setting": sorted(env_flags - flag_names - alias_names),
+        "setting_sin_env_example": sorted(flag_names - documented),
     }
 
 
@@ -107,7 +135,11 @@ def render_markdown(flags: list[dict], drift: dict[str, list[str]]) -> str:
         if len(purpose) > 160:
             purpose = purpose[:157] + "..."
         default = item["default"].replace("|", "/") or "-"
-        lines.append(f"| `{item['flag']}` | `{default}` | {purpose} |")
+        name = f"`{item['flag']}`"
+        aliases = item.get("aliases") or ()
+        if aliases:
+            name += " (alias " + ", ".join(f"`{alias}`" for alias in aliases) + ")"
+        lines.append(f"| {name} | `{default}` | {purpose} |")
     lines += ["", "## Drift con .env.example", ""]
     if drift["en_env_sin_setting"]:
         lines.append(
