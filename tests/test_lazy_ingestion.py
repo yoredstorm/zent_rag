@@ -28,6 +28,17 @@ NO_INFO_ADMIN = "No tengo suficiente información"
 NO_INFO_CANONICAL = "No hay evidencia suficiente"
 
 
+@pytest.fixture(autouse=True)
+def _flow_store_sin_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit test de orquestación: la persistencia real de `rag_flows` es del
+    camino de integración (tests/test_rag_flow.py). Una organization fake no
+    debe generar errores de FK contra una DB que este test no ejercita."""
+    async def _noop(**kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("src.rag.flow_store.record_flow", _noop)
+
+
 def _no_info(content: str) -> bool:
     return NO_INFO_ADMIN in content or NO_INFO_CANONICAL in content
 
@@ -38,8 +49,19 @@ class FakeCache:
         self.lists: dict[str, list[str]] = {}
 
     @staticmethod
-    def _hash_query(organization_id: str, query: str, model: str, role: str = "") -> str:
-        return f"hash:{organization_id}:{query}:{model}:{role}"
+    def _hash_query(
+        organization_id: str,
+        query: str,
+        model: str,
+        role: str = "",
+        knowledge_fingerprint: str = "",
+        conversation_id: Any = None,
+    ) -> str:
+        """Firma vigente del orquestador: el cache está scoped por conversación."""
+        return (
+            f"hash:{organization_id}:{conversation_id or ''}:{query}:{model}:"
+            f"{role}:{knowledge_fingerprint}"
+        )
 
     async def get(self, key: str) -> str | None:
         return self.store.get(key)
@@ -278,20 +300,30 @@ def test_extract_query_keywords_drops_stopwords_and_short_tokens() -> None:
 # Orchestrator gates
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_cached_no_info_answer_is_regenerated() -> None:
+async def test_cached_no_info_answer_is_regenerated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Una respuesta 'no tengo información' cacheada se descarta y se regenera.
 
     Evita que un fallo transitorio del SQL Expert sirva respuestas negativas
-    obsoletas durante 5 minutos.
+    obsoletas durante 5 minutos. La clave vigente está scoped por conversación
+    y por fingerprint de conocimiento: el test fija ambos explícitamente.
     """
     organization = _organization()
+    conversation_id = uuid4()
     vs = FakeVectorStore()
     vs.enqueue_search(_chunk_ctx())
     vs.enqueue_search(_chunk_ctx())
     llm = FakeLLM(content="El producto más vendido es Paracetamol.")
     cache = FakeCache()
+    fingerprint = "fp-test"
     key = cache._hash_query(
-        str(organization.id), "cuál es el producto más vendido", "default", "admin"
+        str(organization.id),
+        "cuál es el producto más vendido",
+        "default",
+        "admin",
+        knowledge_fingerprint=fingerprint,
+        conversation_id=conversation_id.hex,
     )
     cache.store[key] = json.dumps(
         "No tengo suficiente información para responder esta pregunta. "
@@ -305,11 +337,17 @@ async def test_cached_no_info_answer_is_regenerated() -> None:
         cache=cache,
     )
 
+    async def _fake_fingerprint(organization_id: UUID) -> str:
+        return fingerprint
+
+    monkeypatch.setattr(orch, "_knowledge_cache_fingerprint", _fake_fingerprint)
+
     result = await orch.execute(
         organization_id=organization.id,
         user_id=uuid4(),
         query="cuál es el producto más vendido",
         use_cache=True,
+        conversation_id=conversation_id,
     )
 
     assert len(llm.calls) == 1

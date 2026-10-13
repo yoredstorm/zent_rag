@@ -24,6 +24,17 @@ from src.core.domain.entities import (
 from src.rag.retrieval.hybrid import HybridRetriever
 
 
+@pytest.fixture(autouse=True)
+def _flow_store_sin_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit test de orquestación: la persistencia real de `rag_flows` es del
+    camino de integración (tests/test_rag_flow.py). Una organization fake no
+    debe generar errores de FK contra una DB que este test no ejercita."""
+    async def _noop(**kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("src.rag.flow_store.record_flow", _noop)
+
+
 class FakeCache:
     def __init__(self) -> None:
         self.store: dict[str, str] = {}
