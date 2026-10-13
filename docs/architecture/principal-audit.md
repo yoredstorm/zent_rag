@@ -301,6 +301,25 @@ Solo hallazgos con evidencia en el repo. Ordenados por
 - F0: scripts `flags_inventory`/`simplification_score`/`finalization_audit`,
   corpus dorado de la política (`tests/golden/finalization_cases.json`).
 
+**HECHO (hardening F4–F7, 2026-10-13)** — ver `hardening/02-report.md`:
+- F4: contrato del prompt (`src/runtime/prompt_assembly.py`,
+  `prompt-assembly-1`): solo política y contrato pueden instruir; el resto es
+  DATO con encabezado del sobre. Etiqueta ad-hoc de evidencia eliminada.
+- F5: intentos del router visibles en el ledger (`LLMResponse.attempts` +
+  líneas `provider_attempt` + `zent_provider_attempts_total`), sin doble conteo.
+- F6: `src/runtime/failure_taxonomy.py` (clases únicas) + CI que escanea
+  literales de `reason_code` en el runtime contra el catálogo.
+- F7: métricas run-level en un único publisher (`run_metrics.py`) con labels
+  acotados y costo unknown explícito.
+
+**NEXT (hardening)**
+- F8: extracción del cierre restante (`_try_finalize_answer`) y fronteras del
+  orquestador.
+- F9–F11: perf con corpus A/B/C, load harness y chaos subset en nightly.
+- F12: CI fast/full (invariantes + adversarial + stability ×100 en nightly).
+- F13: SLOs, dashboards, alertas y runbooks.
+- F14: auditoría final y reporte antes/después del programa completo.
+
 **NEXT**
 11. Invariantes de texto para el resto de los estados de respuesta (ya
     cubiertos RETRIEVAL_UNAVAILABLE y UNDETERMINED).
