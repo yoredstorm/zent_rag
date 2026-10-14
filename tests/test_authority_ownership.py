@@ -186,6 +186,24 @@ AUTHORITY_REGISTRY: dict[str, tuple[str, str]] = {
 }
 
 
+#: Autoridades añadidas por la fase de convergencia: deben existir y estar
+#: declaradas en el mapa AFTER (05-ownership-map-after.md).
+POST_PHASE_AUTHORITIES: dict[str, tuple[str, str]] = {
+    "closure_resolution": (
+        "src.runtime.finalization_policy",
+        "resolve_closure_phase",
+    ),
+    "evidence_condition": (
+        "src.runtime.evidence_semantics",
+        "classify_evidence_condition",
+    ),
+    "workflow_permissions": (
+        "src.platform.workflows.engine",
+        "resolve_workflow_permissions",
+    ),
+}
+
+
 def _src_files() -> list[Path]:
     return [
         path
@@ -399,8 +417,18 @@ def test_ownership_map_declara_el_registro() -> None:
     baseline_doc = ownership / "00-baseline.md"
     duplicates_doc = ownership / "02-duplicated-authorities.md"
     adr_doc = ownership / "03-adr-decisions.md"
+    after_doc = ownership / "05-ownership-map-after.md"
+    report_doc = ownership / "06-final-report.md"
     missing = [
-        path.name for path in (map_doc, baseline_doc, duplicates_doc, adr_doc)
+        path.name
+        for path in (
+            map_doc,
+            baseline_doc,
+            duplicates_doc,
+            adr_doc,
+            after_doc,
+            report_doc,
+        )
         if not path.exists()
     ]
     assert not missing, f"documentos de ownership faltantes: {missing}"
@@ -419,4 +447,28 @@ def test_ownership_map_declara_el_registro() -> None:
     assert "tests/test_authority_ownership.py" in map_text, (
         "el mapa debe referenciar el ratchet que lo protege"
     )
+
+    after_text = after_doc.read_text(encoding="utf-8")
+    absent_after = [
+        state for state in POST_PHASE_AUTHORITIES if state not in after_text
+    ]
+    assert not absent_after, (
+        "05-ownership-map-after.md no declara las autoridades de la fase: "
+        f"{absent_after}"
+    )
+
+
+def test_post_phase_authorities_exist() -> None:
+    import importlib
+
+    missing: list[str] = []
+    for state, (module_name, symbol) in POST_PHASE_AUTHORITIES.items():
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:  # noqa: BLE001 — el test debe explicar el fallo
+            missing.append(f"{state}: import {module_name} falló ({exc})")
+            continue
+        if not hasattr(module, symbol):
+            missing.append(f"{state}: {module_name}.{symbol} no existe")
+    assert not missing, "\n".join(missing)
 
