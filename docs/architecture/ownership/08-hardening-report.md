@@ -98,6 +98,7 @@ Cada afirmación tiene un test behavioral además del estático.
 | CI del baseline | run [`38491910749`](https://github.com/yoredstorm/zent_rag/actions/runs/38491910749): **10/10 success**; Nightly [`38520279844`](https://github.com/yoredstorm/zent_rag/actions/runs/38520279844): success |
 | SHA del cambio de autoridad | `6661aa8af1175576dddfb8ec9fd9c61312109516` |
 | CI del cambio | run [`38583136531`](https://github.com/yoredstorm/zent_rag/actions/runs/38583136531): **10/10 success** (`secrets-scan`, `lint`, `pip-audit`, `test`, `sdk-python`, `sdk-node`, `portal`, `portal-e2e`, `kustomize`, `build`) |
+| CI del commit de evidencia (docs-only) | run [`38588463321`](https://github.com/yoredstorm/zent_rag/actions/runs/38588463321): `test` success (suite completa); `portal-e2e` falló en el step «Run E2E (smoke + axe)» con código idéntico al run verde anterior → flake del job, no del cambio (sin logs públicos para el detalle) |
 | Paso de invariantes (local, pre-CI) | 405 passed sobre los 33 archivos del paso `Architecture invariants (fast, required)` |
 | `ruff check src/ tests/ sdk/python` | limpio |
 | `uv lock --check` | OK (sin dependencias nuevas) |
