@@ -1,0 +1,50 @@
+{
+  "schema": "zent.cert.local-deploy/1",
+  "git_sha": "ff072e88dedceaa22e03e7db28fc1b84814d7abb",
+  "generated_at": "2026-10-14T23:07:18.893766+00:00",
+  "checks": {
+    "api_health": {
+      "http": 200,
+      "body": "{\"status\":\"healthy\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"ok\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}"
+    },
+    "image_sha_in_container": {
+      "RAG_GIT_SHA": "ff072e88dedceaa22e03e7db28fc1b84814d7abb",
+      "RAG_RUNTIME_BUILD_TIMESTAMP": ""
+    },
+    "prometheus_rules": {
+      "groups": [
+        "zent-authority-security",
+        "zent-availability",
+        "zent-cost",
+        "zent-knowledge",
+        "zent-latency",
+        "zent-provider"
+      ],
+      "total": 24,
+      "with_error": []
+    },
+    "prometheus_targets": {
+      "up": [
+        "prometheus",
+        "rag-api"
+      ],
+      "down": []
+    },
+    "grafana_dashboard": {
+      "http": 200,
+      "title": "ZENT — Producción (canary)",
+      "panels": 35
+    },
+    "metrics_run_level": {
+      "http": 200,
+      "series": [
+        "zent_run_latency_seconds_count{path=\"rag\"}",
+        "zent_runs_total{path=\"rag\",phase=\"FINALIZED\"}"
+      ]
+    },
+    "ssrf_e2e_in_container": {
+      "passed": true,
+      "output": "PASS: redirect interno bloqueado -> Blocked URL host: Blocked private network IP: 169.254.169.254 (add host to connector confi\nprimer hop pedido: ['/spec']"
+    }
+  }
+}

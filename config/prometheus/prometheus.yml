@@ -37,18 +37,18 @@ scrape_configs:
         replacement: "rag-api"
 
   # ---------------------------------------------------------------------------
-  # PostgreSQL — Métricas de base de datos
+  # PostgreSQL - Métricas de base de datos
   # ---------------------------------------------------------------------------
-  - job_name: "postgres-exporter"
-    static_configs:
-      - targets: ["postgres-exporter:9187"]  # Futuro: pg-exporter sidecar
-
-  # ---------------------------------------------------------------------------
-  # Redis — Métricas de caché
-  # ---------------------------------------------------------------------------
-  - job_name: "redis-exporter"
-    static_configs:
-      - targets: ["redis-exporter:9121"]  # Futuro: redis-exporter sidecar
+  # Exporters pendientes: no hay servicio postgres-exporter/redis-exporter en
+  # docker-compose.prod.yml ni en k8s, así que estos jobs quedan deshabilitados
+  # para no generar targets `down` permanentes (ruido en Alertmanager y en la UI).
+  # Al desplegar los exporters, descomentar y ajustar los targets.
+  # - job_name: "postgres-exporter"
+  #   static_configs:
+  #     - targets: ["postgres-exporter:9187"]
+  # - job_name: "redis-exporter"
+  #   static_configs:
+  #     - targets: ["redis-exporter:9121"]
 
   # ---------------------------------------------------------------------------
   # Prometheus — Auto-monitorización

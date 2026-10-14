@@ -213,7 +213,27 @@ desplegada para observabilidad. Los puntajes reflejan lo demostrado hoy.
 internamente, todavía **no certificable para canary** por evidencia de entorno,
 no por falta de diseño.
 
-## 15. Cómo reproducir esta certificación
+## 15. Verificación de deploy local (rebuild + smoke)
+
+Ejecutada después de reconstruir las imágenes locales con el código certificado.
+Evidencia: `artifacts/certification/ff072e8…/local-deploy.json`
+(`scripts/cert/local_deploy_evidence.py`) + `…/perf/http-probe-after-deploy.json`.
+
+| Check | Resultado |
+|---|---|
+| Imagen local `zent_rag-api` reconstruida (target worker, SHA inyectado) | `RAG_GIT_SHA=ff072e88…` dentro del contenedor |
+| `/health` del contenedor nuevo | `healthy` (postgres/qdrant/redis/decision_engine ok) |
+| Prometheus local tras `restart` | 6 grupos, **24 reglas**, 0 reglas con error |
+| Targets de scrape | `rag-api` y `prometheus` up, **0 down** (jobs muertos de exporters deshabilitados) |
+| Grafana | dashboard `ZENT - Producción (canary)` provisionado, 35 paneles |
+| Métricas run-level en `/metrics` | `zent_runs_total{path="rag",phase="FINALIZED"}`, `zent_run_latency_seconds_count{path="rag"}` |
+| **E2E del fix SSRF en el contenedor** | PASS: server local allowlisted recibe 1 request; el 302 a `169.254.169.254` se bloquea y el hop interno nunca se pide (`scripts/cert/ssrf_e2e.py`) |
+| Smoke de query por HTTP (contenedor nuevo) | 200; miss 15,2 s / repetición 7,7 s; TTFT 8,24 s; 0 hits de caché (mismo hallazgo P2 que el probe previo) |
+
+Nota: el SHA del build local es `ff072e8` (HEAD con la evidencia); el código de
+producto es idéntico a `edeeb61` (`git diff edeeb61..ff072e8 -- src ':!src/scripts'` vacío).
+
+## 16. Cómo reproducir esta certificación
 
 ```bash
 python scripts/cert/scratch_db.py create --name rag_cert && python scripts/cert/scratch_db.py init --name rag_cert

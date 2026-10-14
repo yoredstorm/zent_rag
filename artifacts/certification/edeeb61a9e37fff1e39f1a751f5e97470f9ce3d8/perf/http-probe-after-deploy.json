@@ -1,0 +1,23 @@
+{
+  "schema": "zent.cert.http-probe/1",
+  "generated_at": "2026-10-14T23:05:18.961946+00:00",
+  "base_url": "http://127.0.0.1:8000",
+  "organization_id": "00000000-0000-0000-0000-000000000001",
+  "query": "¿Cuál es la política de vacaciones?",
+  "miss_latency_ms": 15222.0,
+  "miss_status": 200,
+  "miss_answer_state": "completed",
+  "miss_cost": null,
+  "miss_tokens": null,
+  "hit_latency_ms": 7710.3,
+  "hit_status": 200,
+  "metrics_delta": {
+    "rag_cache_misses_created{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 1792019125.298,
+    "rag_cache_misses_total{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 2.0
+  },
+  "stream_status": 200,
+  "first_event_ms": 66.4,
+  "ttft_ms": 8236.0,
+  "stream_total_ms": 8238.8,
+  "stream_events": 8
+}

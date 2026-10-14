@@ -107,5 +107,7 @@ comandos reales (no solo "investigate logs").
    `alert-rules.yml`.
 3. Scheduler que dispare `POST /platform/obs/check` (cron/k8s CronJob) si se
    quiere el webhook del tenant sin depender de una llamada manual.
-4. Postgres/Redis exporters (las reglas de saturación usan métricas de la app;
-   los exporters siguen comentados como "futuro" en `prometheus.yml`).
+4. Postgres/Redis exporters: los jobs `postgres-exporter`/`redis-exporter` están
+   deshabilitados en `prometheus.yml` (no hay servicios detrás, generaban targets
+   `down` permanentes). Las reglas de saturación usan métricas de la app; al
+   desplegar los exporters, descomentar los jobs.
