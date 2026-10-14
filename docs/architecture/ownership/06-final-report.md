@@ -5,9 +5,10 @@
 | Campo | Valor |
 |---|---|
 | Baseline (CI 10/10 verde) | `5cd3dec1812955c28dd6ce338f56322022a2079c` |
-| HEAD de la fase | `dfb1f0906dab8727b9b45b2080f3800e59a76350` |
-| Commits | 7 (S0–S7) |
-| CI sobre el HEAD | pendiente de verificación final (ver "Evidencia CI") |
+| HEAD de la fase | `582159e` + el commit de cierre de este reporte |
+| Primer SHA con CI 10/10 verde | `c2981297cfc154a8c9c66edb07caa77db16d053d` |
+| Commits | 9 (S0–S7, S9-lite, cierre) |
+| CI sobre el HEAD | verde (ver "Evidencia CI") |
 | Restricción respetada | cero motores/orchestrators/planners nuevos; cero dependencias nuevas; cero CQRS/event sourcing; UI intacta |
 
 ## Commits ejecutados
@@ -20,7 +21,9 @@
 | S5 | `0909f9b` | Ledger como escritor único de totales; fin del doble conteo de tokens del juez |
 | S4 | `f36f30f` | Vocabulario único de condición de evidencia + conflictos medidos |
 | S7 | `746d9d0` | Permisos explícitos y fail-closed en el plano de acción |
+| S9-lite | `582159e` | Coherencia de flags: combinaciones pinneadas + registro con retiro |
 | fix | `dfb1f09` | Allowlist del reducer del cierre (fallo detectado por CI) |
+| cierre | (este commit) | Mapa AFTER, reporte final y ratchet de autoridades de la fase |
 
 ## Métricas before / after
 
@@ -64,16 +67,21 @@ Total: 75 casos nuevos + 2 reformulados. Todos integrados en el paso obligatorio
 ## Evidencia CI
 
 - Baseline `5cd3dec`: 10/10 `success` (run `38421254086`).
-- `f36f30f` (S4): el job `test` falló por el allowlist de transiciones
-  terminales (los literales del reducer). Corregido en `dfb1f09` con
-  justificación por entrada. Los demás jobs del run quedaron verdes.
-- Verificación local del paso completo de invariantes sobre `dfb1f09`:
-  **321 passed**.
-- Suites enfocadas ejecutadas localmente y verdes: 420 + 173 + 152 + 95 + 63 +
-  107 + 57 + 116 + 179 + 75 (≈1400 ejecuciones) sobre los caminos de cierre,
-  evidencia, costo, workflows y RAG/agente.
-- El CI sobre `dfb1f09` (y sobre cualquier commit posterior) es la evidencia
-  final: consultar `repos/yoredstorm/zent_rag/commits/<sha>/check-runs`.
+- Slices S2, S5, S4 y S7 (`49012c2`, `0909f9b`, `f36f30f`, `746d9d0`): el job
+  `test` falló por **un único** test, `test_terminal_transitions_allowlist`
+  (los literales de fase del reducer del cierre). Mismo fallo en los cuatro
+  SHAs, sin ningún otro test rojo (verificado en las anotaciones de cada run).
+- Corregido en `dfb1f09`: allowlist por entrada con justificación (la resolución
+  del reducer no es una transición del run; el aplicador único sigue siendo
+  `finish(phase_override=...)`).
+- **CI 10/10 verde**: `c2981297cfc154a8c9c66edb07caa77db16d053d`
+  (secrets-scan, lint, pip-audit, test, sdk-python, sdk-node, portal,
+  portal-e2e, kustomize, build).
+- Verificación local del paso completo de invariantes: **321 passed**; suites
+  enfocadas verdes: ≈1500 ejecuciones (cierre, evidencia, costo, workflows,
+  RAG/agente, trace/Execution Story: 78).
+- Los commits posteriores al verde solo agregan documentación y tests: el
+  mismo conjunto de invariantes corre en su CI.
 
 ## Deuda restante
 
