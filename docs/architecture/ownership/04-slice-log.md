@@ -192,5 +192,32 @@ su permiso, el dispatch no trata la ausencia de `authorized` como autorización,
 workflow sin permisos es fail-closed, contexto de sistema explícito, permisos
 explícitos nunca se amplían, e inventario de callers de sistema fijado.
 
+---
+
+## S9-lite — Coherencia de flags (este slice)
+
+### Alcance
+
+Sin cambios de comportamiento: se **pinnean** las 8 combinaciones
+contradictorias detectadas en el recon con su comportamiento real, y se
+clasifica cada flag con autoridad (clase, default, lector, condición de retiro).
+
+### Entregables
+
+- `tests/test_flag_coherence.py` (18 casos): gate encendido con fase salteada,
+  termination gate con fase salteada, canary 0 = off, canary estable por run,
+  etapa de enforcement sin veredicto, precedencia agente > org > env > global,
+  override del agente que desarma el global (P1-3 medido), fail-closed del
+  estado en sus tres scopes, override `answer_gate` bool-only (P1-3), loop JEV
+  que fuerza el gate (P1-6), `guards_enforced`, normalización de fases.
+- `docs/architecture/ownership/07-flags-registry.md`: registro con clase
+  (M/S/P/W) y condición de retiro por flag + tabla de combos contradictorios.
+
+### Deuda que queda
+
+- P1-3 (guard de overrides), P1-6 (corregir combos), P2-1 (prefijos del
+  inventario) siguen abiertos: requieren decisión de producto, ahora con datos.
+
+
 
 

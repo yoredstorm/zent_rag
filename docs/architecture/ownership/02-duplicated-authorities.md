@@ -17,6 +17,7 @@ Estado por entrada (actualizado en cada slice): `ABIERTO`, `EN CURSO`,
 | P0-5 | RESUELTO en S5 (ledger como escritor único; sin doble conteo de tokens del juez) |
 | P1-4 | PARCIAL en S7 (workflows fail-closed + contrato de handlers; dispatcher/cognitive/embed declarados) |
 | P1-1..P1-3, P1-5..P1-7 | ABIERTO (S6/S8/S9/S11) |
+| P2-1, P2-2 | PARCIAL en S9-lite (registro de flags con clase y retiro; falta cubrir los prefijos en el inventario) |
 | P2-1..P2-6 | ABIERTO |
 
 ## P0 — la respuesta a "quién decide" es ambigua
