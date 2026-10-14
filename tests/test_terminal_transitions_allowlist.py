@@ -67,6 +67,28 @@ ALLOWLIST: dict[str, list[tuple[str, int, str]]] = {
         ("return RunPhase.UNDETERMINED", 1, "mapper único status → fase (finish())"),
         ("return RunPhase.FINALIZED", 1, "mapper único status → fase (finish())"),
     ],
+    "src/runtime/finalization_policy.py": [
+        (
+            "return RunPhase.ABSTAINED",
+            1,
+            "reducer del cierre: la resolución DECLARA la fase del veto por "
+            "conflicto de fuentes. No muta el run: el aplicador único sigue "
+            "siendo finish(phase_override=...).",
+        ),
+        (
+            "return RunPhase.UNDETERMINED",
+            1,
+            "reducer del cierre: veto por conflicto de reglas (misma razón: "
+            "declara la resolución, no transiciona el run).",
+        ),
+        (
+            "phase=RunPhase.BLOCKED",
+            2,
+            "reducer del cierre: valor de la resolución en los branches de "
+            "fallo operativo y de cierre no autorizado (autoridad, no "
+            "transición).",
+        ),
+    ],
 }
 
 
