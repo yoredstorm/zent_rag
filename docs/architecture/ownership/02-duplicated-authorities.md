@@ -15,8 +15,13 @@ Estado por entrada (actualizado en cada slice): `ABIERTO`, `EN CURSO`,
 | P0-3 | EN CURSO (S4/S8) |
 | P0-4 | RESUELTO en S4 (vocabulario único de evidencia + conflictos medidos; la corrección de la cobertura parcial se adopta por canary) |
 | P0-5 | RESUELTO en S5 (ledger como escritor único; sin doble conteo de tokens del juez) |
-| P1-4 | PARCIAL en S7 (workflows fail-closed + contrato de handlers; dispatcher/cognitive/embed declarados) |
-| P1-1..P1-3, P1-5..P1-7 | ABIERTO (S6/S8/S9/S11) |
+| P1-1 | RESUELTO (hardening H1: `JEV_SHADOW_MODE` no actúa en ningún modo) |
+| P1-2 | RESUELTO (hardening H2: matriz determinista × JEV; JEV solo no bloquea) |
+| P1-3 | RESUELTO (hardening H3/H4: piso monotónico + override del contrato honrado) |
+| P1-4 | CERRADO por contrato con test (hardening H6: dispatcher/embed/cognitive; el plano de eventos queda P2 documentado) |
+| P1-5 | RECLASIFICADO P3 CON EVIDENCIA (hardening H5: clasificación de guards) |
+| P1-6 | RESUELTO (hardening H4: validación de inicio + combinaciones resueltas por construcción) |
+| P1-7 | RESUELTO (hardening H0: representación muerta eliminada; una sola verdad `stop_reason`) |
 | P2-1, P2-2 | PARCIAL en S9-lite (registro de flags con clase y retiro; falta cubrir los prefijos en el inventario) |
 | P2-1..P2-6 | ABIERTO |
 
@@ -116,6 +121,20 @@ Estado por entrada (actualizado en cada slice): `ABIERTO`, `EN CURSO`,
 - Slice: **S5**.
 
 ## P1 — no debería ser posible, pero no rompe el cierre
+
+**Estado tras el hardening de autoridad (H0–H9, ver `08-hardening-report.md`)**:
+
+| ID | Estado | Evidencia |
+|---|---|---|
+| P1-1 | RESUELTO | `DecisionEngineSettings.acts()` devuelve False con shadow; `tests/test_authorization_matrix.py::TestShadowNoActua` |
+| P1-2 | RESUELTO | Matriz `resolve_authorization` (determinista × JEV); un juicio solo nunca da acción definitiva; `TestPreflightMatriz` |
+| P1-3 | RESUELTO | Piso monotónico en `strict_mode_enabled` y `enforcement_stages`; override `shadow` honrado; `tests/test_safety_floor.py` |
+| P1-4 | CERRADO por contrato con test | Dispatcher denegado/observacional no ejecuta; tool privilegiada no corre con permisos vacíos; DAG cognitivo recibe el tenant del run; `tests/test_action_plane_authority.py` |
+| P1-5 | RECLASIFICADO P3 (evidencia) | `GUARD_CLASS`: SECURITY/CORRECTNESS duplican autoridades canónicas; `tests/test_run_guards_classification.py` |
+| P1-6 | RESUELTO | `src/core/config_rules.py` + `assert_runtime_config` en `Settings`; combinaciones resueltas por construcción |
+| P1-7 | RESUELTO | `last_cut_reason` eliminado; `stop_reason` es la única representación |
+
+Detalle por entrada (recon original):
 
 ### P1-1. `JEV_SHADOW_MODE` no shadowea
 

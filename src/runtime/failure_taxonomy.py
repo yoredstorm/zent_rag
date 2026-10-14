@@ -121,6 +121,16 @@ _REASON_CODE_FAILURES: dict[str, FailureInfo] = {
         user_visible=False,
         operational=True,
     ),
+    # Override de seguridad post cierre: la respuesta se reemplaza por una
+    # violación de invariantes críticos (no es un fallo operativo: el runtime
+    # funcionó y la autoridad decidió no publicar la conclusión).
+    rc.STRICT_BLOCK: _info(
+        FailureClass.POLICY_BLOCK,
+        rc.STRICT_BLOCK,
+        retryable=False,
+        user_visible=True,
+        operational=False,
+    ),
     # Autoridad determinista ausente: ni evidencia ni provider.
     rc.AUTHORITY_MISSING_RETRIEVE: _info(
         FailureClass.AUTHORITY_MISSING,

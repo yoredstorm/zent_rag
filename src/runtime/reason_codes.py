@@ -56,6 +56,11 @@ TOOL_RETRY_ALLOWED = "TOOL_RETRY_ALLOWED"
 TOOL_FAILED_PERMANENT_NO_RETRY = "TOOL_FAILED_PERMANENT_NO_RETRY"
 TOOL_RESULT_OBSERVED = "TOOL_RESULT_OBSERVED"
 
+# --- Aplicador terminal: override de seguridad post cierre -------------------
+#: Motivo del override `apply_closure_override` cuando el modo estricto
+#: reemplaza la respuesta por invariantes críticos.
+STRICT_BLOCK = "strict_block"
+
 #: Todos los códigos emitibles. Un código fuera de este set es un bug de
 #: contrato: o falta declararlo acá, o sobra en el emisor.
 ALL_REASON_CODES: frozenset[str] = frozenset(
@@ -94,6 +99,8 @@ ALL_REASON_CODES: frozenset[str] = frozenset(
         TOOL_RETRY_ALLOWED,
         TOOL_FAILED_PERMANENT_NO_RETRY,
         TOOL_RESULT_OBSERVED,
+        # Aplicador terminal (override post cierre)
+        STRICT_BLOCK,
     }
 )
 

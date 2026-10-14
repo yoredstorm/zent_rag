@@ -22,16 +22,22 @@ Mapa BEFORE: `01-ownership-map-before.md`.
 
 | Componente | BEFORE | AFTER |
 |---|---|---|
-| `AgentRunState.phase` | 3 módulos escribían; la fase terminal se derivaba del texto | 3 módulos siguen escribiendo fase no-terminal; la terminal la aplica `finish()` desde la resolución |
-| `terminal_phase_for` | fuente de la fase terminal | **oráculo de consistencia**: su divergencia es invariante crítico |
-| `FinalizationPolicy` | advisory + hold en 3 etapas; `closure` sin enforcement | autoridad del cierre en todos los modos; `closure_not_authorized` / `closure_authority_mismatch` |
-| `RUNTIME_RUN_STATE_STRICT` | documentado, inexistente (no-op) | campo real (default `off`), respetado, canary por org/agente |
+| `AgentRunState.phase` | 3 módulos escribían; la fase terminal se derivaba del texto | un solo aplicador canónico (`_apply_terminal`); `try_advance` rechaza terminales; override post cierre solo no-concluyente (hardening) |
+| `terminal_phase_for` | fuente de la fase terminal | **oráculo de consistencia**: su divergencia es invariante crítico; un fallo del reducer NO reabre el mapper (FAILED estructurado) |
+| `FinalizationPolicy` | advisory + hold en 3 etapas; `closure` sin enforcement | autoridad del cierre en todos los modos; `closure_not_authorized` / `closure_authority_mismatch` / `closure_authority_failed` |
+| `RUNTIME_RUN_STATE_STRICT` | documentado, inexistente (no-op) | campo real (default `off`), respetado, canary por org; **piso monotónico**: la config del agente solo refuerza |
+| `RUNTIME_FINALIZATION_ENFORCE` | el scope más específico reemplazaba (agente podía desarmar) | unión de scopes (piso): ninguno resta etapas |
+| JEV | podía actuar con `shadow_mode`; el preflight podía bloquear con un juicio solo | shadow no actúa; matriz determinista × JEV: un juicio solo nunca da acción definitiva |
+| RunGuards | advisory por default sin clasificación | `GUARD_CLASS`: SECURITY/CORRECTNESS duplican autoridades canónicas; RESOURCE respeta el ledger |
+| Flags contradictorios | 10 combinaciones pinneadas sin consecuencia | INVALID = startup failure; DANGEROUS = error en producción sin acknowledgement |
 | `RunBudgetLedger` | autoridad con bypass del juez | autoridad única de totales; el juez entra por `account_judge_usage` |
 | `usage_events` (`jev_judge:*`) | repetían tokens del juez (doble conteo) | 0 tokens + `judge_tokens`/`cost_source` en `routing`; costo del juez intacto |
+| `budget.last_cut_reason` | representación muerta | eliminada; `stop_reason` es la única representación |
 | Sufficiency | dos modelos rivales (`EvidenceSufficiency` / `EvidenceQuality`) | medición única + vocabulario de condición (`evidence_semantics`); `EvidenceQuality` queda como proyección del camino RAG (deuda S11) |
 | Condición de evidencia | sin vocabulario; conflaciones invisibles | 9 condiciones canónicas + 2 conflictos medidos (métricas low-cardinality) |
 | Permisos de workflow | `permissions` vacío escalaba a permisos de sistema en silencio | `resolve_workflow_permissions` fail-closed; contexto de sistema explícito |
-| Handlers del dispatcher | autorización supuesta | contrato testeado por handler |
+| Handlers del dispatcher | autorización supuesta | contrato testeado por handler + behavioral (deny corta antes de ejecutar; shadow no ejecuta) |
+| `decisions` durante el run | autoridad local hasta la finalización | publicación en el event boundary (SQL y envelope) |
 
 ## Campos críticos y su writer (AFTER)
 
@@ -50,10 +56,23 @@ Mapa BEFORE: `01-ownership-map-before.md`.
 
 ## Registro de autoridad verificado por ratchet
 
-Igual que en el mapa BEFORE (14 símbolos). Añadidos en esta fase:
+Igual que en el mapa BEFORE (14 símbolos). Añadidos en la fase de convergencia:
 
 | Estado crítico | Autoridad canónica |
 |---|---|
 | `closure_resolution` | `finalization_policy.resolve_closure_phase` |
 | `evidence_condition` | `evidence_semantics.classify_evidence_condition` |
 | `workflow_permissions` | `workflows.engine.resolve_workflow_permissions` |
+
+Añadidos en el hardening de autoridad (H0–H9, `08-hardening-report.md`):
+
+| Estado crítico | Autoridad canónica |
+|---|---|
+| `closure_failure_resolution` | `finalization_policy.closure_authority_failure` |
+| `terminal_application` | `run_state.AgentRunState` (`_apply_terminal` / `apply_closure_override`) |
+| `authorization_matrix` | `decision.preflight.resolve_authorization` |
+| `shadow_authority` | `decision.settings.DecisionEngineSettings.acts` |
+| `safety_floor` | `run_state.strict_mode_enabled` / `enforcement.enforcement_stages` |
+| `config_validation` | `core.config_rules.assert_runtime_config` |
+| `guard_classification` | `run_guards.GUARD_CLASS` |
+ |

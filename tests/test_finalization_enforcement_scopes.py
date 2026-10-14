@@ -1,8 +1,10 @@
 # =============================================================================
 # Enforcement de la FinalizationPolicy — scopes y holds (F2).
 # =============================================================================
-# Prioridad: agent config > organización > environment > global. Un scope nunca
-# arma una etapa desconocida (fail-closed del lado seguro).
+# Prioridad: SAFETY FLOOR monotónico (P1-D): effective = global ∪ environment ∪
+# organización ∪ agente. Cada scope SUMA etapas; ninguno puede desarmar una
+# etapa que otro armó. Un scope nunca arma una etapa desconocida (fail-closed
+# del lado seguro).
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -58,7 +60,9 @@ class TestParseStages:
         assert parse_stages("answer_gate,nope") == frozenset({"answer_gate"})
 
 
-class TestPrioridadDeScopes:
+class TestPisoMonotonico:
+    """SAFETY FLOOR: cada scope SUMA etapas; ninguno resta (P1-D)."""
+
     def test_sin_configuracion_no_arma_nada(self) -> None:
         assert enforcement_stages(SimpleNamespace()) == frozenset()
 
@@ -66,13 +70,15 @@ class TestPrioridadDeScopes:
         settings = SimpleNamespace(RUNTIME_FINALIZATION_ENFORCE="answer_gate")
         assert enforcement_stages(settings) == frozenset({"answer_gate"})
 
-    def test_environment_gana_al_global(self) -> None:
+    def test_environment_suma_al_global(self) -> None:
         settings = SimpleNamespace(
             RUNTIME_FINALIZATION_ENFORCE="draft_gate",
             RUNTIME_FINALIZATION_ENFORCE_BY_ENV="production=termination_trigger",
             ENVIRONMENT="production",
         )
-        assert enforcement_stages(settings) == frozenset({"termination_trigger"})
+        assert enforcement_stages(settings) == frozenset(
+            {"draft_gate", "termination_trigger"}
+        )
 
     def test_environment_no_coincidente_usa_global(self) -> None:
         settings = SimpleNamespace(
@@ -82,7 +88,7 @@ class TestPrioridadDeScopes:
         )
         assert enforcement_stages(settings) == frozenset({"draft_gate"})
 
-    def test_organizacion_gana_al_environment(self) -> None:
+    def test_organizacion_suma_al_environment(self) -> None:
         settings = SimpleNamespace(
             RUNTIME_FINALIZATION_ENFORCE="draft_gate",
             RUNTIME_FINALIZATION_ENFORCE_BY_ENV="production=termination_trigger",
@@ -90,7 +96,7 @@ class TestPrioridadDeScopes:
             ENVIRONMENT="production",
         )
         assert enforcement_stages(settings, organization_id="org-1") == frozenset(
-            {"answer_gate"}
+            {"draft_gate", "termination_trigger", "answer_gate"}
         )
 
     def test_organizacion_sin_valor_hereda_las_globales(self) -> None:
@@ -102,13 +108,13 @@ class TestPrioridadDeScopes:
             {"draft_gate"}
         )
         assert enforcement_stages(settings, organization_id="org-2") == frozenset(
-            {"answer_gate"}
+            {"draft_gate", "answer_gate"}
         )
         assert enforcement_stages(settings, organization_id="org-3") == frozenset(
             {"draft_gate"}
         )
 
-    def test_config_del_agente_gana_a_todo(self) -> None:
+    def test_config_del_agente_suma_y_nunca_resta(self) -> None:
         settings = SimpleNamespace(
             RUNTIME_FINALIZATION_ENFORCE="draft_gate",
             RUNTIME_FINALIZATION_ENFORCE_ORGS="org-1=answer_gate",
@@ -116,7 +122,11 @@ class TestPrioridadDeScopes:
         config = {"runtime": {"finalization_enforce": "termination_trigger"}}
         assert enforcement_stages(
             settings, config_json=config, organization_id="org-1"
-        ) == frozenset({"termination_trigger"})
+        ) == frozenset({"draft_gate", "answer_gate", "termination_trigger"})
+        # `false` del agente NO desarma el piso global (antes sí).
+        assert enforcement_stages(
+            settings, config_json={"runtime": {"finalization_enforce": False}}
+        ) == frozenset({"draft_gate"})
 
     def test_config_del_agente_booleano(self) -> None:
         settings = SimpleNamespace(RUNTIME_FINALIZATION_ENFORCE="")

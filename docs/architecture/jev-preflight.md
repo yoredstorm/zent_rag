@@ -137,10 +137,26 @@ next_action                      == generate_answer
 pero con **dos señales, nunca una sola**: si JEV dice "no está listo" y el
 código (answerability, evidencia, análisis) ya vio que todo está bien, se
 registra el desacuerdo (`conflicts: ["jev_only_signal"]`) y **no** se cambia la
-ejecución. Si el código no tiene ninguna señal disponible, bloquear exige un
-juicio **concluyente y múltiple** (≥2 condiciones insatisfechas, sin
-incertidumbre y con confianza ≥ `no_signal_min_confidence`); un solo cruce de
-umbral nunca detiene la generación.
+ejecución.
+
+Matriz de autorización (hardening P1-C: `resolve_authorization` es la única
+función que compone el ruling):
+
+| DETERMINISTA | JEV | RESULTADO |
+|---|---|---|
+| DENY | cualquiera | BLOCK (la forma del stop la elige el código) |
+| ALLOW | negativo | ADVISORY (JEV no invierte al determinista) |
+| ALLOW | positivo | ALLOW |
+| UNKNOWN | negativo concluyente y múltiple | `retrieve_more` si hay presupuesto (busca corroboración); si no, advisory con `corroboration_required` (se genera) |
+| UNKNOWN | negativo único/incierto | ADVISORY (`no_second_signal`) |
+| UNKNOWN | positivo | ALLOW |
+| (sin pack / pack no ok) | — | degradación explícita: decide el código (`jev_unavailable`) |
+
+Un juicio probabilístico **nunca** produce por sí solo una acción definitiva
+(`abstain`/`ask_user`/`deterministic_answer`): el peor resultado de una señal
+JEV sola es pedir corroboración o quedar en advisory. El juicio concluyente y
+múltiple del MISMO juez no cuenta como segunda señal independiente
+(`judgment_only_signal_multiple`).
 
 Acciones posibles: `generate_answer`, `retrieve_more`, `reconstruct_more`,
 `ask_user`, `abstain`, `deterministic_answer`. Tiers:

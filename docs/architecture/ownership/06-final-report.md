@@ -99,15 +99,25 @@ Ninguna conocida. Los cinco P0 del recon están resueltos o medidos:
 
 ### P1
 
-| ID | Deuda | Slice propuesto |
+Los siete P1 del recon original quedaron cerrados en el hardening de autoridad
+(H0–H9). El detalle before/after, la evidencia y la deuda remanente viven en
+`08-hardening-report.md`; resumen:
+
+| ID | Deuda original | Estado |
 |---|---|---|
-| P1-1 | `JEV_SHADOW_MODE` no impide actuar en modo `jev` | S8 |
-| P1-2 | Preflight con bloqueo JEV-only (≥2 unsatisfied + confianza ≥0.70) sin segunda señal | S8 |
-| P1-3 | Overrides por agente pueden desarmar autoridad global (sin guard) | S9 |
-| P1-4 | Formas delegadas del plano de acción (embed/cognitive/event dispatcher) con authz a nivel trigger | S7-bis (requiere decisión de producto) |
-| P1-5 | RunGuards advisory por default (`RUNTIME_RUN_GUARDS_ENFORCE=off`) | S9 |
-| P1-6 | 10 combinaciones de flags contradictorias detectadas | S9 |
-| P1-7 | `budget.last_cut_reason` sin writer (representación muerta) | S11 |
+| P1-1 | `JEV_SHADOW_MODE` no impide actuar en modo `jev` | RESUELTO (shadow no actúa) |
+| P1-2 | Preflight con bloqueo JEV-only sin segunda señal | RESUELTO (matriz determinista × JEV) |
+| P1-3 | Overrides por agente pueden desarmar autoridad global | RESUELTO (piso monotónico + contrato `on|shadow|off`) |
+| P1-4 | Formas delegadas del plano de acción | CERRADO por contrato con test (eventos: P2-H1 aceptado) |
+| P1-5 | RunGuards advisory por default | RECLASIFICADO P3 con evidencia (`GUARD_CLASS`) |
+| P1-6 | 10 combinaciones de flags contradictorias | RESUELTO (startup fail-closed) |
+| P1-7 | `budget.last_cut_reason` sin writer | RESUELTO (representación eliminada) |
+
+Nuevos invariantes del hardening: cierre fail-closed ante fallo del reducer,
+terminales solo por el aplicador canónico, un juicio JEV nunca decide solo, el
+piso de seguridad no se debilita desde config normal, y ninguna instancia
+arranca en una postura contradictoria. Cada uno tiene ratchet estático **y**
+test behavioral (ver `08-hardening-report.md`).
 
 ### P2
 
@@ -159,13 +169,16 @@ antes de poder afirmarlo para el resto de los estados.
 
 ## Recomendación de continuación
 
-1. **S8 (JEV)**: cerrar P1-1 y P1-2 — es la deuda de seguridad más cercana a
-   "probabilidad convertida en autorización".
-2. **S9 (flags)**: matriz de combinaciones + guard de overrides + clasificación
-   con retiro; cierra P1-3, P1-5, P1-6 y P2-1/P2-2.
-3. **S11**: unificar `EvidenceQuality` como proyección y eliminar
-   representaciones muertas (P0-3 residual, P1-7, P2-3, P2-9).
-4. **Adopción por canary** de lo ya construido: con `closure` y `strict` reales,
+1. **Producción (Prompt 3)**: iniciar Production Readiness / Load / Chaos /
+   Canary con `P0 known = 0` y `P1 de arquitectura/seguridad = 0` (hardening
+   H0–H9, ver `08-hardening-report.md`).
+2. **Adopción por canary** de lo ya construido: con `closure` y `strict` reales,
    medir `zent_evidence_condition_conflicts_total`,
    `zent_finalization_divergence_total` y `zent_run_state_violations_total`
-   antes de encender el fail-closed por organización.
+   antes de encender el fail-closed global; revisar el acknowledgement
+   `RUNTIME_CONFIG_ACK_DANGEROUS` en el entorno de despliegue (el `.env` local
+   tiene combinaciones DANGEROUS de calibración que en producción exigen ack).
+3. **Deuda P2** sin riesgo de autoridad: planos delegados de eventos (P2-H1,
+   firma de eventos como decisión de producto), inventario de flags
+   (`RAG_LONG_CONTEXT_*`, `RAG_COGNITIVE_OS_ENABLED`, `RAG_JEV_PREFLIGHT_*`),
+   `EvidenceQuality` como proyección y representaciones muertas restantes.

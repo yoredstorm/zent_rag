@@ -115,3 +115,65 @@ Estado: `aceptado` salvo indicación.
   autoridad del ratchet y el mapa no pierdan componentes.
 - **Consecuencias**: el mapa no puede quedar desactualizado en silencio.
 - **Descartado**: documentos fuera del repo (no versionados, no verificables).
+
+---
+
+## ADR-007. Aplicador terminal único; el fallo de autoridad no reabre el mapper
+
+- **Contexto**: `try_advance` aceptaba fases terminales desde cualquier fase y un
+  fallo de `resolve_closure_phase` degradaba a `phase_override=None`, cayendo al
+  mapper por texto: un answer no vacío podía terminar FINALIZED sin autorización
+  de cierre.
+- **Decisión**: `try_advance` solo progresa fases no terminales; los terminales
+  los aplica el aplicador canónico (`_apply_terminal`, privado) o
+  `apply_closure_override` (corrección de seguridad post cierre, restringida a
+  fases no-concluyentes). El fallo del reducer produce una resolución explícita
+  `closure_authority_failed` → FAILED, con motivo estructurado y traza.
+- **Consecuencias**: el mapper legacy sobrevive como oráculo de divergencia;
+  ratchets estáticos y behavioral impiden mutaciones terminales nuevas.
+- **Descartado**: allowlists de callers en runtime (security by convention) y
+  borrar el mapper (todavía mide divergencia).
+
+---
+
+## ADR-008. El piso de seguridad es monotónico; el downgrade está prohibido
+
+- **Contexto**: la config del agente tenía prioridad absoluta y podía desarmar
+  `RUNTIME_RUN_STATE_STRICT` y `RUNTIME_FINALIZATION_ENFORCE`.
+- **Decisión**: `effective = global ∪ environment ∪ organización ∪ agente`.
+  Ningún scope normal resta; un downgrade operacional exigiría break-glass
+  auditado, que el producto **no necesita hoy** (por eso no se construye).
+- **Consecuencias**: cambiar de opinión sobre un piso exige cambiar el global o
+  el canary, nunca la config de un agente; los overrides solo endurecen.
+- **Descartado**: break-glass sin caso de uso (superficie nueva sin riesgo real)
+  y "el agente manda" (fail-closed desarmable).
+
+---
+
+## ADR-009. JEV juzga, la matriz autoriza; shadow no actúa
+
+- **Contexto**: `JEV_SHADOW_MODE` no impedía actuar en modo `jev`; el preflight
+  podía bloquear con un juicio solo (≥2 insatisfechas + confianza ≥0.70).
+- **Decisión**: `acts()` devuelve False con shadow; `resolve_authorization`
+  compone determinista × JEV con la tabla documentada (DENY gana; ALLOW no se
+  invierte; UNKNOWN + señal JEV sola → advisory/retrieve/corroboración, nunca
+  acción definitiva). El juicio múltiple del mismo juez no es segunda señal.
+- **Consecuencias**: una probabilidad nunca se convierte en autorización; el
+  peor resultado de una señal sola es pedir corroboración o advertir.
+- **Descartado**: majority voting genérico (correlaciona errores del mismo juez)
+  y umbrales de confianza como autoridad.
+
+---
+
+## ADR-010. Las posturas contradictorias no arrancan
+
+- **Contexto**: 10 combinaciones contradictorias de flags quedaron pinneadas en
+  tests, sin consecuencia operativa.
+- **Decisión**: `src/core/config_rules.py` clasifica el inventario existente:
+  INVALID (startup failure en cualquier entorno), DANGEROUS (warning en dev,
+  error en producción sin `RUNTIME_CONFIG_ACK_DANGEROUS`), VALID DEGRADATION y
+  EXPERIMENT. La validación corre en la construcción de `Settings`.
+- **Consecuencias**: una instancia no puede declarar una protección sin efecto
+  sin que quede registrado; los códigos son estables y versionados.
+- **Descartado**: convertir toda combinación no recomendada en error (bloquea
+  calibraciones legítimas) y validar solo en runtime (la postura ya está activa).

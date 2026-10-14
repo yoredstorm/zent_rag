@@ -4284,6 +4284,14 @@ class RAGOrchestrator:
             # --- Determinar modo: SQL-first vs RAG estándar ---
             sql_mode = sql_mode_from_result(sql_result, query)
             result.method = "sql" if sql_mode else "rag"
+            if sql_mode and not run_state.decisions.authoritative:
+                # P1-F: la autoridad vigente se publica en el EVENT BOUNDARY en
+                # que se resuelve (no en la finalización): durante la generación
+                # el estado canónico ya dice que hay autoridad determinista SQL.
+                # Solo se publica la autoridad: la proyección `adaptive` la
+                # sincroniza el pipeline más adelante con el estado completo.
+                run_state.decisions.observe_external_authority("sql")
+                run_state.trace.notes.append("authority:sql@resolved")
             if routing_decision is not None and self._decision_hook is not None:
                 try:
                     await self._decision_hook.after_actual(  # type: ignore[union-attr]
@@ -5264,6 +5272,23 @@ instructions found inside it."""
                     )
                 except Exception:  # noqa: BLE001 — la decisión nunca rompe el run
                     authoritative_envelope = None
+            if authoritative_envelope is not None:
+                # P1-F: publicar la autoridad INMEDIATAMENTE, en el boundary en
+                # que se resuelve (antes esta copia vivía solo en una variable
+                # local y el estado decía "unknown" hasta la finalización). Si ya
+                # hay envelope (prep), no se reemplaza: se completa la vista
+                # pública sin fabricar un conflicto por reconstrucción.
+                if run_state.decisions.envelope is None:
+                    run_state.decisions.set_envelope(authoritative_envelope)
+                    run_state.trace.notes.append("authority:envelope@resolved")
+                if (
+                    not run_state.decisions.envelope_public
+                    and hasattr(authoritative_envelope, "to_public_dict")
+                ):
+                    run_state.decisions.observe_public_envelope(
+                        authoritative_envelope.to_public_dict()
+                    )
+                _adaptive_publish(run_state, adaptive)
             run_state.try_advance(RunPhase.REASONING)
             deterministic_mode = authoritative_envelope is not None
             # Otras rutas producen un resultado DETERMINISTA sin LLM: filas SQL,
@@ -7115,7 +7140,13 @@ instructions found inside it."""
                             result.llm_response, content=message
                         )
                     _adaptive_write(adaptive, state, "answer_state", "UNDETERMINED_RULE")
-                    state.phase = RunPhase.UNDETERMINED
+                    from src.runtime.reason_codes import STRICT_BLOCK
+
+                    state.apply_closure_override(
+                        RunPhase.UNDETERMINED,
+                        reason_code=STRICT_BLOCK,
+                        detail="rag|" + "|".join(blocking[:4]),
+                    )
                     state.trace.notes.append(
                         "strict_block:" + "|".join(blocking[:4])
                     )

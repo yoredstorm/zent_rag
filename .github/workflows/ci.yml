@@ -142,11 +142,16 @@ jobs:
           uv run --frozen --no-sync pytest \
             tests/test_architecture.py \
             tests/test_authority_ownership.py \
+            tests/test_authorization_matrix.py \
             tests/test_closure_authority.py \
+            tests/test_config_rules.py \
             tests/test_cost_authority.py \
+            tests/test_decision_state_inflight.py \
             tests/test_evidence_semantics.py \
             tests/test_action_plane_authority.py \
             tests/test_flag_coherence.py \
+            tests/test_safety_floor.py \
+            tests/test_run_guards_classification.py \
             tests/test_terminal_transitions_allowlist.py \
             tests/test_reason_codes.py \
             tests/test_failure_taxonomy.py \

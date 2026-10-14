@@ -5,8 +5,12 @@
 # política resuelve RETRIEVE_MORE, en vez de cerrar con evidencia incompleta y
 # búsqueda todavía disponible. Los holds están acotados por etapa.
 #
-# Scopes de activación, con prioridad:
-#   agent config > organización > environment > global
+# Scopes de activación (SAFETY FLOOR monotónico, P1-D):
+#   effective = global ∪ environment ∪ organización ∪ agente
+# Cada scope SUMA etapas; ninguno puede desarmar una etapa armada por otro.
+# Una configuración normal (org/agente/workflow/request) no debilita el piso:
+# para un downgrade operacional haría falta un mecanismo break-glass explícito
+# (no existe: el downgrade está prohibido por construcción).
 #
 # `closure` NO se arma acá: su fail-closed es el modo estricto del estado
 # (`RUNTIME_RUN_STATE_STRICT` / orgs canary), campo real desde S2 de la fase de
@@ -65,27 +69,17 @@ def enforcement_stages(
     config_json: Any = None,
     organization_id: Any = None,
 ) -> frozenset[str]:
-    """Etapas con enforcement activo, resueltas por surface.
+    """Etapas con enforcement activo. SAFETY FLOOR monotónico.
 
-    1. `config_json["runtime"]["finalization_enforce"]` (agente): bool o "a,b".
-    2. `RUNTIME_FINALIZATION_ENFORCE_ORGS` (`org=a,b;org2`): override por org
-       (clave sin valor = etapas globales).
-    3. `RUNTIME_FINALIZATION_ENFORCE_BY_ENV` (`production=a,b`): override por
-       `settings.ENVIRONMENT`.
-    4. `RUNTIME_FINALIZATION_ENFORCE`: global.
+    effective = global ∪ environment ∪ organización ∪ agente.
+
+    Cada scope SUMA etapas: una configuración normal no puede apagar una etapa
+    que un scope superior armó (antes el scope más específico reemplazaba al
+    global, y `finalization_enforce=false` del agente desarmaba el fail-closed).
+    El valor vacío o `false` de un scope no aporta etapas; nunca resta.
     """
-    runtime = config_json.get("runtime") if isinstance(config_json, dict) else None
-    if isinstance(runtime, dict) and runtime.get("finalization_enforce") is not None:
-        return parse_stages(runtime.get("finalization_enforce"))
-
     global_stages = parse_stages(getattr(settings, "RUNTIME_FINALIZATION_ENFORCE", ""))
-
-    overrides = _parse_surface(
-        getattr(settings, "RUNTIME_FINALIZATION_ENFORCE_ORGS", "")
-    )
-    if organization_id is not None and str(organization_id) in overrides:
-        raw = overrides[str(organization_id)]
-        return parse_stages(raw) if raw else global_stages
+    stages: set[str] = set(global_stages)
 
     by_env = _parse_surface(
         getattr(settings, "RUNTIME_FINALIZATION_ENFORCE_BY_ENV", "")
@@ -93,9 +87,20 @@ def enforcement_stages(
     env_name = str(getattr(settings, "ENVIRONMENT", "") or "").strip()
     if env_name and env_name in by_env:
         raw = by_env[env_name]
-        return parse_stages(raw) if raw else global_stages
+        stages |= set(parse_stages(raw) if raw else global_stages)
 
-    return global_stages
+    overrides = _parse_surface(
+        getattr(settings, "RUNTIME_FINALIZATION_ENFORCE_ORGS", "")
+    )
+    if organization_id is not None and str(organization_id) in overrides:
+        raw = overrides[str(organization_id)]
+        stages |= set(parse_stages(raw) if raw else global_stages)
+
+    runtime = config_json.get("runtime") if isinstance(config_json, dict) else None
+    if isinstance(runtime, dict) and runtime.get("finalization_enforce") is not None:
+        stages |= set(parse_stages(runtime.get("finalization_enforce")))
+
+    return frozenset(stages)
 
 
 def should_hold_trigger(

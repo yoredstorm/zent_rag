@@ -20,6 +20,7 @@ from src.agents.tools.registry import register_tool
 from src.core.domain.entities import Agent, LLMResponse
 from src.core.ports import LLMProvider
 from src.runtime.run_state import (
+    TERMINAL_PHASES,
     AgentRunState,
     RunIdentity,
     RunPhase,
@@ -109,6 +110,7 @@ def _request(agent: Agent, message: str = "hola") -> AgentRunRequest:
 # -----------------------------------------------------------------------------
 class TestLifecycle:
     def test_happy_path_avanza_y_registra(self) -> None:
+        """El pipeline progresa hasta READY_TO_FINALIZE; el terminal lo aplica la autoridad."""
         state = _state()
         path = [
             RunPhase.CLASSIFIED,
@@ -120,23 +122,54 @@ class TestLifecycle:
             RunPhase.ACTING,
             RunPhase.REASONING,
             RunPhase.READY_TO_FINALIZE,
-            RunPhase.FINALIZED,
         ]
         for phase in path:
             assert state.try_advance(phase), f"transición rechazada: {phase}"
-        assert state.phase is RunPhase.FINALIZED
-        assert state.terminal is True
+        assert state.phase is RunPhase.READY_TO_FINALIZE
+        assert state.terminal is False
         assert [entry["phase"] for entry in state.trace.phase_history] == [
             str(phase) for phase in path
         ]
         assert state.trace.notes == []
+        # El estado terminal NO es una transición de pipeline: la autoridad del
+        # cierre lo aplica (vía `finalize_state`).
+        violations = finalize_state(state, status="completed", answer="ok", answer_state=None)
+        assert violations == ()
+        assert state.phase is RunPhase.FINALIZED
+        assert state.terminal is True
 
     def test_transicion_invalida_se_registra_y_no_mueve(self) -> None:
         state = _state()
-        assert state.try_advance(RunPhase.FINALIZED) is True  # terminal desde CREATED
+        assert state.try_advance(RunPhase.FINALIZED) is False  # terminal desde CREATED
+        assert state.phase is RunPhase.CREATED
         assert state.try_advance(RunPhase.REASONING) is False
-        assert state.phase is RunPhase.FINALIZED
+        assert state.phase is RunPhase.CREATED
         assert any(note.startswith("phase_rejected:") for note in state.trace.notes)
+
+    def test_terminal_directo_rechazado_en_todas_las_fases_no_terminales(self) -> None:
+        """Ratchet behavioral: ninguna fase terminal es alcanzable por try_advance."""
+        for start in RunPhase:
+            if start in TERMINAL_PHASES:
+                continue
+            for terminal in TERMINAL_PHASES:
+                state = _state()
+                state.phase = start
+                assert state.try_advance(terminal) is False, f"{start}->{terminal}"
+                assert state.phase is start, f"{start}->{terminal} mutó la fase"
+                assert any(
+                    note.startswith(f"phase_rejected:{start}->{terminal}")
+                    for note in state.trace.notes
+                ), f"{start}->{terminal}"
+
+    def test_estado_terminal_no_transiciona_a_nada(self) -> None:
+        for start in TERMINAL_PHASES:
+            for target in RunPhase:
+                if target is start:
+                    continue  # misma fase: idempotente por contrato
+                state = _state()
+                state.phase = start
+                assert state.try_advance(target) is False
+                assert state.phase is start
 
     def test_salto_invalido_entre_fases_no_terminales(self) -> None:
         state = _state()
@@ -205,7 +238,13 @@ class TestInvariants:
         state = _state()
         assert state.try_advance(RunPhase.CLASSIFIED)
         assert state.try_advance(RunPhase.READY_TO_FINALIZE)
-        assert state.try_advance(RunPhase.FINALIZED)
+        assert state.try_advance(RunPhase.FINALIZED) is False
+        state.finish(
+            status="completed",
+            answer="",
+            answer_state=None,
+            phase_override=RunPhase.FINALIZED,
+        )
         violations = state.check_invariants()
         assert "terminal_phase_without_answer:FINALIZED" in violations
 
@@ -229,7 +268,7 @@ class TestInvariants:
         state = _state()
         state.decisions.requires_deterministic = True
         state.answer.text = "MATCH"
-        state.phase = RunPhase.FINALIZED
+        state._apply_terminal(RunPhase.FINALIZED)
         assert "deterministic_finalized_without_envelope" in state.check_invariants()
 
     def test_determinista_con_autoridad_externa_es_consistente(self) -> None:
@@ -299,7 +338,7 @@ class TestInvariants:
             blocks_early_answer=True,
         )
         state.answer.text = "ok"
-        state.phase = RunPhase.FINALIZED
+        state._apply_terminal(RunPhase.FINALIZED)
         assert "incomplete_analysis_finalized" in state.check_invariants()
 
     def test_analisis_incompleto_con_limite_no_viola(self) -> None:
@@ -682,7 +721,7 @@ class TestStrictModeAndMetrics:
         assert strict_mode_enabled(settings, organization_id="org-2") is True
         assert strict_mode_enabled(settings, organization_id="org-9") is False
 
-    def test_strict_config_del_agente_manda_sobre_todo(self) -> None:
+    def test_strict_config_del_agente_no_debilita_el_piso_global(self) -> None:
         from types import SimpleNamespace
 
         from src.runtime.run_state import strict_mode_enabled
@@ -690,11 +729,12 @@ class TestStrictModeAndMetrics:
         global_on = SimpleNamespace(
             RUNTIME_RUN_STATE_STRICT="on", RUNTIME_RUN_STATE_STRICT_ORGS=""
         )
+        # P1-D: el agente puede reforzar; nunca apagar el piso global.
         assert (
             strict_mode_enabled(
                 global_on, config_json={"runtime": {"strict_run_state": False}}
             )
-            is False
+            is True
         )
         global_off = SimpleNamespace(
             RUNTIME_RUN_STATE_STRICT="off", RUNTIME_RUN_STATE_STRICT_ORGS=""

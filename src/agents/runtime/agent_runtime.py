@@ -70,6 +70,7 @@ from src.runtime.finalizer import (
     parse_finalize_answer,
 )
 from src.runtime.prompt_assembly import tool_observation_block
+from src.runtime.reason_codes import STRICT_BLOCK
 from src.runtime.run_state import (
     AgentRunState,
     RunIdentity,
@@ -1151,7 +1152,11 @@ def _strict_block_run_state(state: AgentRunState, result: AgentRunResult) -> boo
     }
     state.answer.text = message
     state.answer.answer_state = dict(result.answer_state)
-    state.phase = RunPhase.UNDETERMINED
+    state.apply_closure_override(
+        RunPhase.UNDETERMINED,
+        reason_code=STRICT_BLOCK,
+        detail="|".join(blocking[:4] or (f"policy:{policy_action}",)),
+    )
     state.trace.notes.append(
         "strict_block:" + "|".join(blocking[:4] or (f"policy:{policy_action}",))
     )
@@ -2787,8 +2792,9 @@ class AgentRuntime:
             """Enforcement del shadow (fail-closed): el trigger espera si la
             política pide RETRIEVE_MORE. Una vez por etapa, nunca rompe el run.
 
-            Las etapas armadas se resuelven por scope: config del agente >
-            organización > environment > global (`src/runtime/enforcement.py`).
+            Las etapas armadas se resuelven como piso monotónico: global ∪
+            environment ∪ organización ∪ agente (`src/runtime/enforcement.py`);
+            ningún scope resta.
             """
             try:
                 from src.runtime.enforcement import (

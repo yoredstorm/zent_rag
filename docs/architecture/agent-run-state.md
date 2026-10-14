@@ -111,7 +111,7 @@ steps. El objetivo es una sola estructura.
 |---|---|---|
 | **AUTHORITATIVE** | Decide el resultado. Un escritor observacional jamás la cambia. | `evidence` (registry/selection/sufficiency), `decisions` (envelope/prep), `budget` (ledger), `tools.allowed/used`, `turn.decision`, `reasoning.run`, `identity` |
 | **DERIVED** | Se calcula de la autoridad; nunca la contradice. | `plan`, `knowledge`, `answer` (texto/estado), `evidence.complete/insufficient` |
-| **OBSERVATIONAL** | Traza, JEV shadow, timings, notas. Nunca muta autoridad. | `trace`, `decisions.jev`, `tools.failures`, `budget.last_cut_reason` |
+| **OBSERVATIONAL** | Traza, JEV shadow, timings, notas. Nunca muta autoridad. | `trace`, `decisions.jev`, `tools.failures`, `budget.stop_reason` (razón precisa del corte; la representación muerta `last_cut_reason` se eliminó en el hardening P1-7) |
 
 ### 2.2 Estructura (`src/runtime/run_state.py`)
 

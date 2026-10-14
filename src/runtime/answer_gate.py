@@ -160,15 +160,26 @@ def retrieval_unavailable_answer(reason: str = "") -> str:
 CONTENT_REVISION_REASONS = frozenset({"missing_evidence", "unsupported_claim"})
 
 
+#: Modos válidos de una superficie de gate (bool histórico + string).
+_ANSWER_GATE_MODES = frozenset({"off", "shadow", "on"})
+
+
 def answer_gate_mode(settings, config: dict | None = None) -> str:
-    """off | shadow | on. `config.runtime.answer_gate` manda si esta definido."""
+    """off | shadow | on. `config.runtime.answer_gate` manda si esta definido.
+
+    Acepta el contrato documentado (`on`/`shadow`/`off`) además del bool
+    histórico. Un valor desconocido cae al global; el global inválido cae a
+    `off` (fail-safe: el gate es señal JEV, no autorización).
+    """
     runtime = (config or {}).get("runtime") if isinstance(config, dict) else None
     if isinstance(runtime, dict):
         override = runtime.get("answer_gate")
         if isinstance(override, bool):
             return "on" if override else "off"
+        if isinstance(override, str) and override.strip().lower() in _ANSWER_GATE_MODES:
+            return override.strip().lower()
     mode = str(getattr(settings, "RUNTIME_ANSWER_GATE", "off") or "off").lower()
-    return mode if mode in {"off", "shadow", "on"} else "off"
+    return mode if mode in _ANSWER_GATE_MODES else "off"
 
 
 @dataclass

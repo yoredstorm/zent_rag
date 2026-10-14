@@ -97,6 +97,9 @@ data:
   RUNTIME_AGENT_JEV_LOOP: "on"
   RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE: "0"
   RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS: "2"
+  # P1-E: combinaciones DANGEROUS no arrancan en produccion sin acknowledgement
+  # (codigos de src/core/config_rules separados por coma).
+  RAG_RUNTIME_CONFIG_ACK_DANGEROUS: ""
   # Providers de anchors de dominio (parten tokens estructurados por vertical).
   RAG_ANCHOR_MODULES: ""
   RAG_DECISION_TARGET_SELECTION: "off"

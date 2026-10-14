@@ -760,6 +760,79 @@ CRITICAL_QUESTIONS = (
     "next_action",
 )
 
+# -----------------------------------------------------------------------------
+# Matriz de autorización: DETERMINISTA × JEV (P1-C)
+# -----------------------------------------------------------------------------
+# Regla de arquitectura:
+#   UNTRUSTED/PROBABILISTIC COMPONENTS (JEV) PRODUCE SIGNALS.
+#   POLICY (esta matriz, compuesta en código) PRODUCE AUTHORIZATION.
+#
+# No es voto por mayoría: la señal determinista tiene autoridad de bloqueo; la
+# señal JEV nunca produce por sí sola una decisión definitiva (ni BLOCK ni
+# autorización). Con corroboración determinista la política decide según esta
+# tabla documentada:
+#
+#   DETERMINISTA | JEV            | RESULTADO
+#   DENY         | cualquiera     | BLOCK (la autoridad determinista manda)
+#   ALLOW        | negative       | ADVISORY (JEV no invierte al determinista)
+#   ALLOW        | positive       | ALLOW
+#   UNKNOWN      | single negative| ADVISORY (se genera; la duda se declara)
+#   UNKNOWN      | corroborated   | RETRIEVE_MORE si hay presupuesto (busca
+#                | negative       | corroboración), si no REQUIRES_CORROBORATION
+#                                  (advisory, se genera con el aviso)
+#   UNKNOWN      | positive       | ALLOW
+#   (sin pack / | pack no ok     | degradación explícita: decide el código
+#    JEV ausente)|               | (`jev_unavailable`), sin cambiar ejecución
+#
+# `corroborated` = el juicio es concluyente y múltiple (≥
+# `no_signal_min_unsatisfied` condiciones insatisfechas, sin incertidumbre
+# crítica, confianza ≥ `no_signal_min_confidence`). Aun corroborado, el mismo
+# juez no es una segunda señal independiente: el peor resultado es pedir
+# evidencia, nunca un BLOCK.
+AUTHORIZATION_ALLOW = "allow"
+AUTHORIZATION_DENY = "deny"
+AUTHORIZATION_UNKNOWN = "unknown"
+
+RULING_BLOCK = "block"
+RULING_ALLOW = "allow"
+RULING_ADVISORY = "advisory"
+RULING_RETRIEVE_MORE = "retrieve_more"
+RULING_REQUIRES_CORROBORATION = "requires_corroboration"
+
+JEV_SIGNAL_NEGATIVE = "negative"
+JEV_SIGNAL_POSITIVE = "positive"
+
+
+def resolve_authorization(
+    *,
+    deterministic: str,
+    jev: str,
+    corroborated: bool = False,
+    retrieval_budget_left: int = 0,
+) -> str:
+    """Compone autorización desde dos señales de distinta naturaleza.
+
+    `deterministic` = ALLOW | DENY | UNKNOWN (¿el código puede opinar y qué
+    opina?). `jev` = NEGATIVE | POSITIVE (juicio probabilístico, ya clasificado
+    como concluyente-múltiple o no). Devuelve un ruling no definitivo cuando
+    solo hay señal JEV: el peor resultado de un juicio solo es pedir
+    corroboración o quedar en advisory.
+    """
+    if deterministic == AUTHORIZATION_DENY:
+        return RULING_BLOCK
+    if deterministic == AUTHORIZATION_ALLOW:
+        if jev == JEV_SIGNAL_NEGATIVE:
+            return RULING_ADVISORY
+        return RULING_ALLOW
+    # UNKNOWN: sin señal determinista que confirme o desmienta.
+    if jev == JEV_SIGNAL_NEGATIVE:
+        if not corroborated:
+            return RULING_ADVISORY
+        if int(retrieval_budget_left or 0) > 0:
+            return RULING_RETRIEVE_MORE
+        return RULING_REQUIRES_CORROBORATION
+    return RULING_ALLOW
+
 
 @dataclass(frozen=True)
 class LLMEscalationPolicy:
@@ -806,7 +879,10 @@ class LLMEscalationPolicy:
             tier=signals.legacy_tier or TIER_STANDARD,
         )
         if pack is None or not pack.ok:
+            # Degradación explícita: sin juicio decide el código determinista.
+            # El pack ausente NO es una señal negativa ni positiva.
             decision.reasons.append("jev_unavailable")
+            decision.decided_by = DECIDED_BY_DETERMINISTIC
             return decision
 
         decision.decided_by = DECIDED_BY_JEV
@@ -845,32 +921,55 @@ class LLMEscalationPolicy:
             decision.reasons.append("gate_not_satisfied")
             decision.reasons.extend(f"unsatisfied_{question}" for question in unsatisfied)
 
-        # Segunda señal determinística: sólo bloquea si el código también duda.
-        deterministic_verdict = self._deterministic_blocked(signals)
-        if not gate_ok and deterministic_verdict is True:
-            decision.allow_generation = False
-            decision.action = self._fallback_action(decision, signals)
-        elif not gate_ok and deterministic_verdict is False:
+        # Matriz de autorización (P1-C): determinista × JEV -> ruling.
+        deterministic = self._deterministic_state(signals)
+        corroborated = bool(
+            len(unsatisfied) >= int(self.no_signal_min_unsatisfied)
+            and not decision.uncertain_critical
+            and decision.confidence >= float(self.no_signal_min_confidence)
+        )
+        ruling = resolve_authorization(
+            deterministic=deterministic,
+            jev=(
+                JEV_SIGNAL_NEGATIVE
+                if not gate_ok
+                else JEV_SIGNAL_POSITIVE
+            ),
+            corroborated=corroborated,
+            retrieval_budget_left=int(signals.retrieval_budget_left or 0),
+        )
+        if not gate_ok and ruling in (
+            RULING_RETRIEVE_MORE,
+            RULING_REQUIRES_CORROBORATION,
+            RULING_ADVISORY,
+        ):
             decision.conflicts.append("jev_only_signal")
-            decision.reasons.append("deterministic_signals_ok")
+            if ruling == RULING_ADVISORY and deterministic == AUTHORIZATION_ALLOW:
+                decision.reasons.append("deterministic_signals_ok")
+            else:
+                decision.reasons.append("no_second_signal")
+            if corroborated:
+                # Juicio concluyente y múltiple del MISMO juez: no es una
+                # segunda señal independiente, se registra como tal.
+                decision.reasons.append("judgment_only_signal_multiple")
+        if ruling == RULING_BLOCK:
+            # La autoridad determinista manda: la forma del stop también la
+            # decide el código (JEV no elige la acción de un DENY).
+            decision.action = ACTION_GENERATE
+            decision.allow_generation = False
+            decision.action = self._deterministic_fallback_action(decision, signals)
+        elif ruling == RULING_RETRIEVE_MORE:
+            decision.reasons.append("corroboration_required")
+            decision.action = ACTION_RETRIEVE
+        elif ruling == RULING_REQUIRES_CORROBORATION:
+            decision.reasons.append("corroboration_required")
             gate_ok = True
             decision.action = ACTION_GENERATE
-        elif not gate_ok:
-            # El código no tiene señales para confirmar ni para desmentir. Sin
-            # segunda señal, bloquear exige un juicio concluyente y múltiple.
-            if (
-                len(unsatisfied) >= int(self.no_signal_min_unsatisfied)
-                and not decision.uncertain_critical
-                and decision.confidence >= float(self.no_signal_min_confidence)
-            ):
-                decision.reasons.append("judgment_only_signal_decisive")
-                decision.allow_generation = False
-                decision.action = self._fallback_action(decision, signals)
-            else:
-                decision.conflicts.append("jev_only_signal")
-                decision.reasons.append("no_second_signal")
-                gate_ok = True
-                decision.action = ACTION_GENERATE
+        elif ruling == RULING_ADVISORY:
+            gate_ok = True
+            decision.action = ACTION_GENERATE
+        # RULING_ALLOW: el gate acompañó; una acción no-terminal pedida por el
+        # juicio (retrieve/reconstruct) sigue siendo advisory y se conserva.
 
         if gate_ok and decision.action == ACTION_GENERATE:
             decision.tier = self._tier(pack, signals, decision)
@@ -911,6 +1010,19 @@ class LLMEscalationPolicy:
             return verdict == VERDICT_YES
         return verdict == VERDICT_NO
 
+    def _deterministic_state(self, signals: DeterministicSignals) -> str:
+        """ALLOW / DENY / UNKNOWN de la señal determinista.
+
+        `UNKNOWN` es distinto de `ALLOW`: significa que el código no puede
+        opinar y, por lo tanto, JEV tampoco puede bloquear por su cuenta.
+        """
+        blocked = self._deterministic_blocked(signals)
+        if blocked is True:
+            return AUTHORIZATION_DENY
+        if blocked is False:
+            return AUTHORIZATION_ALLOW
+        return AUTHORIZATION_UNKNOWN
+
     def _deterministic_blocked(self, signals: DeterministicSignals) -> bool | None:
         """True bloquea, False confirma que está bien, None no hay señal.
 
@@ -936,9 +1048,16 @@ class LLMEscalationPolicy:
             return None
         return False
 
-    def _fallback_action(
-        self, decision: EscalationDecision, signals: DeterministicSignals
+    def _deterministic_fallback_action(
+        self,
+        decision: EscalationDecision,
+        signals: DeterministicSignals,
     ) -> str:
+        """Forma del stop cuando la señal DETERMINISTA bloqueó.
+
+        La acción la elige el código con señales deterministas: JEV no
+        selecciona la acción de una autoridad que no le pertenece (P1-C).
+        """
         if decision.action in (
             ACTION_RETRIEVE,
             ACTION_RECONSTRUCT,
@@ -947,30 +1066,17 @@ class LLMEscalationPolicy:
             ACTION_DETERMINISTIC,
         ):
             return decision.action
-        if "critical_fact_missing" in decision.unsatisfied:
+        if signals.evidence_sufficient is False:
             return ACTION_RETRIEVE if signals.retrieval_budget_left > 0 else ACTION_ABSTAIN
-        if "analysis_complete" in decision.unsatisfied:
+        if signals.analysis_complete is False:
             return (
                 ACTION_RECONSTRUCT
                 if signals.retrieval_budget_left > 0
                 else ACTION_ABSTAIN
             )
-        if "critical_conflict_unresolved" in decision.unsatisfied:
-            return ACTION_ABSTAIN
-        if "inference_supported" in decision.unsatisfied:
-            return ACTION_ABSTAIN
-        if "answerable_from_current_evidence" in decision.unsatisfied:
-            return ACTION_RETRIEVE if signals.retrieval_budget_left > 0 else ACTION_ABSTAIN
-        # Sólo el código dudó: se resuelve con la señal determinística disponible.
-        if signals.evidence_sufficient is False:
-            return ACTION_RETRIEVE if signals.retrieval_budget_left > 0 else ACTION_ABSTAIN
-        if signals.analysis_complete is False:
-            return (
-                ACTION_RECONSTRUCT if signals.retrieval_budget_left > 0 else ACTION_ABSTAIN
-            )
         if signals.source_conflict or signals.answerable is False:
             return ACTION_RETRIEVE if signals.retrieval_budget_left > 0 else ACTION_ABSTAIN
-        return ACTION_GENERATE
+        return ACTION_ABSTAIN
 
     def _tier(
         self,

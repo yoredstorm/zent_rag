@@ -57,24 +57,21 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
 PHASE_WRITES: dict[str, tuple[int, str]] = {
     "src/runtime/run_state.py": (
         6,
-        "Autoridad de fase: try_advance/finish y el mapper de cierre. Writer único "
-        "lógico del run; el resto de los sitios son transiciones no terminales.",
+        "Autoridad de fase: `try_advance` (no terminal), `_apply_terminal` "
+        "(aplicador único, privado) y las comparaciones `self.phase == ...` de "
+        "los invariantes. Desde la fase de hardening los terminales NO se "
+        "alcanzan por try_advance: solo el aplicador canónico los asigna.",
     ),
     "src/agents/runtime/agent_runtime.py": (
-        2,
-        "strict fail-closed (UNDETERMINED sobre FINALIZED) y early return "
-        "operativo antes del loop. Ambos en la allowlist de transiciones "
-        "terminales. Deuda: deben rutearse por el contrato de cierre (S2).",
-    ),
-    "src/agents/runtime/orchestrator.py": (
         1,
-        "Camino RAG sin loop: fallo determinista de fase al cierre. Deuda: "
-        "debe rutearse por el contrato de cierre (S2).",
+        "Comparación `state.phase == RunPhase.FINALIZED` del bloqueo estricto. "
+        "La asignación terminal se rutea por `apply_closure_override` "
+        "(`strict_block`), restringido a fases no-concluyentes.",
     ),
     "src/decision/preflight.py": (
         1,
-        "Preflight de decisión: escribe la fase del run de conversación "
-        "canónica del motor de decisión, no la del AgentRun. Revisar en S8.",
+        "Preflight de decisión: compara la fase del run de conversación "
+        "canónica del motor de decisión (`pack.phase == phase`), no la del AgentRun.",
     ),
 }
 
@@ -138,14 +135,15 @@ AUTHORITY_FLAG_WRITES: dict[str, tuple[int, str]] = {
 TERMINAL_MAPPER: dict[str, tuple[int, str]] = {
     "src/runtime/run_state.py": (
         2,
-        "Definición del mapper + la llamada de respaldo en `finish()`. La fase la "
-        "aplica la autoridad del cierre (`phase_override`); el oráculo solo se "
-        "computa acá cuando `finish()` se invoca sin resolución (tests).",
+        "Definición del mapper + la llamada de respaldo en `finish()` cuando el "
+        "caller no pasa `oracle_phase`. `finish()` sin `phase_override` NO usa "
+        "el mapper como autoridad: aplica FAILED (`closure_authority_missing`).",
     ),
     "src/runtime/finalization_policy.py": (
-        1,
-        "Oráculo legacy dentro de `resolve_closure_phase`: la divergencia contra "
-        "la resolución es un invariante crítico, nunca la fuente de la fase.",
+        2,
+        "Oráculo legacy dentro de `resolve_closure_phase` y en la resolución de "
+        "fallo `closure_authority_failure`: la divergencia contra la resolución "
+        "es un invariante crítico, nunca la fuente de la fase.",
     ),
 }
 
@@ -186,8 +184,9 @@ AUTHORITY_REGISTRY: dict[str, tuple[str, str]] = {
 }
 
 
-#: Autoridades añadidas por la fase de convergencia: deben existir y estar
-#: declaradas en el mapa AFTER (05-ownership-map-after.md).
+#: Autoridades añadidas por la fase de convergencia y por el hardening de
+#: autoridad: deben existir y estar declaradas en el mapa AFTER
+#: (05-ownership-map-after.md).
 POST_PHASE_AUTHORITIES: dict[str, tuple[str, str]] = {
     "closure_resolution": (
         "src.runtime.finalization_policy",
@@ -200,6 +199,35 @@ POST_PHASE_AUTHORITIES: dict[str, tuple[str, str]] = {
     "workflow_permissions": (
         "src.platform.workflows.engine",
         "resolve_workflow_permissions",
+    ),
+    # Hardening H0–H9 (ver 08-hardening-report.md)
+    "closure_failure_resolution": (
+        "src.runtime.finalization_policy",
+        "closure_authority_failure",
+    ),
+    "authorization_matrix": (
+        "src.decision.preflight",
+        "resolve_authorization",
+    ),
+    "shadow_authority": (
+        "src.decision.settings",
+        "DecisionEngineSettings",
+    ),
+    "safety_floor": (
+        "src.runtime.run_state",
+        "strict_mode_enabled",
+    ),
+    "terminal_application": (
+        "src.runtime.run_state",
+        "AgentRunState",
+    ),
+    "config_validation": (
+        "src.core.config_rules",
+        "assert_runtime_config",
+    ),
+    "guard_classification": (
+        "src.runtime.run_guards",
+        "GUARD_CLASS",
     ),
 }
 

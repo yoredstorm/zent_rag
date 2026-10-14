@@ -94,7 +94,15 @@ class DecisionEngineSettings:
         return self.acts(request_id) or self.observes(request_id)
 
     def acts(self, request_id: UUID | None) -> bool:
-        """True when the engine may change execution."""
+        """True when the engine may change execution.
+
+        `JEV_SHADOW_MODE` (shadow_mode) fuerza observación en CUALQUIER modo:
+        un flag de observación no puede modificar la ejecución real. El juez
+        sigue produciendo señal (trazas/métricas), pero la autoridad la ejerce
+        la ruta vigente + `authorize_decision`.
+        """
+        if self.shadow_mode:
+            return False
         mode = self.effective_mode
         if mode == RoutingMode.JEV.value:
             return True

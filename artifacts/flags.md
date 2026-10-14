@@ -80,6 +80,7 @@ Generado por `python -m src.scripts.flags_inventory` (solo lectura).
 | `RAG_RUNTIME_BUILD_TIMESTAMP` | `-` | Timestamp ISO del build desplegado; se publica en build.build_timestamp de la traza del run. |
 | `RAG_RUNTIME_COMPOSER_MAX_TOKENS` | `400` | Tope de tokens de salida de la llamada de redaccion (presentacion). Target 100-400: no es una respuesta completa de pipeline. |
 | `RAG_RUNTIME_COMPOSER_MODEL` | `-` | Modelo barato para la redaccion de presentacion. Vacio = usa GATEWAY_FAST_MODEL / GATEWAY_CHEAP_MODEL; si no hay, el modelo del agente. Nunca se usa un reaso... |
+| `RAG_RUNTIME_CONFIG_ACK_DANGEROUS` | `-` | Acknowledgement explícito de combinaciones DANGEROUS (P1-E): códigos de `src/core/config_rules` separados por coma (`dangerous_gate_phase_skipped`, ...). En ... |
 | `RAG_RUNTIME_DETERMINISTIC_RENDER_MODE` | `adaptive` | Modo de redaccion de presentacion del fast path determinista: strict=0 llamadas LLM; polish=1 llamada pequena cuando el agente tiene personalidad; adaptive (... |
 | `RAG_RUNTIME_EFFICIENCY_COST_WEIGHT` | `0.25` |  |
 | `RAG_RUNTIME_EFFICIENCY_FALLBACK_WEIGHT` | `0.15` |  |
@@ -104,7 +105,8 @@ Generado por `python -m src.scripts.flags_inventory` (solo lectura).
 | `RAG_RUNTIME_NARRATIVE_FAST_PATH` | `on` | on = consultas informacionales puras usan una busqueda por codigo y una generacion (sin loop ReAct). off = loop normal con tools. |
 | `RAG_RUNTIME_NARRATIVE_GENERATION_TIMEOUT_SECONDS` | `0.0` | Timeout opcional de la generacion narrativa (0 = sin timeout). Si el proveedor primario no entrega a tiempo, se intenta GATEWAY_FALLBACK_MODEL y se registra ... |
 | `RAG_RUNTIME_RUN_GUARDS_ENFORCE` | `off` | on = el veredicto de la tabla de run_guards manda en ejecución (una tool que el guard deniega no se ejecuta). off = solo shadow medible (zent_guard_divergenc... |
-| `RAG_RUNTIME_RUN_STATE_STRICT_ORGS` | `-` | Canary del modo estricto por organización (ids separados por coma): esas orgs corren fail-closed por invariantes aunque el global esté apagado. El config del... |
+| `RAG_RUNTIME_RUN_STATE_STRICT` | `off` | on = modo estricto global del estado del run: una violación de invariante crítico (autoridad contradicha/reemplazada, cierre no autorizado por la política) r... |
+| `RAG_RUNTIME_RUN_STATE_STRICT_ORGS` | `-` | Canary del modo estricto por organización (ids separados por coma): esas orgs corren fail-closed por invariantes aunque el global esté apagado. La configurac... |
 | `RAG_RUNTIME_SHADOW_SAMPLE_RATE` | `0.0` | Optional sample of JEV decisions compared with the previous provider. |
 | `RAG_RUNTIME_SOURCE_AWARE_TOOLS` | `True` | on = el runtime quita tools que no aplican a las fuentes del agente (SQL sin fuentes de datos, tabular sin CSV/Excel, call_api sin allowlist). |
 | `RAG_RUNTIME_TERMINATION_GATE` | `off` | on = extra Noul gate after tool use; max_steps still hard-stops. |

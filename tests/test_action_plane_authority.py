@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from uuid import uuid4
+
+import pytest
 
 from src.platform.workflows.engine import (
     SYSTEM_NODE_PERMS,
@@ -118,4 +121,155 @@ def test_callers_de_sistema_declaran_system_context() -> None:
         "Cambió el inventario de callers de sistema de workflows.\n"
         f"  esperado: {WORKFLOW_SYSTEM_CALLERS}\n"
         f"  hallado:  {found}"
+    )
+
+
+# -----------------------------------------------------------------------------
+# Contrato behavioral (P1-H): la ausencia de `authorized` delega en el handler;
+# un `authorized` denegado corta ANTES de ejecutar; un veredicto observacional
+# (shadow) no ejecuta. Nada de esto depende de convención.
+# -----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_dispatch_denegado_no_llama_al_handler() -> None:
+    from src.core.domain.decision import RoutingDecision
+    from src.decision.policy import AuthorizedDecision
+    from src.runtime.dispatcher import CapabilityDispatcher, DispatchRequest
+
+    calls: list[str] = []
+
+    async def handler(request, decision):
+        calls.append("executed")
+        raise AssertionError("un handler denegado no debe ejecutarse")
+
+    dispatcher = CapabilityDispatcher()
+    dispatcher.register("agent_runtime", handler)
+    decision = RoutingDecision(
+        provider="rules",
+        resolved=True,
+        capability="agent.execute",
+        confidence=0.99,
+    )
+    denied = AuthorizedDecision(
+        decision=decision, authorized=False, reason="capability_denied"
+    )
+    result = await dispatcher.dispatch(
+        decision,
+        DispatchRequest(
+            organization_id=uuid4(),
+            user_id=uuid4(),
+            role="customer",
+            permissions=frozenset(),
+            query="q",
+        ),
+        authorized=denied,
+    )
+    assert result.status == "denied"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_observacional_no_ejecuta() -> None:
+    """Un veredicto shadow (`acting=False`) es observación, nunca ejecución."""
+    from src.core.domain.decision import RoutingDecision
+    from src.runtime.dispatcher import CapabilityDispatcher, DispatchRequest
+
+    calls: list[str] = []
+
+    async def handler(request, decision):
+        calls.append("executed")
+        raise AssertionError("una decisión observacional no debe ejecutarse")
+
+    dispatcher = CapabilityDispatcher()
+    dispatcher.register("agent_runtime", handler)
+    decision = RoutingDecision(
+        provider="jev",
+        resolved=True,
+        capability="agent.execute",
+        confidence=0.99,
+        metadata={"acting": False},
+    )
+    result = await dispatcher.dispatch(
+        decision,
+        DispatchRequest(
+            organization_id=uuid4(),
+            user_id=uuid4(),
+            role="customer",
+            permissions=frozenset(),
+            query="q",
+        ),
+    )
+    assert result.status == "unavailable"
+    assert result.error == "decision_is_observational"
+    assert calls == []
+
+
+def test_tool_con_permiso_no_ejecuta_sin_permiso_del_tenant() -> None:
+    """Contrato del chat embed (permisos vacíos): una tool privilegiada no corre.
+
+    El handler del dispatcher exige `agents:execute` y `tool.permission`; el
+    chat público (rol customer, permissions=frozenset()) no puede ejecutar tools
+    con permiso declarado. Es la autorización equivalente del path embed.
+    """
+    from src.agents.tools.base import Tool, ToolContext
+    from src.agents.tools.registry import tool_allowed
+    from src.platform.auth.scopes import permission_satisfied
+
+    class PrivilegedTool(Tool):
+        name = "marketplace_action"
+        description = "efecto externo"
+        input_schema: dict = {"type": "object"}
+        permission = "external_actions:execute"
+
+        async def execute(self, ctx, arguments):  # pragma: no cover - no corre
+            raise AssertionError("no debe ejecutarse")
+
+    tool = PrivilegedTool()
+    ctx = ToolContext(tenant_id=uuid4(), role="customer", permissions=frozenset())
+    assert permission_satisfied(frozenset(), "agents:execute") is False
+    assert tool_allowed(tool, [tool.name], ctx) is False
+    authorized_ctx = ToolContext(
+        tenant_id=uuid4(),
+        role="admin",
+        permissions=frozenset({"agents:execute", "external_actions:execute"}),
+    )
+    assert tool_allowed(tool, [tool.name], authorized_ctx) is True
+
+
+def test_deep_path_cognitivo_usa_el_tenant_del_run() -> None:
+    """La ejecución cognitiva profunda recibe la identidad del run autenticado.
+
+    No hay camino donde el org del DAG provenga del modelo o de un payload: el
+    call site pasa la misma variable de organización del turno.
+    """
+    source = (ROOT / "src" / "agents" / "runtime" / "orchestrator.py").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    marker = "self._run_deep_reasoning("
+    assert marker in source
+    call = source.split(marker, 1)[1]
+    block = call[: call.find(")") + 1]
+    assert "organization_id=organization_id" in block, block
+    assert "user_id=user_id" in block
+    assert "role=role" in block
+
+
+def test_ejecucion_de_tools_solo_en_guards() -> None:
+    """Ratchet: un Tool se ejecuta únicamente por `execute_tool_guarded`.
+
+    `tool.execute(...)` fuera de `src/agents/tools/guards.py` es un bypass del
+    contrato MODEL PROPOSES → POLICY AUTHORIZES → RUNTIME EXECUTES: la tool
+    corre sin schema, timeout ni rate limit.
+    """
+    pattern = re.compile(r"\btool\.execute\(")
+    found: dict[str, int] = {}
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        matches = pattern.findall(path.read_text(encoding="utf-8", errors="replace"))
+        if matches:
+            rel = str(path.relative_to(ROOT)).replace("\\", "/")
+            found[rel] = len(matches)
+    assert found == {"src/agents/tools/guards.py": 1}, (
+        "ejecución de tools fuera del guard de ejecución: "
+        f"{found} (esperado únicamente src/agents/tools/guards.py)"
     )

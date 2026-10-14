@@ -9,6 +9,14 @@
 #
 # No son transiciones (no entran): comparaciones (`== RunPhase.FINALIZED`),
 # claves de mapping (`RunPhase.FINALIZED: ...`) y membership en TERMINAL_PHASES.
+#
+# Desde el hardening de autoridad:
+#   * `try_advance()` RECHAZA fases terminales (progreso no terminal únicamente);
+#   * el aplicador único es `AgentRunState._apply_terminal`, invocado por
+#     `finish(phase_override=<resolución>)` y por `apply_closure_override()`
+#     (fail-closed post cierre, solo fases no-concluyentes);
+#   * el segundo test de este archivo prohíbe asignaciones `.phase =` nuevas
+#     fuera del aplicador canónico.
 from __future__ import annotations
 
 import re
@@ -26,12 +34,6 @@ _TRANSITION_PATTERN = re.compile(
 #: archivo -> [(snippet exacto, cantidad, justificación)].
 ALLOWLIST: dict[str, list[tuple[str, int, str]]] = {
     "src/agents/runtime/agent_runtime.py": [
-        (
-            "phase = RunPhase.UNDETERMINED",
-            1,
-            "strict fail-closed: ejecuta la resolución de la política "
-            "(UNDETERMINED/BLOCK sobre FINALIZED); no decide por sí",
-        ),
         (
             "phase=RunPhase.BLOCKED",
             2,
@@ -52,22 +54,23 @@ ALLOWLIST: dict[str, list[tuple[str, int, str]]] = {
             "tabla de guards: REQUEST_FINALIZE permitido (evidencia / READY)",
         ),
     ],
-    "src/agents/runtime/orchestrator.py": [
-        (
-            "phase = RunPhase.UNDETERMINED",
-            1,
-            "camino RAG sin loop: fallo determinista de fase",
-        ),
-    ],
     "src/runtime/run_state.py": [
-        ("return RunPhase.FAILED", 1, "mapper único status → fase (finish())"),
-        ("return RunPhase.LIMIT_REACHED", 1, "mapper único status → fase (finish())"),
-        ("return RunPhase.BLOCKED", 3, "mapper único status → fase (finish())"),
-        ("return RunPhase.ABSTAINED", 1, "mapper único status → fase (finish())"),
-        ("return RunPhase.UNDETERMINED", 1, "mapper único status → fase (finish())"),
-        ("return RunPhase.FINALIZED", 1, "mapper único status → fase (finish())"),
+        ("return RunPhase.FAILED", 1, "mapper único status → fase (oráculo)"),
+        ("return RunPhase.LIMIT_REACHED", 1, "mapper único status → fase (oráculo)"),
+        ("return RunPhase.BLOCKED", 3, "mapper único status → fase (oráculo)"),
+        ("return RunPhase.ABSTAINED", 1, "mapper único status → fase (oráculo)"),
+        ("return RunPhase.UNDETERMINED", 1, "mapper único status → fase (oráculo)"),
+        ("return RunPhase.FINALIZED", 1, "mapper único status → fase (oráculo)"),
     ],
     "src/runtime/finalization_policy.py": [
+        (
+            "phase=RunPhase.FAILED",
+            1,
+            "resolución de fallo de la autoridad del cierre "
+            "(`closure_authority_failure`): declara FAILED, no transiciona; el "
+            "aplicador único sigue siendo finish(phase_override=...). Fail-closed: "
+            "un fallo del reducer no reabre la heurística legacy.",
+        ),
         (
             "return RunPhase.ABSTAINED",
             1,
@@ -116,6 +119,32 @@ def test_solo_los_sitios_allowlisted() -> None:
             f"esperadas:   {sorted(expected[rel])}\n"
             "Rutear por FinalizationPolicy o agregar a la allowlist con justificación."
         )
+
+
+def test_apply_terminal_es_el_unico_mutador_de_phase_en_src() -> None:
+    """Ratchet de asignación: solo `run_state._apply_terminal` muta `.phase`.
+
+    Los usuarios del estado tienen `try_advance` (no terminal) y el override de
+    seguridad post cierre; una asignación nueva fuera del aplicador canónico
+    exige justificación explícita acá y en el ownership map.
+    """
+    assignment = re.compile(r"\.phase\s*=\s*(?!=)")
+    allowed = {
+        "src/runtime/run_state.py": 2,
+        # ^ `try_advance` (fase NO terminal) + `_apply_terminal` (canónico).
+    }
+    found = {
+        str(path.relative_to(ROOT)).replace("\\", "/"): len(
+            assignment.findall(path.read_text(encoding="utf-8"))
+        )
+        for path in (ROOT / "src").rglob("*.py")
+        if assignment.search(path.read_text(encoding="utf-8"))
+    }
+    assert found == allowed, (
+        "Asignaciones directas de `.phase` fuera del aplicador canónico:\n"
+        f"  encontradas: {found}\n"
+        f"  esperadas:   {allowed}"
+    )
 
 
 def test_allowlist_declara_justificacion() -> None:

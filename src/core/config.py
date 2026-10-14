@@ -1453,8 +1453,18 @@ class Settings(BaseSettings):
         description=(
             "Canary del modo estricto por organización (ids separados por coma): "
             "esas orgs corren fail-closed por invariantes aunque el global esté "
-            "apagado. El config del agente "
-            "(config_json.runtime.strict_run_state) manda sobre todo."
+            "apagado. La configuración del agente solo puede REFORZAR el piso "
+            "(P1-D): no puede apagarlo."
+        ),
+    )
+    RUNTIME_CONFIG_ACK_DANGEROUS: str = Field(
+        default="",
+        description=(
+            "Acknowledgement explícito de combinaciones DANGEROUS (P1-E): códigos "
+            "de `src/core/config_rules` separados por coma "
+            "(`dangerous_gate_phase_skipped`, ...). En producción una combinación "
+            "dangerous sin acknowledgement no arranca. Las INVALID nunca se "
+            "reconocen."
         ),
     )
     RUNTIME_JEV_SKIP_SHADOW: Literal["off", "on"] = Field(
@@ -2836,6 +2846,10 @@ class Settings(BaseSettings):
                 "before any real deployment.",
                 stacklevel=2,
             )
+        # P1-E: una instancia no arranca en una postura contradictoria.
+        from src.core.config_rules import assert_runtime_config
+
+        assert_runtime_config(self)
         return self
 
 

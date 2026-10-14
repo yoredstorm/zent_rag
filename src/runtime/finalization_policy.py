@@ -430,6 +430,11 @@ def decision_matches_terminal(
 #
 # Cualquier divergencia queda como `mismatch` trazable y es un invariante
 # crítico: por construcción no existe un cierre FINALIZED sin autoridad.
+#
+# Fallo de la autoridad (excepción del reducer): fail-closed explícito. La
+# resolución es `closure_authority_failed` -> FAILED (fallo operativo), nunca
+# `phase_override=None` cayendo al mapper legacy. El oráculo queda como
+# diagnóstico/oráculo de divergencia, jamás como autoridad de respaldo.
 # =============================================================================
 #: Status operativos: la fase la decide el resultado, no la answerability.
 _OPERATIONAL_STATUS_PHASE: dict[str, RunPhase] = {
@@ -452,6 +457,12 @@ _ACTION_PHASE: dict[FinalizationAction, RunPhase] = {
 #: Kinds de violación del cierre (invariantes críticos en modo estricto).
 CLOSURE_NOT_AUTHORIZED = "closure_not_authorized"
 CLOSURE_AUTHORITY_MISMATCH = "closure_authority_mismatch"
+#: La autoridad del cierre no pudo resolver (excepción / contrato roto).
+#: Fail-closed: no existe cierre por heurística legacy; se aplica fallo
+#: operativo (FAILED) con motivo estructurado y traza.
+CLOSURE_AUTHORITY_FAILED = "closure_authority_failed"
+#: El aplicador canónico recibió una fase sin resolución de autoridad.
+CLOSURE_AUTHORITY_MISSING = "closure_authority_missing"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -464,6 +475,8 @@ class ClosureResolution:
     kind: str = "agreed"
     mismatch: str = ""
     operational: bool = False
+    #: Motivo estructurado cuando no hay `decision` (fallo de autoridad).
+    reason_code: str = ""
     #: Condición de evidencia medida (`evidence_semantics`): vocabulario único,
     #: low-cardinality, publicado para observabilidad y adopción por canary.
     condition: str = ""
@@ -487,7 +500,9 @@ class ClosureResolution:
                 str(self.decision.action) if self.decision is not None else None
             ),
             "reason_code": (
-                self.decision.reason_code if self.decision is not None else None
+                self.decision.reason_code
+                if self.decision is not None
+                else (self.reason_code or None)
             ),
             "authority": (
                 str(self.decision.authority) if self.decision is not None else None
@@ -558,6 +573,40 @@ def resolve_closure_phase(
         resolution,
         condition=str(condition),
         evidence_conflict=condition_conflict(state, condition),
+    )
+
+
+def closure_authority_failure(
+    state: AgentRunState,
+    *,
+    status: str,
+    answer: str,
+    answer_state: dict | None,
+    error: str = "",
+) -> ClosureResolution:
+    """Resolución EXPLÍCITA de fallo de autoridad del cierre (fail-closed).
+
+    Cuando el reducer no puede resolver (`resolve_closure_phase` lanza, o un
+    caller la monkeypatchea para fallar), el cierre NO puede reabrir la
+    heurística legacy: un texto no vacío jamás se convierte en FINALIZED por el
+    solo hecho de existir. La resolución aplica el fallo operativo (FAILED),
+    conserva el oráculo como dato de diagnóstico y publica motivo estructurado.
+
+    La única responsabilidad de esta función es declarar la resolución; el
+    aplicador único sigue siendo `AgentRunState.finish(phase_override=...)`.
+    """
+    legacy = terminal_phase_for(
+        status=status, answer=answer, answer_state=answer_state
+    )
+    reason = CLOSURE_AUTHORITY_FAILED
+    return ClosureResolution(
+        phase=RunPhase.FAILED,
+        legacy_phase=legacy,
+        decision=None,
+        kind=CLOSURE_AUTHORITY_FAILED,
+        mismatch=f"{reason}:{error}" if error else reason,
+        operational=True,
+        reason_code=reason,
     )
 
 
@@ -811,7 +860,9 @@ def observe_trigger_shadow(
 
 __all__ = [
     "AuthorityLevel",
+    "CLOSURE_AUTHORITY_FAILED",
     "CLOSURE_AUTHORITY_MISMATCH",
+    "CLOSURE_AUTHORITY_MISSING",
     "CLOSURE_NOT_AUTHORIZED",
     "ClosureResolution",
     "ENFORCE_STAGES",
@@ -819,6 +870,7 @@ __all__ = [
     "FinalizationAction",
     "FinalizationDecision",
     "LEGACY_ACTION_BY_PHASE",
+    "closure_authority_failure",
     "decision_matches_terminal",
     "enforced_stages",
     "enforcement_stages",

@@ -183,6 +183,10 @@ adversarial) y roadmap NOW/NEXT/LATER.
 
 - `flow["jev_value"]` (agente): llamadas JEV por fase + `redundant_rate`.
 - `state.decisions.finalization`: resolución de autoridad del cierre.
+- `state.decisions.closure`: resolución del cierre APLICADA (fase, oráculo,
+  `kind`, `reason_code`, condición de evidencia). Un fallo de la autoridad del
+  reducer queda como `closure_authority_failed` → FAILED con motivo
+  estructurado: nunca se reabre el mapper legacy por texto (hardening P1-A).
 - `state.context`: sobre de procedencia (tenant/conversación/trust).
 - `zent_finalization_divergence_total{stage, policy_action, legacy_action,
   reason_code}`: divergencia entre la ruta vigente y la resolución. `stage`:
@@ -210,15 +214,17 @@ adversarial) y roadmap NOW/NEXT/LATER.
 
 ## 7c. Enforcement por etapas y scopes (F2/F3)
 
-`src/runtime/enforcement.py` resuelve las etapas armadas con prioridad
-**agente > organización > environment > global**:
+`src/runtime/enforcement.py` resuelve las etapas armadas como **piso
+monotónico**: `effective = global ∪ environment ∪ organización ∪ agente`. Cada
+scope SUMA etapas; ninguno puede desarmar una etapa armada por otro (P1-D del
+hardening de autoridad):
 
 | Surface | Configuración |
 |---|---|
-| Agente | `config_json.runtime.finalization_enforce` (bool o `"a,b"`) |
-| Organización | `RUNTIME_FINALIZATION_ENFORCE_ORGS` (`org=a,b;org2`) |
-| Environment | `RUNTIME_FINALIZATION_ENFORCE_BY_ENV` (`production=a,b`) |
 | Global | `RUNTIME_FINALIZATION_ENFORCE` (default `termination_trigger,draft_gate`) |
+| Environment | `RUNTIME_FINALIZATION_ENFORCE_BY_ENV` (`production=a,b`) |
+| Organización | `RUNTIME_FINALIZATION_ENFORCE_ORGS` (`org=a,b;org2`) |
+| Agente | `config_json.runtime.finalization_enforce` (bool o `"a,b"`) |
 
 Etapas: `termination_trigger`, `draft_gate`, `answer_gate`. Un trigger armado
 espera (una vez por etapa) cuando la política resuelve RETRIEVE_MORE; nunca

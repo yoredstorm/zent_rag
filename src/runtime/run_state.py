@@ -65,7 +65,9 @@ class RunPhase(StrEnum):
     UNDETERMINED = "UNDETERMINED"
 
 
-#: Fases sin salida. Solo `finish()` las asigna.
+#: Fases sin salida. Las asignan el aplicador canónico (`finish()` con la
+#: resolución del cierre) y el override de seguridad post cierre
+#: (`apply_closure_override`, solo fases no-concluyentes).
 TERMINAL_PHASES: frozenset[RunPhase] = frozenset(
     {
         RunPhase.FINALIZED,
@@ -122,21 +124,28 @@ _TRANSITIONS: dict[RunPhase, frozenset[RunPhase]] = {
             _T.READY_TO_FINALIZE,
         }
     ),
-    _T.READY_TO_FINALIZE: TERMINAL_PHASES,
+    # Desde READY_TO_FINALIZE solo hay reproceso no terminal: la salida
+    # terminal NO es una transición de pipeline, la aplica la autoridad del
+    # cierre (`resolve_closure_phase` -> `finish(phase_override=...)`).
+    _T.READY_TO_FINALIZE: frozenset(
+        {_T.REASONING, _T.RETRIEVING, _T.ACTION_REQUIRED}
+    ),
 }
 
 
 def _allowed_transitions(current: RunPhase) -> frozenset[RunPhase]:
+    """Transiciones NO terminales válidas. Un estado terminal no transiciona."""
     if current in TERMINAL_PHASES:
         return frozenset()
-    return frozenset(_TRANSITIONS.get(current, frozenset())) | TERMINAL_PHASES
+    return frozenset(_TRANSITIONS.get(current, frozenset()))
 
 
 #: Invariantes que, en modo estricto (`RUNTIME_RUN_STATE_STRICT=on`), bloquean
 #: la respuesta por riesgo de corrección (no por bookkeeping).
 #: Los kinds `closure_*` los emite el reducer del cierre
-#: (`finalization_policy.CLOSURE_NOT_AUTHORIZED` / `CLOSURE_AUTHORITY_MISMATCH`);
-#: un test compara los literales para que no puedan divergir.
+#: (`finalization_policy.CLOSURE_NOT_AUTHORIZED` / `CLOSURE_AUTHORITY_MISMATCH`
+#: / `CLOSURE_AUTHORITY_FAILED`); un test compara los literales para que no
+#: puedan divergir.
 CRITICAL_INVARIANTS: frozenset[str] = frozenset(
     {
         "authoritative_decision_contradicted",
@@ -144,7 +153,14 @@ CRITICAL_INVARIANTS: frozenset[str] = frozenset(
         "deterministic_finalized_without_envelope",
         "closure_not_authorized",
         "closure_authority_mismatch",
+        "closure_authority_failed",
     }
+)
+
+#: Fases que un override POST cierre puede aplicar: solo las no-concluyentes.
+#: Un override nunca puede fabricar un FINALIZED (monotonicidad del fail-closed).
+CLOSURE_OVERRIDE_PHASES: frozenset[RunPhase] = frozenset(
+    {RunPhase.UNDETERMINED, RunPhase.BLOCKED, RunPhase.FAILED}
 )
 
 
@@ -498,9 +514,9 @@ class BudgetState:
 
     ledger: RunBudgetLedger | None = None
     expensive_calls_after_exhaustion: int = 0
-    #: Observacional: el último motivo de corte presupuestario observado.
-    last_cut_reason: str = ""
     #: Razón PRECISA del corte (run_budget.STOP_REASONS). Vacío = sin corte.
+    #: Writer único: `_mark_budget_stop` (agent_runtime). La representación
+    #: muerta `last_cut_reason` se eliminó (P1-7): una sola verdad.
     stop_reason: str = ""
 
     @property
@@ -528,7 +544,6 @@ class BudgetState:
             "expensive_calls_after_exhaustion": self.expensive_calls_after_exhaustion,
             "remaining_tokens": getattr(ledger, "remaining_tokens", None),
             "remaining_cost_usd": getattr(ledger, "remaining_cost_usd", None),
-            "last_cut_reason": self.last_cut_reason or None,
             "stop_reason": self.stop_reason or None,
         }
 
@@ -755,9 +770,21 @@ class AgentRunState:
         return self.phase in TERMINAL_PHASES
 
     def try_advance(self, phase: RunPhase, *, detail: str = "") -> bool:
-        """Transición validada. Inválida = nota observacional, nunca excepción."""
+        """Transición NO terminal validada (progreso del pipeline).
+
+        Una fase TERMINAL no se alcanza por acá: solo la autoridad del cierre
+        (`finalization_policy.resolve_closure_phase` -> `finish()`) o un
+        override de seguridad posterior (`apply_closure_override`) aplican un
+        estado terminal. Inválida = nota observacional, nunca excepción.
+        """
         if phase == self.phase:
             return True
+        if phase in TERMINAL_PHASES:
+            self.trace.notes.append(
+                f"phase_rejected:{self.phase}->{phase}"
+                ":terminal_requires_closure_authority"
+            )
+            return False
         if phase not in _allowed_transitions(self.phase):
             self.trace.notes.append(f"phase_rejected:{self.phase}->{phase}")
             return False
@@ -765,6 +792,47 @@ class AgentRunState:
         self.trace.phase_history.append(
             {"phase": str(phase), "detail": detail[:200], "at_ms": round(time.time() * 1000)}
         )
+        return True
+
+    def _apply_terminal(self, phase: RunPhase, *, detail: str = "") -> None:
+        """Aplicador ÚNICO de fases terminales (canonical finalizer).
+
+        Privado por contrato: callers normales (pipeline, tools, gates) usan
+        `try_advance` para progreso no terminal y la autoridad del cierre para
+        el estado terminal. Los únicos call sites son `finish()` (resolución del
+        cierre) y `apply_closure_override()` (corrección de seguridad post
+        cierre, restringida a fases no-concluyentes).
+        """
+        if phase not in TERMINAL_PHASES:
+            return
+        previous = self.phase
+        self.phase = phase
+        self.trace.phase_history.append(
+            {
+                "phase": str(phase),
+                "detail": detail[:200],
+                "at_ms": round(time.time() * 1000),
+            }
+        )
+        if previous in TERMINAL_PHASES and previous is not phase:
+            self.trace.notes.append(f"terminal_overridden:{previous}->{phase}")
+
+    def apply_closure_override(
+        self, phase: RunPhase, *, reason_code: str, detail: str = ""
+    ) -> bool:
+        """Corrección de seguridad POST cierre (bloqueo estricto por invariantes).
+
+        Reservada a mecanismos explícitos de seguridad que actúan después de
+        `finalize_state` (p. ej. `RUNTIME_RUN_STATE_STRICT`). Solo puede aplicar
+        fases no-concluyentes: un override NO puede convertir un fallo en
+        FINALIZED (monotonicidad del fail-closed). Devuelve si aplicó.
+        """
+        if phase not in CLOSURE_OVERRIDE_PHASES:
+            self.trace.notes.append(
+                f"closure_override_rejected:{phase}:reason={reason_code}"
+            )
+            return False
+        self._apply_terminal(phase, detail=f"override:{reason_code}:{detail}")
         return True
 
     def finish(
@@ -776,28 +844,33 @@ class AgentRunState:
         phase_override: RunPhase | None = None,
         oracle_phase: RunPhase | None = None,
     ) -> RunPhase:
-        """Cierra el run con la fase terminal que corresponde al resultado real.
+        """Cierra el run con la fase terminal que resolvió la AUTORIDAD.
 
-        La fase la decide la AUTORIDAD del cierre (`phase_override`, resuelta por
-        `finalization_policy.resolve_closure_phase`). El mapper
-        (`terminal_phase_for`) queda como oráculo: si difiere, se registra la
-        divergencia y manda la autoridad, nunca el texto.
+        `phase_override` es la fase resuelta por
+        `finalization_policy.resolve_closure_phase` (o el fallo estructurado
+        `closure_authority_failure`). El mapper `terminal_phase_for` queda como
+        ORÁCULO: si difiere, se registra la divergencia y manda la autoridad,
+        nunca el texto.
+
+        Sin resolución no hay cierre: `finish()` sin `phase_override` terminal
+        NO cae a la heurística legacy — aplica fallo operativo (FAILED) con
+        traza (`closure_authority_missing`). Fallo de autoridad nunca termina
+        FINALIZED por la existencia de texto.
         """
-        terminal = (
-            oracle_phase
-            if oracle_phase is not None
-            else terminal_phase_for(status=status, answer=answer, answer_state=answer_state)
-        )
-        if phase_override is not None and phase_override in TERMINAL_PHASES:
-            if phase_override is not terminal:
-                self.trace.notes.append(
-                    f"closure_oracle:{terminal}->{phase_override}"
-                )
-            terminal = phase_override
-        if self.phase not in TERMINAL_PHASES:
-            self.try_advance(terminal, detail=f"status={status}")
-        else:
-            self.phase = terminal
+        terminal = phase_override if phase_override in TERMINAL_PHASES else None
+        oracle = oracle_phase if oracle_phase in TERMINAL_PHASES else None
+        if oracle is None:
+            oracle = terminal_phase_for(
+                status=status, answer=answer, answer_state=answer_state
+            )
+        if terminal is None:
+            self.trace.notes.append(
+                f"closure_authority_missing:{oracle}->FAILED"
+            )
+            terminal = RunPhase.FAILED
+        if oracle is not terminal:
+            self.trace.notes.append(f"closure_oracle:{oracle}->{terminal}")
+        self._apply_terminal(terminal, detail=f"status={status}")
         return self.phase
 
     # ------------------------------------------------------------------ invariantes
@@ -948,19 +1021,18 @@ def strict_mode_enabled(
     config_json: Any = None,
     organization_id: Any = None,
 ) -> bool:
-    """Fail-closed por invariantes. Scope: config del agente > orgs canary > global.
+    """Fail-closed por invariantes críticos. SAFETY FLOOR monotónico.
 
-    1. `config_json["runtime"]["strict_run_state"]` (bool) manda por agente.
-    2. `RUNTIME_RUN_STATE_STRICT_ORGS` (lista de orgs) habilita el canary.
-    3. `RUNTIME_RUN_STATE_STRICT=on` global.
+    effective = global ∪ canary de organización ∪ configuración del agente.
+
+    Un scope normal (organización/agente) puede REFORZAR el piso (encenderlo
+    donde no está), nunca debilitarlo: si el global está `on`, ningún
+    `config_json` de agente lo apaga. El downgrade operacional, si el producto
+    lo necesitara, exigiría un mecanismo break-glass explícito (no existe hoy:
+    se prohíbe el downgrade).
     """
-    runtime = (
-        config_json.get("runtime") if isinstance(config_json, dict) else None
-    )
-    if isinstance(runtime, dict) and isinstance(
-        runtime.get("strict_run_state"), bool
-    ):
-        return bool(runtime["strict_run_state"])
+    if _strict_global_enabled(settings):
+        return True
     orgs = {
         part.strip()
         for part in str(
@@ -970,6 +1042,17 @@ def strict_mode_enabled(
     }
     if organization_id is not None and str(organization_id) in orgs:
         return True
+    runtime = (
+        config_json.get("runtime") if isinstance(config_json, dict) else None
+    )
+    if isinstance(runtime, dict) and isinstance(
+        runtime.get("strict_run_state"), bool
+    ):
+        return bool(runtime["strict_run_state"])
+    return False
+
+
+def _strict_global_enabled(settings: Any) -> bool:
     value = str(
         getattr(settings, "RUNTIME_RUN_STATE_STRICT", "off") or "off"
     ).strip().lower()
@@ -1008,6 +1091,10 @@ def finalize_state(
     El cierre pasa por el reducer de autoridad (`resolve_closure_phase`): la fase
     aplicada sale de la resolución, no del texto. Cualquier divergencia entre la
     autoridad y el oráculo legacy queda como violación crítica trazable.
+
+    Si la autoridad del cierre FALLA (excepción del reducer), el cierre es
+    fail-closed explícito: resolución `closure_authority_failed` -> FAILED con
+    motivo estructurado. Nunca `phase_override=None` cayendo al mapper legacy.
     """
     state.answer.text = str(answer or "")
     state.answer.status = str(status or "")
@@ -1028,14 +1115,31 @@ def finalize_state(
             state.answer.citations = tuple(sorted(cited_ids))
             if not state.evidence.cited:
                 state.evidence.observe_usage(cited=frozenset(cited_ids))
-    resolution = None
-    try:
-        from src.runtime.finalization_policy import resolve_closure_phase
+    from src.runtime.finalization_policy import (
+        closure_authority_failure,
+        resolve_closure_phase,
+    )
 
+    resolution = None
+    closure_failure: str = ""
+    try:
         resolution = resolve_closure_phase(
             state, status=status, answer=answer, answer_state=answer_state
         )
-        state.decisions.observe_closure(resolution)
+    except Exception as exc:  # noqa: BLE001 — fail-closed estructurado
+        closure_failure = str(exc)[:120]
+        state.trace.notes.append(f"closure_authority_failed:{closure_failure}")
+        resolution = closure_authority_failure(
+            state,
+            status=status,
+            answer=answer,
+            answer_state=answer_state,
+            error=closure_failure,
+        )
+    state.decisions.observe_closure(resolution)
+    # La clasificación de evidencia es observabilidad: un fallo acá NO puede
+    # cambiar la fase (antes compartía el try del reducer y degradaba a legacy).
+    try:
         from src.runtime.evidence_semantics import observe_condition
 
         observe_condition(
@@ -1043,17 +1147,17 @@ def finalize_state(
             resolution.condition,
             conflict=resolution.evidence_conflict,
         )
-    except Exception as exc:  # noqa: BLE001 — diagnóstico: nunca rompe el cierre
-        state.trace.notes.append(f"closure_authority_failed:{str(exc)[:120]}")
+    except Exception as exc:  # noqa: BLE001 — observabilidad, nunca rompe el cierre
+        state.trace.notes.append(f"closure_condition_failed:{str(exc)[:120]}")
     state.finish(
         status=status,
         answer=answer,
         answer_state=answer_state,
-        phase_override=(resolution.phase if resolution is not None else None),
-        oracle_phase=(resolution.legacy_phase if resolution is not None else None),
+        phase_override=resolution.phase,
+        oracle_phase=resolution.legacy_phase,
     )
     violations = list(state.check_invariants())
-    if resolution is not None and resolution.mismatch:
+    if resolution.mismatch:
         violations.append(resolution.mismatch)
     state.trace.violations[:] = violations
     if violations:
@@ -1065,6 +1169,7 @@ __all__ = [
     "AgentRunState",
     "AnswerState",
     "BudgetState",
+    "CLOSURE_OVERRIDE_PHASES",
     "CONTRACT_VERSION",
     "CRITICAL_INVARIANTS",
     "DecisionState",

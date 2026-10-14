@@ -172,24 +172,26 @@ def test_enforcement_de_answer_gate_requiere_gate_encendido() -> None:
     ) is False
 
 
-def test_enforcement_global_por_org_y_environment() -> None:
+def test_enforcement_global_por_org_y_environment_es_piso_monotonico() -> None:
     settings = _settings(
         RUNTIME_FINALIZATION_ENFORCE="termination_trigger",
         RUNTIME_FINALIZATION_ENFORCE_ORGS="org-1=answer_gate;org-2",
         RUNTIME_FINALIZATION_ENFORCE_BY_ENV="production=draft_gate",
         ENVIRONMENT="production",
     )
+    # P1-D: los scopes SUMAN; ninguno apaga una etapa armada por otro.
     assert enforcement_stages(settings, organization_id="org-1") == frozenset(
-        {"answer_gate"}
+        {"termination_trigger", "draft_gate", "answer_gate"}
     )
     assert enforcement_stages(settings, organization_id="org-2") == frozenset(
-        {"termination_trigger"}
+        {"termination_trigger", "draft_gate"}
     )
-    # Precedencia documentada: agente > org > environment > global.
     assert enforcement_stages(settings, organization_id="org-3") == frozenset(
-        {"draft_gate"}
+        {"termination_trigger", "draft_gate"}
     )
-    assert enforcement_stages(settings) == frozenset({"draft_gate"})
+    assert enforcement_stages(settings) == frozenset(
+        {"termination_trigger", "draft_gate"}
+    )
     staging = _settings(
         RUNTIME_FINALIZATION_ENFORCE="termination_trigger",
         RUNTIME_FINALIZATION_ENFORCE_ORGS="org-1=answer_gate;org-2",
@@ -198,19 +200,19 @@ def test_enforcement_global_por_org_y_environment() -> None:
     )
     assert enforcement_stages(staging) == frozenset({"termination_trigger"})
     assert enforcement_stages(staging, organization_id="org-1") == frozenset(
-        {"answer_gate"}
+        {"termination_trigger", "answer_gate"}
     )
 
 
-def test_agente_puede_desarmar_el_enforcement_global() -> None:
-    """Deuda P1-3 medida: el override del agente tiene prioridad absoluta."""
+def test_agente_no_puede_desarmar_el_enforcement_global() -> None:
+    """P1-D: un override de agente SUMA etapas; el fail-closed no se desarma."""
     settings = _settings(RUNTIME_FINALIZATION_ENFORCE="termination_trigger,draft_gate")
     assert enforcement_stages(
         settings, config_json={"runtime": {"finalization_enforce": False}}
-    ) == frozenset()
+    ) == frozenset({"termination_trigger", "draft_gate"})
     assert enforcement_stages(
         settings, config_json={"runtime": {"finalization_enforce": "answer_gate"}}
-    ) == frozenset({"answer_gate"})
+    ) == frozenset({"termination_trigger", "draft_gate", "answer_gate"})
 
 
 # -----------------------------------------------------------------------------
@@ -232,12 +234,13 @@ def test_estricto_global_canary_y_agente() -> None:
         )
         is True
     )
+    # P1-D: el agente puede reforzar, nunca debilitar el piso global.
     assert (
         strict_mode_enabled(
             _settings(RUNTIME_RUN_STATE_STRICT="on"),
             config_json={"runtime": {"strict_run_state": False}},
         )
-        is False
+        is True
     )
 
 
@@ -249,15 +252,18 @@ def test_strict_invalido_no_activa_fail_closed() -> None:
 # -----------------------------------------------------------------------------
 # 6. El modo de respuesta del gate: flag global vs override del agente.
 # -----------------------------------------------------------------------------
-def test_override_del_agente_es_bool_only() -> None:
-    """El string `shadow` documentado NO se honra: solo bool (deuda P1-3)."""
+def test_override_del_agente_respeta_el_contrato_documentado() -> None:
+    """P1-3 corregido: `on`/`shadow`/`off` del agente se honran (antes solo bool)."""
     from src.runtime.answer_gate import answer_gate_mode
 
     settings = _settings(RUNTIME_ANSWER_GATE="on")
     assert answer_gate_mode(settings, {"runtime": {"answer_gate": False}}) == "off"
     assert answer_gate_mode(settings, {"runtime": {"answer_gate": True}}) == "on"
-    # Documentado como `on|shadow|off`; el código ignora el string y cae al global.
-    assert answer_gate_mode(settings, {"runtime": {"answer_gate": "shadow"}}) == "on"
+    assert answer_gate_mode(settings, {"runtime": {"answer_gate": "shadow"}}) == "shadow"
+    assert answer_gate_mode(settings, {"runtime": {"answer_gate": "off"}}) == "off"
+    assert answer_gate_mode(settings, {"runtime": {"answer_gate": "on"}}) == "on"
+    # Valor desconocido: cae al global (no inventa un modo).
+    assert answer_gate_mode(settings, {"runtime": {"answer_gate": "quizas"}}) == "on"
 
 
 def test_flag_global_invalido_cae_a_off() -> None:

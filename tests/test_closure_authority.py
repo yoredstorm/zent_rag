@@ -22,6 +22,7 @@ from src.runtime.answer_state import (
     ANSWER_STATE_UNDETERMINED,
 )
 from src.runtime.finalization_policy import (
+    CLOSURE_AUTHORITY_FAILED,
     CLOSURE_AUTHORITY_MISMATCH,
     CLOSURE_NOT_AUTHORIZED,
     ClosureResolution,
@@ -330,6 +331,7 @@ def test_finalize_state_cierre_normal_es_consistente() -> None:
 def test_kinds_del_cierre_son_invariantes_criticos() -> None:
     assert CLOSURE_NOT_AUTHORIZED in CRITICAL_INVARIANTS
     assert CLOSURE_AUTHORITY_MISMATCH in CRITICAL_INVARIANTS
+    assert CLOSURE_AUTHORITY_FAILED in CRITICAL_INVARIANTS
 
 
 def test_los_literales_del_ratchet_coinciden_con_la_politica() -> None:
@@ -338,6 +340,145 @@ def test_los_literales_del_ratchet_coinciden_con_la_politica() -> None:
 
     assert CLOSURE_NOT_AUTHORIZED == policy.CLOSURE_NOT_AUTHORIZED
     assert CLOSURE_AUTHORITY_MISMATCH == policy.CLOSURE_AUTHORITY_MISMATCH
+    assert CLOSURE_AUTHORITY_FAILED == policy.CLOSURE_AUTHORITY_FAILED
+
+
+# -----------------------------------------------------------------------------
+# P1-A: un fallo de la autoridad del cierre es FAIL-CLOSED, nunca legacy.
+# -----------------------------------------------------------------------------
+class TestAutoridadDeCierreFailClosed:
+    """Contrato: `closure_authority_failed` -> fallo operativo + motivo + traza.
+
+    Un fallo del reducer NO puede terminar en FINALIZED por la existencia de
+    texto ni por ningún dato legacy (`status`, `answer_state`).
+    """
+
+    @staticmethod
+    def _fail(monkeypatch) -> None:
+        import src.runtime.finalization_policy as policy
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("reducer caido")
+
+        monkeypatch.setattr(policy, "resolve_closure_phase", boom)
+
+    def test_fallo_del_reducer_no_finaliza_por_texto(self, monkeypatch) -> None:
+        self._fail(monkeypatch)
+        state = _state(evidence="complete")
+        violations = finalize_state(
+            state, status="completed", answer=_DRAFT, answer_state=None
+        )
+        assert state.phase is RunPhase.FAILED
+        assert state.terminal is True
+        # Motivo estructurado (no solo texto de nota).
+        assert any(v.startswith(CLOSURE_AUTHORITY_FAILED) for v in violations)
+        closure = state.decisions.closure or {}
+        assert closure["phase"] == "FAILED"
+        assert closure["kind"] == CLOSURE_AUTHORITY_FAILED
+        assert closure["reason_code"] == CLOSURE_AUTHORITY_FAILED
+        assert closure["operational"] is True
+        # El oráculo legacy sí ve texto: la divergencia es dato, no autoridad.
+        assert closure["legacy_phase"] == "FINALIZED"
+        assert closure["consistent"] is False
+        # Traza observable del fallo.
+        assert any(
+            note.startswith("closure_authority_failed:")
+            for note in state.trace.notes
+        )
+        assert "closure_oracle:FINALIZED->FAILED" in state.trace.notes
+        # El bloqueo estricto lo consume como invariante crítico.
+        assert state.critical_violations()
+
+    def test_answer_state_aparentemente_valido_tampoco_finaliza(self, monkeypatch) -> None:
+        self._fail(monkeypatch)
+        from src.runtime.answer_state import ANSWER_STATE_DERIVED
+
+        state = _state(evidence="complete", authority=True)
+        violations = finalize_state(
+            state,
+            status="completed",
+            answer=_DRAFT,
+            answer_state={"state": ANSWER_STATE_DERIVED},
+        )
+        assert state.phase is RunPhase.FAILED
+        assert any(v.startswith(CLOSURE_AUTHORITY_FAILED) for v in violations)
+
+    def test_ningun_dato_legacy_convierte_fallo_en_success(self, monkeypatch) -> None:
+        """Barrido de combinaciones: el fallo de autoridad jamás da FINALIZED."""
+        self._fail(monkeypatch)
+        from src.runtime.answer_state import (
+            ANSWER_STATE_DERIVED,
+            ANSWER_STATE_INSUFFICIENT,
+        )
+
+        statuses = ("completed", "error", "limit_reached", "blocked", "failed")
+        families = (
+            None,
+            {"state": ""},
+            {"state": ANSWER_STATE_DERIVED},
+            {"state": ANSWER_STATE_INSUFFICIENT},
+        )
+        drafts = ("", _DRAFT)
+        checked = 0
+        for status in statuses:
+            for family in families:
+                for draft in drafts:
+                    state = _state(evidence="complete")
+                    finalize_state(
+                        state,
+                        status=status,
+                        answer=draft,
+                        answer_state=family,
+                    )
+                    checked += 1
+                    assert state.phase is not RunPhase.FINALIZED, (
+                        status,
+                        family,
+                        draft,
+                    )
+                    assert state.phase is RunPhase.FAILED
+        assert checked >= 40
+
+    def test_finish_sin_resolucion_cae_a_fallo_operativo(self) -> None:
+        """Defensa en profundidad: `finish()` sin autoridad no usa el mapper."""
+        state = _state(evidence="complete")
+        phase = state.finish(status="completed", answer=_DRAFT, answer_state=None)
+        assert phase is RunPhase.FAILED
+        assert state.phase is RunPhase.FAILED
+        assert any(
+            note.startswith("closure_authority_missing:")
+            for note in state.trace.notes
+        )
+
+    def test_finish_ignora_fase_no_terminal_como_autoridad(self) -> None:
+        state = _state()
+        phase = state.finish(
+            status="completed",
+            answer=_DRAFT,
+            answer_state=None,
+            phase_override=RunPhase.REASONING,
+        )
+        assert phase is RunPhase.FAILED
+
+    def test_override_post_cierre_solo_acepta_fases_no_concluyentes(self) -> None:
+        state = _state(evidence="complete")
+        finalize_state(state, status="completed", answer=_DRAFT, answer_state=None)
+        assert state.phase is RunPhase.FINALIZED
+        assert (
+            state.apply_closure_override(
+                RunPhase.FINALIZED, reason_code="strict_block"
+            )
+            is False
+        )
+        assert state.phase is RunPhase.FINALIZED
+        assert state.apply_closure_override(
+            RunPhase.UNDETERMINED, reason_code="strict_block"
+        ) is True
+        assert state.phase is RunPhase.UNDETERMINED
+        assert any(
+            note.startswith("terminal_overridden:FINALIZED->UNDETERMINED")
+            for note in state.trace.notes
+        )
 
 
 # -----------------------------------------------------------------------------
