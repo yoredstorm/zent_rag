@@ -17,6 +17,7 @@ está ratcheteada:
 | Baseline | `6bfed8092232720ff21ccbf07ccfb1e9162a8145` (CI 10/10 verde) |
 | Alcance | cierre de P1 de arquitectura/seguridad; cero features; UI intacta |
 | Restricciones respetadas | cero orchestrators/planners/ledgers/event stores nuevos; cero dependencias nuevas; mapper legacy conservado como oráculo |
+| Estados críticos con autoridad declarada y símbolo verificado | 17 + 7 nuevos del hardening (`POST_PHASE_AUTHORITIES`) |
 
 ## P1 before / after
 
@@ -88,3 +89,27 @@ está ratcheteada:
 JEV: sombra no actúa y un juicio solo no decide. Config normal: no debilita el
 piso ni arranca en postura contradictoria. Terminal: solo el aplicador canónico.
 Cada afirmación tiene un test behavioral además del estático.
+
+## Evidencia CI
+
+| Campo | Valor |
+|---|---|
+| SHA inicial (baseline) | `6bfed8092232720ff21ccbf07ccfb1e9162a8145` |
+| CI del baseline | run [`38491910749`](https://github.com/yoredstorm/zent_rag/actions/runs/38491910749): **10/10 success**; Nightly [`38520279844`](https://github.com/yoredstorm/zent_rag/actions/runs/38520279844): success |
+| SHA del cambio de autoridad | `6661aa8af1175576dddfb8ec9fd9c61312109516` |
+| CI del cambio | run [`38583136531`](https://github.com/yoredstorm/zent_rag/actions/runs/38583136531): **10/10 success** (`secrets-scan`, `lint`, `pip-audit`, `test`, `sdk-python`, `sdk-node`, `portal`, `portal-e2e`, `kustomize`, `build`) |
+| Paso de invariantes (local, pre-CI) | 405 passed sobre los 33 archivos del paso `Architecture invariants (fast, required)` |
+| `ruff check src/ tests/ sdk/python` | limpio |
+| `uv lock --check` | OK (sin dependencias nuevas) |
+| Tests nuevos | 62 funciones (+ reformulados con contrato más fuerte) |
+
+Nota de ejecución local (Windows, servicios docker locales con estado previo):
+la suite completa local (5415 tests) mostró 2 fallos **pre-existentes**
+(`test_changelog_and_public_status` y `test_start_learning_reconciles_orphan_run`:
+fallan igual sobre el baseline `6bfed80` en este host por datos sembrados
+locales), 3 fallos flaky que pasan aislados y un timeout de recurso
+(`test_search_knowledge_timeout_uses_settings`, pasa aislado en 1.19s) que
+detuvo la corrida local al 84%. La verificación autoritativa es el CI de
+GitHub sobre el SHA final, que corre la suite completa con base de datos
+sembrada desde cero: **verde**.
+
