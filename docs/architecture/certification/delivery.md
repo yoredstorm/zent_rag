@@ -51,10 +51,12 @@ propósito distinto al PR CI:
 | Estabilidad ×100 (3 pasadas de `test_finalization_golden` + `test_adversarial_matrix`) | autoridad determinista |
 | Upload de JUnit | reproducibilidad del fallo |
 
-Pendiente en nightly (declarado, no implementado en esta fase): batería de
-certificación completa (seguridad/tenant/contabilidad) como paso propio, y
-retención de logs (`/tmp/*.log`) además de los JUnit. Ver
-`remaining-risks.md` P2.
+**Implementado en esta fase** (`.github/workflows/nightly.yml`): la batería de
+certificación como paso propio (suites `security`, `tenant`, `accounting`,
+`chaos` con JUnit y evidencia en `artifacts/certification/nightly`), los
+invariantes de arquitectura extraídos de `ci.yml`
+(`scripts/cert/run_invariants.py`) y retención de logs (`/tmp/nightly-*.log`)
+además de los JUnit cuando el run falla.
 
 ## 3. Canary (Parte P)
 

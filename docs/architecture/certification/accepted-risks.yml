@@ -21,9 +21,9 @@ risks:
     blocks: production
   - id: P2-4
     severity: P2
-    title: "Branch protection no verificada (API GitHub 401 sin token)"
+    title: "Branch protection: enforcement duro requiere PRs requeridos (hoy los checks aplican a merges de PR, no a push directo)"
     owner: Platform
-    mitigation: "Auditar y fijar required checks con gh api (delivery.md §1)"
+    mitigation: "Activar required_pull_request_reviews con 0 approvals si se quiere bloquear el push directo (decisión del owner)"
     blocks: production
   - id: P2-5
     severity: P2
@@ -51,9 +51,9 @@ risks:
     blocks: production
   - id: P2-9
     severity: P2
-    title: "Sin evaluación periódica de alertas de tenant (solo endpoint manual)"
+    title: "Alertmanager sin receptor externo y sin scheduler de POST /platform/obs/check"
     owner: Platform
-    mitigation: "CronJob/scheduler que dispare POST /platform/obs/check"
+    mitigation: "Conectar webhook/Slack/PagerDuty en config/alertmanager/alertmanager.yml y agregar CronJob/scheduler"
     blocks: production
   - id: P2-10
     severity: P2
