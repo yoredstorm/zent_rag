@@ -1,0 +1,362 @@
+{
+  "schema": "zent.release-evidence/1",
+  "generated_at": "2026-10-14T20:45:27.197670+00:00",
+  "generated_by": "src/scripts/release_manifest.py",
+  "git": {
+    "sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+    "branch": "master",
+    "tag": "edeeb61",
+    "dirty": true,
+    "subject": "cert: release certification tooling, adversarial gap closure, observability assets"
+  },
+  "build": {
+    "identifier": "local-20261014T204527Z",
+    "ci_run": "38596793506 (base 17acf3d: success, todos los jobs)",
+    "python": "3.13.7",
+    "uv": "0.12.13",
+    "platform": "Windows-11-10.0.26200-SP0"
+  },
+  "dependencies": {
+    "uv_lock": {
+      "path": "uv.lock",
+      "sha256": "da55449bedabd6c187c4c353a941746d9d314d1a15f5b15b90f250d71b7bcc98"
+    },
+    "pyproject": {
+      "path": "pyproject.toml",
+      "sha256": "76d0416e482fdac2ae16660c7804f9172434f7ddffd99518a7d968a451bd4c6b"
+    },
+    "python_version": {
+      "path": ".python-version",
+      "sha256": "49a506dd32096b010d75205acf3430c9ae6c40351888129499e5a5e487126c93"
+    },
+    "portal_lock": {
+      "path": "portal/package-lock.json",
+      "sha256": "53b88b8ed8745061feab92a397e1839080dc2cadca4b5911086685ddeecaa433"
+    },
+    "portal_package": {
+      "path": "portal/package.json",
+      "sha256": "9737a9a32b808607b8ec7a0aa783cf65bc691ff4d0dcb12d3212dc5ed4fe6dff"
+    },
+    "sdk_node_lock": {
+      "path": "sdk/node/package-lock.json",
+      "sha256": "e9b6257cae3b44649efad7b79640f1e6fc418a45ea89a1532c10b6726ad0dfc1"
+    },
+    "dockerfile_api": {
+      "path": "Dockerfile.api",
+      "sha256": "2d379e7b3e9fdb6ca5bf147f76f5890107451fbcb7dd4c4a6b48a4ab808e382d"
+    },
+    "dockerfile_portal": {
+      "path": "portal/Dockerfile",
+      "sha256": "a80b2eb5b909172044ab2e2cca6e517dec248b15d80f98abc565352026ffc6b4"
+    },
+    "compose_prod": {
+      "path": "docker-compose.prod.yml",
+      "sha256": "f7d1e5c77688c3d8c89b8288063e582118999d00f99c046f1cca1108d23735f4"
+    }
+  },
+  "sbom": {
+    "path": "artifacts/release/edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8/sbom.json",
+    "sha256": "a720f0d136069848d95d27421d822be0051c6d47516e6824105ae11b676a34d5"
+  },
+  "migrations": {
+    "migration_head": "151",
+    "revisions": 150,
+    "source": "alembic ScriptDirectory (script_location=src/infrastructure/db_init)",
+    "applied_head_at_evidence_time": [
+      "151 (head)"
+    ]
+  },
+  "frontend": {
+    "artifact": "not_built_in_this_run",
+    "package_version": "0.1.0"
+  },
+  "containers": {
+    "image": "zent-api:cert-edeeb61",
+    "image_id": "sha256:cb7fba67353dd0e40ca58f283f8e67b577937579e2421a74eb381f10a589fbc9",
+    "base_images_pinned_by_digest": false
+  },
+  "checks": {
+    "sbom --check": "pass"
+  },
+  "tests": {
+    "full_suite": {
+      "status": "not_available"
+    },
+    "invariants": {
+      "status": "pass",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\invariants\\invariants.evidence.json",
+      "sha256": "a847e2204a28fa67d30468728fd2e73607942b8750d1a6e1ee72e06f3a0e7ca1",
+      "label": null,
+      "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+      "environment": null,
+      "database": null,
+      "duration_seconds": 970.5,
+      "exit_code": 0,
+      "junit": {
+        "status": "pass",
+        "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\invariants\\junit-invariants.xml",
+        "sha256": "8919cce6161396b58394271e9615ce7f01f2720f80e2c55cc5458c1fafced2ad",
+        "tests": 406,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failed_tests": []
+      }
+    },
+    "battery": {
+      "status": "pass",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery",
+      "suites": {
+        "accounting": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\accounting.json",
+          "sha256": "71eec4ae9a5e083ccbb8cb4a3900f22aa88c5586c887556f9c1d00da6393e256",
+          "scenarios": {
+            "pass": 6,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 65,
+            "pass": 65,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "chaos": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\chaos.json",
+          "sha256": "c804678e34075a39f0b6d543b05ed3f94ffeba17db071d6b30cade5f5efe357f",
+          "scenarios": {
+            "pass": 17,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 115,
+            "pass": 115,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "determinism": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\determinism.json",
+          "sha256": "316c6d33db6708bc40d0c8dab7298518e637480a2d797f172cf823d9ad0200a3",
+          "scenarios": {
+            "pass": 6,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 222,
+            "pass": 222,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "security": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\security.json",
+          "sha256": "7ac43b2bb97c32f22a1943a4a7b3aab225213186b7e2c3268dd291b3c34cd060",
+          "scenarios": {
+            "pass": 22,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 350,
+            "pass": 350,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "tenant": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\tenant.json",
+          "sha256": "c76adf26ae0957cad3b84a2564b304c5146e02273c156ce676f40c0ab111a52d",
+          "scenarios": {
+            "pass": 6,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 49,
+            "pass": 49,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        }
+      }
+    }
+  },
+  "evidence": {
+    "rollback": {
+      "status": "measured",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\rollback\\rehearsal.json",
+      "sha256": "633600149d2de49819032c28e4c18bba6725fedd8ae45a68c64859ca82f5ef0f",
+      "label": null,
+      "generated_at": null,
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.rollback-rehearsal/1",
+        "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+        "image": "zent-api:cert-edeeb61",
+        "database": "rag_cert_rehearsal",
+        "started_at": "2026-10-14T19:39:12.2761618Z",
+        "steps": [
+          {
+            "step": "good_release",
+            "health": "{\"status\":\"healthy\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"ok\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+            "seconds": 16.6,
+            "healthy": true
+          },
+          {
+            "step": "bad_release",
+            "health": "{\"status\":\"degraded\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"error\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+            "seconds": 13.7,
+            "detected_degraded": true
+          },
+          {
+            "step": "rollback",
+            "health": "{\"status\":\"healthy\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"ok\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+            "seconds": 16.9,
+            "healthy": true
+          }
+        ],
+        "finished_at": "2026-10-14T19:40:00.4737373Z",
+        "rollback_seconds": 16.9,
+        "passed": true
+      }
+    }
+  },
+  "known_warnings": [
+    "WARNINGS CONOCIDOS (al SHA certificado; si el código cambia, re-verificar)",
+    "- El venv local corre Python 3.13.7 mientras CI/imagen usan 3.11: los tests locales no son evidencia de paridad de runtime.",
+    "- El .env de desarrollo define RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: config.py emite \"dangerous_gate_phase_skipped\" al importar (config de dev, no de CI).",
+    "- El .env de desarrollo usa el POSTGRES_PASSWORD y PORTAL_SESSION_KEY de desarrollo: config.py emite warnings SECURITY en cada import (esperado fuera de producción).",
+    "- portal-e2e tiene un flake conocido registrado en el repo (commit 17acf3d, docs/architecture/ownership): no se promueve a required check de release hasta estabilizarlo.",
+    "- Las revisiones de migración recientes usan CREATE INDEX sin CONCURRENTLY y la 151 hace DROP COLUMN (lock/destructivo): ver docs/architecture/certification/delivery.md §4.",
+    "- El reporte de reconciliación redondea a centavos (round 2): runs de menos de un centavo aparecen con delta 0.00."
+  ],
+  "accepted_risks": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "title": "Umbrales de latencia/costo PROVISIONAL (sin baseline de staging)",
+      "owner": "Platform",
+      "mitigation": "Corrida de staging con 30 iteraciones y concurrencia 25/50; fijar umbrales en alert-rules.yml",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "title": "Carga cercana a capacidad (25/50 concurrentes) no medida",
+      "owner": "Platform",
+      "mitigation": "Corrida de load en staging con pool dimensionado",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "title": "Observabilidad (Prometheus/Grafana/Alertmanager) no desplegada en el entorno real",
+      "owner": "Platform",
+      "mitigation": "Desplegar stack de observabilidad y scrape de /metrics con METRICS_TOKEN",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "title": "Branch protection no verificada (API GitHub 401 sin token)",
+      "owner": "Platform",
+      "mitigation": "Auditar y fijar required checks con gh api (delivery.md §1)",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-5",
+      "severity": "P2",
+      "title": "pip-audit no bloquea el merge (continue-on-error)",
+      "owner": "Security",
+      "mitigation": "Estabilizar advisories y promoverlo a required check",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-6",
+      "severity": "P2",
+      "title": "Precios por defecto hardcodeados pueden convertir unknown en conocido",
+      "owner": "FinOps",
+      "mitigation": "Cargar tarifas reales; revisar el fallback antes de producción",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-7",
+      "severity": "P2",
+      "title": "Fallback del loop de candidatos sin línea contable con costo",
+      "owner": "AI Runtime",
+      "mitigation": "Extender la emisión de provider_attempt al loop de candidatos",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-8",
+      "severity": "P2",
+      "title": "Sin métrica de divergencia contable (ledger vs usage vs billing)",
+      "owner": "FinOps",
+      "mitigation": "Métrica + alerta; billing_reconcile.py diario",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-9",
+      "severity": "P2",
+      "title": "Sin evaluación periódica de alertas de tenant (solo endpoint manual)",
+      "owner": "Platform",
+      "mitigation": "CronJob/scheduler que dispare POST /platform/obs/check",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-10",
+      "severity": "P2",
+      "title": "20 except Exception sin certificar en caminos críticos (ratchet en CI)",
+      "owner": "AI Runtime",
+      "mitigation": "Certificar al tocar cada bloque; el número no puede crecer",
+      "blocks": "none"
+    },
+    {
+      "id": "P2-11",
+      "severity": "P2",
+      "title": "Imágenes base y actions de CI pinneadas por tag, sin Dependabot",
+      "owner": "Platform",
+      "mitigation": "Pin por digest + Dependabot/renovate",
+      "blocks": "production"
+    },
+    {
+      "id": "P3-6",
+      "severity": "P3",
+      "title": "Tests dependientes de estado sembrado fallan con drift del DB local",
+      "owner": "Platform",
+      "mitigation": "Usar scripts/cert/scratch_db.py (paridad CI) o reseed del org demo",
+      "blocks": "none"
+    }
+  ],
+  "release_decision": {
+    "decision": "NO_GO",
+    "reason": "Faltan 4 condiciones para canary (CI del SHA certificado, full suite del SHA certificado, baseline/load de staging, observabilidad desplegada). Detalle en docs/architecture/certification/final-report.md",
+    "environment": "local-workstation (Windows) + DBs scratch con paridad CI",
+    "certified_by": "certification run 2026-10-14 (automatizado)"
+  }
+}

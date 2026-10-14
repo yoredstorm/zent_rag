@@ -1,0 +1,82 @@
+{
+  "label": "cert-rag-warm",
+  "target": "rag",
+  "generated_at": "2026-10-14T20:34:21.713713+00:00",
+  "organization_id": "00000000-0000-0000-0000-000000000001",
+  "queries_file": "tests\\golden\\corpus_rag.json",
+  "iterations": 1,
+  "summary": {
+    "runs": 3,
+    "errors": 0,
+    "latency_ms_p50": 2208.64,
+    "latency_ms_p95": 6261.98,
+    "latency_ms_p99": 6261.98,
+    "latency_ms_mean": 3551.05,
+    "tokens_per_run": 0.0,
+    "cost_per_run": 0.0,
+    "llm_calls_per_run": 1.0,
+    "tool_calls_per_run": 0.0,
+    "retrieval_rounds_per_run": 0.0,
+    "tokens_total": 0,
+    "cost_total": 0.0,
+    "phase_distribution": {
+      "FINALIZED": 3
+    },
+    "answer_state_distribution": {
+      "UNDETERMINED_RULE": 3
+    }
+  },
+  "cases": [
+    {
+      "latency_ms": 6261.98,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "UNDETERMINED_RULE",
+      "status": "completed",
+      "error": "",
+      "question": "Compará la política de cambios de fecha con la de devoluciones",
+      "wall_ms": 7038.7,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 2182.53,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "UNDETERMINED_RULE",
+      "status": "completed",
+      "error": "",
+      "question": "¿Qué diferencia hay entre una regla canónica y una derivada?",
+      "wall_ms": 2873.28,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 2208.64,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "UNDETERMINED_RULE",
+      "status": "completed",
+      "error": "",
+      "question": "Compará los requisitos para vuelos domésticos e internacionales",
+      "wall_ms": 2895.8,
+      "iteration": 0
+    }
+  ]
+}

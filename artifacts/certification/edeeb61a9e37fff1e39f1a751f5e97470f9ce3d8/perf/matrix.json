@@ -1,0 +1,82 @@
+{
+  "schema": "zent.cert.perf-matrix/1",
+  "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+  "git_dirty": true,
+  "profile": "ci-parity",
+  "generated_at": "2026-10-14T20:39:10.2827304Z",
+  "out_dir": "artifacts/certification/edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8/perf",
+  "runs": [
+    {
+      "label": "simple-cold",
+      "module": "src.scripts.perf_traffic",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:32:40.0608803Z",
+      "duration_s": 35.9,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\simple-cold.log",
+      "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    },
+    {
+      "label": "simple-warm",
+      "module": "src.scripts.perf_traffic",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:33:15.9713577Z",
+      "duration_s": 35.8,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\simple-warm.log",
+      "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    },
+    {
+      "label": "rag-warm",
+      "module": "src.scripts.perf_traffic",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:33:51.8224952Z",
+      "duration_s": 32.1,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\rag-warm.log",
+      "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    },
+    {
+      "label": "agentic-warm",
+      "module": "src.scripts.perf_traffic",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:34:23.8794327Z",
+      "duration_s": 112.1,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\agentic-warm.log",
+      "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    },
+    {
+      "label": "no-evidence",
+      "module": "src.scripts.perf_traffic",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:36:15.9612419Z",
+      "duration_s": 42.0,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\no-evidence.log",
+      "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    },
+    {
+      "label": "retrieval-unavailable",
+      "module": "src.scripts.perf_traffic",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:36:57.9816390Z",
+      "duration_s": 44.5,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\retrieval-unavailable.log",
+      "env": "RAG_QDRANT_PORT=6399;RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    },
+    {
+      "label": "fallback-provider",
+      "module": "src.scripts.perf_traffic",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:37:42.4880030Z",
+      "duration_s": 62.8,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\fallback-provider.log",
+      "env": "RAG_LITELLM_API_BASE=http://127.0.0.1:9/v1;RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    },
+    {
+      "label": "http-probe",
+      "module": "scripts/cert/http_probe.py",
+      "exit_code": 0,
+      "started_at": "2026-10-14T20:38:45.2604049Z",
+      "duration_s": 24.8,
+      "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\http-probe.log",
+      "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+    }
+  ]
+}

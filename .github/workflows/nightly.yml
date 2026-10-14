@@ -86,6 +86,26 @@ jobs:
           uv run --frozen --no-sync pytest tests/ -q --tb=short --timeout=600 \
             --junitxml=artifacts/junit-nightly-full.xml 2>&1 | tee /tmp/nightly-full.log
 
+      - name: "Certificación: batería adversarial, tenant, contabilidad y determinismo"
+        # Evidencia por escenario (docs/architecture/certification/). Un
+        # escenario sin test que lo pruebe cuenta como NO DEMOSTRADO.
+        run: |
+          set -o pipefail
+          uv run --frozen --no-sync python -m src.scripts.certification_battery \
+            --suite security --out-dir artifacts/certification/nightly 2>&1 | tee /tmp/nightly-battery-security.log
+          uv run --frozen --no-sync python -m src.scripts.certification_battery \
+            --suite tenant --out-dir artifacts/certification/nightly 2>&1 | tee /tmp/nightly-battery-tenant.log
+          uv run --frozen --no-sync python -m src.scripts.certification_battery \
+            --suite accounting --out-dir artifacts/certification/nightly 2>&1 | tee /tmp/nightly-battery-accounting.log
+          uv run --frozen --no-sync python -m src.scripts.certification_battery \
+            --suite chaos --out-dir artifacts/certification/nightly 2>&1 | tee /tmp/nightly-battery-chaos.log
+
+      - name: "Invariantes de arquitectura (lista de ci.yml)"
+        run: |
+          set -o pipefail
+          uv run --frozen --no-sync python scripts/cert/run_invariants.py \
+            --out-dir artifacts/certification/nightly/invariants 2>&1 | tee /tmp/nightly-invariants.log
+
       - name: Adversarial matrix
         run: |
           set -o pipefail
@@ -112,13 +132,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-nightly
-          path: artifacts/junit-*.xml
+          path: |
+            artifacts/junit-*.xml
+            artifacts/certification/**
+          if-no-files-found: ignore
+
+      - name: Upload logs on failure (reproducibilidad del fallo)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-logs
+          path: /tmp/nightly-*.log
           if-no-files-found: ignore
 
       - name: Annotate failures
         if: failure()
         run: |
-          for log in /tmp/nightly-full.log /tmp/nightly-adversarial.log; do
+          for log in /tmp/nightly-full.log /tmp/nightly-adversarial.log \
+                     /tmp/nightly-battery-*.log /tmp/nightly-invariants.log; do
             if [ -f "$log" ]; then
               grep -E "^(FAILED|ERROR) " "$log" | head -n 10 | while IFS= read -r line; do
                 echo "::error::$line"

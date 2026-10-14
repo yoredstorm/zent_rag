@@ -59,17 +59,26 @@ class TestPublicacion:
             zent_run_tool_calls_total,
         )
 
+        # Deltas, no valores absolutos: los counters son globales del proceso y
+        # otros tests (batería de certificación) publican sobre los mismos labels.
         calls = zent_llm_calls_total.labels(path="rag")
         prompt = zent_llm_tokens_total.labels(path="rag", kind="prompt")
         completion = zent_llm_tokens_total.labels(path="rag", kind="completion")
         cost = zent_run_cost_usd_total.labels(path="rag")
         tools = zent_run_tool_calls_total.labels(path="rag")
+        before = (
+            calls._value.get(),
+            prompt._value.get(),
+            completion._value.get(),
+            cost._value.get(),
+            tools._value.get(),
+        )
         publish_run_metrics(_state(), path="rag", result=_result())
-        assert calls._value.get() == 2
-        assert prompt._value.get() == 100
-        assert completion._value.get() == 40
-        assert round(cost._value.get(), 6) == 0.002
-        assert tools._value.get() == 1
+        assert calls._value.get() == before[0] + 2
+        assert prompt._value.get() == before[1] + 100
+        assert completion._value.get() == before[2] + 40
+        assert round(cost._value.get() - before[3], 6) == 0.002
+        assert tools._value.get() == before[4] + 1
 
     def test_costo_desconocido_no_se_disfraza(self) -> None:
         from src.infrastructure.observability.metrics import (

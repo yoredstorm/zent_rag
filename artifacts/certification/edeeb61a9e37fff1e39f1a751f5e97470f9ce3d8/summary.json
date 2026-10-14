@@ -1,0 +1,616 @@
+{
+  "sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+  "sections": {
+    "invariants": {
+      "result": "pass",
+      "targets": 33,
+      "duration_seconds": 970.5
+    },
+    "battery": {
+      "accounting": {
+        "scenarios": {
+          "pass": 6,
+          "fail": 0,
+          "not_demonstrated": 0
+        },
+        "tests": {
+          "tests": 65,
+          "pass": 65,
+          "fail": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "not_demonstrated": []
+      },
+      "chaos": {
+        "scenarios": {
+          "pass": 17,
+          "fail": 0,
+          "not_demonstrated": 0
+        },
+        "tests": {
+          "tests": 115,
+          "pass": 115,
+          "fail": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "not_demonstrated": []
+      },
+      "determinism": {
+        "scenarios": {
+          "pass": 6,
+          "fail": 0,
+          "not_demonstrated": 0
+        },
+        "tests": {
+          "tests": 222,
+          "pass": 222,
+          "fail": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "not_demonstrated": []
+      },
+      "security": {
+        "scenarios": {
+          "pass": 22,
+          "fail": 0,
+          "not_demonstrated": 0
+        },
+        "tests": {
+          "tests": 350,
+          "pass": 350,
+          "fail": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "not_demonstrated": []
+      },
+      "tenant": {
+        "scenarios": {
+          "pass": 6,
+          "fail": 0,
+          "not_demonstrated": 0
+        },
+        "tests": {
+          "tests": 49,
+          "pass": 49,
+          "fail": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "not_demonstrated": []
+      }
+    },
+    "perf": {
+      "runs": {
+        "cert-agentic-warm": {
+          "runs": 3,
+          "errors": 0,
+          "latency_ms_p50": 17849.41,
+          "latency_ms_p95": 55357.49,
+          "latency_ms_p99": 55357.49,
+          "latency_ms_mean": 30080.01,
+          "tokens_per_run": 0.0,
+          "cost_per_run": 0.0,
+          "llm_calls_per_run": 1.0,
+          "tool_calls_per_run": 0.0,
+          "retrieval_rounds_per_run": 0.0,
+          "tokens_total": 0,
+          "cost_total": 0.0,
+          "phase_distribution": {
+            "FINALIZED": 3
+          },
+          "answer_state_distribution": {
+            "UNDETERMINED_RULE": 2,
+            "INSUFFICIENT_EVIDENCE": 1
+          }
+        },
+        "cert-fallback-provider": {
+          "runs": 3,
+          "errors": 0,
+          "latency_ms_p50": 10090.98,
+          "latency_ms_p95": 15175.74,
+          "latency_ms_p99": 15175.74,
+          "latency_ms_mean": 11732.28,
+          "tokens_per_run": 0.0,
+          "cost_per_run": 0.0,
+          "llm_calls_per_run": 1.0,
+          "tool_calls_per_run": 0.0,
+          "retrieval_rounds_per_run": 0.0,
+          "tokens_total": 0,
+          "cost_total": 0.0,
+          "phase_distribution": {
+            "FINALIZED": 3
+          },
+          "answer_state_distribution": {
+            "INSUFFICIENT_EVIDENCE": 3
+          }
+        },
+        "cert-load": {
+          "label": "cert-load",
+          "target": "rag-load",
+          "generated_at": "2026-10-14T20:40:34.597801+00:00",
+          "organization_id": "00000000-0000-0000-0000-000000000001",
+          "queries_file": "tests\\golden\\corpus_simple.json",
+          "levels": [
+            {
+              "concurrency": 1,
+              "requests": 3,
+              "errors": 0,
+              "error_rate": 0.0,
+              "wall_seconds": 22.04,
+              "throughput_rps": 0.136,
+              "latency_ms_p50": 5257.68,
+              "latency_ms_p95": 12036.86,
+              "latency_ms_p99": 12036.86,
+              "latency_ms_mean": 7344.73,
+              "provider_attempts": 0,
+              "provider_rate_limited": 0,
+              "retry_amplification": 0.0,
+              "infra_before": {
+                "postgres_ms": 356.37,
+                "redis_ms": 16.97
+              },
+              "infra_after": {
+                "postgres_ms": 125.17,
+                "redis_ms": 1.18
+              }
+            },
+            {
+              "concurrency": 2,
+              "requests": 3,
+              "errors": 0,
+              "error_rate": 0.0,
+              "wall_seconds": 12.93,
+              "throughput_rps": 0.232,
+              "latency_ms_p50": 7035.8,
+              "latency_ms_p95": 9133.5,
+              "latency_ms_p99": 9133.5,
+              "latency_ms_mean": 7351.71,
+              "provider_attempts": 0,
+              "provider_rate_limited": 0,
+              "retry_amplification": 0.0,
+              "infra_before": {
+                "postgres_ms": 116.44,
+                "redis_ms": 3.47
+              },
+              "infra_after": {
+                "postgres_ms": 140.97,
+                "redis_ms": 4.84
+              }
+            },
+            {
+              "concurrency": 4,
+              "requests": 3,
+              "errors": 0,
+              "error_rate": 0.0,
+              "wall_seconds": 12.58,
+              "throughput_rps": 0.238,
+              "latency_ms_p50": 12283.55,
+              "latency_ms_p95": 12580.73,
+              "latency_ms_p99": 12580.73,
+              "latency_ms_mean": 12055.27,
+              "provider_attempts": 0,
+              "provider_rate_limited": 0,
+              "retry_amplification": 0.0,
+              "infra_before": {
+                "postgres_ms": 143.44,
+                "redis_ms": 1.53
+              },
+              "infra_after": {
+                "postgres_ms": 111.78,
+                "redis_ms": 1.33
+              }
+            }
+          ],
+          "details": [
+            {
+              "summary": {
+                "concurrency": 1,
+                "requests": 3,
+                "errors": 0,
+                "error_rate": 0.0,
+                "wall_seconds": 22.04,
+                "throughput_rps": 0.136,
+                "latency_ms_p50": 5257.68,
+                "latency_ms_p95": 12036.86,
+                "latency_ms_p99": 12036.86,
+                "latency_ms_mean": 7344.73,
+                "provider_attempts": 0,
+                "provider_rate_limited": 0,
+                "retry_amplification": 0.0,
+                "infra_before": {
+                  "postgres_ms": 356.37,
+                  "redis_ms": 16.97
+                },
+                "infra_after": {
+                  "postgres_ms": 125.17,
+                  "redis_ms": 1.18
+                }
+              },
+              "cases": [
+                {
+                  "wall_ms": 12036.86,
+                  "status": "completed",
+                  "latency_ms": 10670.85,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué es ZENT?"
+                },
+                {
+                  "wall_ms": 5257.68,
+                  "status": "completed",
+                  "latency_ms": 4491.86,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué es un agente de conocimiento?"
+                },
+                {
+                  "wall_ms": 4739.64,
+                  "status": "completed",
+                  "latency_ms": 3955.5,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué significa RBAC?"
+                }
+              ]
+            },
+            {
+              "summary": {
+                "concurrency": 2,
+                "requests": 3,
+                "errors": 0,
+                "error_rate": 0.0,
+                "wall_seconds": 12.93,
+                "throughput_rps": 0.232,
+                "latency_ms_p50": 7035.8,
+                "latency_ms_p95": 9133.5,
+                "latency_ms_p99": 9133.5,
+                "latency_ms_mean": 7351.71,
+                "provider_attempts": 0,
+                "provider_rate_limited": 0,
+                "retry_amplification": 0.0,
+                "infra_before": {
+                  "postgres_ms": 116.44,
+                  "redis_ms": 3.47
+                },
+                "infra_after": {
+                  "postgres_ms": 140.97,
+                  "redis_ms": 4.84
+                }
+              },
+              "cases": [
+                {
+                  "wall_ms": 9133.5,
+                  "status": "completed",
+                  "latency_ms": 7517.98,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué es ZENT?"
+                },
+                {
+                  "wall_ms": 7035.8,
+                  "status": "completed",
+                  "latency_ms": 5593.6,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué es un agente de conocimiento?"
+                },
+                {
+                  "wall_ms": 5885.84,
+                  "status": "completed",
+                  "latency_ms": 5015.09,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué significa RBAC?"
+                }
+              ]
+            },
+            {
+              "summary": {
+                "concurrency": 4,
+                "requests": 3,
+                "errors": 0,
+                "error_rate": 0.0,
+                "wall_seconds": 12.58,
+                "throughput_rps": 0.238,
+                "latency_ms_p50": 12283.55,
+                "latency_ms_p95": 12580.73,
+                "latency_ms_p99": 12580.73,
+                "latency_ms_mean": 12055.27,
+                "provider_attempts": 0,
+                "provider_rate_limited": 0,
+                "retry_amplification": 0.0,
+                "infra_before": {
+                  "postgres_ms": 143.44,
+                  "redis_ms": 1.53
+                },
+                "infra_after": {
+                  "postgres_ms": 111.78,
+                  "redis_ms": 1.33
+                }
+              },
+              "cases": [
+                {
+                  "wall_ms": 12580.73,
+                  "status": "completed",
+                  "latency_ms": 11442.54,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué es ZENT?"
+                },
+                {
+                  "wall_ms": 11301.53,
+                  "status": "completed",
+                  "latency_ms": 7775.61,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué es un agente de conocimiento?"
+                },
+                {
+                  "wall_ms": 12283.55,
+                  "status": "completed",
+                  "latency_ms": 10813.51,
+                  "tokens": 0,
+                  "attempts": {},
+                  "question": "¿Qué significa RBAC?"
+                }
+              ]
+            }
+          ]
+        },
+        "cert-no-evidence": {
+          "runs": 3,
+          "errors": 0,
+          "latency_ms_p50": 7419.45,
+          "latency_ms_p95": 8064.3,
+          "latency_ms_p99": 8064.3,
+          "latency_ms_mean": 5934.24,
+          "tokens_per_run": 0.0,
+          "cost_per_run": 0.0,
+          "llm_calls_per_run": 1.0,
+          "tool_calls_per_run": 0.0,
+          "retrieval_rounds_per_run": 0.0,
+          "tokens_total": 0,
+          "cost_total": 0.0,
+          "phase_distribution": {
+            "FINALIZED": 3
+          },
+          "answer_state_distribution": {
+            "INSUFFICIENT_EVIDENCE": 2,
+            "EXECUTION_FAILED": 1
+          }
+        },
+        "cert-rag-warm": {
+          "runs": 3,
+          "errors": 0,
+          "latency_ms_p50": 2208.64,
+          "latency_ms_p95": 6261.98,
+          "latency_ms_p99": 6261.98,
+          "latency_ms_mean": 3551.05,
+          "tokens_per_run": 0.0,
+          "cost_per_run": 0.0,
+          "llm_calls_per_run": 1.0,
+          "tool_calls_per_run": 0.0,
+          "retrieval_rounds_per_run": 0.0,
+          "tokens_total": 0,
+          "cost_total": 0.0,
+          "phase_distribution": {
+            "FINALIZED": 3
+          },
+          "answer_state_distribution": {
+            "UNDETERMINED_RULE": 3
+          }
+        },
+        "cert-retrieval-unavailable": {
+          "runs": 3,
+          "errors": 0,
+          "latency_ms_p50": 4842.12,
+          "latency_ms_p95": 9013.95,
+          "latency_ms_p99": 9013.95,
+          "latency_ms_mean": 6158.51,
+          "tokens_per_run": 0.0,
+          "cost_per_run": 0.0,
+          "llm_calls_per_run": 1.0,
+          "tool_calls_per_run": 0.0,
+          "retrieval_rounds_per_run": 0.0,
+          "tokens_total": 0,
+          "cost_total": 0.0,
+          "phase_distribution": {
+            "FINALIZED": 3
+          },
+          "answer_state_distribution": {
+            "INSUFFICIENT_EVIDENCE": 3
+          }
+        },
+        "cert-simple-cold": {
+          "runs": 3,
+          "errors": 0,
+          "latency_ms_p50": 3129.88,
+          "latency_ms_p95": 6052.62,
+          "latency_ms_p99": 6052.62,
+          "latency_ms_mean": 3932.83,
+          "tokens_per_run": 0.0,
+          "cost_per_run": 0.0,
+          "llm_calls_per_run": 1.0,
+          "tool_calls_per_run": 0.0,
+          "retrieval_rounds_per_run": 0.0,
+          "tokens_total": 0,
+          "cost_total": 0.0,
+          "phase_distribution": {
+            "FINALIZED": 3
+          },
+          "answer_state_distribution": {
+            "INSUFFICIENT_EVIDENCE": 3
+          }
+        },
+        "cert-simple-warm": {
+          "runs": 3,
+          "errors": 0,
+          "latency_ms_p50": 2436.34,
+          "latency_ms_p95": 7595.76,
+          "latency_ms_p99": 7595.76,
+          "latency_ms_mean": 4111.98,
+          "tokens_per_run": 0.0,
+          "cost_per_run": 0.0,
+          "llm_calls_per_run": 1.0,
+          "tool_calls_per_run": 0.0,
+          "retrieval_rounds_per_run": 0.0,
+          "tokens_total": 0,
+          "cost_total": 0.0,
+          "phase_distribution": {
+            "FINALIZED": 3
+          },
+          "answer_state_distribution": {
+            "INSUFFICIENT_EVIDENCE": 3
+          }
+        }
+      },
+      "http_probe": {
+        "schema": "zent.cert.http-probe/1",
+        "generated_at": "2026-10-14T20:38:45.616111+00:00",
+        "base_url": "http://127.0.0.1:8000",
+        "organization_id": "00000000-0000-0000-0000-000000000001",
+        "query": "¿Cuál es la política de vacaciones?",
+        "miss_latency_ms": 8060.5,
+        "miss_status": 200,
+        "miss_answer_state": "completed",
+        "miss_cost": null,
+        "miss_tokens": null,
+        "hit_latency_ms": 7113.4,
+        "hit_status": 200,
+        "metrics_delta": {
+          "rag_cache_misses_created{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 0.0,
+          "rag_cache_misses_total{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 2.0
+        },
+        "stream_status": 200,
+        "first_event_ms": 26.9,
+        "ttft_ms": 7191.8,
+        "stream_total_ms": 7192.8,
+        "stream_events": 8
+      },
+      "matrix_runs": [
+        {
+          "label": "simple-cold",
+          "module": "src.scripts.perf_traffic",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:32:40.0608803Z",
+          "duration_s": 35.9,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\simple-cold.log",
+          "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        },
+        {
+          "label": "simple-warm",
+          "module": "src.scripts.perf_traffic",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:33:15.9713577Z",
+          "duration_s": 35.8,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\simple-warm.log",
+          "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        },
+        {
+          "label": "rag-warm",
+          "module": "src.scripts.perf_traffic",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:33:51.8224952Z",
+          "duration_s": 32.1,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\rag-warm.log",
+          "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        },
+        {
+          "label": "agentic-warm",
+          "module": "src.scripts.perf_traffic",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:34:23.8794327Z",
+          "duration_s": 112.1,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\agentic-warm.log",
+          "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        },
+        {
+          "label": "no-evidence",
+          "module": "src.scripts.perf_traffic",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:36:15.9612419Z",
+          "duration_s": 42.0,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\no-evidence.log",
+          "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        },
+        {
+          "label": "retrieval-unavailable",
+          "module": "src.scripts.perf_traffic",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:36:57.9816390Z",
+          "duration_s": 44.5,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\retrieval-unavailable.log",
+          "env": "RAG_QDRANT_PORT=6399;RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        },
+        {
+          "label": "fallback-provider",
+          "module": "src.scripts.perf_traffic",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:37:42.4880030Z",
+          "duration_s": 62.8,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\fallback-provider.log",
+          "env": "RAG_LITELLM_API_BASE=http://127.0.0.1:9/v1;RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        },
+        {
+          "label": "http-probe",
+          "module": "scripts/cert/http_probe.py",
+          "exit_code": 0,
+          "started_at": "2026-10-14T20:38:45.2604049Z",
+          "duration_s": 24.8,
+          "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\http-probe.log",
+          "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+        }
+      ]
+    },
+    "migrations": {
+      "upgrade_head": {
+        "exit": 0,
+        "seconds": 2.56
+      },
+      "current": {
+        "exit": 0,
+        "seconds": 3.35
+      },
+      "downgrade_minus_one": {
+        "exit": 0,
+        "seconds": 3.17
+      },
+      "upgrade_head_again": {
+        "exit": 0,
+        "seconds": 3.14
+      }
+    },
+    "rollback": {
+      "passed": true,
+      "rollback_seconds": 16.9,
+      "steps": [
+        {
+          "step": "good_release",
+          "seconds": 16.6
+        },
+        {
+          "step": "bad_release",
+          "seconds": 13.7
+        },
+        {
+          "step": "rollback",
+          "seconds": 16.9
+        }
+      ]
+    },
+    "manifest": {
+      "decision": "NO_GO",
+      "tests": {
+        "full_suite": "not_available",
+        "invariants": "pass",
+        "battery": "pass"
+      },
+      "migration_head": "151",
+      "sbom_components": 734
+    }
+  }
+}

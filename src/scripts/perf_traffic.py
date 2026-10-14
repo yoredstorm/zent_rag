@@ -104,6 +104,20 @@ def _run_metrics(result: object) -> dict:
         if isinstance(step, dict)
         and str(step.get("type") or "") in {"tool_call", "jev_retrieval"}
     ]
+    # Fase terminal del run (DecisionEnvelope aplicado) + estado de respuesta:
+    # la distribución de outcomes es parte de la evidencia de performance.
+    state = getattr(result, "run_state", None)
+    phase = str(getattr(state, "phase", "") or "")
+    answer_state = ""
+    decisions = getattr(state, "decisions", None)
+    envelope = getattr(decisions, "envelope_public", None) if decisions else None
+    if isinstance(envelope, dict):
+        answer_state = str(envelope.get("state") or "")
+    if not answer_state:
+        for step in steps:
+            if isinstance(step, dict) and step.get("type") == "answer_state":
+                answer_state = str(step.get("state") or "")
+                break
     return {
         "latency_ms": round(float(getattr(result, "total_latency_ms", 0.0) or 0.0), 2),
         "tokens": tokens,
@@ -113,6 +127,8 @@ def _run_metrics(result: object) -> dict:
         "llm_calls": llm_calls,
         "tool_calls": int(getattr(result, "tool_calls", 0) or 0) or len(tool_steps),
         "retrieval_rounds": len(tool_steps),
+        "phase": phase,
+        "answer_state": answer_state,
         "status": str(getattr(result, "status", "") or ""),
         "error": str(getattr(result, "error_message", "") or "")[:200],
     }
@@ -161,11 +177,19 @@ async def _run_case(
 def _summarize(cases: list[dict]) -> dict:
     ok = [c for c in cases if not c.get("error") and c.get("status") != "error"]
     latencies = [float(c["latency_ms"]) for c in ok if c["latency_ms"] > 0]
+    phase_distribution: dict[str, int] = {}
+    answer_state_distribution: dict[str, int] = {}
+    for case in cases:
+        phase = str(case.get("phase") or "unknown")
+        phase_distribution[phase] = phase_distribution.get(phase, 0) + 1
+        state = str(case.get("answer_state") or "unknown")
+        answer_state_distribution[state] = answer_state_distribution.get(state, 0) + 1
     return {
         "runs": len(cases),
         "errors": len(cases) - len(ok),
         "latency_ms_p50": _pct(latencies, 50),
         "latency_ms_p95": _pct(latencies, 95),
+        "latency_ms_p99": _pct(latencies, 99),
         "latency_ms_mean": round(statistics.fmean(latencies), 2) if latencies else 0.0,
         "tokens_per_run": round(
             statistics.fmean([c["tokens"] for c in ok]), 2
@@ -184,6 +208,8 @@ def _summarize(cases: list[dict]) -> dict:
         ) if ok else 0.0,
         "tokens_total": sum(c["tokens"] for c in ok),
         "cost_total": round(sum(c["cost"] for c in ok), 6),
+        "phase_distribution": phase_distribution,
+        "answer_state_distribution": answer_state_distribution,
     }
 
 

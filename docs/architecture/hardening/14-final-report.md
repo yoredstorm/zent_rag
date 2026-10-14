@@ -1,5 +1,11 @@
 # Hardening ZENT — Reporte final del programa (F0–F13)
 
+> **Estado superseded (2026-10-14)**: este reporte es el cierre del programa de
+> hardening sobre la base `3d24057`. La evidencia de release vigente vive en
+> `docs/architecture/certification/` (SHA certificado y GO/NO-GO en
+> `certification/final-report.md`). Las cifras de acá son **punto en el tiempo**:
+> no describen el estado actual del código.
+
 Base: `3d24057`. Fases ejecutadas: **F0–F8 (F8 como auditoría), F9–F11 (harness
 + corridas locales acotadas; corrida completa en staging), F12, F13**.
 Pendiente: cerrar la tabla de performance con el baseline de staging

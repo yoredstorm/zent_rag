@@ -1,0 +1,265 @@
+{
+  "schema": "zent.cert.battery/1",
+  "suite": "chaos",
+  "purpose": "Política observada ante fallos de dependencias (hermético).",
+  "generated_at": "2026-10-14T20:02:42.577940+00:00",
+  "duration_seconds": 293.0,
+  "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+  "command": "D:\\zent_RAG\\.venv\\Scripts\\python.exe -m pytest tests/test_chaos_resilience.py tests/test_provider_attempts.py tests/test_llm_stream_fallback.py tests/test_llm_embed_fallback.py tests/test_llm_embed_retry.py tests/test_model_health.py tests/test_budget_stop_reasons.py tests/test_db_lifecycle.py tests/test_answer_state_texts.py tests/test_evidence_semantics.py tests/test_certification_accounting_chain.py tests/test_certification_security.py -q --tb=short --timeout=300 --junitxml=artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\junit-chaos.xml",
+  "pytest_exit_code": 0,
+  "totals": {
+    "tests": 115,
+    "pass": 115,
+    "fail": 0,
+    "error": 0,
+    "skipped": 0
+  },
+  "scenarios": [
+    {
+      "id": "F01",
+      "title": "primary LLM hard failure",
+      "match": [
+        "provider_down_no_propaga",
+        "todos_los_candidatos_fallan"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestLLMCaido::test_provider_down_no_propaga_y_cierra_honesto",
+        "tests.test_provider_attempts.TestRouterAttempts::test_todos_los_candidatos_fallan_propaga_con_intentos",
+        "tests.test_llm_stream_fallback.TestStreamingFailover::test_todos_los_candidatos_fallan_propaga_el_error"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F02",
+      "title": "primary LLM 429",
+      "match": [
+        "429_no_multiplica",
+        "429_antes_del_primer_token",
+        "rate_limited"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestLLMCaido::test_429_no_multiplica_llamadas",
+        "tests.test_llm_stream_fallback.TestStreamingFailover::test_429_antes_del_primer_token_va_al_fallback"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F03",
+      "title": "primary LLM timeout",
+      "match": [
+        "timeout_antes_del_primer_token",
+        "timeout_no_se_reintenta"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestToolsCaidas::test_timeout_no_se_reintenta_y_el_run_define",
+        "tests.test_llm_stream_fallback.TestStreamingFailover::test_timeout_antes_del_primer_token_va_al_fallback"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F04",
+      "title": "fallback LLM failure",
+      "match": [
+        "todos_los_candidatos_fallan",
+        "fallback"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_llm_stream_fallback.TestStreamingFailover::test_todos_los_candidatos_fallan_propaga_el_error"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F05",
+      "title": "embedding provider unavailable",
+      "match": [
+        "embed_retry",
+        "embed_fallback"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_llm_embed_fallback::test_marcadores_de_fallo_de_proveedor",
+        "tests.test_llm_embed_fallback::test_fallback_kwargs_exige_key",
+        "tests.test_llm_embed_fallback::test_failover_al_primer_fallo_del_primario",
+        "tests.test_llm_embed_fallback::test_el_respaldo_tambien_reintenta_y_se_rinde",
+        "tests.test_llm_embed_fallback::test_error_de_payload_no_dispara_respaldo",
+        "tests.test_llm_embed_fallback::test_sin_key_no_hay_respaldo",
+        "tests.test_llm_embed_fallback::test_dimension_del_respaldo_no_coincide",
+        "tests.test_llm_embed_fallback::test_modelo_local_no_tiene_respaldo",
+        "tests.test_llm_embed_fallback::test_trace_del_primario_cuando_no_hay_fallo",
+        "tests.test_llm_embed_retry::test_marcadores_de_fallo_transitorio",
+        "tests.test_llm_embed_retry::test_backoff_crece_con_jitter",
+        "tests.test_llm_embed_retry::test_reintenta_y_termina_bien_tras_un_429",
+        "tests.test_llm_embed_retry::test_apaga_el_retry_interno_de_litellm",
+        "tests.test_llm_embed_retry::test_se_rinde_al_agotar_los_reintentos",
+        "tests.test_llm_embed_retry::test_no_reintenta_un_error_no_transitorio",
+        "tests.test_llm_embed_retry::test_el_presupuesto_corta_los_reintentos"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F06",
+      "title": "reranker unavailable",
+      "match": [
+        "reranker_caido"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestDependenciasCaidas::test_reranker_caido_devuelve_orden_crudo"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F07",
+      "title": "JEV unavailable",
+      "match": [
+        "jev_roto"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestDependenciasCaidas::test_engine_jev_roto_el_run_sigue_con_reglas"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F08",
+      "title": "Redis unavailable",
+      "match": [
+        "redis_caido"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestDependenciasCaidas::test_redis_caido_la_cache_es_fail_soft"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F09",
+      "title": "Qdrant unavailable / retrieval failure",
+      "match": [
+        "retrieval_unavailable",
+        "retrieval_failed",
+        "retrieval_failure"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_evidence_semantics::test_retrieval_unavailable_no_es_ausencia"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F10",
+      "title": "PostgreSQL transient disconnect",
+      "match": [
+        "transient_db_disconnect",
+        "engine_se_recrea"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_db_lifecycle::test_engine_se_recrea_entre_loops_sin_warnings",
+        "tests.test_certification_accounting_chain::test_usage_write_survives_transient_db_disconnect"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F11",
+      "title": "tool timeout",
+      "match": [
+        "timeout_no_se_reintenta"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestToolsCaidas::test_timeout_no_se_reintenta_y_el_run_define"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F12",
+      "title": "tool hard failure (5xx/permanente)",
+      "match": [
+        "fallo_permanente_no_se_reintenta"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestToolsCaidas::test_fallo_permanente_no_se_reintenta"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F13",
+      "title": "malformed tool output",
+      "match": [
+        "malformed_output"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_certification_security.TestMalformedToolOutput::test_malformed_output_does_not_become_authority"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F14",
+      "title": "circuit breaker abierto",
+      "match": [
+        "circuit_open_antes_del_primer_token",
+        "circuit"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_llm_stream_fallback.TestStreamingFailover::test_circuit_open_antes_del_primer_token_va_al_fallback"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F15",
+      "title": "partial streaming failure",
+      "match": [
+        "stream_cortado_tras_emitir"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_llm_stream_fallback.TestStreamingFailover::test_stream_cortado_tras_emitir_no_cambia_de_modelo"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F16",
+      "title": "dependency recovery (circuito se cierra)",
+      "match": [
+        "circuit_breaker_and_runtime_guard",
+        "circuito_aislado_por_tenant",
+        "reset_circuit"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_model_health::test_circuit_breaker_and_runtime_guard",
+        "tests.test_model_health::test_circuito_aislado_por_tenant"
+      ],
+      "failures": []
+    },
+    {
+      "id": "F17",
+      "title": "retry amplification acotada",
+      "match": [
+        "retry_acotado_por_candidato",
+        "factor_de_amplificacion"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_chaos_resilience.TestAmplificacionDeRetry::test_retry_acotado_por_candidato",
+        "tests.test_chaos_resilience.TestAmplificacionDeRetry::test_factor_de_amplificacion_documentado"
+      ],
+      "failures": []
+    }
+  ],
+  "summary": {
+    "pass": 17,
+    "fail": 0,
+    "not_demonstrated": 0
+  },
+  "junit": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\junit-chaos.xml",
+  "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\pytest-chaos.log"
+}

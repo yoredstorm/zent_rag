@@ -1,0 +1,83 @@
+{
+  "label": "cert-agentic-warm",
+  "target": "rag",
+  "generated_at": "2026-10-14T20:36:13.311359+00:00",
+  "organization_id": "00000000-0000-0000-0000-000000000001",
+  "queries_file": "tests\\golden\\corpus_agentic.json",
+  "iterations": 1,
+  "summary": {
+    "runs": 3,
+    "errors": 0,
+    "latency_ms_p50": 17849.41,
+    "latency_ms_p95": 55357.49,
+    "latency_ms_p99": 55357.49,
+    "latency_ms_mean": 30080.01,
+    "tokens_per_run": 0.0,
+    "cost_per_run": 0.0,
+    "llm_calls_per_run": 1.0,
+    "tool_calls_per_run": 0.0,
+    "retrieval_rounds_per_run": 0.0,
+    "tokens_total": 0,
+    "cost_total": 0.0,
+    "phase_distribution": {
+      "FINALIZED": 3
+    },
+    "answer_state_distribution": {
+      "UNDETERMINED_RULE": 2,
+      "INSUFFICIENT_EVIDENCE": 1
+    }
+  },
+  "cases": [
+    {
+      "latency_ms": 55357.49,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "UNDETERMINED_RULE",
+      "status": "completed",
+      "error": "",
+      "question": "Calculá el total de ventas del último trimestre agrupado por categoría",
+      "wall_ms": 56291.38,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 17849.41,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "UNDETERMINED_RULE",
+      "status": "completed",
+      "error": "",
+      "question": "Compará los ingresos de las dos últimas campañas y explicá la diferencia",
+      "wall_ms": 18567.81,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 17033.14,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "INSUFFICIENT_EVIDENCE",
+      "status": "completed",
+      "error": "",
+      "question": "¿Cuántos clientes superaron el límite de crédito este mes?",
+      "wall_ms": 17729.65,
+      "iteration": 0
+    }
+  ]
+}

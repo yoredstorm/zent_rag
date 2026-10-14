@@ -1,0 +1,82 @@
+{
+  "label": "cert-simple-cold",
+  "target": "rag",
+  "generated_at": "2026-10-14T20:33:13.510373+00:00",
+  "organization_id": "00000000-0000-0000-0000-000000000001",
+  "queries_file": "tests\\golden\\corpus_simple.json",
+  "iterations": 1,
+  "summary": {
+    "runs": 3,
+    "errors": 0,
+    "latency_ms_p50": 3129.88,
+    "latency_ms_p95": 6052.62,
+    "latency_ms_p99": 6052.62,
+    "latency_ms_mean": 3932.83,
+    "tokens_per_run": 0.0,
+    "cost_per_run": 0.0,
+    "llm_calls_per_run": 1.0,
+    "tool_calls_per_run": 0.0,
+    "retrieval_rounds_per_run": 0.0,
+    "tokens_total": 0,
+    "cost_total": 0.0,
+    "phase_distribution": {
+      "FINALIZED": 3
+    },
+    "answer_state_distribution": {
+      "INSUFFICIENT_EVIDENCE": 3
+    }
+  },
+  "cases": [
+    {
+      "latency_ms": 6052.62,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "INSUFFICIENT_EVIDENCE",
+      "status": "completed",
+      "error": "",
+      "question": "¿Qué es ZENT?",
+      "wall_ms": 7118.45,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 3129.88,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "INSUFFICIENT_EVIDENCE",
+      "status": "completed",
+      "error": "",
+      "question": "¿Qué es un agente de conocimiento?",
+      "wall_ms": 4242.01,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 2616.0,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "INSUFFICIENT_EVIDENCE",
+      "status": "completed",
+      "error": "",
+      "question": "¿Qué significa RBAC?",
+      "wall_ms": 3604.17,
+      "iteration": 0
+    }
+  ]
+}

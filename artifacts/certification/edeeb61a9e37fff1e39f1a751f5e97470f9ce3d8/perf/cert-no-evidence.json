@@ -1,0 +1,83 @@
+{
+  "label": "cert-no-evidence",
+  "target": "rag",
+  "generated_at": "2026-10-14T20:36:56.189683+00:00",
+  "organization_id": "00000000-0000-0000-0000-000000000001",
+  "queries_file": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\corpus_no_evidence.json",
+  "iterations": 1,
+  "summary": {
+    "runs": 3,
+    "errors": 0,
+    "latency_ms_p50": 7419.45,
+    "latency_ms_p95": 8064.3,
+    "latency_ms_p99": 8064.3,
+    "latency_ms_mean": 5934.24,
+    "tokens_per_run": 0.0,
+    "cost_per_run": 0.0,
+    "llm_calls_per_run": 1.0,
+    "tool_calls_per_run": 0.0,
+    "retrieval_rounds_per_run": 0.0,
+    "tokens_total": 0,
+    "cost_total": 0.0,
+    "phase_distribution": {
+      "FINALIZED": 3
+    },
+    "answer_state_distribution": {
+      "INSUFFICIENT_EVIDENCE": 2,
+      "EXECUTION_FAILED": 1
+    }
+  },
+  "cases": [
+    {
+      "latency_ms": 7419.45,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "INSUFFICIENT_EVIDENCE",
+      "status": "completed",
+      "error": "",
+      "question": "¿Cuál es el color favorito del CEO de una empresa que no existe en el corpus?",
+      "wall_ms": 8195.64,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 8064.3,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "EXECUTION_FAILED",
+      "status": "completed",
+      "error": "",
+      "question": "¿Cuánto costó el proyecto secreto Marte-7 en 2087?",
+      "wall_ms": 8668.29,
+      "iteration": 0
+    },
+    {
+      "latency_ms": 2318.98,
+      "tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "llm_calls": 1,
+      "tool_calls": 0,
+      "retrieval_rounds": 0,
+      "phase": "FINALIZED",
+      "answer_state": "INSUFFICIENT_EVIDENCE",
+      "status": "completed",
+      "error": "",
+      "question": "¿Quién ganó el torneo interno de ajedrez de 1975 en la sede de Neptuno?",
+      "wall_ms": 3022.86,
+      "iteration": 0
+    }
+  ]
+}

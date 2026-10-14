@@ -1,0 +1,101 @@
+{
+  "schema": "zent.cert.migrations/1",
+  "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+  "database": "rag_cert_mig",
+  "generated_at": "2026-10-14T19:37:11.119267+00:00",
+  "steps": {
+    "upgrade_head": {
+      "exit": 0,
+      "seconds": 2.56,
+      "tail": "or__.validate_python(data, self_instance=self)\nD:\\zent_RAG\\src\\core\\config.py:2852: UserWarning: CONFIG: dangerous_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL."
+    },
+    "current": {
+      "exit": 0,
+      "seconds": 3.35,
+      "tail": "or__.validate_python(data, self_instance=self)\nD:\\zent_RAG\\src\\core\\config.py:2852: UserWarning: CONFIG: dangerous_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL."
+    },
+    "downgrade_minus_one": {
+      "exit": 0,
+      "seconds": 3.17,
+      "tail": "s_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL.\nINFO  [alembic.runtime.migration] Running downgrade 151 -> 150, Model circuit breakers — aislamiento por tenant."
+    },
+    "upgrade_head_again": {
+      "exit": 0,
+      "seconds": 3.14,
+      "tail": "ous_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL.\nINFO  [alembic.runtime.migration] Running upgrade 150 -> 151, Model circuit breakers — aislamiento por tenant."
+    }
+  },
+  "recent_revisions": [
+    {
+      "revision": "141_knowledge_nutrition_indexes",
+      "file": "src\\infrastructure\\db_init\\versions\\141_knowledge_nutrition_indexes.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "143_semantic_ingestion",
+      "file": "src\\infrastructure\\db_init\\versions\\143_semantic_ingestion.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "144_tenant_delete_permission",
+      "file": "src\\infrastructure\\db_init\\versions\\144_tenant_delete_permission.py",
+      "blocking_ddl": []
+    },
+    {
+      "revision": "145_semantic_window_results",
+      "file": "src\\infrastructure\\db_init\\versions\\145_semantic_window_results.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "146_semantic_threads",
+      "file": "src\\infrastructure\\db_init\\versions\\146_semantic_threads.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "147_semantic_stitcher",
+      "file": "src\\infrastructure\\db_init\\versions\\147_semantic_stitcher.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "148_regional_models",
+      "file": "src\\infrastructure\\db_init\\versions\\148_regional_models.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "149_global_model",
+      "file": "src\\infrastructure\\db_init\\versions\\149_global_model.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "150_semantic_fabric",
+      "file": "src\\infrastructure\\db_init\\versions\\150_semantic_fabric.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY"
+      ]
+    },
+    {
+      "revision": "151_model_circuit_breaker_tenant",
+      "file": "src\\infrastructure\\db_init\\versions\\151_model_circuit_breaker_tenant.py",
+      "blocking_ddl": [
+        "CREATE INDEX sin CONCURRENTLY",
+        "DROP COLUMN (destructivo)"
+      ]
+    }
+  ],
+  "versions_total": 150,
+  "versions_with_downgrade": 150
+}

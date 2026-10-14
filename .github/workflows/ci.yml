@@ -33,6 +33,9 @@ jobs:
       - name: Toolchain desde el lock (frozen)
         run: uv sync --frozen --extra dev
       - run: uv run --frozen --no-sync ruff check src/ tests/ sdk/python
+      - name: Dashboard de producción actualizado (dashboards-as-code)
+        # El JSON se genera: si el generador cambió, el artifact debe cambiar.
+        run: uv run --frozen --no-sync python -m src.scripts.observability_assets --check
 
   pip-audit:
     runs-on: ubuntu-latest
@@ -403,3 +406,15 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: SBOM (CycloneDX) de los artifacts desplegables
+        # Sin dependencias nuevas: lee uv.lock + package-lock.json.
+        run: |
+          python -m pip install "uv==0.12.13"
+          uv sync --frozen --extra dev
+          uv run --frozen --no-sync python -m src.scripts.sbom --out artifacts/release/sbom.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: artifacts/release/sbom.json
+          if-no-files-found: error

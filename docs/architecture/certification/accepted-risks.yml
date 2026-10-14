@@ -1,0 +1,75 @@
+# Riesgos aceptados para la decisión de release (lo lee release_manifest.py).
+# Cada entrada debe existir también en remaining-risks.md (misma numeración).
+risks:
+  - id: P2-1
+    severity: P2
+    title: "Umbrales de latencia/costo PROVISIONAL (sin baseline de staging)"
+    owner: Platform
+    mitigation: "Corrida de staging con 30 iteraciones y concurrencia 25/50; fijar umbrales en alert-rules.yml"
+    blocks: production
+  - id: P2-2
+    severity: P2
+    title: "Carga cercana a capacidad (25/50 concurrentes) no medida"
+    owner: Platform
+    mitigation: "Corrida de load en staging con pool dimensionado"
+    blocks: production
+  - id: P2-3
+    severity: P2
+    title: "Observabilidad (Prometheus/Grafana/Alertmanager) no desplegada en el entorno real"
+    owner: Platform
+    mitigation: "Desplegar stack de observabilidad y scrape de /metrics con METRICS_TOKEN"
+    blocks: production
+  - id: P2-4
+    severity: P2
+    title: "Branch protection no verificada (API GitHub 401 sin token)"
+    owner: Platform
+    mitigation: "Auditar y fijar required checks con gh api (delivery.md §1)"
+    blocks: production
+  - id: P2-5
+    severity: P2
+    title: "pip-audit no bloquea el merge (continue-on-error)"
+    owner: Security
+    mitigation: "Estabilizar advisories y promoverlo a required check"
+    blocks: production
+  - id: P2-6
+    severity: P2
+    title: "Precios por defecto hardcodeados pueden convertir unknown en conocido"
+    owner: FinOps
+    mitigation: "Cargar tarifas reales; revisar el fallback antes de producción"
+    blocks: production
+  - id: P2-7
+    severity: P2
+    title: "Fallback del loop de candidatos sin línea contable con costo"
+    owner: AI Runtime
+    mitigation: "Extender la emisión de provider_attempt al loop de candidatos"
+    blocks: production
+  - id: P2-8
+    severity: P2
+    title: "Sin métrica de divergencia contable (ledger vs usage vs billing)"
+    owner: FinOps
+    mitigation: "Métrica + alerta; billing_reconcile.py diario"
+    blocks: production
+  - id: P2-9
+    severity: P2
+    title: "Sin evaluación periódica de alertas de tenant (solo endpoint manual)"
+    owner: Platform
+    mitigation: "CronJob/scheduler que dispare POST /platform/obs/check"
+    blocks: production
+  - id: P2-10
+    severity: P2
+    title: "20 except Exception sin certificar en caminos críticos (ratchet en CI)"
+    owner: AI Runtime
+    mitigation: "Certificar al tocar cada bloque; el número no puede crecer"
+    blocks: none
+  - id: P2-11
+    severity: P2
+    title: "Imágenes base y actions de CI pinneadas por tag, sin Dependabot"
+    owner: Platform
+    mitigation: "Pin por digest + Dependabot/renovate"
+    blocks: production
+  - id: P3-6
+    severity: P3
+    title: "Tests dependientes de estado sembrado fallan con drift del DB local"
+    owner: Platform
+    mitigation: "Usar scripts/cert/scratch_db.py (paridad CI) o reseed del org demo"
+    blocks: none

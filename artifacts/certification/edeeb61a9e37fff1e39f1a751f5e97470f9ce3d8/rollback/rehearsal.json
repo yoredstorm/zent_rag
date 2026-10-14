@@ -1,0 +1,30 @@
+{
+  "schema": "zent.cert.rollback-rehearsal/1",
+  "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+  "image": "zent-api:cert-edeeb61",
+  "database": "rag_cert_rehearsal",
+  "started_at": "2026-10-14T19:39:12.2761618Z",
+  "steps": [
+    {
+      "step": "good_release",
+      "health": "{\"status\":\"healthy\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"ok\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+      "seconds": 16.6,
+      "healthy": true
+    },
+    {
+      "step": "bad_release",
+      "health": "{\"status\":\"degraded\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"error\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+      "seconds": 13.7,
+      "detected_degraded": true
+    },
+    {
+      "step": "rollback",
+      "health": "{\"status\":\"healthy\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"ok\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+      "seconds": 16.9,
+      "healthy": true
+    }
+  ],
+  "finished_at": "2026-10-14T19:40:00.4737373Z",
+  "rollback_seconds": 16.9,
+  "passed": true
+}

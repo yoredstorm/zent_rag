@@ -1,5 +1,11 @@
 # SLOs, alertas y runbooks — propuesta operativa (F13)
 
+> **Estado superseded (2026-10-14)**: la versión vigente de SLOs y de la matriz
+> de alertas está en `docs/architecture/certification/slo.md` y
+> `config/prometheus/alert-rules.yml` (con contrato en
+> `tests/test_observability_assets.py`). Este documento queda como registro
+> histórico de la propuesta F13.
+
 Estado: **propuesta con umbrales provisionales**. Los targets de latencia se
 fijan con el baseline de producción (F9); acá quedan el método, las invariantes
 duras y la matriz de alertas con su runbook.

@@ -1,0 +1,7 @@
+WARNINGS CONOCIDOS (al SHA certificado; si el código cambia, re-verificar)
+- El venv local corre Python 3.13.7 mientras CI/imagen usan 3.11: los tests locales no son evidencia de paridad de runtime.
+- El .env de desarrollo define RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: config.py emite "dangerous_gate_phase_skipped" al importar (config de dev, no de CI).
+- El .env de desarrollo usa el POSTGRES_PASSWORD y PORTAL_SESSION_KEY de desarrollo: config.py emite warnings SECURITY en cada import (esperado fuera de producción).
+- portal-e2e tiene un flake conocido registrado en el repo (commit 17acf3d, docs/architecture/ownership): no se promueve a required check de release hasta estabilizarlo.
+- Las revisiones de migración recientes usan CREATE INDEX sin CONCURRENTLY y la 151 hace DROP COLUMN (lock/destructivo): ver docs/architecture/certification/delivery.md §4.
+- El reporte de reconciliación redondea a centavos (round 2): runs de menos de un centavo aparecen con delta 0.00.

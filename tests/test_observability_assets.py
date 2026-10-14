@@ -277,3 +277,20 @@ def test_dashboard_has_no_per_run_labels() -> None:
 @pytest.mark.parametrize("path", [ALERT_RULES, PROMETHEUS_YML, DASHBOARD])
 def test_assets_are_utf8(path: Path) -> None:
     path.read_text(encoding="utf-8")
+
+
+def test_prod_compose_declares_observability_profile() -> None:
+    """Canary exige SLI conectados: el compose de prod trae el stack opt-in."""
+    compose = yaml.safe_load(
+        (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    for name in ("prometheus", "grafana"):
+        assert name in services, f"falta {name} en docker-compose.prod.yml"
+        assert "observability" in (services[name].get("profiles") or []), name
+    prom_volumes = " ".join(services["prometheus"].get("volumes") or [])
+    assert "config/prometheus" in prom_volumes
+    grafana_volumes = " ".join(services["grafana"].get("volumes") or [])
+    assert "config/grafana/dashboards" in grafana_volumes
+    assert "prometheus_data" in (compose.get("volumes") or {})
+    assert "grafana_data" in (compose.get("volumes") or {})

@@ -1,0 +1,129 @@
+{
+  "schema": "zent.cert.battery/1",
+  "suite": "accounting",
+  "purpose": "ledger == usage == billing input == observability; unknown != 0.",
+  "generated_at": "2026-10-14T20:14:37.159537+00:00",
+  "duration_seconds": 172.6,
+  "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+  "command": "D:\\zent_RAG\\.venv\\Scripts\\python.exe -m pytest tests/test_certification_accounting_chain.py tests/test_run_accounting.py tests/test_run_accounting_rag.py tests/test_cost_authority.py tests/test_run_budget.py tests/test_budget_stop_reasons.py tests/test_run_metrics.py tests/test_finops.py tests/test_billing_limits_api.py -q --tb=short --timeout=300 --junitxml=artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\junit-accounting.xml",
+  "pytest_exit_code": 0,
+  "totals": {
+    "tests": 65,
+    "pass": 65,
+    "fail": 0,
+    "error": 0,
+    "skipped": 0
+  },
+  "scenarios": [
+    {
+      "id": "I01",
+      "title": "una llamada: cadena completa cuadra",
+      "match": [
+        "ledger_usage_billing_observability_chain"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_certification_accounting_chain::test_ledger_usage_billing_observability_chain"
+      ],
+      "failures": []
+    },
+    {
+      "id": "I02",
+      "title": "retry/fallback visibles sin doble conteo",
+      "match": [
+        "retry_and_fallback_are_visible",
+        "attempts"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_certification_accounting_chain::test_retry_and_fallback_are_visible_without_double_count"
+      ],
+      "failures": []
+    },
+    {
+      "id": "I03",
+      "title": "unknown != 0",
+      "match": [
+        "unknown_cost_is_not_zero",
+        "unknown"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_certification_accounting_chain::test_unknown_cost_is_not_zero"
+      ],
+      "failures": []
+    },
+    {
+      "id": "I04",
+      "title": "budget blocking",
+      "match": [
+        "budget",
+        "budget_overrun"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_run_budget::test_ledger_reads_agent_run_result_metrics",
+        "tests.test_run_budget::test_multi_concept_technical_cap_exceeds_legacy_800",
+        "tests.test_run_budget::test_tight_run_budget_caps_completion_to_remaining",
+        "tests.test_run_budget::test_tiny_budget_exhausts_or_compacts",
+        "tests.test_run_budget::test_low_max_cost_reduces_or_exhausts_call",
+        "tests.test_run_budget::test_deterministic_fast_path_does_not_consume_decision_tokens",
+        "tests.test_run_budget::test_personality_polish_uses_the_same_ledger",
+        "tests.test_run_budget::test_table_signal_raises_desired_without_passing_the_run",
+        "tests.test_run_budget::test_future_retrieval_round_stops_when_steps_are_gone",
+        "tests.test_run_budget::test_call_limit_never_exceeds_remaining_run_room",
+        "tests.test_budget_stop_reasons.TestBudgetStopReasons::test_max_steps_es_step_budget",
+        "tests.test_budget_stop_reasons.TestBudgetStopReasons::test_max_tool_calls_es_tool_budget",
+        "tests.test_budget_stop_reasons.TestBudgetStopReasons::test_tokens_es_token_budget",
+        "tests.test_budget_stop_reasons.TestBudgetStopReasons::test_timeout_es_time_budget",
+        "tests.test_budget_stop_reasons.TestBudgetStopReasons::test_circuito_abierto_es_provider_failure",
+        "tests.test_budget_stop_reasons.TestBudgetStopReasons::test_razones_declaradas",
+        "tests.test_budget_stop_reasons.TestToolGuardAdoption::test_duplicate_tool_queda_con_guard_reason",
+        "tests.test_finops::test_finops_alerts_budget_and_ack"
+      ],
+      "failures": []
+    },
+    {
+      "id": "I05",
+      "title": "suma de líneas == total",
+      "match": [
+        "ledger_totales_igualan_el_evento",
+        "lineas"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_run_accounting_rag.TestRagLedgerEqualsEvent::test_ledger_totales_igualan_el_evento",
+        "tests.test_run_accounting_rag.TestRagLineasExplicitas::test_embedding_linea_y_costo_explicito",
+        "tests.test_run_accounting_rag.TestRagLineasExplicitas::test_sin_tarifa_el_costo_es_desconocido_no_cero",
+        "tests.test_run_accounting_rag.TestRagLineasExplicitas::test_rerank_linea_solo_cuando_corresponde",
+        "tests.test_run_accounting_rag.TestRagLineasExplicitas::test_jev_observado_no_toca_totales",
+        "tests.test_run_accounting_rag.TestRagPricingSinSplit::test_suma_de_lineas_igual_al_total_sin_doble_billing"
+      ],
+      "failures": []
+    },
+    {
+      "id": "I06",
+      "title": "reconciliación billing",
+      "match": [
+        "reconcile",
+        "billing"
+      ],
+      "status": "pass",
+      "tests": [
+        "tests.test_certification_accounting_chain::test_ledger_usage_billing_observability_chain",
+        "tests.test_run_accounting_rag.TestRagPricingSinSplit::test_suma_de_lineas_igual_al_total_sin_doble_billing",
+        "tests.test_billing_limits_api::test_agent_limit_enforced_on_create",
+        "tests.test_billing_limits_api::test_connector_limit_enforced_on_create",
+        "tests.test_billing_limits_api.TestReconciliation::test_report_matches_seeded_data"
+      ],
+      "failures": []
+    }
+  ],
+  "summary": {
+    "pass": 6,
+    "fail": 0,
+    "not_demonstrated": 0
+  },
+  "junit": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\junit-accounting.xml",
+  "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\pytest-accounting.log"
+}
