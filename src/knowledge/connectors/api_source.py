@@ -22,6 +22,10 @@ from src.knowledge.connectors.base import (
     Record,
     SourceConnector,
 )
+from src.knowledge.connectors.http import (
+    assert_public_url,
+    request_with_safe_redirects,
+)
 
 
 def _flatten_item(item: dict, fields: list[str] | None = None) -> str:
@@ -88,8 +92,13 @@ class ApiSourceConnector(SourceConnector):
     def _pagination(self) -> dict:
         return self.config.get("pagination") or {}
 
+    def _allowlist(self) -> list[str]:
+        raw = self.config.get("ssrf_allowlist") or []
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+
     async def validate(self) -> None:
-        self._endpoint()
+        endpoint = self._endpoint()
+        assert_public_url(endpoint, allowlist=self._allowlist())
         self._secrets = await self._ensure_secrets()
         items_path = self.config.get("items_path")
         if not isinstance(items_path, list) or not items_path:
@@ -102,11 +111,13 @@ class ApiSourceConnector(SourceConnector):
         self, params: dict, method: str, json_body: dict | None
     ) -> dict:
         timeout = float(self.config.get("timeout_seconds") or 30)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             try:
-                response = await client.request(
+                response = await request_with_safe_redirects(
+                    client,
                     method,
                     self._endpoint(),
+                    allowlist=self._allowlist(),
                     params=params or None,
                     headers=self._headers(),
                     json=json_body,

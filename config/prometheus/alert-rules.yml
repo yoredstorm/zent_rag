@@ -1,110 +1,497 @@
 # =============================================================================
-# Alert Rules — RAG-as-a-Service Platform
+# Alert Rules — ZENT (reglas vinculadas a runbooks)
+# =============================================================================
+# Convenciones (obligatorias, validadas por tests/test_observability_assets.py):
+#   labels:
+#     severity   critical | warning | info
+#     owner      Platform | Knowledge | AI Runtime | Security | FinOps
+#     sli        nombre del SLI afectado (ver docs/architecture/certification/slo.md)
+#     runbook    ancla en docs/architecture/runbooks/README.md
+#   annotations:
+#     summary, description, diagnosis (primer comando/consulta), mitigation
+#     (rollback/fallback), runbook_url
+#
+# Reglas de higiene:
+#   - Prohibido usar labels no acotados (query text, user_id, conversation_id,
+#     document_id, trace_id, run_id). Ver src/infrastructure/observability/metrics.py.
+#   - Toda métrica referenciada acá existe en el registry real (test en CI).
+#   - Los umbrales marcados PROVISIONAL se re-fijan con el baseline de staging
+#     (docs/architecture/certification/perf-baseline.md) antes de producción.
+#
+# Jobs scrapeados: ver config/prometheus/prometheus.yml. `up{job="rag-api"}`
+# requiere el job rag-api (prod: docker compose profile `observability`).
 # =============================================================================
 groups:
-  - name: rag-alerts
+  - name: zent-availability
     rules:
       # -----------------------------------------------------------------------
-      # Alerta 1: Alta tasa de errores HTTP 5xx (>5% durante 5 minutos)
+      # API caída: el scrape del propio servicio falla.
       # -----------------------------------------------------------------------
-      - alert: HighErrorRate
-        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Tasa de errores HTTP 5xx superior al 5% en la API RAG"
-          description: |
-            El {{ $value | humanizePercentage }} de las solicitudes HTTP están
-            devolviendo errores 5xx. Verificar:
-            - Logs de la API en busca de excepciones no controladas
-            - Estado de la conexión con Qdrant, Redis y PostgreSQL
-            - Recursos del servidor (CPU, memoria)
-
-      # -----------------------------------------------------------------------
-      # Alerta 2: Fallos en consultas RAG
-      # -----------------------------------------------------------------------
-      - alert: RAGQueryFailure
-        expr: rate(rag_errors_total[5m]) > 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Fallos detectados en consultas RAG"
-          description: |
-            Se están registrando errores en las consultas RAG a razón de
-            {{ $value | humanize }} errores/segundo. Verificar:
-            - Disponibilidad del modelo de embeddings
-            - Conexión con Qdrant (vector store)
-            - Configuración del organization y permisos
-
-      # -----------------------------------------------------------------------
-      # Alerta 3: Cuota cercana al límite (90% de uso)
-      # -----------------------------------------------------------------------
-      - alert: QuotaNearlyExceeded
-        expr: rag_active_requests{usage="current"} / rag_active_requests{usage="quota"} > 0.90
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Uso de cuota superior al 90% para el organization {{ $labels.organization_id }}"
-          description: |
-            El organization {{ $labels.organization_id }} ha consumido el
-            {{ $value | humanizePercentage }} de su cuota asignada. Verificar:
-            - Plan y límites del organization en el panel de billing
-            - Posible abuso o fuga de consultas
-            - Necesidad de escalar el plan (upsell)
-
-      # -----------------------------------------------------------------------
-      # Alerta 4: Latencia P99 superior a 10 segundos
-      # -----------------------------------------------------------------------
-      - alert: HighLatency
-        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 10
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Latencia P99 superior a 10 segundos en la API RAG"
-          description: |
-            La latencia del percentil 99 es de {{ $value }}s. Verificar:
-            - Tiempo de respuesta del modelo de embeddings (Ollama)
-            - Rendimiento de Qdrant en búsquedas vectoriales
-            - Carga de PostgreSQL y Redis
-            - Tamaño de los payloads en las solicitudes
-
-      # -----------------------------------------------------------------------
-      # Alerta 5: Ollama inaccesible (>2 minutos caído)
-      # -----------------------------------------------------------------------
-      - alert: OllamaDown
-        expr: up{job="ollama"} == 0
+      - alert: ZENTApiDown
+        expr: up{job="rag-api"} == 0
         for: 2m
         labels:
           severity: critical
+          owner: Platform
+          sli: availability
+          runbook: "runbooks §12 Bad release"
         annotations:
-          summary: "El servicio Ollama lleva más de 2 minutos inaccesible"
+          summary: "ZENT API no responde al scrape de Prometheus"
           description: |
-            El target de Ollama no responde. Verificar:
-            - Estado del contenedor o proceso de Ollama
-            - Modelo cargado correctamente en memoria
-            - Recursos de GPU/CPU del nodo Ollama
-            - Conectividad de red entre la API y Ollama
+            El target rag-api no responde. Availability SLO (99.9% mensual)
+            consumiendo error budget al ritmo de la caída.
+          diagnosis: |
+            kubectl -n zent get pods -l app=zent-api
+            kubectl -n zent describe pod -l app=zent-api | tail -30
+            curl -sf https://<host>/health || echo DOWN
+          mitigation: |
+            Rollback: kubectl -n zent rollout undo deploy/zent-api
+            Compose: docker compose -f docker-compose.prod.yml up -d --no-deps api
+          runbook_url: "docs/architecture/runbooks/README.md (§12 Bad release)"
 
       # -----------------------------------------------------------------------
-      # Alerta 6: Circuit breaker abierto para MÚLTIPLES tenants (provider caído
-      # para todos, no un tenant problemático).
+      # Error rate HTTP 5xx.
       # -----------------------------------------------------------------------
-      - alert: ModelCircuitMultiTenantOpen
-        expr: count by (model) (zent_model_circuit_openings_total{scope!="global"}) > 1
+      - alert: ZENTHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_requests_total[5m])), 0.001) > 0.05
         for: 5m
         labels:
           severity: critical
+          owner: Platform
+          sli: availability
+          runbook: "runbooks §4 DB saturation"
         annotations:
-          summary: "Más de un tenant abrió el circuito del modelo {{ $labels.model }}"
+          summary: ">5% de requests HTTP 5xx ({{ $value | humanizePercentage }})"
+          description: "Error rate por encima del objetivo; consume error budget rápido."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep -E 'http_requests_total\{status="5'
+            docker compose logs --tail=200 api | grep -iE "error|exception"
+          mitigation: "Si el deploy es reciente: rollback (runbook #12). Si no: runbook #4 (DB) o #1 (LLM)."
+          runbook_url: "docs/architecture/runbooks/README.md (§4 DB saturation)"
+
+      # -----------------------------------------------------------------------
+      # Fallos de run RAG/agente (errores de dominio, no solo HTTP).
+      # -----------------------------------------------------------------------
+      - alert: ZENTRunFailureRate
+        expr: |
+          sum(increase(zent_runs_total{phase="FAILED"}[15m]))
+          / clamp_min(sum(increase(zent_runs_total[15m])), 1) > 0.01
+        for: 10m
+        labels:
+          severity: high
+          owner: AI Runtime
+          sli: successful_run_completion
+          runbook: "runbooks §1 LLM outage"
+        annotations:
+          summary: ">1% de runs terminan en FAILED (15m)"
           description: |
-            Varios tenants distintos abrieron su circuit breaker para el mismo
-            modelo ({{ $value }} scopes en 5m). Eso apunta a un problema del
-            PROVIDER/modelo, no de una organización:
-            - Revisar estado del provider (429/5xx/timeouts)
-            - Considerar abrir el circuito GLOBAL del modelo
-            - Verificar el fallback de modelo por si el primario está degradado
-            Un solo tenant abriendo su scope es aislado y no dispara esta alerta.
+            Runs que no completan respuesta ni abstención legítima. Un ABSTAIN
+            por evidencia insuficiente NO cuenta como fallo (ver slo.md §errores).
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep 'zent_runs_total'
+            docker compose logs --tail=200 api | grep -E "run_failed|PROVIDER_FAILURE|RETRIEVAL_UNAVAILABLE"
+          mitigation: "Provider: runbook #1/#5. Retrieval: runbook #2. DB: #4."
+          runbook_url: "docs/architecture/runbooks/README.md (§1 LLM outage)"
+
+      # -----------------------------------------------------------------------
+      # Error budget: SLO de disponibilidad 99.9% mensual.
+      # Fast burn: 2% del presupuesto mensual en 1h -> page.
+      # -----------------------------------------------------------------------
+      - alert: ZENTErrorBudgetFastBurn
+        expr: |
+          sum(rate(rag_errors_total[1h]))
+          / clamp_min(sum(rate(rag_queries_total[1h])), 0.001) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+          owner: Platform
+          sli: availability
+          runbook: "runbooks §12 Bad release"
+        annotations:
+          summary: "Fast burn del error budget (>2% del presupuesto mensual en 1h)"
+          description: "Al ritmo actual el presupuesto de 0.1% mensual se agota en horas."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep -E 'rag_errors_total|rag_queries_total'
+          mitigation: "Congelar cambios y rollback si el burn coincide con un deploy (runbook #12)."
+          runbook_url: "docs/architecture/runbooks/README.md (§12 Bad release)"
+
+      - alert: ZENTErrorBudgetSlowBurn
+        expr: |
+          sum(rate(rag_errors_total[6h]))
+          / clamp_min(sum(rate(rag_queries_total[6h])), 0.001) > 0.002
+        for: 30m
+        labels:
+          severity: warning
+          owner: Platform
+          sli: availability
+          runbook: "runbooks §10 High latency"
+        annotations:
+          summary: "Slow burn del error budget (6h sobre el objetivo)"
+          description: "Degradación sostenida; revisar antes de que escale."
+          diagnosis: "curl -s \"$API/metrics\" -H \"Authorization: Bearer $METRICS_TOKEN\" | grep rag_errors_total"
+          mitigation: "Identificar la dependencia que falla (runbooks #1-#4)."
+          runbook_url: "docs/architecture/runbooks/README.md (§10 High latency)"
+
+  - name: zent-latency
+    rules:
+      - alert: ZENTHighLatencyP99
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 10
+        for: 10m
+        labels:
+          severity: warning
+          owner: Platform
+          sli: latency
+          runbook: "runbooks §10 High latency"
+        annotations:
+          summary: "p99 HTTP > 10s ({{ $value }}s)"
+          description: "Latencia de cola degradada; afecta el SLO de latencia de API."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep -E 'rag_llm_latency_seconds_bucket|rag_vector_search_latency_seconds_bucket|rag_rerank_latency_seconds_bucket'
+          mitigation: "Runbook #9 (latencia sostenida). Si es provider: #1/#5."
+          runbook_url: "docs/architecture/runbooks/README.md (§10 High latency)"
+
+      - alert: ZENTRunP95Regression
+        # PROVISIONAL: fijar con el baseline de staging (perf-baseline.md).
+        expr: histogram_quantile(0.95, sum by (le, path) (rate(zent_run_latency_seconds_bucket[15m]))) > 120
+        for: 15m
+        labels:
+          severity: warning
+          owner: Platform
+          sli: latency
+          runbook: "runbooks §10 High latency"
+        annotations:
+          summary: "p95 de run > 120s ({{ $value }}s, path {{ $labels.path }})"
+          description: "Latencia end-to-end del run fuera del baseline medido."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep 'zent_run_latency_seconds_bucket'
+            # ¿cold start o sostenido? comparar con el baseline por workload.
+          mitigation: "Verificar cold start de modelos/reranker antes de escalar (runbook #9)."
+          runbook_url: "docs/architecture/runbooks/README.md (§10 High latency)"
+
+      - alert: ZENTRetrievalStageSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(rag_vector_search_latency_seconds_bucket[15m]))) > 2
+        for: 15m
+        labels:
+          severity: warning
+          owner: Knowledge
+          sli: retrieval_availability
+          runbook: "runbooks §2 Qdrant outage"
+        annotations:
+          summary: "Búsqueda vectorial p95 > 2s"
+          description: "Retrieval lento: Qdrant saturado o colección sin optimizar."
+          diagnosis: |
+            curl -s http://qdrant:6333/collections
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep rag_vector_search_latency
+          mitigation: "Runbook #2 (Qdrant): revisar memoria/segmentos antes de tocar la app."
+          runbook_url: "docs/architecture/runbooks/README.md (§2 Qdrant outage)"
+
+      - alert: ZENTLlmLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(rag_llm_latency_seconds_bucket[15m]))) > 30
+        for: 15m
+        labels:
+          severity: warning
+          owner: Platform
+          sli: provider_dependency
+          runbook: "runbooks §1 LLM outage"
+        annotations:
+          summary: "LLM p95 > 30s"
+          description: "Provider degradado (lento) aunque no falle."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep zent_provider_attempts_total
+          mitigation: "Runbook #1: si el fallback responde mejor, forzarlo; si no, degradar con aviso."
+          runbook_url: "docs/architecture/runbooks/README.md (§1 LLM outage)"
+
+  - name: zent-provider
+    rules:
+      - alert: ZENTProviderRateLimited
+        expr: increase(zent_provider_attempts_total{status="rate_limited"}[5m]) > 20
+        for: 5m
+        labels:
+          severity: high
+          owner: Platform
+          sli: provider_dependency
+          runbook: "runbooks §5 Provider 429"
+        annotations:
+          summary: ">20 intentos rate-limited en 5m ({{ $labels.provider }})"
+          description: |
+            El provider está limitando el RPM/TPM. Los requests pueden completar
+            por fallback: es un evento DEGRADADO, no necesariamente un fallo.
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep 'zent_provider_attempts_total{status="rate_limited"'
+            # ¿subió el tráfico o bajó el límite del plan?
+          mitigation: "Runbook #5: bajar concurrencia/RPM o cambiar de provider; el fallback debe seguir sirviendo."
+          runbook_url: "docs/architecture/runbooks/README.md (§5 Provider 429)"
+
+      - alert: ZENTProviderAttemptAmplification
+        expr: |
+          sum(increase(zent_provider_attempts_total[5m]))
+          / clamp_min(sum(increase(zent_runs_total[5m])), 1) > 3
+        for: 5m
+        labels:
+          severity: high
+          owner: Platform
+          sli: provider_dependency
+          runbook: "runbooks §11 Retry amplification"
+        annotations:
+          summary: "Amplificación de intentos > 3x runs"
+          description: |
+            Los reintentos/fallbacks están multiplicando llamadas al provider
+            (costo y presión). El diseño permite ≤4 intentos con 2 candidatos.
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep zent_provider_attempts_total
+            docker compose logs --tail=200 api | grep -c provider_attempt
+          mitigation: "Runbook #11: verificar circuit breakers y backoff antes de subir concurrencia."
+          runbook_url: "docs/architecture/runbooks/README.md (§11 Retry amplification)"
+
+      - alert: ZENTCircuitBreakerOpenGlobal
+        expr: increase(zent_model_circuit_openings_total{scope="global"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          owner: Platform
+          sli: provider_dependency
+          runbook: "runbooks §6 Circuit open"
+        annotations:
+          summary: "Circuit breaker GLOBAL abierto ({{ $labels.model }})"
+          description: "El provider/modelo primario está caído para todos los tenants."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep zent_model_circuit
+            # El fallback debe estar sirviendo: verificar zent_provider_attempts_total{retry="true"}
+          mitigation: "Runbook #6: mantener el fallback, no cerrar el circuito a mano sin evidencia de recuperación."
+          runbook_url: "docs/architecture/runbooks/README.md (§6 Circuit open)"
+
+      - alert: ZENTCircuitBreakerMultiTenant
+        # Corrige el bug de la regla previa: el counter es monotónico, se
+        # necesita `increase()` para detectar aperturas recientes.
+        expr: count by (model) (increase(zent_model_circuit_openings_total{scope!="global"}[10m]) > 0) > 1
+        for: 5m
+        labels:
+          severity: critical
+          owner: Platform
+          sli: provider_dependency
+          runbook: "runbooks §6 Circuit open"
+        annotations:
+          summary: "Varios tenants abrieron el circuito del modelo {{ $labels.model }}"
+          description: "No es un tenant problemático: es el provider/modelo."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep 'zent_model_circuit_openings_total{scope!="global"'
+          mitigation: "Runbook #6: abrir circuito global y dejar actuar el fallback."
+          runbook_url: "docs/architecture/runbooks/README.md (§6 Circuit open)"
+
+      - alert: ZENTProviderHardFailures
+        expr: increase(zent_provider_attempts_total{status=~"provider_error|timeout|auth_error"}[10m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          owner: Platform
+          sli: provider_dependency
+          runbook: "runbooks §1 LLM outage"
+        annotations:
+          summary: "Errores duros de provider (>10 en 10m)"
+          description: "Timeouts/5xx/auth del provider primario o del fallback."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep -E 'zent_provider_attempts_total\{status="(timeout|auth_error|provider_error)"'
+          mitigation: "Runbook #1: auth_error suele ser credencial/rotación; timeout es red o provider."
+          runbook_url: "docs/architecture/runbooks/README.md (§1 LLM outage)"
+
+  - name: zent-knowledge
+    rules:
+      - alert: ZENTRetrievalUnavailable
+        expr: |
+          sum(increase(rag_agent_retrieval_unavailable_total[15m]))
+          / clamp_min(sum(increase(zent_runs_total[15m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: high
+          owner: Knowledge
+          sli: retrieval_availability
+          runbook: "runbooks §2 Qdrant outage"
+        annotations:
+          summary: ">5% de runs con retrieval no disponible"
+          description: |
+            RETRIEVAL_UNAVAILABLE es un fallo de infraestructura, JAMÁS
+            "no hay información": el run no debe responder como si no existiera dato.
+          diagnosis: |
+            curl -sf http://qdrant:6333/collections | head -20
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep rag_agent_retrieval_unavailable_total
+          mitigation: "Runbook #2 (Qdrant). Si Qdrant está sano: revisar timeout/red y embeddings."
+          runbook_url: "docs/architecture/runbooks/README.md (§2 Qdrant outage)"
+
+      - alert: ZENTRetrievalPermanentFailure
+        expr: increase(rag_agent_retrieval_unavailable_total{failure_kind="permanent"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: high
+          owner: Knowledge
+          sli: retrieval_availability
+          runbook: "runbooks §2 Qdrant outage"
+        annotations:
+          summary: "Fallo PERMANENTE de retrieval (colección/config), no transitorio"
+          description: "Un fallo permanente suele ser colección ausente, dimensión o permisos."
+          diagnosis: |
+            curl -s http://qdrant:6333/collections | grep -i <org>
+            docker compose logs --tail=200 api | grep -i "retrieval_failure"
+          mitigation: "Runbook #2: recrear/verificar colección; no reintentar en bucle."
+          runbook_url: "docs/architecture/runbooks/README.md (§2 Qdrant outage)"
+
+      - alert: ZENTEvidenceFailedRate
+        expr: |
+          sum(increase(zent_run_evidence_total{status="failed"}[15m]))
+          / clamp_min(sum(increase(zent_runs_total[15m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: high
+          owner: Knowledge
+          sli: retrieval_availability
+          runbook: "runbooks §2 Qdrant outage"
+        annotations:
+          summary: ">5% de runs cierran con evidencia FAILED"
+          description: "La evidencia no pudo evaluarse (distinto de insuficiente)."
+          diagnosis: "curl -s \"$API/metrics\" -H \"Authorization: Bearer $METRICS_TOKEN\" | grep zent_run_evidence_total"
+          mitigation: "Runbook #2/#4 según dependencia caída."
+          runbook_url: "docs/architecture/runbooks/README.md (§2 Qdrant outage)"
+
+      - alert: ZENTAbstentionSpike
+        expr: |
+          sum(increase(zent_runs_total{phase="ABSTAINED"}[1h]))
+          / clamp_min(sum(increase(zent_runs_total[1h])), 1) > 0.30
+        for: 30m
+        labels:
+          severity: warning
+          owner: Knowledge
+          sli: successful_run_completion
+          runbook: "runbooks §8 High abstention rate"
+        annotations:
+          summary: ">30% de runs ABSTAIN en 1h"
+          description: |
+            Abstención legítima NO es fallo de disponibilidad, pero un salto
+            sostenido indica corpus, retrieval o umbrales mal calibrados.
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep -E 'zent_finalization_actions_total|zent_run_evidence_total'
+          mitigation: "Runbook #8: comparar contra el baseline de abstención antes de tocar umbrales."
+          runbook_url: "docs/architecture/runbooks/README.md (§8 High abstention rate)"
+
+      - alert: ZENTUndeterminedSpike
+        expr: |
+          sum(increase(zent_runs_total{phase="UNDETERMINED"}[1h]))
+          / clamp_min(sum(increase(zent_runs_total[1h])), 1) > 0.10
+        for: 30m
+        labels:
+          severity: warning
+          owner: AI Runtime
+          sli: successful_run_completion
+          runbook: "runbooks §9 High undetermined rate"
+        annotations:
+          summary: ">10% de runs UNDETERMINED en 1h"
+          description: "El runtime no pudo decidir: política/evidencia/contrato en conflicto."
+          diagnosis: "curl -s \"$API/metrics\" -H \"Authorization: Bearer $METRICS_TOKEN\" | grep -E 'zent_finalization_actions_total|zent_runs_total'"
+          mitigation: "Runbook #10: revisar reason_code dominante antes de relajar la política."
+          runbook_url: "docs/architecture/runbooks/README.md (§9 High undetermined rate)"
+
+  - name: zent-authority-security
+    rules:
+      - alert: ZENTFinalizationDivergence
+        expr: increase(zent_finalization_divergence_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          owner: AI Runtime
+          sli: authority_integrity
+          runbook: "runbooks §18 Authority divergence"
+        annotations:
+          summary: "Divergencia de autoridad de finalización ({{ $labels.stage }})"
+          description: |
+            La política armada y la acción legacy discreparon. La autoridad
+            determinista no puede divergir: invariante dura.
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep zent_finalization_divergence_total
+            # identificar stage/policy_action/reason_code del label
+          mitigation: "Runbook #7: NO apagar la política; capturar el run y arreglar la regla."
+          runbook_url: "docs/architecture/runbooks/README.md (§18 Authority divergence)"
+
+      - alert: ZENTTenantIsolationViolation
+        expr: increase(zent_run_state_violations_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          owner: Security
+          sli: tenant_isolation
+          runbook: "runbooks §13 Tenant isolation incident"
+        annotations:
+          summary: "Violación de invariante de aislamiento ({{ $labels.kind }})"
+          description: |
+            Invariante dura: cross-tenant leakage objetivo = 0. Se trata como
+            incidente de seguridad, no como bug de performance.
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep zent_run_state_violations_total
+            docker compose logs --tail=500 api | grep -iE "isolation|tenant_violation" | head
+          mitigation: "Runbook #13: contener (bloquear org afectada si hace falta) y preservar evidencia antes de tocar código."
+          runbook_url: "docs/architecture/runbooks/README.md (§13 Tenant isolation incident)"
+
+      - alert: ZENTCacheBypassIsolationGuard
+        expr: increase(zent_cache_bypass_total{reason="conversation_unsupported"}[15m]) > 0
+        for: 10m
+        labels:
+          severity: info
+          owner: AI Runtime
+          sli: latency
+          runbook: "runbooks §13 Tenant isolation incident"
+        annotations:
+          summary: "Caché de respuestas bypassed por política fail-closed"
+          description: |
+            El proveedor de caché no soporta aislamiento por conversación: el
+            bypass es CORRECTO (fail-closed) y cuesta latencia/costo.
+          diagnosis: "curl -s \"$API/metrics\" -H \"Authorization: Bearer $METRICS_TOKEN\" | grep zent_cache_bypass_total"
+          mitigation: "No 'arreglar' desactivando el guard: migrar el provider de caché (P2)."
+          runbook_url: "docs/architecture/runbooks/README.md (§13 Tenant isolation incident)"
+
+  - name: zent-cost
+    rules:
+      - alert: ZENTUnknownCostSpike
+        expr: |
+          sum(increase(zent_run_cost_unknown_total[1h]))
+          / clamp_min(sum(increase(zent_runs_total[1h])), 1) > 0.05
+        for: 30m
+        labels:
+          severity: warning
+          owner: FinOps
+          sli: budget_accounting_integrity
+          runbook: "runbooks §14 Cost unknown"
+        annotations:
+          summary: ">5% de runs con costo desconocido (unknown != 0)"
+          description: |
+            Unknown nunca es cero: si sube, la facturación queda incompleta.
+            Causa típica: modelo sin tarifa en pricing_models.
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep zent_run_cost_unknown_total
+            psql "$DATABASE_URL" -c "SELECT provider, model FROM pricing_models ORDER BY updated_at DESC LIMIT 20"
+          mitigation: "Runbook #14: cargar la tarifa del modelo o degradar el modelo a uno tarifado."
+          runbook_url: "docs/architecture/runbooks/README.md (§14 Cost unknown)"
+
+      - alert: ZENTCostPerRunSpike
+        # PROVISIONAL: fijar con el baseline de costo por workload (perf-baseline.md).
+        expr: |
+          sum(increase(zent_run_cost_usd_total[1h]))
+          / clamp_min(sum(increase(zent_runs_total[1h])), 1) > 0.05
+        for: 30m
+        labels:
+          severity: warning
+          owner: FinOps
+          sli: budget_accounting_integrity
+          runbook: "runbooks §7 Cost spike"
+        annotations:
+          summary: "Costo por run > $0.05 (1h)"
+          description: "Cambio abrupto de costo/run: tokens, retries, fallback o modelo distinto."
+          diagnosis: |
+            curl -s "$API/metrics" -H "Authorization: Bearer $METRICS_TOKEN" | grep -E 'zent_run_cost_usd_total|zent_llm_tokens_total|zent_provider_attempts_total'
+            psql "$DATABASE_URL" -c "SELECT model, sum(total_tokens), sum(COALESCE(actual_cost, estimated_cost)) FROM usage_events WHERE created_at > now() - interval '1 hour' GROUP BY 1 ORDER BY 3 DESC LIMIT 10"
+          mitigation: "Runbook #15: comparar con baseline; si es retry/fallback, ver runbook #11."
+          runbook_url: "docs/architecture/runbooks/README.md (§7 Cost spike)"
+
+      # NOTA (gap declarado): no existe todavía una métrica de divergencia
+      # contable (ledger vs usage vs billing). Se valida con
+      # src/scripts/billing_reconcile.py (job diario) y el test de cadena
+      # tests/test_certification_accounting_chain.py. Alerta pendiente de
+      # métrica (P2, ver docs/architecture/certification/remaining-risks.md).

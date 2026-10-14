@@ -51,7 +51,13 @@ def validate_arguments(tool: Tool, arguments: dict) -> dict:
         if key not in properties:
             continue  # extras se descartan (no pasan al tool)
         spec = properties[key]
-        expected = _SCHEMA_TYPE_MAP.get(spec.get("type"))
+        declared = spec.get("type")
+        # bool es subclase de int en Python: no puede colarse como integer/number.
+        if isinstance(value, bool) and declared != "boolean":
+            raise ToolInputError(
+                f"Argument '{key}' must be {declared}, got boolean"
+            )
+        expected = _SCHEMA_TYPE_MAP.get(declared)
         if expected is not None and not isinstance(value, expected):
             raise ToolInputError(
                 f"Argument '{key}' must be {spec.get('type')}, got {type(value).__name__}"

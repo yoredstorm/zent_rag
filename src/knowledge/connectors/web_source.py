@@ -11,6 +11,10 @@ from src.knowledge.connectors.base import (
     Record,
     SourceConnector,
 )
+from src.knowledge.connectors.http import (
+    assert_public_url,
+    request_with_safe_redirects,
+)
 
 
 class WebSourceConnector(SourceConnector):
@@ -23,8 +27,12 @@ class WebSourceConnector(SourceConnector):
             raise ConnectorError("web source requires a valid 'url' (http/https)")
         return url
 
+    def _allowlist(self) -> list[str]:
+        raw = self.config.get("ssrf_allowlist") or []
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+
     async def validate(self) -> None:
-        self._url()
+        assert_public_url(self._url(), allowlist=self._allowlist())
 
     async def discover(self) -> list[DiscoveredItem]:
         return [DiscoveredItem(external_id=self._url(), label=self._url())]
@@ -32,9 +40,15 @@ class WebSourceConnector(SourceConnector):
     async def _fetch_bytes(self) -> tuple[bytes, str]:
         headers = {k: str(v) for k, v in (self.config.get("headers") or {}).items()}
         timeout = float(self.config.get("timeout_seconds") or 30)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             try:
-                response = await client.get(self._url(), headers=headers)
+                response = await request_with_safe_redirects(
+                    client,
+                    "GET",
+                    self._url(),
+                    allowlist=self._allowlist(),
+                    headers=headers,
+                )
                 response.raise_for_status()
             except httpx.HTTPError as exc:
                 raise ConnectorError(f"Fetch failed for {self._url()}: {exc}") from exc
