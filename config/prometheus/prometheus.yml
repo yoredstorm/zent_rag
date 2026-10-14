@@ -6,11 +6,13 @@ global:
   scrape_timeout: 10s
   evaluation_interval: 15s
 
-# Alertmanager (pendiente de configuración)
+# Alertmanager: recibe las alertas de alert-rules.yml.
+# El receptor por defecto no tiene integración externa todavía (ver
+# config/alertmanager/alertmanager.yml): las alertas se ven en la UI/API.
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []
+        - targets: ["alertmanager:9093"]
 
 # Reglas de alerta
 rule_files:

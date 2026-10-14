@@ -118,6 +118,20 @@ def main() -> int:
         "output": ssrf[-400:],
     }
 
+    status, body = _get("http://127.0.0.1:9090/api/v1/alertmanagers")
+    alertmanagers = json.loads(body)["data"] if status == 200 else {"activeAlertmanagers": []}
+    status, body = _get("http://127.0.0.1:9093/api/v2/alerts")
+    active_alerts = json.loads(body) if status == 200 else []
+    status, body = _get("http://127.0.0.1:9093/api/v2/status")
+    am_status = json.loads(body) if status == 200 else {}
+    evidence["checks"]["alertmanager"] = {
+        "prometheus_active_targets": [a["url"] for a in alertmanagers["activeAlertmanagers"]],
+        "prometheus_dropped": len(alertmanagers.get("droppedAlertmanagers") or []),
+        "alertmanager_cluster": (am_status.get("cluster") or {}).get("status"),
+        "active_alerts": len(active_alerts),
+        "alert_names": [alert["labels"].get("alertname") for alert in active_alerts],
+    }
+
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(evidence, ensure_ascii=False, indent=2))

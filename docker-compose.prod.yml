@@ -366,6 +366,20 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=15d"
 
+  # Receptor de alertas (receptor `default` sin integración externa todavía).
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+
   grafana:
     image: grafana/grafana:11.3.0
     profiles: ["observability"]
@@ -389,4 +403,5 @@ volumes:
     # Prefer S3-compatible storage for file sources; this volume is a last resort.
     # See docs/platform/PRODUCTION.md
   prometheus_data:
+  alertmanager_data:
   grafana_data:

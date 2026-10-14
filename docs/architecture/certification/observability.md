@@ -65,7 +65,24 @@ Gap declarado: no existe todavía una métrica de **divergencia contable**
 (job diario) y el test de cadena `tests/test_certification_accounting_chain.py`.
 Alerta pendiente de métrica (riesgo P2).
 
-## 3. Runbooks
+## 3. Alertmanager (conectado y probado)
+
+- Servicio `alertmanager` (prom/alertmanager v0.27.0) en `docker-compose.yml` y en
+  el profile `observability` de `docker-compose.prod.yml`; config en
+  `config/alertmanager/alertmanager.yml` (receptor `default` **sin integración
+  externa todavía**: las alertas se ven en la UI/API, no se envían a nadie).
+- `config/prometheus/prometheus.yml` apunta a `alertmanager:9093`; Prometheus lo
+  ve como target activo (`dropped=0`).
+- **Prueba end-to-end ejecutada** (2026-10-14, local): se detuvo `rag-api`; a los
+  ~2,5 min la regla `ZENTApiDown` pasó a `firing` en Prometheus y a `active` en
+  Alertmanager; al levantar el contenedor, ambas volvieron a 0 alertas activas.
+  Evidencia del estado de wiring: `artifacts/certification/684d383…/local-deploy.json`
+  (`checks.alertmanager`).
+- Contrato en CI: `tests/test_observability_assets.py` valida que Prometheus tenga
+  Alertmanager configurado, que la config de Alertmanager tenga receiver válido y
+  que ambos compose declaren el servicio.
+
+## 4. Runbooks
 
 `docs/architecture/runbooks/README.md` — 18 incidentes con señales, diagnóstico
 ejecutable (`psql`, `redis-cli`, `curl`, `kubectl`), acción, rollback y owner:
@@ -86,7 +103,7 @@ ejecutable (`psql`, `redis-cli`, `curl`, `kubectl`), acción, rollback y owner:
 falla si alguno desaparece; `::test_runbooks_have_executable_diagnosis` exige
 comandos reales (no solo "investigate logs").
 
-## 4. Health y SLOs de plataforma (código existente)
+## 5. Health y SLOs de plataforma (código existente)
 
 - `/health` (checks de Postgres/Qdrant/Redis/decision engine) —
   `src/platform/observability/health.py`.
@@ -97,14 +114,16 @@ comandos reales (no solo "investigate logs").
 - FinOps: `finops_alerts` (budget_exceeded, negative_margin, usage_spike,
   provider_spike) y `usage_alerts` (50/80/90/100%).
 
-## 5. Qué falta para producción (explícito)
+## 6. Qué falta para producción (explícito)
 
-1. **Desplegar** el stack: `docker compose -f docker-compose.prod.yml --profile observability up -d`
-   (Prometheus + Grafana ya están declarados en el compose de producción y
-   verificados por `tests/test_observability_assets.py::test_prod_compose_declares_observability_profile`).
-   Falta ejecutarlo en el entorno real y confirmar el scrape de `/metrics`.
-2. Alertmanager (hoy `targets: []`) o receptor equivalente para las reglas de
-   `alert-rules.yml`.
+1. **Desplegar** el stack en el entorno real:
+   `docker compose -f docker-compose.prod.yml --profile observability up -d`
+   (Prometheus + Grafana + Alertmanager ya están declarados y verificados por
+   `tests/test_observability_assets.py`). Falta ejecutarlo en staging/producción
+   y confirmar el scrape de `/metrics` con `METRICS_TOKEN`.
+2. **Receptor externo de alertas**: el receptor `default` de Alertmanager no
+   tiene integración (no envía a ningún canal). Conectar webhook/Slack/PagerDuty
+   en `config/alertmanager/alertmanager.yml`.
 3. Scheduler que dispare `POST /platform/obs/check` (cron/k8s CronJob) si se
    quiere el webhook del tenant sin depender de una llamada manual.
 4. Postgres/Redis exporters: los jobs `postgres-exporter`/`redis-exporter` están

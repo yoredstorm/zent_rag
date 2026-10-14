@@ -144,8 +144,10 @@ fallback es evento degradado; `RETRIEVAL_UNAVAILABLE` **sí** es fallo.
   muertas y se corrigió el bug de counter monotónico en la alerta multi-tenant.
 - 18 runbooks con comandos reales (`docs/architecture/runbooks/README.md`).
 - Stack de observabilidad declarado en `docker-compose.prod.yml` (profile
-  `observability`, verificado por test); **falta desplegarlo** (P2-3) y conectar
-  Alertmanager/scheduler (P2-9).
+  `observability`, verificado por test); **Alertmanager conectado y probado en
+  local** (regla `ZENTApiDown` disparó y se resolvió end-to-end). Falta
+  desplegarlo en staging, conectar un receptor externo y el scheduler de
+  `POST /platform/obs/check` (P2-3, P2-9).
 
 ## 12. Riesgos P0–P3
 
@@ -175,11 +177,14 @@ tests dependientes de seed.
 3. **Baseline de performance y load en staging** con corpus cargado (30
    iteraciones, concurrencia 25/50) → fijar los umbrales PROVISIONAL de latencia
    y costo en `alert-rules.yml` y `slo.md` (P2-1, P2-2).
-4. **Observabilidad desplegada y conectada**: `--profile observability` en el
-   entorno real, scrape de `/metrics` confirmado y receptor de alertas
-   (Alertmanager o equivalente) + scheduler de `POST /platform/obs/check` (P2-3, P2-9).
-5. **Branch protection verificada y configurada** con los required checks de
-   `delivery.md` §1 (P2-4).
+4. **Observabilidad desplegada en staging** con receptor externo de alertas:
+   `--profile observability` en el entorno real, scrape de `/metrics` confirmado,
+   webhook/Slack/PagerDuty en `alertmanager.yml` y scheduler de
+   `POST /platform/obs/check` (P2-3, P2-9). En local ya está conectado y probado.
+5. ~~Branch protection verificada~~ **HECHA**: aplicada y verificada
+   (`artifacts/certification/684d383…/branch-protection.json`). Queda como
+   decisión de producción activar PRs requeridos para enforcement duro en el
+   flujo de push directo.
 
 Condiciones adicionales **para producción**: cerrar o aceptar formalmente
 P2-5…P2-8 y P2-11 (pip-audit bloqueante, precios reales, visibilidad de intentos
@@ -201,15 +206,15 @@ desplegada para observabilidad. Los puntajes reflejan lo demostrado hoy.
 | security | 8 | 22/22 + 2 P1 cerrados + mitigaciones estructurales | sin pentest externo/fuzzing |
 | tenant isolation | 9 | A/B idéntico + contratos + invariantes + 49 tests | sin prueba cross-región/workspace en batería |
 | reliability | 8 | chaos 17/17 + fallback real + rollback ensayado | chaos de infraestructura en staging |
-| observability | 6 | dashboards/alertas como código + contratos + compose profile | no desplegado, sin Alertmanager/scheduler |
+| observability | 7 | dashboards/alertas como código + contratos + compose profile + Alertmanager conectado y probado (fired/resolved) | no desplegado en staging, sin receptor externo ni scheduler |
 | performance | 5 | baseline real medido (2 perfiles) + TTFT + rutas degradadas | local, n=3, sin corpus cargado ni staging |
 | cost/accounting | 7 | cadena con matemática + unknown≠0 + budget | precios default, loop sin línea, sin métrica de divergencia |
 | maintainability | 7 | tooling de evidencia + ratchets + docs indexados | 20 `except` sin certificar, módulos grandes |
 | test quality | 7 | escenario→test mapeado + no-demostrados explícitos | suite lenta/pesada; hermeticidad a corregir por caso |
 | build reproducibility | 7 | locks frozen + SBOM determinista + imagen construida | bases/actions por tag, sin Dependabot |
-| operational readiness | 6 | 18 runbooks + rollback 16,9 s + alertas con owner | branch protection sin verificar, staging sin ejercitar |
+| operational readiness | 7 | 18 runbooks + rollback 16,9 s + alertas con owner + branch protection aplicada | staging sin ejercitar; enforcement duro requiere PRs |
 
-**Promedio: 7,2/10** — consistente con la decisión: sistema sólido y verificable
+**Promedio: 7,4/10** — consistente con la decisión: sistema sólido y verificable
 internamente, todavía **no certificable para canary** por evidencia de entorno,
 no por falta de diseño.
 
@@ -226,6 +231,8 @@ Evidencia: `artifacts/certification/ff072e8…/local-deploy.json`
 | Prometheus local tras `restart` | 6 grupos, **24 reglas**, 0 reglas con error |
 | Targets de scrape | `rag-api` y `prometheus` up, **0 down** (jobs muertos de exporters deshabilitados) |
 | Grafana | dashboard `ZENT - Producción (canary)` provisionado, 35 paneles |
+| **Alertmanager** | target activo en Prometheus (`dropped=0`), cluster `ready`; **prueba E2E**: `ZENTApiDown` disparó al detener `rag-api` y se resolvió al levantarlo (0 alertas activas después) |
+| **Branch protection** | aplicada y verificada por API: 8 required checks, force push y borrado bloqueados (`branch-protection.json`) |
 | Métricas run-level en `/metrics` | `zent_runs_total{path="rag",phase="FINALIZED"}`, `zent_run_latency_seconds_count{path="rag"}` |
 | **E2E del fix SSRF en el contenedor** | PASS: server local allowlisted recibe 1 request; el 302 a `169.254.169.254` se bloquea y el hop interno nunca se pide (`scripts/cert/ssrf_e2e.py`) |
 | Smoke de query por HTTP (contenedor nuevo) | 200; miss 15,2 s / repetición 7,7 s; TTFT 8,24 s; 0 hits de caché (mismo hallazgo P2 que el probe previo) |

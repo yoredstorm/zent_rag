@@ -4,42 +4,40 @@ Partes M, N, P y Q del checklist de certificación.
 
 ## 1. Branch protection (Parte M)
 
-**Estado: NO VERIFICADO desde este entorno.** La API de GitHub devuelve `401`
-sin token (`GET /repos/yoredstorm/zent_rag/branches/master/protection`), así que
-la protección de `master` no se puede auditar ni certificar sin credenciales.
-Se declara como **condición de canary** (ver `final-report.md`).
+**Estado: APLICADA y verificada** (2026-10-14) en `master` de
+`yoredstorm/zent_rag`. Evidencia: `artifacts/certification/684d383…/branch-protection.json`
+(lectura de la API posterior al `PUT`).
 
-Configuración objetivo (checks que ya existen como jobs reales en
-`.github/workflows/ci.yml`):
+| Ajuste | Valor |
+|---|---|
+| Required status checks | `secrets-scan`, `lint`, `test`, `sdk-python`, `sdk-node`, `portal`, `kustomize`, `build` |
+| `strict` (branch al día antes de merge) | `false` |
+| `enforce_admins` | `false` |
+| Force pushes | bloqueados |
+| Borrado de la rama | bloqueado |
+| PRs requeridos | **no** (`required_pull_request_reviews: null`) |
+| Sin required (a propósito) | `pip-audit` (`continue-on-error`), `portal-e2e` (flake conocido), `nightly` (no es check de PR) |
 
-| Job de CI | Rol | ¿Required en PR? | ¿Required en release? |
-|---|---|---|---|
-| `secrets-scan` (gitleaks) | seguridad | sí | sí |
-| `lint` (uv lock --check + ruff) | higiene + lock reproducible | sí | sí |
-| `test` → paso *Architecture invariants* | invariantes de contrato | sí | sí |
-| `test` → suite completa | correctness | sí (con `-x`) | sí (sin `-x`) |
-| `sdk-python`, `sdk-node` | contratos de SDK | sí | sí |
-| `portal` (typecheck/lint/test/build) | frontend | sí | sí |
-| `portal-e2e` | E2E + axe | sí (ver nota de flake) | sí |
-| `kustomize` | manifests renderizan | sí | sí |
-| `build` (docker build) | build reproducible | sí | sí |
-| `pip-audit` | dependencias (HIGH+) | **no** (`continue-on-error: true`) | no |
-| `nightly` (suite completa, adversarial, estabilidad ×100) | estabilidad | no | informativo |
-
-Notas:
-- `pip-audit` es informativo a propósito: convertirlo en blocker sin estabilizar
-  el feed de advisories crearía falsos bloqueos. Sigue siendo visible en cada PR.
-- `portal-e2e` tiene un flake conocido y registrado en el repo
-  (`docs/architecture/ownership/…`, commit `17acf3d`). No se promueve a blocker
-  de release hasta estabilizarlo.
-- No existe Dependabot/renovate: las actualizaciones de dependencias son una
-  operación deliberada (riesgo P3 en `remaining-risks.md`).
-
-Comando para auditar (una vez con token disponible):
+Comando ejecutado (repetible):
 
 ```bash
-gh api repos/yoredstorm/zent_rag/branches/master/protection | jq '.required_status_checks.contexts'
+gh api -X PUT repos/yoredstorm/zent_rag/branches/master/protection \
+  -f required_status_checks[strict]=false \
+  -f 'required_status_checks[contexts][]=test' ...   # ver branch-protection.json
 ```
+
+**Limitación declarada**: GitHub aplica los required checks a **merges de PR**;
+un push directo a `master` no queda bloqueado por checks. Para enforcement duro
+en el flujo actual (push directo) hay que activar PRs requeridos con 0
+aprobaciones:
+
+```bash
+gh api -X PUT repos/yoredstorm/zent_rag/branches/master/protection \
+  -F required_pull_request_reviews[required_approving_review_count]=0
+```
+
+Eso cambia el workflow (todo cambio entra por PR). No se aplicó sin decisión
+explícita del owner; queda como condición para producción.
 
 ## 2. Nightly (Parte N)
 

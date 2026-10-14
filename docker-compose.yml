@@ -642,7 +642,26 @@ services:
       - rag-network
 
   # ===========================================================================
-  # Loki — Agregación Centralizada de Logs
+  # Alertmanager - Enrutamiento de Alertas
+  # ===========================================================================
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: rag-alertmanager
+    ports:
+      # Solo loopback del host
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  # ===========================================================================
+  # Loki - Agregación Centralizada de Logs
   # ===========================================================================
   loki:
     image: grafana/loki:3.2.0
@@ -707,6 +726,7 @@ volumes:
   uploads_data:
   ollama_data:
   prometheus_data:
+  alertmanager_data:
   loki_data:
   grafana_data:
 

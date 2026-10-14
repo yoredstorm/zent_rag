@@ -205,6 +205,37 @@ def test_prometheus_scrape_config_is_wired() -> None:
     assert api_job.get("authorization", {}).get("credentials"), (
         "el scrape de /metrics requiere token (METRICS_TOKEN)"
     )
+    # Alertas conectadas: Prometheus debe tener un Alertmanager configurado.
+    alertmanagers = (config.get("alerting") or {}).get("alertmanagers") or []
+    targets = [
+        target
+        for entry in alertmanagers
+        for static in entry.get("static_configs") or []
+        for target in static.get("targets") or []
+    ]
+    assert targets, "sin Alertmanager configurado: las alertas no salen de Prometheus"
+    assert any(t.startswith("alertmanager:") for t in targets), targets
+
+
+def test_alertmanager_config_is_valid() -> None:
+    config = yaml.safe_load(
+        (ROOT / "config" / "alertmanager" / "alertmanager.yml").read_text(encoding="utf-8")
+    )
+    assert config.get("route", {}).get("receiver"), "route sin receiver"
+    receivers = {receiver["name"] for receiver in config.get("receivers") or []}
+    assert config["route"]["receiver"] in receivers, "receiver del route no existe"
+
+
+@pytest.mark.parametrize("compose_path", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_compose_declares_alertmanager(compose_path: str) -> None:
+    compose = yaml.safe_load((ROOT / compose_path).read_text(encoding="utf-8"))
+    services = compose["services"]
+    assert "alertmanager" in services, f"falta alertmanager en {compose_path}"
+    if compose_path.endswith("prod.yml"):
+        assert "observability" in (services["alertmanager"].get("profiles") or [])
+    volumes = " ".join(services["alertmanager"].get("volumes") or [])
+    assert "config/alertmanager" in volumes
+    assert "alertmanager_data" in (compose.get("volumes") or {})
 
 
 # ---------------------------------------------------------------------------
