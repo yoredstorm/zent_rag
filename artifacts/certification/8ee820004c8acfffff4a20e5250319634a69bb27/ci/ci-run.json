@@ -1,0 +1,70 @@
+{
+  "schema": "zent.cert.ci-run/2",
+  "repository": "yoredstorm/zent_rag",
+  "sha": "8ee820004c8acfffff4a20e5250319634a69bb27",
+  "run_id": 38653834675,
+  "run_url": "https://github.com/yoredstorm/zent_rag/actions/runs/38653834675",
+  "conclusion": "success",
+  "jobs": [
+    {
+      "name": "sdk-node",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "sdk-python",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "secrets-scan",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "lint",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "portal-e2e",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "portal",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "pip-audit",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "test",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "kustomize",
+      "conclusion": "success",
+      "failed_steps": []
+    },
+    {
+      "name": "build",
+      "conclusion": "success",
+      "failed_steps": []
+    }
+  ],
+  "artifacts": [
+    "junit-ci",
+    "sbom-cyclonedx",
+    "yoredstorm~zent_rag~K925WG.dockerbuild",
+    "gitleaks-results.sarif"
+  ],
+  "extracted_junit": [
+    "junit-invariants.xml",
+    "junit-tests.xml"
+  ]
+}

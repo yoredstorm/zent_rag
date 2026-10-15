@@ -40,6 +40,14 @@ def _token() -> str:
     return ""
 
 
+def _full_sha(short: str) -> str:
+    """La API filtra por SHA completo: un prefijo corto devuelve 0 runs."""
+    result = subprocess.run(
+        ["git", "rev-parse", short], cwd=ROOT, capture_output=True, text=True
+    )
+    return result.stdout.strip() or short
+
+
 def _api(path: str, token: str) -> dict:
     request = urllib.request.Request(
         f"https://api.github.com/repos/{REPO}/{path}",
@@ -53,12 +61,24 @@ def _api(path: str, token: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """El artifact zip redirige a una URL firmada: mandar el Bearer la rompe."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_request is not None:
+            new_request.headers.pop("Authorization", None)
+            new_request.headers.pop("authorization", None)
+        return new_request
+
+
 def _download_artifact(artifact_id: int, token: str) -> bytes:
     request = urllib.request.Request(
         f"https://api.github.com/repos/{REPO}/actions/artifacts/{artifact_id}/zip",
         headers={"User-Agent": "zent-cert", "Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+    opener = urllib.request.build_opener(_StripAuthOnRedirect)
+    with opener.open(request, timeout=120) as response:  # noqa: S310
         return response.read()
 
 
@@ -71,6 +91,7 @@ def main() -> int:
     if not token:
         print("sin credencial de GitHub en el credential store")
         return 2
+    args.sha = _full_sha(args.sha)
 
     runs = _api(f"actions/runs?head_sha={args.sha}&per_page=20", token)["workflow_runs"]
     run = next((r for r in runs if r["name"] == "CI"), None)

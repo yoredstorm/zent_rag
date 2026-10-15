@@ -1,0 +1,1007 @@
+{
+  "schema": "zent.release-evidence/1",
+  "generated_at": "2026-10-15T00:12:19.611171+00:00",
+  "generated_by": "src/scripts/release_manifest.py",
+  "git": {
+    "sha": "8ee820004c8acfffff4a20e5250319634a69bb27",
+    "branch": "master",
+    "tag": "2967622",
+    "dirty": true,
+    "subject": "cert: CI evidence fetcher + risks/docs update (P2-4 closed, nightly battery noted)"
+  },
+  "build": {
+    "identifier": "local-20261015T001219Z",
+    "ci_run": "38653834675 (SHA 8ee8200: success, 10/10 jobs)",
+    "python": "3.13.7",
+    "uv": "0.12.13",
+    "platform": "Windows-11-10.0.26200-SP0"
+  },
+  "dependencies": {
+    "uv_lock": {
+      "path": "uv.lock",
+      "sha256": "da55449bedabd6c187c4c353a941746d9d314d1a15f5b15b90f250d71b7bcc98"
+    },
+    "pyproject": {
+      "path": "pyproject.toml",
+      "sha256": "76d0416e482fdac2ae16660c7804f9172434f7ddffd99518a7d968a451bd4c6b"
+    },
+    "python_version": {
+      "path": ".python-version",
+      "sha256": "49a506dd32096b010d75205acf3430c9ae6c40351888129499e5a5e487126c93"
+    },
+    "portal_lock": {
+      "path": "portal/package-lock.json",
+      "sha256": "53b88b8ed8745061feab92a397e1839080dc2cadca4b5911086685ddeecaa433"
+    },
+    "portal_package": {
+      "path": "portal/package.json",
+      "sha256": "9737a9a32b808607b8ec7a0aa783cf65bc691ff4d0dcb12d3212dc5ed4fe6dff"
+    },
+    "sdk_node_lock": {
+      "path": "sdk/node/package-lock.json",
+      "sha256": "e9b6257cae3b44649efad7b79640f1e6fc418a45ea89a1532c10b6726ad0dfc1"
+    },
+    "dockerfile_api": {
+      "path": "Dockerfile.api",
+      "sha256": "2d379e7b3e9fdb6ca5bf147f76f5890107451fbcb7dd4c4a6b48a4ab808e382d"
+    },
+    "dockerfile_portal": {
+      "path": "portal/Dockerfile",
+      "sha256": "a80b2eb5b909172044ab2e2cca6e517dec248b15d80f98abc565352026ffc6b4"
+    },
+    "compose_prod": {
+      "path": "docker-compose.prod.yml",
+      "sha256": "62a4fec2b8ae34d195f184af1a6f437cb0da91f718e7cc7ef5ded19da49fd6c3"
+    }
+  },
+  "sbom": {
+    "path": "artifacts/release/8ee820004c8acfffff4a20e5250319634a69bb27/sbom.json",
+    "sha256": "64e752b54bf1e91bf0c2e9f125546502fd75096616777eb74a6c73e2de114bf1"
+  },
+  "migrations": {
+    "migration_head": "151",
+    "revisions": 150,
+    "source": "alembic ScriptDirectory (script_location=src/infrastructure/db_init)",
+    "applied_head_at_evidence_time": [
+      "151 (head)"
+    ]
+  },
+  "frontend": {
+    "artifact": "not_built_in_this_run",
+    "package_version": "0.1.0"
+  },
+  "containers": {
+    "image": "zent_rag-api (compose local, GIT_SHA=ff072e8)",
+    "image_id": "sha256:866851661e5545bccea757120d9ae1cd99d9cda8b64cae9b5a488c36502c614f",
+    "base_images_pinned_by_digest": false
+  },
+  "checks": {
+    "ruff": "pass",
+    "uv lock --check": "pass",
+    "dashboard --check": "pass",
+    "sbom --check": "pass (mismo content hash que edeeb61)",
+    "gitleaks": "pass (CI)",
+    "pip-audit": "pass (CI, informativo)",
+    "nightly": "bateria+invariantes+artifacts (implementado)"
+  },
+  "tests": {
+    "full_suite": {
+      "status": "pass",
+      "path": "artifacts\\certification\\8ee820004c8acfffff4a20e5250319634a69bb27\\ci\\ci-suite.evidence.json",
+      "sha256": "3c809466bee076560a782725f5b569445a325e38cd64088d0411e69afd442821",
+      "label": "ci-full-suite",
+      "git_sha": "8ee820004c8acfffff4a20e5250319634a69bb27",
+      "environment": "github-actions ubuntu-latest, postgres pgvector:pg16, qdrant v1.13.4, redis 7, python 3.11",
+      "database": null,
+      "duration_seconds": null,
+      "exit_code": 0,
+      "junit": {
+        "status": "pass",
+        "path": "D:\\zent_RAG\\artifacts\\certification\\8ee820004c8acfffff4a20e5250319634a69bb27\\ci\\junit-tests.xml",
+        "sha256": "5465d6be0976a4ef062f19825b4ae05f5dc0cbbfa29057f226286bf500288db6",
+        "tests": 5476,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 4,
+        "failed_tests": []
+      }
+    },
+    "invariants": {
+      "status": "pass",
+      "path": "artifacts\\certification\\8ee820004c8acfffff4a20e5250319634a69bb27\\ci\\ci-invariants.evidence.json",
+      "sha256": "b20fdf5c4d85a6158a256f7e983fe9dbf0be828a635efac9ea20f2e2c2469c38",
+      "label": "ci-invariants",
+      "git_sha": "8ee820004c8acfffff4a20e5250319634a69bb27",
+      "environment": "github-actions ubuntu-latest, postgres pgvector:pg16, qdrant v1.13.4, redis 7, python 3.11",
+      "database": null,
+      "duration_seconds": null,
+      "exit_code": 0,
+      "junit": {
+        "status": "pass",
+        "path": "D:\\zent_RAG\\artifacts\\certification\\8ee820004c8acfffff4a20e5250319634a69bb27\\ci\\junit-invariants.xml",
+        "sha256": "2e3c88a2deb023e932beb9c2be1b480910f4f3ae92f944dfd86e43882430309d",
+        "tests": 406,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failed_tests": []
+      }
+    },
+    "battery": {
+      "status": "pass",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery",
+      "suites": {
+        "accounting": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\accounting.json",
+          "sha256": "71eec4ae9a5e083ccbb8cb4a3900f22aa88c5586c887556f9c1d00da6393e256",
+          "scenarios": {
+            "pass": 6,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 65,
+            "pass": 65,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "chaos": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\chaos.json",
+          "sha256": "c804678e34075a39f0b6d543b05ed3f94ffeba17db071d6b30cade5f5efe357f",
+          "scenarios": {
+            "pass": 17,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 115,
+            "pass": 115,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "determinism": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\determinism.json",
+          "sha256": "316c6d33db6708bc40d0c8dab7298518e637480a2d797f172cf823d9ad0200a3",
+          "scenarios": {
+            "pass": 6,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 222,
+            "pass": 222,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "security": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\security.json",
+          "sha256": "7ac43b2bb97c32f22a1943a4a7b3aab225213186b7e2c3268dd291b3c34cd060",
+          "scenarios": {
+            "pass": 22,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 350,
+            "pass": 350,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        },
+        "tenant": {
+          "status": "pass",
+          "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\battery\\tenant.json",
+          "sha256": "c76adf26ae0957cad3b84a2564b304c5146e02273c156ce676f40c0ab111a52d",
+          "scenarios": {
+            "pass": 6,
+            "fail": 0,
+            "not_demonstrated": 0
+          },
+          "tests": {
+            "tests": 49,
+            "pass": 49,
+            "fail": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "not_demonstrated": [],
+          "failures": []
+        }
+      }
+    }
+  },
+  "evidence": {
+    "perf": {
+      "status": "measured",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\matrix.json",
+      "sha256": "e16cf3f4f9ebe1a599b7b963f333d49f71942330f34a0b2e0752f5527ff9f426",
+      "label": null,
+      "generated_at": "2026-10-14T20:39:10.2827304Z",
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.perf-matrix/1",
+        "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+        "git_dirty": true,
+        "profile": "ci-parity",
+        "generated_at": "2026-10-14T20:39:10.2827304Z",
+        "out_dir": "artifacts/certification/edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8/perf",
+        "runs": [
+          {
+            "label": "simple-cold",
+            "module": "src.scripts.perf_traffic",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:32:40.0608803Z",
+            "duration_s": 35.9,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\simple-cold.log",
+            "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          },
+          {
+            "label": "simple-warm",
+            "module": "src.scripts.perf_traffic",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:33:15.9713577Z",
+            "duration_s": 35.8,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\simple-warm.log",
+            "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          },
+          {
+            "label": "rag-warm",
+            "module": "src.scripts.perf_traffic",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:33:51.8224952Z",
+            "duration_s": 32.1,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\rag-warm.log",
+            "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          },
+          {
+            "label": "agentic-warm",
+            "module": "src.scripts.perf_traffic",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:34:23.8794327Z",
+            "duration_s": 112.1,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\agentic-warm.log",
+            "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          },
+          {
+            "label": "no-evidence",
+            "module": "src.scripts.perf_traffic",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:36:15.9612419Z",
+            "duration_s": 42.0,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\no-evidence.log",
+            "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          },
+          {
+            "label": "retrieval-unavailable",
+            "module": "src.scripts.perf_traffic",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:36:57.9816390Z",
+            "duration_s": 44.5,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\retrieval-unavailable.log",
+            "env": "RAG_QDRANT_PORT=6399;RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          },
+          {
+            "label": "fallback-provider",
+            "module": "src.scripts.perf_traffic",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:37:42.4880030Z",
+            "duration_s": 62.8,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\fallback-provider.log",
+            "env": "RAG_LITELLM_API_BASE=http://127.0.0.1:9/v1;RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          },
+          {
+            "label": "http-probe",
+            "module": "scripts/cert/http_probe.py",
+            "exit_code": 0,
+            "started_at": "2026-10-14T20:38:45.2604049Z",
+            "duration_s": 24.8,
+            "log": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\http-probe.log",
+            "env": "RAG_ADAPTIVE_RAG_MODE=off;RAG_RAG_EVIDENCE_REASONING_MODE=off;RAG_RAG_LAZY_INGESTION_ENABLED=false;RAG_RAG_LONG_CONTEXT_MODE=off;RAG_COGNITIVE_OS_ENABLED=off;RAG_DECISION_ROUTING_MODE=legacy"
+          }
+        ]
+      }
+    },
+    "load": {
+      "status": "measured",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\cert-load.json",
+      "sha256": "d49272567db3679ada29b1de5f335e5f0b6cb24633030c3cffc47deadc8e2496",
+      "label": "cert-load",
+      "generated_at": "2026-10-14T20:40:34.597801+00:00",
+      "queries_file": "tests\\golden\\corpus_simple.json",
+      "iterations": null,
+      "summary": {
+        "label": "cert-load",
+        "target": "rag-load",
+        "generated_at": "2026-10-14T20:40:34.597801+00:00",
+        "organization_id": "00000000-0000-0000-0000-000000000001",
+        "queries_file": "tests\\golden\\corpus_simple.json",
+        "levels": [
+          {
+            "concurrency": 1,
+            "requests": 3,
+            "errors": 0,
+            "error_rate": 0.0,
+            "wall_seconds": 22.04,
+            "throughput_rps": 0.136,
+            "latency_ms_p50": 5257.68,
+            "latency_ms_p95": 12036.86,
+            "latency_ms_p99": 12036.86,
+            "latency_ms_mean": 7344.73,
+            "provider_attempts": 0,
+            "provider_rate_limited": 0,
+            "retry_amplification": 0.0,
+            "infra_before": {
+              "postgres_ms": 356.37,
+              "redis_ms": 16.97
+            },
+            "infra_after": {
+              "postgres_ms": 125.17,
+              "redis_ms": 1.18
+            }
+          },
+          {
+            "concurrency": 2,
+            "requests": 3,
+            "errors": 0,
+            "error_rate": 0.0,
+            "wall_seconds": 12.93,
+            "throughput_rps": 0.232,
+            "latency_ms_p50": 7035.8,
+            "latency_ms_p95": 9133.5,
+            "latency_ms_p99": 9133.5,
+            "latency_ms_mean": 7351.71,
+            "provider_attempts": 0,
+            "provider_rate_limited": 0,
+            "retry_amplification": 0.0,
+            "infra_before": {
+              "postgres_ms": 116.44,
+              "redis_ms": 3.47
+            },
+            "infra_after": {
+              "postgres_ms": 140.97,
+              "redis_ms": 4.84
+            }
+          },
+          {
+            "concurrency": 4,
+            "requests": 3,
+            "errors": 0,
+            "error_rate": 0.0,
+            "wall_seconds": 12.58,
+            "throughput_rps": 0.238,
+            "latency_ms_p50": 12283.55,
+            "latency_ms_p95": 12580.73,
+            "latency_ms_p99": 12580.73,
+            "latency_ms_mean": 12055.27,
+            "provider_attempts": 0,
+            "provider_rate_limited": 0,
+            "retry_amplification": 0.0,
+            "infra_before": {
+              "postgres_ms": 143.44,
+              "redis_ms": 1.53
+            },
+            "infra_after": {
+              "postgres_ms": 111.78,
+              "redis_ms": 1.33
+            }
+          }
+        ],
+        "details": [
+          {
+            "summary": {
+              "concurrency": 1,
+              "requests": 3,
+              "errors": 0,
+              "error_rate": 0.0,
+              "wall_seconds": 22.04,
+              "throughput_rps": 0.136,
+              "latency_ms_p50": 5257.68,
+              "latency_ms_p95": 12036.86,
+              "latency_ms_p99": 12036.86,
+              "latency_ms_mean": 7344.73,
+              "provider_attempts": 0,
+              "provider_rate_limited": 0,
+              "retry_amplification": 0.0,
+              "infra_before": {
+                "postgres_ms": 356.37,
+                "redis_ms": 16.97
+              },
+              "infra_after": {
+                "postgres_ms": 125.17,
+                "redis_ms": 1.18
+              }
+            },
+            "cases": [
+              {
+                "wall_ms": 12036.86,
+                "status": "completed",
+                "latency_ms": 10670.85,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué es ZENT?"
+              },
+              {
+                "wall_ms": 5257.68,
+                "status": "completed",
+                "latency_ms": 4491.86,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué es un agente de conocimiento?"
+              },
+              {
+                "wall_ms": 4739.64,
+                "status": "completed",
+                "latency_ms": 3955.5,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué significa RBAC?"
+              }
+            ]
+          },
+          {
+            "summary": {
+              "concurrency": 2,
+              "requests": 3,
+              "errors": 0,
+              "error_rate": 0.0,
+              "wall_seconds": 12.93,
+              "throughput_rps": 0.232,
+              "latency_ms_p50": 7035.8,
+              "latency_ms_p95": 9133.5,
+              "latency_ms_p99": 9133.5,
+              "latency_ms_mean": 7351.71,
+              "provider_attempts": 0,
+              "provider_rate_limited": 0,
+              "retry_amplification": 0.0,
+              "infra_before": {
+                "postgres_ms": 116.44,
+                "redis_ms": 3.47
+              },
+              "infra_after": {
+                "postgres_ms": 140.97,
+                "redis_ms": 4.84
+              }
+            },
+            "cases": [
+              {
+                "wall_ms": 9133.5,
+                "status": "completed",
+                "latency_ms": 7517.98,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué es ZENT?"
+              },
+              {
+                "wall_ms": 7035.8,
+                "status": "completed",
+                "latency_ms": 5593.6,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué es un agente de conocimiento?"
+              },
+              {
+                "wall_ms": 5885.84,
+                "status": "completed",
+                "latency_ms": 5015.09,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué significa RBAC?"
+              }
+            ]
+          },
+          {
+            "summary": {
+              "concurrency": 4,
+              "requests": 3,
+              "errors": 0,
+              "error_rate": 0.0,
+              "wall_seconds": 12.58,
+              "throughput_rps": 0.238,
+              "latency_ms_p50": 12283.55,
+              "latency_ms_p95": 12580.73,
+              "latency_ms_p99": 12580.73,
+              "latency_ms_mean": 12055.27,
+              "provider_attempts": 0,
+              "provider_rate_limited": 0,
+              "retry_amplification": 0.0,
+              "infra_before": {
+                "postgres_ms": 143.44,
+                "redis_ms": 1.53
+              },
+              "infra_after": {
+                "postgres_ms": 111.78,
+                "redis_ms": 1.33
+              }
+            },
+            "cases": [
+              {
+                "wall_ms": 12580.73,
+                "status": "completed",
+                "latency_ms": 11442.54,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué es ZENT?"
+              },
+              {
+                "wall_ms": 11301.53,
+                "status": "completed",
+                "latency_ms": 7775.61,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué es un agente de conocimiento?"
+              },
+              {
+                "wall_ms": 12283.55,
+                "status": "completed",
+                "latency_ms": 10813.51,
+                "tokens": 0,
+                "attempts": {},
+                "question": "¿Qué significa RBAC?"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "http-probe": {
+      "status": "measured",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\http-probe.json",
+      "sha256": "7b4ec332c031b136efd91ea755d488e367f6f82c340b29adcfb787640ca2ea3f",
+      "label": null,
+      "generated_at": "2026-10-14T20:38:45.616111+00:00",
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.http-probe/1",
+        "generated_at": "2026-10-14T20:38:45.616111+00:00",
+        "base_url": "http://127.0.0.1:8000",
+        "organization_id": "00000000-0000-0000-0000-000000000001",
+        "query": "¿Cuál es la política de vacaciones?",
+        "miss_latency_ms": 8060.5,
+        "miss_status": 200,
+        "miss_answer_state": "completed",
+        "miss_cost": null,
+        "miss_tokens": null,
+        "hit_latency_ms": 7113.4,
+        "hit_status": 200,
+        "metrics_delta": {
+          "rag_cache_misses_created{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 0.0,
+          "rag_cache_misses_total{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 2.0
+        },
+        "stream_status": 200,
+        "first_event_ms": 26.9,
+        "ttft_ms": 7191.8,
+        "stream_total_ms": 7192.8,
+        "stream_events": 8
+      }
+    },
+    "http-probe-after-deploy": {
+      "status": "measured",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\perf\\http-probe-after-deploy.json",
+      "sha256": "a0c3ee4784d4783a55818791067376e1dff47183e16115d6b5c9c62b3918d9ea",
+      "label": null,
+      "generated_at": "2026-10-14T23:05:18.961946+00:00",
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.http-probe/1",
+        "generated_at": "2026-10-14T23:05:18.961946+00:00",
+        "base_url": "http://127.0.0.1:8000",
+        "organization_id": "00000000-0000-0000-0000-000000000001",
+        "query": "¿Cuál es la política de vacaciones?",
+        "miss_latency_ms": 15222.0,
+        "miss_status": 200,
+        "miss_answer_state": "completed",
+        "miss_cost": null,
+        "miss_tokens": null,
+        "hit_latency_ms": 7710.3,
+        "hit_status": 200,
+        "metrics_delta": {
+          "rag_cache_misses_created{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 1792019125.298,
+          "rag_cache_misses_total{organization_id=\"00000000-0000-0000-0000-000000000001\"}": 2.0
+        },
+        "stream_status": 200,
+        "first_event_ms": 66.4,
+        "ttft_ms": 8236.0,
+        "stream_total_ms": 8238.8,
+        "stream_events": 8
+      }
+    },
+    "migrations": {
+      "status": "measured",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\migrations.json",
+      "sha256": "8404f30ce059fc4341c7493ff57005c2b2eac3fabe74924568181d6b17fe139b",
+      "label": null,
+      "generated_at": "2026-10-14T19:37:11.119267+00:00",
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.migrations/1",
+        "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+        "database": "rag_cert_mig",
+        "generated_at": "2026-10-14T19:37:11.119267+00:00",
+        "steps": {
+          "upgrade_head": {
+            "exit": 0,
+            "seconds": 2.56,
+            "tail": "or__.validate_python(data, self_instance=self)\nD:\\zent_RAG\\src\\core\\config.py:2852: UserWarning: CONFIG: dangerous_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL."
+          },
+          "current": {
+            "exit": 0,
+            "seconds": 3.35,
+            "tail": "or__.validate_python(data, self_instance=self)\nD:\\zent_RAG\\src\\core\\config.py:2852: UserWarning: CONFIG: dangerous_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL."
+          },
+          "downgrade_minus_one": {
+            "exit": 0,
+            "seconds": 3.17,
+            "tail": "s_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL.\nINFO  [alembic.runtime.migration] Running downgrade 151 -> 150, Model circuit breakers — aislamiento por tenant."
+          },
+          "upgrade_head_again": {
+            "exit": 0,
+            "seconds": 3.14,
+            "tail": "ous_gate_phase_skipped — RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: el gate declara juicio y nunca juzga.\n  assert_runtime_config(self)\nINFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL.\nINFO  [alembic.runtime.migration] Running upgrade 150 -> 151, Model circuit breakers — aislamiento por tenant."
+          }
+        },
+        "recent_revisions": [
+          {
+            "revision": "141_knowledge_nutrition_indexes",
+            "file": "src\\infrastructure\\db_init\\versions\\141_knowledge_nutrition_indexes.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "143_semantic_ingestion",
+            "file": "src\\infrastructure\\db_init\\versions\\143_semantic_ingestion.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "144_tenant_delete_permission",
+            "file": "src\\infrastructure\\db_init\\versions\\144_tenant_delete_permission.py",
+            "blocking_ddl": []
+          },
+          {
+            "revision": "145_semantic_window_results",
+            "file": "src\\infrastructure\\db_init\\versions\\145_semantic_window_results.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "146_semantic_threads",
+            "file": "src\\infrastructure\\db_init\\versions\\146_semantic_threads.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "147_semantic_stitcher",
+            "file": "src\\infrastructure\\db_init\\versions\\147_semantic_stitcher.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "148_regional_models",
+            "file": "src\\infrastructure\\db_init\\versions\\148_regional_models.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "149_global_model",
+            "file": "src\\infrastructure\\db_init\\versions\\149_global_model.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "150_semantic_fabric",
+            "file": "src\\infrastructure\\db_init\\versions\\150_semantic_fabric.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY"
+            ]
+          },
+          {
+            "revision": "151_model_circuit_breaker_tenant",
+            "file": "src\\infrastructure\\db_init\\versions\\151_model_circuit_breaker_tenant.py",
+            "blocking_ddl": [
+              "CREATE INDEX sin CONCURRENTLY",
+              "DROP COLUMN (destructivo)"
+            ]
+          }
+        ],
+        "versions_total": 150,
+        "versions_with_downgrade": 150
+      }
+    },
+    "rollback": {
+      "status": "measured",
+      "path": "artifacts\\certification\\edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8\\rollback\\rehearsal.json",
+      "sha256": "633600149d2de49819032c28e4c18bba6725fedd8ae45a68c64859ca82f5ef0f",
+      "label": null,
+      "generated_at": null,
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.rollback-rehearsal/1",
+        "git_sha": "edeeb61a9e37fff1e39f1a751f5e97470f9ce3d8",
+        "image": "zent-api:cert-edeeb61",
+        "database": "rag_cert_rehearsal",
+        "started_at": "2026-10-14T19:39:12.2761618Z",
+        "steps": [
+          {
+            "step": "good_release",
+            "health": "{\"status\":\"healthy\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"ok\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+            "seconds": 16.6,
+            "healthy": true
+          },
+          {
+            "step": "bad_release",
+            "health": "{\"status\":\"degraded\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"error\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+            "seconds": 13.7,
+            "detected_degraded": true
+          },
+          {
+            "step": "rollback",
+            "health": "{\"status\":\"healthy\",\"version\":\"1.0.0\",\"environment\":\"development\",\"checks\":{\"postgres\":\"ok\",\"qdrant\":\"ok\",\"redis\":\"ok\",\"decision_engine\":\"ok\"}}",
+            "seconds": 16.9,
+            "healthy": true
+          }
+        ],
+        "finished_at": "2026-10-14T19:40:00.4737373Z",
+        "rollback_seconds": 16.9,
+        "passed": true
+      }
+    },
+    "local-deploy": {
+      "status": "not_available",
+      "path": "artifacts\\certification\\8ee820004c8acfffff4a20e5250319634a69bb27\\local-deploy.json"
+    },
+    "branch-protection": {
+      "status": "measured",
+      "path": "artifacts\\certification\\684d383c6afb62c41522a69c026599965a7ea9e4\\branch-protection.json",
+      "sha256": "1cdb59b3ec8fb5e9378313b1ad6f55d7d255de6a2403585d16dac2869f4e4123",
+      "label": null,
+      "generated_at": "2026-10-14T23:12:11.1660315Z",
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.branch-protection/1",
+        "generated_at": "2026-10-14T23:12:11.1660315Z",
+        "repository": "yoredstorm/zent_rag",
+        "branch": "master",
+        "required_status_checks": [
+          "secrets-scan",
+          "lint",
+          "test",
+          "sdk-python",
+          "sdk-node",
+          "portal",
+          "kustomize",
+          "build"
+        ],
+        "strict": false,
+        "enforce_admins": false,
+        "allow_force_pushes": false,
+        "allow_deletions": false,
+        "required_pull_request_reviews": false,
+        "note": "Con required_pull_request_reviews=null los checks se exigen en PRs; un push directo a master no queda bloqueado por checks (GitHub no los aplica a pushes). Para enforcement duro: activar PRs requeridos con 0 approvals."
+      }
+    },
+    "ci-run": {
+      "status": "measured",
+      "path": "artifacts\\certification\\8ee820004c8acfffff4a20e5250319634a69bb27\\ci\\ci-run.json",
+      "sha256": "f61114a34d3b135dd4b0874cd82b11c933b634c0e58c0af93767e3e6f8dfc12c",
+      "label": null,
+      "generated_at": null,
+      "queries_file": null,
+      "iterations": null,
+      "summary": {
+        "schema": "zent.cert.ci-run/2",
+        "repository": "yoredstorm/zent_rag",
+        "sha": "8ee820004c8acfffff4a20e5250319634a69bb27",
+        "run_id": 38653834675,
+        "run_url": "https://github.com/yoredstorm/zent_rag/actions/runs/38653834675",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "sdk-node",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "sdk-python",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "secrets-scan",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "lint",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "portal-e2e",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "portal",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "pip-audit",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "test",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "kustomize",
+            "conclusion": "success",
+            "failed_steps": []
+          },
+          {
+            "name": "build",
+            "conclusion": "success",
+            "failed_steps": []
+          }
+        ],
+        "artifacts": [
+          "junit-ci",
+          "sbom-cyclonedx",
+          "yoredstorm~zent_rag~K925WG.dockerbuild",
+          "gitleaks-results.sarif"
+        ],
+        "extracted_junit": [
+          "junit-invariants.xml",
+          "junit-tests.xml"
+        ]
+      }
+    }
+  },
+  "known_warnings": [
+    "WARNINGS CONOCIDOS (al SHA certificado; si el código cambia, re-verificar)",
+    "- El venv local corre Python 3.13.7 mientras CI/imagen usan 3.11: los tests locales no son evidencia de paridad de runtime.",
+    "- El .env de desarrollo define RUNTIME_ANSWER_GATE=on con 'answer_gate' en RUNTIME_JEV_SKIP_PHASES: config.py emite \"dangerous_gate_phase_skipped\" al importar (config de dev, no de CI).",
+    "- El .env de desarrollo usa el POSTGRES_PASSWORD y PORTAL_SESSION_KEY de desarrollo: config.py emite warnings SECURITY en cada import (esperado fuera de producción).",
+    "- portal-e2e tiene un flake conocido registrado en el repo (commit 17acf3d, docs/architecture/ownership): no se promueve a required check de release hasta estabilizarlo.",
+    "- Las revisiones de migración recientes usan CREATE INDEX sin CONCURRENTLY y la 151 hace DROP COLUMN (lock/destructivo): ver docs/architecture/certification/delivery.md §4.",
+    "- El reporte de reconciliación redondea a centavos (round 2): runs de menos de un centavo aparecen con delta 0.00."
+  ],
+  "accepted_risks": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "title": "Umbrales de latencia/costo PROVISIONAL (sin baseline de staging)",
+      "owner": "Platform",
+      "mitigation": "Corrida de staging con 30 iteraciones y concurrencia 25/50; fijar umbrales en alert-rules.yml",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "title": "Carga cercana a capacidad (25/50 concurrentes) no medida",
+      "owner": "Platform",
+      "mitigation": "Corrida de load en staging con pool dimensionado",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "title": "Observabilidad (Prometheus/Grafana/Alertmanager) no desplegada en el entorno real",
+      "owner": "Platform",
+      "mitigation": "Desplegar stack de observabilidad y scrape de /metrics con METRICS_TOKEN",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "title": "Branch protection: enforcement duro requiere PRs requeridos (hoy los checks aplican a merges de PR, no a push directo)",
+      "owner": "Platform",
+      "mitigation": "Activar required_pull_request_reviews con 0 approvals si se quiere bloquear el push directo (decisión del owner)",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-5",
+      "severity": "P2",
+      "title": "pip-audit no bloquea el merge (continue-on-error)",
+      "owner": "Security",
+      "mitigation": "Estabilizar advisories y promoverlo a required check",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-6",
+      "severity": "P2",
+      "title": "Precios por defecto hardcodeados pueden convertir unknown en conocido",
+      "owner": "FinOps",
+      "mitigation": "Cargar tarifas reales; revisar el fallback antes de producción",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-7",
+      "severity": "P2",
+      "title": "Fallback del loop de candidatos sin línea contable con costo",
+      "owner": "AI Runtime",
+      "mitigation": "Extender la emisión de provider_attempt al loop de candidatos",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-8",
+      "severity": "P2",
+      "title": "Sin métrica de divergencia contable (ledger vs usage vs billing)",
+      "owner": "FinOps",
+      "mitigation": "Métrica + alerta; billing_reconcile.py diario",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-9",
+      "severity": "P2",
+      "title": "Alertmanager sin receptor externo y sin scheduler de POST /platform/obs/check",
+      "owner": "Platform",
+      "mitigation": "Conectar webhook/Slack/PagerDuty en config/alertmanager/alertmanager.yml y agregar CronJob/scheduler",
+      "blocks": "production"
+    },
+    {
+      "id": "P2-10",
+      "severity": "P2",
+      "title": "20 except Exception sin certificar en caminos críticos (ratchet en CI)",
+      "owner": "AI Runtime",
+      "mitigation": "Certificar al tocar cada bloque; el número no puede crecer",
+      "blocks": "none"
+    },
+    {
+      "id": "P2-11",
+      "severity": "P2",
+      "title": "Imágenes base y actions de CI pinneadas por tag, sin Dependabot",
+      "owner": "Platform",
+      "mitigation": "Pin por digest + Dependabot/renovate",
+      "blocks": "production"
+    },
+    {
+      "id": "P3-6",
+      "severity": "P3",
+      "title": "Tests dependientes de estado sembrado fallan con drift del DB local",
+      "owner": "Platform",
+      "mitigation": "Usar scripts/cert/scratch_db.py (paridad CI) o reseed del org demo",
+      "blocks": "none"
+    }
+  ],
+  "release_decision": {
+    "decision": "READY_FOR_INTERNAL",
+    "reason": "CI verde en este SHA (run 38653834675: 10/10 jobs, suite completa 5476 tests 0 fallos, invariantes 406 tests 0 fallos); bateria 57/57 escenarios (tree edeeb61, codigo de producto identico); branch protection aplicada. CANARY bloqueado por 2 condiciones: baseline/load de staging con corpus cargado y observabilidad desplegada en staging con receptor externo de alertas.",
+    "environment": "github-actions runner (CI) + workstation local (evidencia local declarada por artefacto)",
+    "certified_by": "certification run 2026-10-14/15 (automatizado)"
+  }
+}

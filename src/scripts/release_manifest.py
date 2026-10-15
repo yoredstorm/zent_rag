@@ -383,8 +383,18 @@ def main() -> int:
     parser.add_argument("--suite", default="")
     parser.add_argument("--invariants", default="")
     parser.add_argument("--battery-dir", default="")
-    parser.add_argument("--evidence", nargs="*", default=[])
-    parser.add_argument("--check", nargs="*", default=[])
+    parser.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="nombre=ruta (repetible): evidencia externa (perf, load, chaos, ...)",
+    )
+    parser.add_argument(
+        "--check",
+        action="append",
+        default=[],
+        help="nombre=resultado (repetible): check ejecutado por el runner",
+    )
     parser.add_argument("--sbom", default="")
     parser.add_argument("--image", default="")
     parser.add_argument("--image-id", default="")

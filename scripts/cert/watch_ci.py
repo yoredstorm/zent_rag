@@ -7,9 +7,10 @@
 # Escribe artifacts/certification/<sha>/ci-run.json con el resumen por job.
 from __future__ import annotations
 
-# ruff: noqa: T201, S310 - herramienta CLI; URLs fijas de la API de GitHub
+# ruff: noqa: T201, S310, S603, S607 - herramienta CLI; URLs fijas de la API de GitHub
 import argparse
 import json
+import subprocess
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -19,10 +20,42 @@ ROOT = Path(__file__).resolve().parents[2]
 REPO = "yoredstorm/zent_rag"
 
 
+def _token() -> str:
+    """Token del credential store de git (nunca se imprime).
+
+    Sin token la API pública limita a 60 req/h: un watcher por minuto agota el
+    límite y muere con 403.
+    """
+    result = subprocess.run(
+        ["git", "credential", "fill"],
+        cwd=ROOT,
+        input="protocol=https\nhost=github.com\n\n",
+        capture_output=True,
+        text=True,
+    )
+    for line in result.stdout.splitlines():
+        if line.startswith("password="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _full_sha(short: str) -> str:
+    """La API filtra por SHA completo: un prefijo corto devuelve 0 runs."""
+    result = subprocess.run(
+        ["git", "rev-parse", short], cwd=ROOT, capture_output=True, text=True
+    )
+    resolved = result.stdout.strip()
+    return resolved or short
+
+
 def _api(path: str) -> dict:
+    token = _token()
+    headers = {"User-Agent": "zent-cert", "Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         f"https://api.github.com/repos/{REPO}/{path}",
-        headers={"User-Agent": "zent-cert", "Accept": "application/vnd.github+json"},
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
         return json.loads(response.read().decode("utf-8"))
@@ -36,9 +69,11 @@ def main() -> int:
     args = parser.parse_args()
 
     deadline = time.time() + args.timeout_minutes * 60
+    sha = _full_sha(args.sha)
+    print(f"sha completo: {sha}")
     run: dict | None = None
     while time.time() < deadline:
-        data = _api(f"actions/runs?head_sha={args.sha}&per_page=20")
+        data = _api(f"actions/runs?head_sha={sha}&per_page=20")
         runs = data.get("workflow_runs") or []
         candidate = next((r for r in runs if r["name"] == "CI"), None)
         if candidate and candidate["status"] == "completed":

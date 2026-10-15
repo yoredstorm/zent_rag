@@ -1,0 +1,18 @@
+{
+  "schema": "zent.cert.suite-run/3",
+  "git_sha": "8ee820004c8acfffff4a20e5250319634a69bb27",
+  "git_branch": "master",
+  "git_dirty": false,
+  "environment": "github-actions ubuntu-latest, postgres pgvector:pg16, qdrant v1.13.4, redis 7, python 3.11",
+  "configuration": ".github/workflows/ci.yml job `test` (RAG_ENVIRONMENT=development, BILLING_ENABLED=false)",
+  "ci_run_id": 38653834675,
+  "ci_run_url": "https://github.com/yoredstorm/zent_rag/actions/runs/38653834675",
+  "ci_conclusion": "success",
+  "fetched_at": "2026-10-15T00:10:57.476287+00:00",
+  "label": "ci-full-suite",
+  "command": "CI job `test`: uv run pytest tests/ -v --tb=short --timeout=300",
+  "exit_code": 0,
+  "result": "pass",
+  "junit": "D:\\zent_RAG\\artifacts\\certification\\8ee820004c8acfffff4a20e5250319634a69bb27\\ci\\junit-tests.xml",
+  "source": "GitHub Actions artifact junit-ci"
+}
