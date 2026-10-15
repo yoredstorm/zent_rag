@@ -10,6 +10,7 @@ venv/
 # Environment
 .env
 .env.*
+env.prod
 !.env.example
 
 # IDE

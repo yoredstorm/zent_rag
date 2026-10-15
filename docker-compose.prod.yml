@@ -1,12 +1,22 @@
 # Production profile — no Ollama, no demo passwords in the file.
-# Point RAG_POSTGRES_HOST / RAG_REDIS_URL / RAG_QDRANT_HOST at managed services
-# or override the service hostnames. Demo stack remains docker-compose.yml.
 #
-#   docker compose -f docker-compose.prod.yml up -d --build
+# Despliegue objetivo: VPS unico con Dokploy (ver docker-compose.yml para el
+# stack de desarrollo). El stack es autocontenido: incluye postgres (pgvector),
+# qdrant y redis. Para servicios gestionados externos, borrar esos servicios y
+# apuntar RAG_POSTGRES_HOST / RAG_QDRANT_HOST / RAG_REDIS_URL a los endpoints.
 #
-# Required env (names only — set in the host or a secret manager):
+#   Local:   docker compose -f docker-compose.prod.yml up -d --build
+#   Dokploy: crear Docker Compose apuntando a este archivo (compose path
+#            docker-compose.prod.yml), pegar `env.prod` en Environment y
+#            agregar el dominio en la pestana Domains:
+#              service: portal | port: 80 | path: / | host: 77.93.155.249
+#            (el portal nginx proxya /api/*, /mcp, /docs y /health al api).
+#            Dokploy agrega dokploy-network + labels Traefik por su cuenta.
+#
+# Required env (names only — set in the host, Dokploy Environment or a secret manager):
 #   RAG_ENVIRONMENT=production
 #   RAG_POSTGRES_PASSWORD
+#   RAG_POSTGRES_READONLY_PASSWORD
 #   RAG_PORTAL_SESSION_KEY          # openssl rand -hex 32
 #   RAG_LITELLM_API_KEY
 #   RAG_LITELLM_API_BASE
@@ -18,7 +28,8 @@
 #   QDRANT_API_KEY
 #
 # .env se carga como env_file cuando existe (required: false); las variables
-# del host o del orquestador siempre ganan sobre el archivo.
+# del host o del orquestador siempre ganan sobre el archivo. Dokploy escribe
+# el Environment de la UI en ese `.env`.
 
 x-prod-env: &prod-env
   TZ: ${TZ:-UTC}
@@ -239,6 +250,52 @@ x-prod-env: &prod-env
   RAG_CONNECTOR_SSRF_BLOCK_PRIVATE: ${RAG_CONNECTOR_SSRF_BLOCK_PRIVATE:-true}
 
 services:
+  # ===========================================================================
+  # Infraestructura self-hosted (VPS unico). Volumenes con nombre: compatibles
+  # con Volume Backups de Dokploy. Sin puertos al host: solo la red interna.
+  # ===========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${RAG_POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${RAG_POSTGRES_PASSWORD:?set RAG_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${RAG_POSTGRES_DB:-rag_platform}
+      POSTGRES_READONLY_PASSWORD: ${RAG_POSTGRES_READONLY_PASSWORD:?set RAG_POSTGRES_READONLY_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Init SOLO en volumen vacio: SQL top-level 01-31 y 77-79 + scripts .sh.
+      # Las migraciones 087-114 (incl. 118 tabular) las aplica el API con
+      # `alembic upgrade head` al arrancar.
+      - ./src/infrastructure/db_init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RAG_POSTGRES_USER:-rag_user} -d ${RAG_POSTGRES_DB:-rag_platform}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:?set REDIS_PASSWORD} ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -260,6 +317,13 @@ services:
       RAG_SERVICE_NAME: api
     volumes:
       - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "127.0.0.1:${RAG_API_PORT:-8000}:8000"
@@ -330,12 +394,15 @@ services:
       disable: true
     restart: "no"
 
+  # Portal B2B (nginx): sirve la SPA y proxya /api/*, /mcp, /docs y /health al
+  # api. En Dokploy, agregar el dominio apuntando a ESTE servicio, puerto 80.
   portal:
     build:
       context: ./portal
       dockerfile: Dockerfile
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PORTAL_PORT:-8080}:80"
@@ -399,6 +466,9 @@ services:
       - grafana_data:/var/lib/grafana
 
 volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
   uploads_data:
     # Prefer S3-compatible storage for file sources; this volume is a last resort.
     # See docs/platform/PRODUCTION.md
