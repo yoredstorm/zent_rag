@@ -48,7 +48,7 @@ tooling de evidencia y assets de operación): ver el commit y
 | Lint + lock | ruff `All checks passed`; `uv lock --check` OK | local + CI |
 | Suite completa en CI sobre el SHA del release candidate | **PASS**: 5476 tests, 0 fail, 0 error, 4 skip (job `test`, 37 min) | run `38653834675` (`8ee8200`), artifact `junit-ci` |
 | Invariantes en CI | **PASS**: 406 tests, 0 fail (mismo job, paso *Architecture invariants*) | run `38653834675` |
-| CI completo (10 jobs) | **success** en `8ee8200` y en `684d383` | GitHub Actions |
+| CI completo (10 jobs) | **success** en `a815a1d` (HEAD), `8ee8200` y `684d383` | runs `38658924678`, `38653834675`, `38652455381` |
 | CI del SHA base `17acf3d` | success (10/10 jobs) | run `38596793506` |
 | Nightly | 14/10 success; 13/10 **failure** (paso "Full suite") | runs `38520279844` / `38357887002` |
 
@@ -174,8 +174,10 @@ tests dependientes de seed.
 
 ### 13.1 Condiciones que faltan para canary (2 de 5)
 
-1. ~~CI verde del SHA certificado~~ **HECHA**: run `38653834675` en `8ee8200`
-   (10/10 jobs) y `684d383` (10/10). Evidencia: `artifacts/certification/8ee8200…/ci/ci-run.json`.
+1. ~~CI verde del SHA certificado~~ **HECHA**: runs `38658924678` (`a815a1d`, HEAD),
+   `38653834675` (`8ee8200`) y `38652455381` (`684d383`), 10/10 jobs cada uno.
+   Evidencia: `artifacts/certification/8ee8200…/ci/ci-run.json` +
+   `artifacts/certification/a815a1d…/ci-run.json`.
 2. ~~Suite completa verde sobre el SHA certificado~~ **HECHA**: 5476 tests, 0
    fallos, 0 errores (artifact `junit-ci` bajado y registrado en el manifest).
 3. **FALTA** — Baseline de performance y load en staging con corpus cargado (30
