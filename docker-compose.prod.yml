@@ -404,8 +404,14 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${PORTAL_PORT:-8080}:80"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.zent-frontend.rule=Host(`${WEB_URL}`)"  
+      - "traefik.http.routers.zent-frontend.entrypoints=websecure,web"
+      - "traefik.http.services.zent-frontend.loadbalancer.server.port=80"
+      - "traefik.http.routers.zent-frontend.tls=true"
+    #ports:
+    #  - "127.0.0.1:${PORTAL_PORT:-8080}:80"
 
   # ---------------------------------------------------------------------------
   # Observabilidad (profile `observability`): requerida para canary.
