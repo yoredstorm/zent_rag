@@ -143,6 +143,25 @@ describe("ProductTour", () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
+  it("en móvil ancla la tarjeta abajo para no tapar el objetivo", () => {
+    const previous = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      placeTarget("tour-a");
+      render(<ProductTour steps={STEPS} open onSkip={() => {}} onComplete={() => {}} />);
+      const dialog = screen.getByRole("dialog", { name: "Paso A" });
+      // Anclada al borde inferior (con safe-area) y sin `top`: el item del
+      // drawer queda visible por encima de la tarjeta.
+      expect(dialog.style.bottom).toContain("calc(12px");
+      expect(dialog.style.top).toBe("");
+      expect(dialog.style.width).toBe("366px");
+      expect(screen.getByTestId("product-tour")).toHaveClass("pointer-events-auto");
+      expect(screen.getByTestId("product-tour")).toHaveClass("z-[var(--z-tour)]");
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previous });
+    }
+  });
+
   it("sin violaciones de accesibilidad", async () => {
     placeTarget("tour-a");
     const { container } = render(

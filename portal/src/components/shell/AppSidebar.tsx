@@ -1,4 +1,5 @@
 import {
+  GraduationCap,
   MagnifyingGlass,
   SidebarSimple,
   SignOut,
@@ -9,7 +10,11 @@ import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
 import { useEntitlements } from "../../lib/entitlements";
 import { NAV_GROUPS, canSeeNavItem, type NavGroup, type NavLeaf } from "../../lib/nav";
-import { tourTargetForGroup, tourTargetForPath } from "../../lib/productTour";
+import {
+  requestProductTourStart,
+  tourTargetForGroup,
+  tourTargetForPath,
+} from "../../lib/productTour";
 import { Brand, IdentityTile } from "../Brand";
 import { Kbd } from "../ui/code";
 import { IconButton } from "../ui/Button";
@@ -234,12 +239,15 @@ export function AppSidebar({
   instanceId = "desktop",
   onNavigate,
   showCollapseToggle = true,
+  showTourAction = false,
 }: {
   collapsed: boolean;
   onToggleCollapsed?: () => void;
   instanceId?: string;
   onNavigate?: () => void;
   showCollapseToggle?: boolean;
+  /** En el drawer móvil: el menú de cuenta (donde vive "Ver tutorial") no está. */
+  showTourAction?: boolean;
 }) {
   const { session, logout } = useAuth();
   const [confirming, setConfirming] = useState(false);
@@ -307,6 +315,16 @@ export function AppSidebar({
               </span>
             </span>
           </div>
+        )}
+        {showTourAction && !collapsed && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm mb-1 w-full justify-start gap-2 px-2"
+            onClick={() => requestProductTourStart()}
+          >
+            <GraduationCap size={15} aria-hidden />
+            Ver tutorial
+          </button>
         )}
         {collapsed ? (
           <div className="flex justify-center">

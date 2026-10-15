@@ -1,6 +1,6 @@
 import { MagnifyingGlass, List } from "@phosphor-icons/react";
 import { motion, useAnimation, useReducedMotion } from "motion/react";
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
@@ -215,6 +215,8 @@ function ProtectedLayout() {
   // El estudio de workflows es un lienzo: necesita todo el ancho, sin max-w ni padding.
   const fullBleed = /^\/workflows\/[^/]+$/.test(pathname);
   const [navOpen, setNavOpen] = useState(false);
+  const [tourActive, setTourActive] = useState(false);
+  const tourOwnsNav = useRef(false);
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const [signupKey, setSignupKey] = useState<string | null>(null);
   const [impersonationMeta, setImpersonationMeta] = useState<{
@@ -301,6 +303,21 @@ function ProtectedLayout() {
     setNavOpen(false);
   }, [pathname]);
 
+  // El tutorial en móvil señala el menú: abre el drawer y, mientras dure, manda
+  // sobre su interacción (ver `interactionLocked` en MobileNav).
+  const handleTourActive = useCallback((active: boolean) => {
+    setTourActive(active);
+    if (active) {
+      if (window.matchMedia("(min-width: 1024px)").matches) return;
+      tourOwnsNav.current = true;
+      setNavOpen(true);
+      return;
+    }
+    if (!tourOwnsNav.current) return;
+    tourOwnsNav.current = false;
+    setNavOpen(false);
+  }, []);
+
   async function exitImpersonation() {
     // FASE 09: revoca la sesión impersonada server-side y vuelve al Control Center.
     await exitImpersonationToPlatform();
@@ -342,11 +359,7 @@ function ProtectedLayout() {
             session={session}
             blocked={Boolean(impersonating) || Boolean(signupKey)}
             layoutKey={navOpen}
-            onTourActive={(active) => {
-              if (active && !window.matchMedia("(min-width: 1024px)").matches) {
-                setNavOpen(true);
-              }
-            }}
+            onTourActive={handleTourActive}
           />
           <div className="min-h-[100dvh]">
             <aside className="app-sidebar fixed inset-y-0 left-0 z-30 hidden border-r border-border bg-surface lg:block">
@@ -387,7 +400,11 @@ function ProtectedLayout() {
                 </button>
               </header>
 
-              <MobileNav open={navOpen} onOpenChange={setNavOpen} />
+              <MobileNav
+                open={navOpen}
+                onOpenChange={setNavOpen}
+                interactionLocked={tourActive}
+              />
 
               <main
                 id="contenido"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "../api";
 import {
   PRODUCT_TOUR_START_EVENT,
@@ -12,8 +12,12 @@ import {
 } from "../lib/productTour";
 
 const PAD = 6;
-const TOOLTIP_W = 340;
 const GAP = 12;
+const EDGE = 12;
+const DESKTOP_W = 340;
+const EST_H = 280;
+/** Coincide con el breakpoint `lg` de Tailwind: debajo, el menú vive en el drawer. */
+const DRAWER_MAX_W = 1024;
 
 type ProductTourProps = {
   steps: TourStep[];
@@ -23,37 +27,58 @@ type ProductTourProps = {
   remeasureKey?: string | number | boolean;
 };
 
-function tooltipPosition(rect: DOMRect | null): { top: number; left: number } {
-  if (!rect) {
+type TooltipBox = {
+  top?: number;
+  bottom?: number | string;
+  left: number;
+  width: number;
+  maxHeight: number;
+};
+
+/**
+ * Posición de la tarjeta. En móvil el menú vive en el drawer (izquierda) y la
+ * tarjeta se ancla abajo: el item señalado queda visible por encima de ella.
+ */
+function tooltipBox(rect: DOMRect | null, contentH: number): TooltipBox {
+  const vw = Math.max(280, window.innerWidth);
+  const vh = Math.max(280, window.innerHeight);
+  const maxHeight = Math.max(180, vh - EDGE * 2);
+
+  if (vw < DRAWER_MAX_W) {
+    const width = Math.min(420, vw - EDGE * 2);
     return {
-      top: Math.max(24, window.innerHeight / 2 - 80),
-      left: Math.max(12, window.innerWidth / 2 - TOOLTIP_W / 2),
+      bottom: `calc(${EDGE}px + env(safe-area-inset-bottom, 0px))`,
+      left: Math.round((vw - width) / 2),
+      width,
+      maxHeight,
     };
   }
-  let left = rect.right + GAP;
-  let top = Math.max(12, rect.top);
-  if (left + TOOLTIP_W > window.innerWidth - 12) {
-    left = Math.max(12, rect.left - TOOLTIP_W - GAP);
-  }
-  const approxH = 280;
-  if (top + approxH > window.innerHeight - 12) {
-    top = Math.max(12, window.innerHeight - approxH - 12);
-  }
-  return { top, left };
+
+  const width = Math.min(DESKTOP_W, vw - EDGE * 2);
+  const height = Math.min(contentH || EST_H, maxHeight);
+  let left = rect ? rect.right + GAP : (vw - width) / 2;
+  if (rect && left + width > vw - EDGE) left = rect.left - width - GAP;
+  left = Math.round(Math.min(Math.max(left, EDGE), Math.max(EDGE, vw - width - EDGE)));
+  const anchor = rect ? rect.top : vh / 2 - EST_H / 2;
+  const top = Math.round(
+    Math.min(Math.max(anchor, EDGE), Math.max(EDGE, vh - height - EDGE))
+  );
+  return { top, left, width, maxHeight };
 }
 
 export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: ProductTourProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
   const [index, setIndex] = useState(0);
-  const [, setTick] = useState(0);
+  const [contentH, setContentH] = useState(0);
+  const [tick, setTick] = useState(0);
   const activeSteps = visibleTourSteps(steps);
   const safeIndex = Math.min(index, Math.max(0, activeSteps.length - 1));
   const step = activeSteps[safeIndex];
   const isLast = safeIndex >= activeSteps.length - 1;
   const target = step ? visibleTourTarget(step.target) : null;
   const rect = target?.getBoundingClientRect() ?? null;
-  const pos = tooltipPosition(rect);
+  const box = tooltipBox(rect, contentH);
 
   useEffect(() => {
     if (open) setIndex(0);
@@ -63,6 +88,20 @@ export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: P
     if (!open) return;
     setTick((n) => n + 1);
   }, [open, remeasureKey]);
+
+  // Alto real de la tarjeta: sin eso el clamp contra el borde inferior la deja
+  // recortada en pantallas bajas (o en horizontal).
+  useLayoutEffect(() => {
+    if (!open || !step) return;
+    const node = dialogRef.current;
+    if (!node) return;
+    const read = () => setContentH(node.offsetHeight);
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [open, step, tick, remeasureKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -83,7 +122,11 @@ export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: P
     if (el?.getAttribute("aria-expanded") === "false") {
       el.click();
     }
-    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // En móvil la tarjeta se ancla abajo: centrar el objetivo lo deja a la vista.
+    el?.scrollIntoView({
+      block: window.innerWidth < DRAWER_MAX_W ? "center" : "nearest",
+      inline: "nearest",
+    });
   }, [open, step]);
 
   useEffect(() => {
@@ -93,10 +136,17 @@ export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: P
       if (event.key === "Escape") {
         event.preventDefault();
         onSkip();
+        return;
+      }
+      // La paleta (Ctrl/Cmd+K) vive debajo del tutorial: no la abras encima.
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
       }
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    // En captura: la paleta escucha en el documento y este atajo debe ganarle.
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [open, onSkip, safeIndex]);
 
   useEffect(() => {
@@ -137,7 +187,10 @@ export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: P
     : null;
 
   return (
-    <div className="fixed inset-0 z-[60] overflow-hidden" data-testid="product-tour">
+    <div
+      className="pointer-events-auto fixed inset-0 z-[var(--z-tour)] overflow-hidden"
+      data-testid="product-tour"
+    >
       {hole ? (
         <div
           aria-hidden
@@ -159,8 +212,14 @@ export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: P
         aria-modal="true"
         aria-labelledby="product-tour-title"
         aria-describedby="product-tour-body"
-        className="absolute w-[min(100%-24px,340px)] rounded-lg border border-border bg-overlay p-4 shadow-pop"
-        style={{ top: pos.top, left: pos.left }}
+        className="absolute overflow-y-auto rounded-lg border border-border bg-overlay p-4 shadow-pop"
+        style={{
+          top: box.top,
+          bottom: box.bottom,
+          left: box.left,
+          width: box.width,
+          maxHeight: box.maxHeight,
+        }}
       >
         <p className="mb-1 text-[11px] font-medium tracking-wide text-faint uppercase">
           Tutorial {safeIndex + 1} / {activeSteps.length}
