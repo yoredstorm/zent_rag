@@ -2,14 +2,16 @@ import { expect, test } from "@playwright/test";
 import { loginAsPlatform, loginAsTenant, suppressProductTour } from "./fixtures";
 
 test.describe("Marketplace Factory", () => {
-  test("tenant: catálogo de productos y pestaña instalados", async ({ page }) => {
+  test("tenant: catálogo unificado y biblioteca de instalados", async ({ page }) => {
     await suppressProductTour(page);
     await loginAsTenant(page);
+    // /products quedó como alias del marketplace global.
     await page.goto("/products");
+    await expect(page).toHaveURL(/\/marketplace$/);
     await expect(page.getByRole("heading", { name: "Marketplace" })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId("product-catalog")).toBeVisible({ timeout: 20_000 });
-    await page.getByRole("button", { name: /Instalados/ }).click();
-    await expect(page.getByTestId("product-installs")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("marketplace-grid")).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("tab", { name: /Instalados/ }).click();
+    await expect(page.getByTestId("marketplace-installed")).toBeVisible({ timeout: 10_000 });
   });
 
   test("control center: overview de la factory y lista de productos", async ({ page }) => {

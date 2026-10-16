@@ -339,59 +339,61 @@ export default function MarketplacePage() {
         <TabsContent value="installed" className="pt-4">
           {loading ? (
             <Skeleton className="h-[280px] rounded-xl" />
-          ) : installs.length === 0 ? (
-            <Panel>
-              <EmptyState
-                icon={CheckCircle}
-                title="Aún no instalaste productos"
-                body="Activá una integración, un workflow o un pack desde Descubrir. También puedes instalarlos desde Workflows, Agents o Knowledge."
-                action={
-                  <Button variant="secondary" leadingIcon={Storefront} onClick={() => setTab("discover")}>
-                    Ver catálogo
-                  </Button>
-                }
-              />
-            </Panel>
           ) : (
             <div className="flex flex-col gap-3" data-testid="marketplace-installed">
-              {installs.map((install) => (
-                <Panel key={install.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        className="text-sm font-semibold text-text transition-colors hover:text-accent"
-                        onClick={() => setSelectedId(install.product_id)}
-                      >
-                        {install.product.name}
-                      </button>
-                      <Badge tone="neutral">{TYPE_LABEL[install.product.product_type] ?? install.product.product_type}</Badge>
-                      <span className="chip">v{install.product_version}</span>
-                      {install.update_available && <Badge tone="accent" icon={Download}>Actualización v{install.latest_version}</Badge>}
-                    </div>
-                    <p className="mt-1 text-xs text-faint">
-                      Usado por {install.health.workflows ?? 0} workflows · {install.health.agents ?? 0} agentes
-                      {install.last_used_at ? ` · última llamada ${relativeTime(install.last_used_at)}` : " · sin uso aún"}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => setSelectedId(install.product_id)}>
-                      Estado y configuración
-                    </Button>
-                    {install.update_available && (
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        leadingIcon={Download}
-                        loading={busy === install.id}
-                        onClick={() => void updateInstall(install)}
-                      >
-                        Actualizar
+              {installs.length === 0 ? (
+                <Panel>
+                  <EmptyState
+                    icon={CheckCircle}
+                    title="Aún no instalaste productos"
+                    body="Activá una integración, un workflow o un pack desde Descubrir. También puedes instalarlos desde Workflows, Agents o Knowledge."
+                    action={
+                      <Button variant="secondary" leadingIcon={Storefront} onClick={() => setTab("discover")}>
+                        Ver catálogo
                       </Button>
-                    )}
-                  </div>
+                    }
+                  />
                 </Panel>
-              ))}
+              ) : (
+                installs.map((install) => (
+                  <Panel key={install.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="text-sm font-semibold text-text transition-colors hover:text-accent"
+                          onClick={() => setSelectedId(install.product_id)}
+                        >
+                          {install.product.name}
+                        </button>
+                        <Badge tone="neutral">{TYPE_LABEL[install.product.product_type] ?? install.product.product_type}</Badge>
+                        <span className="chip">v{install.product_version}</span>
+                        {install.update_available && <Badge tone="accent" icon={Download}>Actualización v{install.latest_version}</Badge>}
+                      </div>
+                      <p className="mt-1 text-xs text-faint">
+                        Usado por {install.health.workflows ?? 0} workflows · {install.health.agents ?? 0} agentes
+                        {install.last_used_at ? ` · última llamada ${relativeTime(install.last_used_at)}` : " · sin uso aún"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => setSelectedId(install.product_id)}>
+                        Estado y configuración
+                      </Button>
+                      {install.update_available && (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          leadingIcon={Download}
+                          loading={busy === install.id}
+                          onClick={() => void updateInstall(install)}
+                        >
+                          Actualizar
+                        </Button>
+                      )}
+                    </div>
+                  </Panel>
+                ))
+              )}
             </div>
           )}
         </TabsContent>
