@@ -474,6 +474,219 @@ async def tenant_workflow_approval_decide(
 
 
 # ---------------------------------------------------------------------------
+# Workflows durables: instancias (procesos de negocio vivos)
+# ---------------------------------------------------------------------------
+class InstanceStartIn(BaseModel):
+    payload: dict = Field(default_factory=dict)
+    conversation_id: UUID | None = None
+    participant_id: str | None = Field(default=None, max_length=160)
+    business_key: str | None = Field(default=None, max_length=200)
+    expires_in_hours: int | None = Field(default=None, ge=1, le=24 * 365)
+
+
+class InstanceSignalIn(BaseModel):
+    event_type: str = Field(..., min_length=1, max_length=120)
+    correlation: dict = Field(default_factory=dict)
+    payload: dict = Field(default_factory=dict)
+    external_event_id: str | None = Field(default=None, max_length=200)
+    idempotency_key: str | None = Field(default=None, max_length=200)
+
+
+@router.get("/instances", summary="Instancias durables del tenant")
+async def tenant_workflow_instances_list(
+    request: Request,
+    workflow_id: str | None = None,
+    conversation_id: str | None = None,
+    business_key: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.instances import list_instances
+
+    ctx = require_permission(request, "workflow_runs:read")
+    return await list_instances(
+        ctx.organization_id,
+        workflow_id=UUID(workflow_id) if workflow_id else None,
+        conversation_id=UUID(conversation_id) if conversation_id else None,
+        business_key=business_key,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/instances/{instance_id}", summary="Detalle de la instancia durable")
+async def tenant_workflow_instance_detail(instance_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.instances import get_instance
+
+    ctx = require_permission(request, "workflow_runs:read")
+    result = await get_instance(ctx.organization_id, UUID(instance_id))
+    if result is None:
+        raise HTTPException(404, "Instance not found")
+    # El estado durable es visible (sin secretos: nunca se guardan aquí).
+    return result
+
+
+@router.get("/instances/{instance_id}/timeline", summary="Timeline: runs, señales y eventos")
+async def tenant_workflow_instance_timeline(instance_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.instances import get_instance, instance_timeline
+
+    ctx = require_permission(request, "workflow_runs:read")
+    instance = await get_instance(ctx.organization_id, UUID(instance_id))
+    if instance is None:
+        raise HTTPException(404, "Instance not found")
+    timeline = await instance_timeline(ctx.organization_id, UUID(instance_id))
+    return {"instance": instance, **timeline}
+
+
+@router.post("/instances/{instance_id}/signal", summary="Enviar señal a la instancia")
+async def tenant_workflow_instance_signal(
+    instance_id: str, body: InstanceSignalIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.instances import signal_workflow_instance
+
+    ctx = require_permission(request, "workflows:run")
+    return await signal_workflow_instance(
+        organization_id=ctx.organization_id,
+        event_type=body.event_type,
+        correlation=body.correlation,
+        payload=body.payload,
+        external_event_id=body.external_event_id,
+        idempotency_key=body.idempotency_key,
+        source="api",
+        instance_id=UUID(instance_id),
+    )
+
+
+@router.post("/instances/{instance_id}/cancel", summary="Cancelar la instancia")
+async def tenant_workflow_instance_cancel(instance_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.instances import cancel_instance
+
+    ctx = require_permission(request, "workflows:run")
+    return await cancel_instance(ctx.organization_id, UUID(instance_id), reason="api")
+
+
+@router.post("/instances/{instance_id}/suspend", summary="Suspender la instancia")
+async def tenant_workflow_instance_suspend(instance_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.instances import suspend_instance
+
+    ctx = require_permission(request, "workflows:run")
+    return await suspend_instance(ctx.organization_id, UUID(instance_id))
+
+
+@router.post("/instances/{instance_id}/resume", summary="Reanudar instancia suspendida")
+async def tenant_workflow_instance_resume(instance_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.instances import resume_suspended_instance
+
+    ctx = require_permission(request, "workflows:run")
+    return await resume_suspended_instance(ctx.organization_id, UUID(instance_id))
+
+
+# ---------------------------------------------------------------------------
+# Capability bindings + paquetes portables (import/export)
+# ---------------------------------------------------------------------------
+class BindingIn(BaseModel):
+    provider_kind: str = Field(
+        ...,
+        pattern="^(managed_db|connected_db|marketplace_action|semantic_query|rest_api|erp|custom)$",
+    )
+    config: dict = Field(default_factory=dict)
+    contract_input_schema: dict = Field(default_factory=dict)
+    contract_output_schema: dict = Field(default_factory=dict)
+    credential_ref: str | None = Field(default=None, max_length=160)
+    workspace_id: str | None = None
+
+
+class PackageIn(BaseModel):
+    package: dict = Field(...)
+
+
+@router.get("/capability-bindings", summary="Bindings de capacidades del tenant")
+async def tenant_capability_bindings(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.bindings import list_bindings
+
+    ctx = require_permission(request, "workflows:read")
+    return await list_bindings(ctx.organization_id, await _workspace_id(request))
+
+
+@router.put("/capability-bindings/{capability_ref}", summary="Crear/actualizar binding")
+async def tenant_capability_binding_upsert(
+    capability_ref: str, body: BindingIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.bindings import upsert_binding
+
+    ctx = require_permission(request, "workflows:update")
+    try:
+        result = await upsert_binding(
+            ctx.organization_id,
+            capability_ref,
+            body.provider_kind,
+            config=body.config,
+            workspace_id=UUID(body.workspace_id) if body.workspace_id else None,
+            credential_ref=body.credential_ref,
+            contract_input_schema=body.contract_input_schema,
+            contract_output_schema=body.contract_output_schema,
+            created_by=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return result
+
+
+@router.delete("/capability-bindings/{binding_id}", summary="Desactivar binding")
+async def tenant_capability_binding_delete(binding_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.bindings import delete_binding
+
+    ctx = require_permission(request, "workflows:update")
+    if not await delete_binding(ctx.organization_id, UUID(binding_id)):
+        raise HTTPException(404, "Binding not found")
+    return {"deleted": True}
+
+
+@router.post("/import/inspect", summary="Inspeccionar paquete (sin persistir)")
+async def tenant_workflow_import_inspect(body: PackageIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.packages import inspect_package
+
+    ctx = require_permission(request, "workflows:create")
+    return await inspect_package(
+        ctx.organization_id,
+        body.package,
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+    )
+
+
+@router.post("/import", summary="Importar paquete (solo draft)")
+async def tenant_workflow_import(body: PackageIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.packages import import_workflow_package
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        return await import_workflow_package(
+            ctx.organization_id,
+            body.package,
+            workspace_id=await _workspace_id(request),
+            created_by=ctx.user_id,
+            permissions=ctx.permissions,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # Rutas con parámetro workflow_id
 # ---------------------------------------------------------------------------
 @router.get("/{workflow_id}", summary="Detalle del workflow")
@@ -577,6 +790,47 @@ async def tenant_workflow_run(workflow_id: str, body: RunIn, request: Request):
     return result
 
 
+@router.post(
+    "/{workflow_id}/instances",
+    summary="Iniciar proceso durable (WorkflowInstance)",
+)
+async def tenant_workflow_instance_start(workflow_id: str, body: InstanceStartIn, request: Request):
+    """Arranca un proceso de negocio de larga duración: la definición queda
+    congelada y la instancia sobrevive reinicios, waits y días de espera."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import WorkflowAccessError
+    from src.platform.workflows.instances import start_workflow_instance
+
+    ctx = require_permission(request, "workflows:run")
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(hours=int(body.expires_in_hours))
+        if body.expires_in_hours
+        else None
+    )
+    try:
+        result = await start_workflow_instance(
+            workflow_id=UUID(workflow_id),
+            organization_id=ctx.organization_id,
+            workspace_id=await _workspace_id(request),
+            trigger="manual",
+            payload=body.payload,
+            conversation_id=body.conversation_id,
+            participant_id=body.participant_id,
+            business_key=body.business_key,
+            actor_type="user",
+            actor_id=ctx.user_id,
+            permissions=ctx.permissions,
+            expires_at=expires_at,
+        )
+    except WorkflowAccessError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    if result is None or result.get("status") == "failed":
+        raise HTTPException(404, (result or {}).get("error") or "Workflow not found")
+    return result
+
+
 @router.get("/{workflow_id}/runs", summary="Runs del workflow")
 async def tenant_workflow_runs(workflow_id: str, request: Request, limit: int = 50):
     from src.platform.rbac.policy import require_permission
@@ -584,6 +838,18 @@ async def tenant_workflow_runs(workflow_id: str, request: Request, limit: int = 
 
     ctx = require_permission(request, "workflow_runs:read")
     return await list_runs(ctx.organization_id, UUID(workflow_id), limit)
+
+
+@router.get("/{workflow_id}/export", summary="Exportar workflow (zent.workflow.package/v1)")
+async def tenant_workflow_export(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.packages import export_workflow_package
+
+    ctx = require_permission(request, "workflows:read")
+    package = await export_workflow_package(ctx.organization_id, UUID(workflow_id))
+    if package is None:
+        raise HTTPException(404, "Workflow not found")
+    return package
 
 
 @router.get(

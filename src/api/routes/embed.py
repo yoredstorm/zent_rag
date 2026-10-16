@@ -46,6 +46,7 @@ class EmbedChatBody(BaseModel):
 
     messages: list[dict] | None = None
     message: str | None = Field(default=None, max_length=8000)
+    conversation_id: UUID | None = None
 
 
 def _request_origin(request: Request) -> str:
@@ -177,11 +178,37 @@ async def embed_chat(
     if agent is None or not agent.is_active:
         raise HTTPException(status_code=404, detail="Agent not found")
     message = _last_user_message(body)
+    # Conversation Router: la conversación del widget con un proceso durable
+    # vivo esperando mensaje reanuda la instancia (continuidad multi-turno).
+    if body.conversation_id is not None:
+        try:
+            from src.platform.workflows.conversation_router import resume_conversation_message
+
+            routed = await resume_conversation_message(
+                organization_id=row.organization_id,
+                conversation_id=body.conversation_id,
+                message=message,
+                channel="embed",
+            )
+        except Exception as exc:  # noqa: BLE001 — el router nunca rompe el chat
+            routed = None
+        if routed is not None:
+            payload = {
+                "answer": routed.get("answer") or "",
+                "status": "completed" if routed.get("answer") else "waiting",
+                "conversation_id": str(body.conversation_id),
+                "instance_id": routed.get("instance_id"),
+            }
+            response = JSONResponse(payload)
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            return response
     result = await runtime.run(
         AgentRunRequest(
             agent=agent,
             message=message,
             role="customer",
+            conversation_id=body.conversation_id,
         )
     )
     payload = {"answer": result.answer, "status": result.status}

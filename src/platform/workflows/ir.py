@@ -52,6 +52,7 @@ _COERCIONES: dict[str, set[str]] = {
 _NODE_REF_RE = re.compile(r"\{\{(?:nodes\.([A-Za-z0-9_-]+))(?:\.([a-zA-Z0-9_.\[\]-]+))?\}\}")
 _TRIGGER_REF_RE = re.compile(r"\{\{trigger\.([a-zA-Z0-9_.\[\]-]+)\}\}")
 _VARIABLE_REF_RE = re.compile(r"\{\{variables\.([a-zA-Z0-9_-]+)\}\}")
+_INSTANCE_STATE_REF_RE = re.compile(r"\{\{instance\.state\.([a-zA-Z0-9_.\[\]-]+)\}\}")
 _LEGACY_STEP_REF_RE = re.compile(r"\{\{steps\.(\d+)\.output\.([^}]+)\}\}")
 
 
@@ -456,10 +457,15 @@ def get_node_id_for_legacy_index(graph: WorkflowGraph, index: int) -> str:
 
 
 def resolve_stable_references(
-    value: Any, node_outputs: dict[str, Any], trigger: dict[str, Any] | None = None
+    value: Any,
+    node_outputs: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+    *,
+    instance_state: dict[str, Any] | None = None,
 ) -> Any:
     """Resuelve referencias estables por node id ({{nodes.<id>.output.<path>}}),
-    {{trigger.<path>}} y {{variables.<name>}} contra datos ya disponibles."""
+    {{trigger.<path>}}, {{variables.<name>}} y {{instance.state.<path>}}
+    contra datos ya disponibles."""
 
     def _walk(cur: Any, path: str) -> Any:
         for part in path.split("."):
@@ -491,16 +497,25 @@ def resolve_stable_references(
             return match.group(0)
         return _render(_walk(trigger, match.group(1)))
 
+    def repl_instance(match: re.Match) -> str:
+        if instance_state is None:
+            return match.group(0)
+        return _render(_walk(instance_state, match.group(1)))
+
     def repl_variable(match: re.Match) -> str:
         return match.group(0)
 
     if isinstance(value, str):
         out = value
         out = _TRIGGER_REF_RE.sub(repl_trigger, out)
+        out = _INSTANCE_STATE_REF_RE.sub(repl_instance, out)
         out = _NODE_REF_RE.sub(repl, out)
         return out
     if isinstance(value, dict):
-        return {k: resolve_stable_references(v, node_outputs, trigger) for k, v in value.items()}
+        return {
+            k: resolve_stable_references(v, node_outputs, trigger, instance_state=instance_state)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [resolve_stable_references(v, node_outputs, trigger) for v in value]
     return value

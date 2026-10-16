@@ -138,6 +138,51 @@ async def _maybe_dispatch(
     from src.core.domain.entities import LLMResponse, QueryStatus, RAGQueryResult
     from src.runtime.dispatcher import DispatchRequest, with_target
 
+    # Conversation Router: una conversación con proceso durable vivo esperando
+    # el mensaje reanuda la instancia ANTES de reinterpretar la solicitud.
+    if body.conversation_id and not explicit:
+        try:
+            from src.platform.workflows.conversation_router import resume_conversation_message
+
+            routed = await resume_conversation_message(
+                organization_id=organization_id,
+                conversation_id=body.conversation_id,
+                message=body.query,
+                user_id=user_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — el router nunca rompe la query
+            logger.warning("conversation router failed", error=str(exc)[:200])
+            routed = None
+        if routed is not None:
+            return RAGQueryResult(
+                query_id=uuid4(),
+                organization_id=organization_id,
+                user_id=user_id,
+                query=body.query,
+                conversation_id=body.conversation_id,
+                role=role,
+                status=QueryStatus.COMPLETED,
+                llm_response=LLMResponse(
+                    content=routed.get("answer") or "",
+                    model="workflow_instance",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    latency_ms=0.0,
+                ),
+                total_latency_ms=0.0,
+                method="workflow",
+                rag_trace={
+                    "dispatch": {
+                        "capability": "workflow.resume_instance",
+                        "handler": "durable_instance",
+                        "status": routed.get("instance_status") or "resumed",
+                        "run_id": routed.get("run_id"),
+                        "instance_id": routed.get("instance_id"),
+                    }
+                },
+            )
+
     dispatcher = get_capability_dispatcher()
     if not explicit and not dispatcher.selection_enabled():
         return None

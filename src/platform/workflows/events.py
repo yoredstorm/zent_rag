@@ -346,6 +346,18 @@ async def workflow_event_consumer_loop() -> None:
                             event_type=event_type,
                             error=str(exc)[:200],
                         )
+                    try:
+                        # Workflows durables: el mismo evento despierta las
+                        # instancias WAITING compatibles (un solo bus).
+                        from src.platform.workflows.instances import signal_instances_from_event
+
+                        await signal_instances_from_event(event_type, payload)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "workflow instance signal failed",
+                            event_type=event_type,
+                            error=str(exc)[:200],
+                        )
             finally:
                 try:
                     await pubsub.unsubscribe(realtime.EVENTS_CHANNEL)

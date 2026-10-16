@@ -66,4 +66,25 @@ describe("WorkflowHealthBar", () => {
     render(<WorkflowHealthBar workflowId="wf-1" />);
     await waitFor(() => expect(screen.getByTestId("wf-readiness-ready")).toHaveTextContent("Listo para publicar"));
   });
+
+  it("muestra Readiness % y el CTA al Marketplace para requisitos de portabilidad", async () => {
+    stubApi({
+      ready: false,
+      errors: 1,
+      warnings: 0,
+      checks: [
+        { key: "trigger", label: "Inicio del flujo", status: "ok", message: "ok" },
+        {
+          key: "package:capability:catalog.products.search",
+          label: "catalog.products.search",
+          status: "error",
+          message: "MISSING: sin provider publicado",
+          hint: "Resolver en el Marketplace",
+        },
+      ],
+    });
+    render(<WorkflowHealthBar workflowId="wf-1" />);
+    await waitFor(() => expect(screen.getByTestId("wf-readiness-score")).toHaveTextContent("Readiness 50%"));
+    expect(screen.getByTestId("wf-readiness-resolve")).toHaveTextContent("Resolver en Marketplace");
+  });
 });

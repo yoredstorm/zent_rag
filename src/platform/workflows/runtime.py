@@ -41,6 +41,9 @@ class ExecutionContext:
     workspace_id: UUID | None = None
     actor_id: UUID | None = None
     simulate: bool = False
+    #: Segmento de una WorkflowInstance (workflows durables). None en runs
+    #: standalone: el comportamiento existente no cambia.
+    instance_id: UUID | None = None
 
 
 @dataclass
@@ -55,11 +58,13 @@ class NodeExecution:
     control: str | None = None
     cost_ms: float = 0.0
     contribution: dict[str, Any] = field(default_factory=dict)
+    #: Spec de suspensión durable cuando control == "wait_event".
+    waiting: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class RunExecutionResult:
-    status: str = "succeeded"  # succeeded | failed | pending_approval | simulated | stopped
+    status: str = "succeeded"  # succeeded | failed | pending_approval | waiting | simulated | stopped
     node_executions: dict[str, NodeExecution] = field(default_factory=dict)
     error: str | None = None
     planned_effects: list[dict[str, Any]] = field(default_factory=list)
@@ -67,6 +72,10 @@ class RunExecutionResult:
     cost_ms: float = 0.0
     stopped: bool = False
     context_snapshot: dict[str, Any] = field(default_factory=dict)
+    #: Suspensión durable: nodo y spec del wait que dejo al run en "waiting".
+    waiting: dict[str, Any] | None = None
+    wait_node_id: str | None = None
+    wait_port: str = "out"
 
 
 def _ensure_metrics() -> None:
@@ -197,6 +206,8 @@ async def execute_graph(
     preloaded: dict[str, tuple[str, dict, str | None, int]] | None = None,
     pinned: dict[str, dict] | None = None,
     context: WorkflowContext | None = None,
+    resolve_preload_edges: bool = False,
+    preload_ports: dict[str, str] | None = None,
 ) -> RunExecutionResult:
     """Ejecuta el grafo completo. `resume` reutiliza pasos persistidos
     (aprobación humana). `stop_after`/`entry_override`/`preloaded` habilitan
@@ -238,6 +249,8 @@ async def execute_graph(
     total_cost = 0.0
     run_status = "succeeded"
     run_error: str | None = None
+    wait_node_id: str | None = None
+    wait_port: str = "out"
     step_index = step_index_start
     variables: dict[str, Any] = dict(graph.variables or {})
     trigger = payload or {}
@@ -259,6 +272,18 @@ async def execute_graph(
     workflow_context.variables = dict(variables)
     workflow_context.execution.setdefault("nodes", {})
     merger = ContextMerger()
+    instance_ref = None
+    if ctx.instance_id is not None:
+        try:
+            from src.platform.workflows.instances import load_instance_ref
+
+            instance_ref = await load_instance_ref(ctx.organization_id, ctx.instance_id)
+        except Exception as exc:  # noqa: BLE001 — la hidratación del state no rompe el segmento
+            logger.warning(
+                "instance ref hydration failed",
+                instance_id=str(ctx.instance_id),
+                error=str(exc)[:200],
+            )
     try:
         from src.platform.workflows.context_store import hydrate_context
 
@@ -290,7 +315,12 @@ async def execute_graph(
         error: str | None = None,
         exec_: NodeExecution | None = None,
     ) -> None:
-        executions[node_id] = NodeExecution(status=status, output=output or {}, error=error)
+        executions[node_id] = NodeExecution(
+            status=status,
+            output=output or {},
+            error=error,
+            waiting=dict(exec_.waiting) if exec_ is not None and exec_.waiting else {},
+        )
         resolved.add(node_id)
         node_outputs_for_refs[node_id] = {"output": output or {}}
         record_context(node_id, node_map[node_id].type, status, error, exec_)
@@ -329,7 +359,7 @@ async def execute_graph(
             planned_effects.append({"node_id": node_id, "node_type": node_type, "planned": exec_.planned})
 
     async def run_node(node_id: str) -> None:
-        nonlocal run_status, run_error
+        nonlocal run_status, run_error, wait_node_id, wait_port
         node = node_map[node_id]
         node_def = registry.get(node.type)
         started = datetime.now(timezone.utc)
@@ -397,6 +427,7 @@ async def execute_graph(
             node_labels={nid: (node.label or node.type) for nid, node in node_map.items()},
             node_types={nid: node.type for nid, node in node_map.items()},
             run_branch=(lambda branch, item: _run_branch(branch, item, node_id)) if node.type == "for_each" else None,
+            instance=instance_ref,
         )
 
         # Permisos por capability.
@@ -454,6 +485,7 @@ async def execute_graph(
                     planned=dict(outcome.planned or {}),
                     control=outcome.control,
                     cost_ms=float(outcome.cost_ms or 0.0),
+                    waiting=dict(outcome.waiting or {}),
                 )
                 break
             if outcome is not None and outcome.error:
@@ -528,6 +560,13 @@ async def execute_graph(
         if exec_.control == "wait_approval":
             run_status = "pending_approval"
             return
+        if exec_.control == "wait_event":
+            # Suspensión durable: el segmento termina y la instancia queda
+            # WAITING. Nunca se mantiene ningún proceso esperando.
+            run_status = "waiting"
+            wait_node_id = node_id
+            wait_port = str((exec_.waiting or {}).get("port") or "out")
+            return
 
 
         # for_each: materializa los nodos de su subgrafo (branch_of) como
@@ -549,10 +588,12 @@ async def execute_graph(
                 node_outputs_for_refs[bid] = {"output": branch_exec.output}
                 await persist(bid, node_map[bid].type, node_map[bid].config, branch_exec, False)
                 await propagate(bid)
-    async def propagate(node_id: str) -> None:
+    async def propagate(node_id: str, port_override: str | None = None) -> None:
         """Marca edges salientes resolubles (ejecutados o saltados); los tipos
         condition/for_each eligen puerto según resultado. No ejecuta nodos:
-        el scheduler de waves dispara los targets listos."""
+        el scheduler de waves dispara los targets listos. `port_override`
+        permite re-derivar los edges de un nodo preloaded con el puerto real
+        del evento que reanuda (wait_event out|timeout)."""
         node = node_map[node_id]
         exec_ = executions.get(node_id)
         if exec_ is None:
@@ -582,6 +623,13 @@ async def execute_graph(
         elif node.type == "for_each":
             for edge in outgoing.get(node_id, []):
                 if edge.from_port == "done":
+                    executed_edges.add(edge.id)
+                else:
+                    skipped_edges.add(edge.id)
+        elif node.type == "wait_event":
+            taken = port_override or "out"
+            for edge in outgoing.get(node_id, []):
+                if edge.from_port == taken:
                     executed_edges.add(edge.id)
                 else:
                     skipped_edges.add(edge.id)
@@ -624,6 +672,7 @@ async def execute_graph(
                 node_labels={nid: (node.label or node.type) for nid, node in node_map.items()},
                 node_types={nid: node.type for nid, node in node_map.items()},
                 run_branch=None,
+                instance=instance_ref,
             )
             try:
                 exec_ = await _run_node_once(ctx, node_def, rctx, started)
@@ -633,6 +682,18 @@ async def execute_graph(
         return outcomes
 
     # --- Scheduler principal (determinístico, waves por orden de id) --------
+    if resolve_preload_edges:
+        # Reanudación durable: los edges de los nodos preloaded se re-derivan
+        # (incluye el puerto real del wait que despertó) para que el scheduler
+        # continúe desde el checkpoint sin re-ejecutar lo ya hecho.
+        ports = preload_ports or {}
+        for pid in list(executions):
+            if pid in node_map:
+                override = ports.get(pid)
+                if override is None and node_map[pid].type == "wait_event":
+                    # Puerto histórico: el que realmente tomó el wait al resolverse.
+                    override = str((executions[pid].output or {}).get("port") or "out")
+                await propagate(pid, port_override=override)
     processed: set[str] = set()
     entry_set = set(entry_override or graph.entrypoints)
     partial_stop = False
@@ -708,7 +769,7 @@ async def execute_graph(
     # Nodos del subgrafo for_each y no ejecutados → skipped de cierre.
     for node_id, _node in node_map.items():
         if node_id not in resolved and node_id not in branch_of:
-            if run_status in ("failed", "pending_approval", "stopped") or partial_stop:
+            if run_status in ("failed", "pending_approval", "waiting", "stopped") or partial_stop:
                 executions[node_id] = NodeExecution(status="skipped", output={})
                 resolved.add(node_id)
                 if partial_stop:
@@ -719,7 +780,7 @@ async def execute_graph(
                         f"{ctx.correlation_id or ctx.run_id}:{node_id}:0",
                     )
                     step_index += 1
-    _emit_run_metric(run_status if run_status != "pending_approval" else "pending_approval")
+    _emit_run_metric(run_status)
     return RunExecutionResult(
         status=run_status,
         node_executions=executions,
@@ -729,6 +790,13 @@ async def execute_graph(
         cost_ms=total_cost,
         stopped=run_status == "stopped" or partial_stop,
         context_snapshot=workflow_context.snapshot(),
+        waiting=(
+            dict(executions[wait_node_id].waiting)
+            if wait_node_id is not None and wait_node_id in executions
+            else None
+        ),
+        wait_node_id=wait_node_id,
+        wait_port=wait_port,
     )
 
 

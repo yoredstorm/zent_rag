@@ -178,6 +178,45 @@ async def workflow_readiness(
         graph = adapted.to_dict()
     capabilities = await load_capabilities(organization_id, workspace_id)
     checks = readiness_checks(graph, capabilities)
+
+    # Requisitos del paquete portable (si el workflow fue importado): los
+    # mismos estados del readiness report, en el shape del checklist.
+    if workflow.get("package"):
+        try:
+            from src.platform.workflows.packages import publication_blockers
+
+            blockers = await publication_blockers(
+                organization_id, workflow_id, workspace_id=workspace_id
+            )
+            _status_map = {
+                "MISSING": "error",
+                "UNSAFE": "error",
+                "VERSION_MISMATCH": "error",
+                "PERMISSION_DENIED": "error",
+                "DISABLED": "warning",
+                "NEEDS_CREDENTIALS": "warning",
+                "NEEDS_CONFIGURATION": "warning",
+                "AMBIGUOUS": "warning",
+                "OPTIONAL_MISSING": "warning",
+            }
+            for item in blockers[:10]:
+                checks.append(
+                    _check(
+                        f"package:{item.get('kind')}:{item.get('ref')}",
+                        str(item.get("ref") or "requisito"),
+                        _status_map.get(str(item.get("status")), "warning"),
+                        f"{item.get('status')}: {item.get('message') or ''}".strip(),
+                        item.get("hint")
+                        or (
+                            "Resolver en el Marketplace"
+                            if item.get("resolution") == "marketplace"
+                            else None
+                        ),
+                    )
+                )
+        except Exception:  # noqa: BLE001 — el checklist base nunca se rompe
+            pass
+
     errors = [c for c in checks if c["status"] == "error"]
     warnings = [c for c in checks if c["status"] == "warning"]
     return {
@@ -231,6 +270,12 @@ def graph_summary(graph: dict[str, Any]) -> dict[str, Any]:
             steps.append(f"avisar por {channel}" + (f" a {target}" if target else ""))
         elif node_type == "marketplace_action":
             steps.append(f"usar la acción {config.get('action_id') or 'de integración'}")
+        elif node_type == "capability_call":
+            steps.append(f"ejecutar la capacidad {config.get('capability') or 'de negocio'}")
+        elif node_type == "wait_event":
+            steps.append(_wait_text(str(config.get("preset") or "signal")))
+        elif node_type in ("state_set", "state_merge", "state_append", "state_remove"):
+            steps.append(f"actualizar el estado del proceso ({config.get('path') or 'estado'})")
         elif node_type == "human_approval":
             steps.append("pedir aprobación humana")
         elif node_type == "business_result":
@@ -241,6 +286,16 @@ def graph_summary(graph: dict[str, Any]) -> dict[str, Any]:
         steps.append("ejecutar el flujo configurado")
     text = f"Cuando {when}, Zent {', '.join(steps)}."
     return {"when": when, "steps": steps, "text": text}
+
+
+def _wait_text(preset: str) -> str:
+    return {
+        "message": "esperar la respuesta del cliente",
+        "payment": "esperar la confirmación del pago",
+        "webhook": "esperar la señal externa",
+        "timer": "esperar el tiempo configurado",
+        "human": "esperar aprobación humana",
+    }.get(preset, "esperar la señal")
 
 
 def _schedule_text(schedule: dict[str, Any] | None) -> str:

@@ -295,9 +295,20 @@ async def publish_workflow(
     notes: str | None = None,
     created_by: UUID | None = None,
 ) -> dict | None:
-    """Publicar = snapshot en production + workflow activo (webhook/schedule)."""
-    from src.platform.workflows.engine import set_workflow_status
+    """Publicar = snapshot en production + workflow activo (webhook/schedule).
 
+    Gate de portabilidad: un workflow importado (package) no se publica con
+    requisitos críticos pendientes (capabilities sin binding, credenciales,
+    permisos)."""
+    from src.platform.workflows.engine import set_workflow_status
+    from src.platform.workflows.packages import publication_blockers
+
+    blockers = await publication_blockers(organization_id, workflow_id)
+    if blockers:
+        raise ValueError(
+            "requisitos sin resolver: "
+            + "; ".join(f"{b['ref']} ({b['status']})" for b in blockers[:5])
+        )
     version = await create_version(
         organization_id,
         workflow_id,

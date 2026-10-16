@@ -150,6 +150,52 @@ async def run_agent(
     # local y el follow-up rompía la validación de UUID.
     conversation_id = body.conversation_id or uuid4()
 
+    # Conversation Router: si la conversación tiene un proceso durable vivo
+    # esperando el mensaje, este reanuda la instancia (misma conversación,
+    # mismo proceso; no se reinterpreta desde cero).
+    if body.conversation_id:
+        try:
+            from src.platform.workflows.conversation_router import resume_conversation_message
+
+            routed = await resume_conversation_message(
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+                message=body.message,
+                user_id=user_id,
+                channel="agent",
+            )
+        except Exception as exc:  # noqa: BLE001 — el router nunca rompe el run
+            logger.warning("conversation router failed", error=str(exc)[:200])
+            routed = None
+        if routed is not None:
+            return {
+                "run_id": routed.get("run_id"),
+                "conversation_id": str(conversation_id),
+                "status": (
+                    "completed"
+                    if routed.get("answer")
+                    else (routed.get("run_status") or "waiting")
+                ),
+                "answer": routed.get("answer") or "",
+                "steps": [],
+                "flow": {
+                    "flow_version": 1,
+                    "kind": "workflow",
+                    "execution": {"kind": "workflow_run", "id": routed.get("run_id")},
+                    "verdict": {"decider": "Workflow", "route": "Proceso durable"},
+                },
+                "total_latency_ms": 0.0,
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost": 0.0,
+                "model": "workflow_instance",
+                "provider": "zent",
+                "injection_detected": False,
+                "instance_id": routed.get("instance_id"),
+                "instance_status": routed.get("instance_status"),
+            }
+
     result = await runtime.run(
         AgentRunRequest(
             agent=agent,

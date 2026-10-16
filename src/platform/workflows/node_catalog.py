@@ -54,6 +54,16 @@ NODE_NEXT_STEPS: dict[str, tuple[str, ...]] = {
     "join": ("llm", "condition", "notify"),
     "merge": ("llm", "condition", "notify"),
     "set_variable": ("condition", "llm"),
+    "state_get": ("condition", "llm"),
+    "state_set": ("condition", "llm", "wait_event"),
+    "state_merge": ("condition", "llm", "wait_event"),
+    "state_append": ("condition", "llm", "wait_event"),
+    "state_remove": ("condition", "llm", "wait_event"),
+    "capability_call": ("condition", "llm", "notify", "business_result"),
+    "wait_event": (
+        "state_set", "state_merge", "notify", "wait_event", "marketplace_action",
+        "business_result", "stop", "end",
+    ),
     "notify": ("business_result", "stop"),
     "business_result": ("notify", "stop"),
     "business_node": ("condition", "notify", "business_result"),
@@ -449,6 +459,122 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         context_reads=("trigger", "variables", "data", "knowledge"),
         context_writes=("variables",),
         supports_simulation=False,
+    ),
+    "wait_event": _meta(
+        "Esperar evento",
+        "Pausa el proceso hasta que llegue un evento (mensaje, webhook, pago, timer, aprobación).",
+        long_description=(
+            "Suspensión durable: el segmento termina y el worker se libera. El "
+            "proceso se reanuda cuando llega la señal; con timeout puedes derivar "
+            "por el puerto 'timeout'."
+        ),
+        when_to_use=(
+            "el proceso depende de una respuesta externa que puede tardar minutos o días",
+            "esperas el mensaje de un cliente o el webhook de un pago",
+        ),
+        when_not_to_use=("el dato ya está disponible en el mismo segmento",),
+        examples=(
+            {
+                "title": "Esperar respuesta del cliente",
+                "config": {"preset": "message", "timeout": "PT24H", "on_timeout": "expire"},
+            },
+            {
+                "title": "Esperar pago",
+                "config": {"preset": "payment", "timeout": "PT48H", "on_timeout": "branch"},
+            },
+        ),
+        context_reads=("trigger", "variables"),
+        supports_simulation=True,
+    ),
+    "state_get": _meta(
+        "Leer estado de negocio",
+        "Lee un dato del estado durable del proceso (carrito, cliente, pedido...).",
+        long_description=(
+            "El estado de negocio vive en la instancia durable y sobrevive "
+            "reinicios; nunca se guarda en prompts."
+        ),
+        when_to_use=("necesitas un valor guardado en pasos anteriores del proceso",),
+        when_not_to_use=("el valor viene del trigger o de un nodo del mismo segmento",),
+        examples=({"title": "Leer carrito", "config": {"path": "cart.items"}},),
+        context_reads=("trigger",),
+        supports_simulation=True,
+    ),
+    "state_set": _meta(
+        "Guardar estado de negocio",
+        "Guarda un dato durable del proceso (carrito, cliente, pedido...).",
+        long_description=(
+            "Escribe en el estado de negocio de la instancia (JSONB durable). "
+            "El LLM propone; este nodo aplica explícitamente."
+        ),
+        when_to_use=("el dato debe sobrevivir waits, reinicios y días de proceso",),
+        when_not_to_use=("solo se usa dentro del mismo segmento; usa Guardar un dato",),
+        examples=(
+            {"title": "Guardar carrito", "config": {"path": "cart", "value": {"items": []}}},
+        ),
+        context_reads=("trigger", "variables"),
+        supports_simulation=True,
+    ),
+    "state_merge": _meta(
+        "Combinar estado de negocio",
+        "Combina un objeto sobre el estado durable del proceso.",
+        long_description="Merge shallow sobre el objeto existente en path.",
+        when_to_use=("actualizas campos parciales de un objeto durable",),
+        when_not_to_use=("quieres reemplazar el objeto completo; usa estado: set",),
+        examples=(
+            {"title": "Actualizar carrito", "config": {"path": "cart", "value": {"shipping": "pickup"}}},
+        ),
+        context_reads=("trigger", "variables"),
+        supports_simulation=True,
+    ),
+    "state_append": _meta(
+        "Agregar a estado de negocio",
+        "Agrega un elemento a una lista durable del proceso.",
+        long_description="Append (o extend con lista) sobre path del estado durable.",
+        when_to_use=("sumas un ítem al carrito o una entrada a un historial",),
+        when_not_to_use=("el path no es una lista",),
+        examples=(
+            {"title": "Agregar al carrito", "config": {"path": "cart.items", "value": {"sku": "ARZ-1"}}},
+        ),
+        context_reads=("trigger", "variables"),
+        supports_simulation=True,
+    ),
+    "state_remove": _meta(
+        "Quitar de estado de negocio",
+        "Quita un elemento o clave del estado durable del proceso.",
+        long_description=(
+            "Con value sobre una lista elimina esos elementos; sin value borra "
+            "la clave del path."
+        ),
+        when_to_use=("el cliente quita un ítem del carrito",),
+        when_not_to_use=("quieres vaciar todo el estado; usa estado: set con {}",),
+        examples=(
+            {"title": "Quitar del carrito", "config": {"path": "cart.items", "value": {"sku": "ARZ-1"}}},
+        ),
+        context_reads=("trigger", "variables"),
+        supports_simulation=True,
+    ),
+    "capability_call": _meta(
+        "Capacidad de negocio",
+        "Ejecuta una capacidad resuelta por el binding del tenant (catálogo, stock, ventas, pagos).",
+        long_description=(
+            "El workflow depende de capacidades lógicas (catalog.products.search), "
+            "no de tablas ni acciones concretas: el binding del tenant resuelve el "
+            "provider (base gestionada, marketplace, consulta semántica, API)."
+        ),
+        when_to_use=(
+            "el paso representa una capacidad de negocio que debe ser portable entre tenants",
+        ),
+        when_not_to_use=(
+            "la acción concreta del marketplace ya está elegida y no necesita portabilidad",
+        ),
+        examples=(
+            {
+                "title": "Buscar producto",
+                "config": {"capability": "catalog.products.search", "inputs": {"query": "{{trigger.text}}"}},
+            },
+        ),
+        context_reads=("trigger", "variables", "data"),
+        supports_simulation=True,
     ),
     # ------------------------------------------------------------------
     # Control

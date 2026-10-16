@@ -118,10 +118,13 @@ class NodeOutcome:
     error: str | None = None
     simulated: bool = False
     planned: dict[str, Any] = field(default_factory=dict)
-    control: str | None = None  # None | "stop_success" | "stop_fail" | "wait_approval"
+    control: str | None = None  # None | "stop_success" | "stop_fail" | "wait_approval" | "wait_event"
     cost_ms: float = 0.0
     partial: dict[str, Any] = field(default_factory=dict)
     contribution: NodeContribution | None = None  # escrituras al WorkflowContext
+    #: Spec del wait durable cuando control == "wait_event" (event_type,
+    #: correlation, timeout_seconds, port).
+    waiting: dict[str, Any] | None = None
 
 
 @dataclass
@@ -145,6 +148,8 @@ class NodeContext:
     context: WorkflowContext | None = None  # contexto compartido del run (Fase 1)
     node_labels: dict[str, str] = field(default_factory=dict)  # node_id → label visible (Fase 5)
     node_types: dict[str, str] = field(default_factory=dict)  # node_id → node_type (Fase 5)
+    #: WorkflowInstance viva del segmento (state durable). None en runs standalone.
+    instance: "InstanceRef | None" = None  # noqa: F821 — import diferido por ciclo
 
     @property
     def organization_id(self) -> UUID:
@@ -192,8 +197,11 @@ registry = NodeRegistry()
 def _resolve_ref(value: Any, rctx: NodeContext) -> Any:
     from src.platform.workflows.ir import resolve_stable_references
 
+    instance_state = rctx.instance.state if rctx.instance is not None else None
     if isinstance(value, str):
-        resolved = resolve_stable_references(value, rctx.node_outputs, rctx.trigger)
+        resolved = resolve_stable_references(
+            value, rctx.node_outputs, rctx.trigger, instance_state=instance_state
+        )
         if isinstance(resolved, str) and "{{" not in resolved:
             v = resolved
             if v.lower() in ("true",):
@@ -205,7 +213,7 @@ def _resolve_ref(value: Any, rctx: NodeContext) -> Any:
             except ValueError:
                 return v
         return resolved
-    return resolve_stable_references(value, rctx.node_outputs)
+    return resolve_stable_references(value, rctx.node_outputs, instance_state=instance_state)
 
 
 def _deny(outcome: NodeOutcome, permission: str, node_type: str) -> NodeOutcome:
@@ -2887,6 +2895,175 @@ def _field_of(item: Any, field: str) -> Any:
     return cur
 
 
+def _parse_iso_duration(value: Any) -> int | None:
+    """Duración ISO8601 acotada (PT24H, P1DT12H, PT30M, PT45S) → segundos."""
+    import re as _re
+
+    text = str(value or "").strip().upper()
+    if not text:
+        return None
+    m = _re.match(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$", text)
+    if not m:
+        return None
+    days, hours, minutes, seconds = (int(g) if g else 0 for g in m.groups())
+    total = days * 86400 + hours * 3600 + minutes * 60 + seconds
+    return total or None
+
+
+async def _exec_wait_event(rctx: NodeContext) -> NodeOutcome:
+    """WAIT durable: suspende la instancia y libera el worker.
+
+    El segmento termina; la reanudación llega por signal (mensaje, webhook,
+    pago, timer, aprobación). Nunca hay un proceso esperando."""
+    if rctx.simulate:
+        cfg = rctx.node.config or {}
+        event_type = str(cfg.get("event_type") or cfg.get("preset") or "signal")
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "wait", "event_type": event_type},
+            output={"waiting": True, "event_type": event_type},
+        )
+    if rctx.instance is None:
+        return NodeOutcome(
+            error="wait_event requiere una instancia durable (inicia el flujo como proceso)"
+        )
+    cfg = rctx.node.config or {}
+    from src.platform.workflows.instances import WAIT_PRESET_EVENTS
+
+    preset = str(cfg.get("preset") or "signal")
+    event_type = str(cfg.get("event_type") or "").strip()
+    if not event_type:
+        event_type = str(cfg.get("signal_name") or WAIT_PRESET_EVENTS.get(preset, "signal"))
+        if preset == "webhook" and event_type == "webhook":
+            event_type = f"webhook.{rctx.node_id}"
+    correlation = cfg.get("correlation")
+    if isinstance(correlation, dict) and correlation:
+        resolved = _resolve_ref(correlation, rctx)
+        correlation = resolved if isinstance(resolved, dict) else correlation
+    else:
+        correlation = {}
+    if not correlation and preset == "message" and rctx.instance.conversation_id:
+        correlation = {"conversation_id": str(rctx.instance.conversation_id)}
+    if not correlation and preset in ("timer", "human"):
+        correlation = {"instance_id": str(rctx.instance.id)}
+    timeout_seconds = cfg.get("timeout_seconds")
+    if timeout_seconds is None and cfg.get("timeout"):
+        timeout_seconds = _parse_iso_duration(cfg.get("timeout"))
+    try:
+        timeout_seconds = int(timeout_seconds) if timeout_seconds else None
+    except (TypeError, ValueError):
+        timeout_seconds = None
+    on_timeout = str(cfg.get("on_timeout") or ("continue" if preset == "timer" else "")).strip() or None
+    spec = {
+        "preset": preset,
+        "event_type": event_type,
+        "correlation": correlation,
+        "timeout_seconds": timeout_seconds,
+        "on_timeout": on_timeout,
+        "port": "out",
+    }
+    return NodeOutcome(
+        output={
+            "waiting": True,
+            "event_type": event_type,
+            "correlation": correlation,
+            "timeout_seconds": timeout_seconds,
+        },
+        control="wait_event",
+        waiting=spec,
+    )
+
+
+async def _exec_state_op(rctx: NodeContext, op: str) -> NodeOutcome:
+    """Business state durable de la instancia (el LLM propone; el nodo aplica)."""
+    if rctx.simulate:
+        cfg = rctx.node.config or {}
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "state", "op": op, "path": str(cfg.get("path") or "")},
+            output={"state": {"op": op, "path": str(cfg.get("path") or "")}},
+        )
+    if rctx.instance is None:
+        return NodeOutcome(error=f"state.{op} requiere una instancia durable")
+    cfg = rctx.node.config or {}
+    path = str(cfg.get("path") or "").strip()
+    if not path:
+        return NodeOutcome(error=f"state.{op} requiere path")
+    value = _resolve_ref(cfg.get("value"), rctx) if "value" in cfg else None
+    from src.platform.workflows.instances import InstanceStateError, mutate_instance_state
+
+    try:
+        result = await mutate_instance_state(
+            rctx.organization_id, rctx.instance.id, op=op, path=path, value=value
+        )
+    except InstanceStateError as exc:
+        return NodeOutcome(error=str(exc)[:200])
+    rctx.instance.state = dict(result.get("state") or {})
+    return NodeOutcome(
+        output={"state": {"op": op, "path": path, "value": result.get("value")}},
+    )
+
+
+async def _exec_state_get(rctx: NodeContext) -> NodeOutcome:
+    return await _exec_state_op(rctx, "get")
+
+
+async def _exec_state_set(rctx: NodeContext) -> NodeOutcome:
+    return await _exec_state_op(rctx, "set")
+
+
+async def _exec_state_merge(rctx: NodeContext) -> NodeOutcome:
+    return await _exec_state_op(rctx, "merge")
+
+
+async def _exec_state_append(rctx: NodeContext) -> NodeOutcome:
+    return await _exec_state_op(rctx, "append")
+
+
+async def _exec_state_remove(rctx: NodeContext) -> NodeOutcome:
+    return await _exec_state_op(rctx, "remove")
+
+
+async def _exec_capability_call(rctx: NodeContext) -> NodeOutcome:
+    """Ejecuta una CAPACIDAD de negocio resuelta por el binding del tenant.
+
+    El workflow depende de `catalog.products.search`, nunca de una tabla o
+    acción concreta: el binding resuelve el provider (managed db, marketplace,
+    semantic query, REST)."""
+    cfg = rctx.node.config
+    capability_ref = str(cfg.get("capability") or "").strip()
+    if not capability_ref:
+        return NodeOutcome(error="capability_call requiere capability")
+    inputs = _resolve_ref(cfg.get("inputs") or {}, rctx)
+    if not isinstance(inputs, dict):
+        inputs = {}
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "capability", "capability": capability_ref, "inputs": inputs},
+            output={"capability": capability_ref, "simulated": True},
+        )
+    from src.platform.workflows.bindings import BindingError, execute_binding
+
+    try:
+        result = await execute_binding(
+            rctx.organization_id,
+            capability_ref,
+            inputs,
+            workspace_id=rctx.workspace_id,
+            source="workflow",
+            actor_id=rctx.execution.actor_id,
+            workflow_id=rctx.execution.workflow_id,
+            run_id=rctx.execution.run_id,
+        )
+    except BindingError as exc:
+        return NodeOutcome(error=f"{exc.code}: {exc.message}"[:300])
+    output = dict(result.get("output") or {})
+    output["capability"] = capability_ref
+    output["provider_kind"] = result.get("provider_kind")
+    return NodeOutcome(output=output)
+
+
 async def _exec_stop(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
     status = str(cfg.get("status") or "success")
@@ -3565,6 +3742,52 @@ def _register_defaults() -> None:
         execute=_exec_end,
         **semantic_metadata("end"),
     )
+
+    # DURABLES (workflows de negocio de larga duración)
+    registry.register(
+        "capability_call",
+        version=1,
+        label="Capacidad de negocio",
+        category="integration",
+        risk_level="elevated",
+        capabilities=frozenset({CALLS_EXTERNAL}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_capability_call,
+        **semantic_metadata("capability_call"),
+    )
+    registry.register(
+        "wait_event",
+        version=1,
+        label="Esperar evento",
+        category="control",
+        risk_level="info",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}, "timeout": {"type": "json"}},
+        execute=_exec_wait_event,
+        **semantic_metadata("wait_event"),
+    )
+    _state_ops = {
+        "get": _exec_state_get,
+        "set": _exec_state_set,
+        "merge": _exec_state_merge,
+        "append": _exec_state_append,
+        "remove": _exec_state_remove,
+    }
+    for _op, _handler in _state_ops.items():
+        registry.register(
+            f"state_{_op}",
+            version=1,
+            label=f"Estado: {_op}",
+            category="logic",
+            risk_level="info",
+            capabilities=frozenset({IS_LOGIC}),
+            inputs={"in": {"type": "json"}},
+            outputs={"out": {"type": "json"}},
+            execute=_handler,
+            **semantic_metadata(f"state_{_op}"),
+        )
 
 
 _register_defaults()

@@ -343,20 +343,25 @@ async def append_run_event(
     *,
     node_id: str | None = None,
     payload: dict[str, Any] | None = None,
+    instance_id: UUID | None = None,
 ) -> None:
-    """Agrega un evento append-only al timeline del run (D6)."""
+    """Agrega un evento append-only al timeline del run (D6).
+
+    `instance_id` (workflows durables) liga el evento al timeline de la
+    instancia; con None el contrato existente no cambia."""
     session = await get_async_session()
     try:
         await session.execute(
             text(
                 "INSERT INTO workflow_run_events "
-                "(id, run_id, organization_id, kind, node_id, payload, created_at) "
-                "VALUES (gen_random_uuid(), :rid, :oid, :kind, :nid, "
+                "(id, run_id, organization_id, instance_id, kind, node_id, payload, created_at) "
+                "VALUES (gen_random_uuid(), :rid, :oid, :iid, :kind, :nid, "
                 "CAST(:payload AS jsonb), NOW())"
             ),
             {
                 "rid": str(run_id),
                 "oid": str(organization_id),
+                "iid": str(instance_id) if instance_id else None,
                 "kind": str(kind)[:40],
                 "nid": str(node_id)[:80] if node_id else None,
                 "payload": json.dumps(payload or {}, ensure_ascii=False, default=str),

@@ -69,6 +69,9 @@ export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
   if (!summary && !readiness) return null;
   const problems = readiness?.checks.filter((c) => c.status !== "ok") ?? [];
   const problemCount = (readiness?.errors ?? 0) + (readiness?.warnings ?? 0);
+  const totalChecks = readiness?.checks.length ?? 0;
+  const readinessScore = totalChecks > 0 ? Math.round((100 * (totalChecks - problemCount)) / totalChecks) : 100;
+  const needsMarketplace = problems.some((p) => (p.hint || "").includes("Marketplace"));
 
   return (
     <section
@@ -79,6 +82,15 @@ export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
         <p className="min-w-[14rem] flex-1 text-[12px] leading-relaxed text-muted" data-testid="wf-summary-text">
           {summary?.text}
         </p>
+        {totalChecks > 0 && (
+          <span
+            className="text-[11px] tabular-nums text-muted"
+            data-testid="wf-readiness-score"
+            title={`${totalChecks - problemCount}/${totalChecks} requisitos resueltos`}
+          >
+            Readiness {readinessScore}%
+          </span>
+        )}
         <div className="flex flex-wrap items-center gap-1.5" data-testid="wf-readiness-chips">
           {(readiness?.checks ?? []).map((check) => (
             <span
@@ -93,17 +105,28 @@ export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
           ))}
         </div>
         {problemCount > 0 ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={CaretDown}
-            className="text-[11px] text-warn"
-            data-testid="wf-readiness-toggle"
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {readiness?.errors ? `${readiness.errors} por resolver` : `${readiness?.warnings} por revisar`}
-          </Button>
+          <>
+            {needsMarketplace && (
+              <a
+                href="/marketplace"
+                className="text-[11px] text-accent underline-offset-2 hover:underline"
+                data-testid="wf-readiness-resolve"
+              >
+                Resolver en Marketplace
+              </a>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={CaretDown}
+              className="text-[11px] text-warn"
+              data-testid="wf-readiness-toggle"
+              aria-expanded={open}
+              onClick={() => setOpen((v) => !v)}
+            >
+              {readiness?.errors ? `${readiness.errors} por resolver` : `${readiness?.warnings} por revisar`}
+            </Button>
+          </>
         ) : (
           readiness && (
             <span data-testid="wf-readiness-ready">

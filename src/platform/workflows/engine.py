@@ -308,6 +308,11 @@ async def run_workflow(
     run_mode: str = "full",
     target_node_id: str | None = None,
     source_run_id: UUID | None = None,
+    graph_override: dict | None = None,
+    workflow_version_override: int | None = None,
+    instance_id: UUID | None = None,
+    instance_seq: int | None = None,
+    preload_ports: dict[str, str] | None = None,
 ) -> dict:
     """Ejecuta el workflow bajo un ExecutionContext explícito.
 
@@ -320,7 +325,11 @@ async def run_workflow(
 
     Ejecución parcial (Fase 3): run_mode full|node|until_node|from_node con
     `target_node_id`; node/from_node hidratan predecesores desde
-    `source_run_id` (o el último run exitoso) y/o pinned data en simulate."""
+    `source_run_id` (o el último run exitoso) y/o pinned data en simulate.
+
+    Workflows durables: `instance_id` liga el run como segmento de una
+    WorkflowInstance; la definición viaja congelada en `graph_override` y el
+    checkpoint acumulado se hidrata de todos los segmentos previos."""
     if run_mode not in ("full", "node", "until_node", "from_node"):
         return {"status": "failed", "error": f"run_mode inválido: {run_mode}"}
     if run_mode != "full" and not target_node_id:
@@ -337,7 +346,7 @@ async def run_workflow(
         await ensure_context_tables()
     except Exception:  # noqa: BLE001 — paridad dev/test; la migración manda en prod
         pass
-    trig = trigger if trigger in ("manual", "schedule", "webhook", "event", "approval") else "manual"
+    trig = trigger if trigger in ("manual", "schedule", "webhook", "event", "approval", "signal") else "manual"
     wf = await _load_workflow_row(workflow_id)
     if wf is None:
         return None
@@ -385,9 +394,9 @@ async def run_workflow(
                     "INSERT INTO workflow_runs "
                     "(id, workflow_id, organization_id, workspace_id, trigger, "
                     "trigger_payload, correlation_id, actor_type, actor_id, simulate, "
-                    "run_mode, target_node_id, source_run_id) "
+                    "run_mode, target_node_id, source_run_id, instance_id, instance_seq) "
                     "VALUES (:rid, :wid, :oid, :ws, :trig, CAST(:payload AS jsonb), "
-                    ":corr, :atype, :aid, :sim, :rmode, :target, :source_run)"
+                    ":corr, :atype, :aid, :sim, :rmode, :target, :source_run, :iid, :iseq)"
                 ),
                 {
                     "rid": run_id,
@@ -403,6 +412,8 @@ async def run_workflow(
                     "rmode": run_mode,
                     "target": target_node_id,
                     "source_run": source_run_id,
+                    "iid": str(instance_id) if instance_id else None,
+                    "iseq": int(instance_seq) if instance_seq is not None else None,
                 },
             )
             await session.commit()
@@ -415,8 +426,19 @@ async def run_workflow(
     from src.platform.workflows.runtime import ExecutionContext, execute_graph
 
     if wf.graph:
+        graph_dict: dict | None = dict(wf.graph)
+    else:
+        graph_dict = None
+    if graph_override is not None:
+        graph_dict = dict(graph_override)
+    workflow_version = (
+        int(workflow_version_override)
+        if workflow_version_override is not None
+        else int(wf.workflow_version or 1)
+    )
+    if graph_dict:
         try:
-            graph = WorkflowGraph.from_dict(dict(wf.graph))
+            graph = WorkflowGraph.from_dict(graph_dict)
         except Exception as exc:  # noqa: BLE001
             return {
                 "run_id": str(run_id),
@@ -482,6 +504,19 @@ async def run_workflow(
     if run_mode in ("node", "until_node"):
         stop_after = str(target_node_id)
 
+    # --- Workflows durables: checkpoint acumulado de la instancia -----------
+    resolve_preload_edges = False
+    if instance_id is not None and not resume:
+        from src.platform.workflows.instances import load_instance_preload
+
+        try:
+            preloaded = await load_instance_preload(eff_org, UUID(str(instance_id)))
+        except Exception as exc:  # noqa: BLE001 — sin preload se re-ejecuta lo resuelto
+            logger.warning(
+                "instance preload failed", instance_id=str(instance_id), error=str(exc)[:200]
+            )
+            preloaded = {}
+        resolve_preload_edges = True
     _SYSTEM_NODE_PERMS = SYSTEM_NODE_PERMS
     # Autoridad de permisos EXPLÍCITA: los disparadores de sistema (scheduler,
     # webhook con secret verificado, evento de negocio, reanudación aprobada)
@@ -500,6 +535,7 @@ async def run_workflow(
         permissions=perms,
         correlation_id=corr,
         simulate=bool(simulate),
+        instance_id=UUID(str(instance_id)) if instance_id else None,
     )
 
     started = datetime.now(timezone.utc)
@@ -519,6 +555,8 @@ async def run_workflow(
     if resume:
         source_context_id = run_id
     elif run_mode in ("node", "from_node") and source_run_id is not None:
+        source_context_id = source_run_id
+    elif instance_id is not None and source_run_id is not None:
         source_context_id = source_run_id
     if source_context_id is not None:
         try:
@@ -543,6 +581,8 @@ async def run_workflow(
         preloaded=preloaded or None,
         pinned=pinned or None,
         context=wf_context,
+        resolve_preload_edges=resolve_preload_edges,
+        preload_ports=preload_ports or None,
     )
 
     duration = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
@@ -632,6 +672,29 @@ async def run_workflow(
     except Exception as exc:  # noqa: BLE001 — no romper la respuesta del run
         logger.warning("run context persist failed", run_id=str(run_id), error=str(exc)[:200])
 
+    # --- Workflows durables: checkpoint o cierre de la instancia ------------
+    if instance_id is not None:
+        try:
+            from src.platform.workflows.instances import handle_segment_result
+
+            await handle_segment_result(
+                instance_id=UUID(str(instance_id)),
+                organization_id=eff_org,
+                run_id=run_id,
+                instance_seq=int(instance_seq or 0),
+                status=result.status,
+                error=result.error,
+                waiting=result.waiting,
+                wait_node_id=result.wait_node_id,
+                wait_port=result.wait_port,
+            )
+        except Exception as exc:  # noqa: BLE001 — el run ya es durable; el sweep reconcilia
+            logger.warning(
+                "instance segment sync failed",
+                instance_id=str(instance_id),
+                error=str(exc)[:200],
+            )
+
     body: dict = {
         "run_id": str(run_id),
         "workflow_id": str(workflow_id),
@@ -644,6 +707,12 @@ async def run_workflow(
         "simulate": bool(simulate),
         "run_mode": run_mode,
     }
+    if instance_id is not None:
+        body["instance_id"] = str(instance_id)
+        body["instance_seq"] = int(instance_seq or 0)
+        if final_status == "waiting":
+            body["waiting_for"] = result.waiting
+            body["wait_node_id"] = result.wait_node_id
     body["result"] = {
         "summary": summaries[:5],
         "structured_output": {
@@ -828,7 +897,7 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
                 text(
                     "SELECT id, name, description, trigger_type, trigger_config, steps, "
                     "status, created_at, updated_at, editor_state, graph, "
-                    "workspace_id, workflow_version, graph_source FROM workflows "
+                    "workspace_id, workflow_version, graph_source, package FROM workflows "
                     "WHERE id = :wid AND organization_id = :oid"
                 ),
                 {"wid": workflow_id, "oid": organization_id},
@@ -856,6 +925,7 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
         "updated_at": row.updated_at.isoformat(),
         "hook_url": f"/api/v1/public/workflows/{row.id}/hook",
         "has_hook_secret": bool(tcfg.get("hook_secret_hash")),
+        "package": dict(row.package or {}),
     }
 
 
@@ -1075,7 +1145,7 @@ async def create_from_template(
         tpl = (
             await session.execute(
                 text(
-                    "SELECT name, description, trigger_type, steps, trigger_config "
+                    "SELECT name, description, trigger_type, steps, trigger_config, graph "
                     "FROM workflow_templates WHERE slug = :slug"
                 ),
                 {"slug": slug},
@@ -1087,15 +1157,18 @@ async def create_from_template(
         raise ValueError("plantilla no encontrada")
     tcfg = tpl.trigger_config if isinstance(getattr(tpl, "trigger_config", None), dict) else {}
     steps = list(tpl.steps or [])
+    graph = dict(tpl.graph) if getattr(tpl, "graph", None) else None
     missing: list[dict] = []
-    try:
-        from src.platform.workflows.capabilities import wire_template_installs
+    if graph is None:
+        # Plantillas legacy (solo steps): wiring de instalaciones como hoy.
+        try:
+            from src.platform.workflows.capabilities import wire_template_installs
 
-        steps, missing = await wire_template_installs(
-            organization_id, steps, workspace_id=workspace_id
-        )
-    except Exception as exc:  # noqa: BLE001 — la plantilla se crea igual
-        logger.warning("template install wiring failed", slug=slug, error=str(exc)[:200])
+            steps, missing = await wire_template_installs(
+                organization_id, steps, workspace_id=workspace_id
+            )
+        except Exception as exc:  # noqa: BLE001 — la plantilla se crea igual
+            logger.warning("template install wiring failed", slug=slug, error=str(exc)[:200])
     out = await create_workflow(
         organization_id,
         name or tpl.name,
@@ -1104,6 +1177,8 @@ async def create_from_template(
         steps,
         tpl.description,
         workspace_id=workspace_id,
+        graph=graph,
+        workflow_version=2 if graph is not None else None,
     )
     if missing:
         out["missing_integrations"] = missing
@@ -1479,12 +1554,23 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 async def workflow_v2_scheduler_loop() -> None:
-    """Cada 60s: ejecuta schedules v2 vencidos."""
+    """Cada 60s: schedules v2 vencidos + sweep durable (timeouts/expiración).
+
+    Único scheduler: los waits no tienen proceso propio; aquí se detectan los
+    vencidos y se generan señales internas."""
     while True:
         try:
             await run_due_scheduled_workflows()
         except Exception as exc:  # noqa: BLE001
             logger.warning("Workflow v2 scheduler iteration failed", error=str(exc)[:200])
+        try:
+            from src.platform.workflows.instances import sweep_waiting_instances
+
+            stats = await sweep_waiting_instances()
+            if stats.get("waits_timed_out") or stats.get("instances_expired"):
+                logger.info("workflow durable sweep", **stats)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Workflow durable sweep failed", error=str(exc)[:200])
         await asyncio.sleep(60)
 
 
@@ -1566,6 +1652,23 @@ async def list_approvals(organization_id: UUID, run_id: UUID | None = None) -> d
     }
 
 
+async def _run_instance_id(run_id: UUID) -> UUID | None:
+    """Instancia durable ligada al run (None en runs standalone)."""
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text("SELECT instance_id FROM workflow_runs WHERE id = :rid"),
+                {"rid": run_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if row is None or row.instance_id is None:
+        return None
+    return UUID(str(row.instance_id))
+
+
 async def decide_approval(
     organization_id: UUID,
     approval_id: UUID,
@@ -1617,7 +1720,47 @@ async def decide_approval(
             await session.commit()
         finally:
             await session.close()
+        instance_id = await _run_instance_id(run_id)
+        if instance_id is not None:
+            try:
+                from src.platform.workflows.instances import fail_waiting_instance
+
+                await fail_waiting_instance(
+                    organization_id, instance_id, reason="approval_rejected", error="aprobación rechazada"
+                )
+            except Exception as exc:  # noqa: BLE001 — la instancia queda WAITING y el sweep reconcilia
+                logger.warning("instance approval reject sync failed", error=str(exc)[:200])
         return {"approval_id": str(approval_id), "status": "rejected"}
+
+    # Approved → resume. Con WorkflowInstance la reanudación viaja por signal
+    # (misma máquina durable); sin instancia se mantiene el resume clásico.
+    instance_id = await _run_instance_id(run_id)
+    if instance_id is not None:
+        try:
+            from src.platform.workflows.instances import signal_workflow_instance
+
+            out = await signal_workflow_instance(
+                organization_id=organization_id,
+                event_type="approval.decided",
+                correlation={"run_id": str(run_id)},
+                payload={
+                    "decision": decision,
+                    "approval_id": str(approval_id),
+                    "decided_by": str(decided_by) if decided_by else None,
+                    "comment": comment,
+                },
+                idempotency_key=f"approval:{approval_id}",
+                source="approval",
+            )
+            return {
+                "approval_id": str(approval_id),
+                "status": "approved",
+                "resume": out.get("status"),
+                "instance_id": str(instance_id),
+                "run_id": str(run_id),
+            }
+        except Exception as exc:  # noqa: BLE001 — fallback al resume clásico
+            logger.warning("instance approval resume failed", error=str(exc)[:200])
 
     # Approved → resume del run (reutiliza pasos persistidos; nodos OK no se
     # re-ejecutan).
