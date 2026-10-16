@@ -95,6 +95,15 @@ Un solo sistema: `workflow_templates` gana `package JSONB` y `graph JSONB`;
 `graph` cuando existe (paquete) y cae al wiring legacy de instalaciones cuando
 no.
 
+## Readiness en el Studio
+
+- `GET /workflows/{id}/readiness` añade `node_issues` (peor severidad por
+  nodo) además de los checks: el canvas pinta badge verde/amarillo/rojo en el
+  nodo (`falta` / `revisar`, tooltip con el mensaje) y la barra superior
+  muestra `Readiness %` y CTA "Resolver en Marketplace".
+- El flujo durable de ejemplo `pedido_conversacional` (migración 157) se
+  instala desde plantillas con graph + package y corre como proceso vivo.
+
 ## Test portable
 
 `tests/test_workflow_durable_instances.py::test_portable_package_export_inspect_import`:

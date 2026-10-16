@@ -1339,3 +1339,37 @@ async def public_workflow_hook(workflow_id: str, request: Request):
     if result.get("error") == "inactive":
         raise HTTPException(409, "Workflow is not active")
     return result
+
+
+@public_router.post(
+    "/{workflow_id}/instances/signal",
+    summary="Señal externa para instancias durables (webhook)",
+)
+async def public_workflow_instance_signal(workflow_id: str, request: Request):
+    """Proveedores externos (pagos, canales) empujan eventos sin sesión: el
+    secret del workflow autentica el inbound; el inbox durable deduplica."""
+    from src.platform.workflows.instances import signal_instance_from_hook
+
+    secret = request.headers.get("x-zent-workflow-secret") or ""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        result = await signal_instance_from_hook(UUID(workflow_id), secret, body)
+    except ValueError:
+        raise HTTPException(404, "Workflow not found") from None
+    if result.get("error") == "not_found":
+        raise HTTPException(404, "Workflow or instance not found")
+    if result.get("error") == "unauthorized":
+        raise HTTPException(
+            401,
+            "Invalid workflow secret. Send header X-Zent-Workflow-Secret.",
+        )
+    if result.get("error") == "inactive":
+        raise HTTPException(409, "Workflow is not active")
+    if result.get("error") == "missing_event_type":
+        raise HTTPException(400, "event_type is required")
+    return result

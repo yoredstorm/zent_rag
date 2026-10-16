@@ -49,6 +49,8 @@ _ACTION_LABELS: dict[str, str] = {
     "api_call": "consultar un servicio",
     "business_result": "publicar un resultado",
     "human_approval": "pedir aprobación",
+    "wait": "esperar un evento",
+    "state": "actualizar el estado del proceso",
     "stop": "detenerse",
 }
 
@@ -462,6 +464,31 @@ def _action_node(
             "summary": action.message or action.subject or "",
             "expires_minutes": int(action.params.get("expires_minutes") or 1440),
         }
+    if action.kind == "wait":
+        # WAIT durable: el proceso se reanuda con un evento externo (mensaje,
+        # pago, webhook, timer...). Requiere que el flujo corra como instancia.
+        wait_config: dict = {"preset": str(action.params.get("preset") or "message")}
+        if action.params.get("event_type"):
+            wait_config["event_type"] = str(action.params["event_type"])
+        correlation = action.params.get("correlation")
+        if isinstance(correlation, dict) and correlation:
+            wait_config["correlation"] = correlation
+        if action.params.get("timeout_seconds"):
+            try:
+                wait_config["timeout_seconds"] = int(action.params["timeout_seconds"])
+            except (TypeError, ValueError):
+                pass
+        if action.params.get("on_timeout"):
+            wait_config["on_timeout"] = str(action.params["on_timeout"])
+        return "wait_event", wait_config
+    if action.kind == "state":
+        op = str(action.params.get("op") or "set")
+        if op not in ("get", "set", "merge", "append", "remove"):
+            op = "set"
+        state_config: dict = {"path": str(action.params.get("path") or "")}
+        if "value" in action.params:
+            state_config["value"] = action.params["value"]
+        return f"state_{op}", state_config
     if action.kind == "stop":
         return "stop", {
             "status": str(action.params.get("status") or "success"),
@@ -506,6 +533,18 @@ def plan_summary(plan: WorkflowPlan) -> PlanSummary:
             action_lines.append(f"usar la acción {action.action_id}")
         elif action.kind == "human_approval":
             action_lines.append("pedir aprobación humana")
+        elif action.kind == "wait":
+            preset = str(action.params.get("preset") or "message")
+            wait_text = {
+                "message": "esperar la respuesta del cliente",
+                "payment": "esperar la confirmación del pago",
+                "webhook": "esperar la señal externa",
+                "timer": "esperar el tiempo configurado",
+                "human": "esperar aprobación humana",
+            }.get(preset, "esperar la señal")
+            action_lines.append(wait_text)
+        elif action.kind == "state":
+            action_lines.append(f"actualizar el estado del proceso ({action.params.get('path') or 'estado'})")
         elif action.kind == "api_call":
             action_lines.append("consultar un servicio externo")
         elif action.kind == "stop":

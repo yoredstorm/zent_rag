@@ -169,6 +169,29 @@ def _step_config(
             },
             {"inputs": ["in"], "outputs": ["out"]},
         )
+    if step.type == "wait":
+        wait_config: dict = {"preset": str(params.get("preset") or "message")}
+        if params.get("event_type"):
+            wait_config["event_type"] = str(params["event_type"])
+        correlation = params.get("correlation")
+        if isinstance(correlation, dict) and correlation:
+            wait_config["correlation"] = correlation
+        if params.get("timeout_seconds"):
+            try:
+                wait_config["timeout_seconds"] = int(params["timeout_seconds"])
+            except (TypeError, ValueError):
+                pass
+        if params.get("on_timeout"):
+            wait_config["on_timeout"] = str(params["on_timeout"])
+        return ("wait_event", wait_config, {"inputs": ["in"], "outputs": ["out", "timeout"]})
+    if step.type == "state":
+        op = str(params.get("op") or "set")
+        if op not in ("get", "set", "merge", "append", "remove"):
+            op = "set"
+        state_config: dict = {"path": str(params.get("path") or "")[:200]}
+        if "value" in params:
+            state_config["value"] = params.get("value")
+        return (f"state_{op}", state_config, {"inputs": ["in"], "outputs": ["out"]})
     if step.type == "notify":
         return (
             "notify",

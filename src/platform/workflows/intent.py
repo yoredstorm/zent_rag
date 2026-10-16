@@ -421,6 +421,8 @@ class PlanAction(BaseModel):
         "api_call",
         "business_result",
         "human_approval",
+        "wait",
+        "state",
         "stop",
     ]
     description: str | None = Field(default=None, max_length=300)

@@ -91,6 +91,30 @@ export function WorkflowCanvasEditor({
   } | null>(null);
   const [emptyDismissed, setEmptyDismissed] = useState(false);
   const [showContext, setShowContext] = useState(false);
+  const [nodeIssues, setNodeIssues] = useState<Record<string, { status: string; message: string }> | undefined>(undefined);
+
+  // Readiness por nodo (workflow portability): badges verde/amarillo/rojo en el
+  // canvas. Se refresca cuando el estudio pinta un overlay nuevo.
+  useEffect(() => {
+    if (!session || !workflowId) {
+      setNodeIssues(undefined);
+      return;
+    }
+    let alive = true;
+    api<{ node_issues?: Record<string, { status: string; message: string }> }>(
+      `/api/v1/workflows/${workflowId}/readiness`,
+      { token: session.token, organizationId: session.organizationId }
+    )
+      .then((d) => {
+        if (alive) setNodeIssues(d.node_issues ?? {});
+      })
+      .catch(() => {
+        if (alive) setNodeIssues(undefined);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [session, workflowId, overlay]);
 
   useEffect(() => {
     if (!session) return;
@@ -516,6 +540,7 @@ export function WorkflowCanvasEditor({
             onSelectEdge={setSelectedEdge}
             overlay={overlay}
             rightInset={inspectorOpen ? 320 : 0}
+            nodeIssues={nodeIssues}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center rounded-lg border border-dashed border-border bg-soft/30 text-xs text-faint">

@@ -559,6 +559,7 @@ async def execute_graph(
             return
         if exec_.control == "wait_approval":
             run_status = "pending_approval"
+            wait_node_id = node_id
             return
         if exec_.control == "wait_event":
             # Suspensión durable: el segmento termina y la instancia queda

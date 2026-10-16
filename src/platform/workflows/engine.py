@@ -49,7 +49,20 @@ TRIGGER_TYPES = ("webhook", "schedule", "event")
 
 # Nodos cuyos steps cuentan como "acción" en el Execution Inspector.
 _ACTION_NODE_TYPES = frozenset(
-    {"notify", "api_call", "marketplace_action", "business_node", "business_result", "human_approval"}
+    {
+        "notify",
+        "api_call",
+        "marketplace_action",
+        "business_node",
+        "business_result",
+        "human_approval",
+        "capability_call",
+        "wait_event",
+        "state_set",
+        "state_merge",
+        "state_append",
+        "state_remove",
+    }
 )
 _ACTION_SUMMARY_KEYS = (
     "sent",
@@ -1233,6 +1246,7 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
                     "SELECT r.id, r.workflow_id, r.status, r.started_at, r.completed_at, "
                     "r.duration_ms, r.error, r.trigger_payload, r.simulate, r.correlation_id, "
                     "r.workspace_id, r.run_mode, r.target_node_id, r.source_run_id, "
+                    "r.instance_id, r.instance_seq, "
                     "w.name AS workflow_name, w.organization_id "
                     "FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id "
                     "WHERE r.id = :rid"
@@ -1316,6 +1330,8 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         "run_mode": getattr(run, "run_mode", "full"),
         "target_node_id": getattr(run, "target_node_id", None),
         "source_run_id": str(run.source_run_id) if getattr(run, "source_run_id", None) else None,
+        "instance_id": str(run.instance_id) if getattr(run, "instance_id", None) else None,
+        "instance_seq": getattr(run, "instance_seq", None),
         "workspace_id": str(run.workspace_id) if run.workspace_id else None,
         "steps": steps_payload,
         "context": run_context,

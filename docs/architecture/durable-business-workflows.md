@@ -153,6 +153,18 @@ Puntos de entrada: `POST /api/v1/rag/query` (`_maybe_dispatch`), agent runs
 - `GET /workflows/instances/{id}/timeline` — runs + signals + eventos
   (`wait_entered`, `segment_resumed`, `instance_completed`...).
 - `POST /workflows/instances/{id}/signal|cancel|suspend|resume`.
+- **Webhook público** `POST /api/v1/public/workflows/{id}/instances/signal`:
+  proveedores externos (pasarelas, canales) empujan señales sin sesión usando
+  el secret del workflow (`X-Zent-Workflow-Secret`, el mismo del hook de
+  arranque). Body: `{event_type, correlation, payload, external_event_id,
+  idempotency_key, instance_id?}`; sin `instance_id` despierta las instancias
+  WAITING de ese workflow compatibles.
+
+## Generador (Studio / copilot / architect)
+
+`wait` y `state` son kinds de acción del plan IA (y step types del arquitecto):
+compilan a `wait_event` y `state_*` en el graph. `conversation.message` y
+`payment.succeeded` son eventos estándar registrados (readiness → RESOLVED).
 
 ## Operación
 
@@ -161,11 +173,15 @@ Puntos de entrada: `POST /api/v1/rag/query` (`_maybe_dispatch`), agent runs
 - Cancelación es cooperativa: si el segmento está RUNNING, la instancia pasa a
   CANCELLED y el cierre del segmento no la revive.
 - SUSPENDED pausa la recepción de señales (no consume waits).
-- Deuda declarada: señales `pending` sin waiter quedan como auditoría (no hay
-  retención automática aún); el puerto histórico de waits con timeout-branch se
-  persiste en el step del segmento previo; una instancia RUNNING cuyo proceso
-  muere a mitad de segmento queda para reconciliación manual (cancel/suspend)
-  — un reaper automático necesita un watchdog de segmento honesto, fuera de v1.
+- El sweep del scheduler (60s) además:
+  - **reaper**: instancias RUNNING sin cierre tras 6h → FAILED
+    (`stale_segment`), por proceso muerto a mitad de segmento;
+  - **retención por lotes**: señales cerradas > 30 días e instancias
+    terminales > 180 días.
+- Métricas Prometheus: `workflow_instance_transitions_total{status}` y
+  `workflow_instance_signals_total{status}`.
+- Deuda declarada: la migración explícita de instancias vivas entre versiones
+  (política futura) y la granularidad de 60s del sweep.
 
 ## Tests
 

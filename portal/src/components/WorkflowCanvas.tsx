@@ -52,6 +52,8 @@ type Props = {
   className?: string;
   /** Ancho tapado a la derecha por el inspector: el nodo elegido se aparta. */
   rightInset?: number;
+  /** Readiness por nodo (workflow portability): verde/amarillo/rojo en el nodo. */
+  nodeIssues?: Record<string, { status: string; message: string }>;
 };
 
 type Drag = { x: number; y: number; sx: number; sy: number };
@@ -69,6 +71,7 @@ export function WorkflowCanvas({
   agents,
   className = "h-[560px]",
   rightInset = 0,
+  nodeIssues,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 60, y: 40, s: 1 });
@@ -419,6 +422,7 @@ export function WorkflowCanvas({
         {graph.nodes.map((n) => {
           const meta = nodeMeta(n.type);
           const run = overlay?.[n.id];
+          const issue = nodeIssues?.[n.id];
           const selected = selectedNodeId === n.id;
           const isHot = hotPort?.node === n.id;
           const agentName =
@@ -468,6 +472,15 @@ export function WorkflowCanvas({
                 {run && (
                   <span className={`badge shrink-0 ${run.status === "succeeded" ? "badge-ok" : run.status === "failed" || run.status === "denied" ? "badge-danger" : run.status === "skipped" ? "badge-muted" : "badge-pending"}`}>
                     {run.status}
+                  </span>
+                )}
+                {issue && (
+                  <span
+                    className={`badge shrink-0 ${issue.status === "error" ? "badge-danger" : "badge-pending"}`}
+                    data-testid="wf-node-issue"
+                    title={issue.message}
+                  >
+                    {issue.status === "error" ? "falta" : "revisar"}
                   </span>
                 )}
               </div>

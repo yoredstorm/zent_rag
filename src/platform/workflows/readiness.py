@@ -200,22 +200,37 @@ async def workflow_readiness(
                 "OPTIONAL_MISSING": "warning",
             }
             for item in blockers[:10]:
-                checks.append(
-                    _check(
-                        f"package:{item.get('kind')}:{item.get('ref')}",
-                        str(item.get("ref") or "requisito"),
-                        _status_map.get(str(item.get("status")), "warning"),
-                        f"{item.get('status')}: {item.get('message') or ''}".strip(),
-                        item.get("hint")
-                        or (
-                            "Resolver en el Marketplace"
-                            if item.get("resolution") == "marketplace"
-                            else None
-                        ),
-                    )
+                check = _check(
+                    f"package:{item.get('kind')}:{item.get('ref')}",
+                    str(item.get("ref") or "requisito"),
+                    _status_map.get(str(item.get("status")), "warning"),
+                    f"{item.get('status')}: {item.get('message') or ''}".strip(),
+                    item.get("hint")
+                    or (
+                        "Resolver en el Marketplace"
+                        if item.get("resolution") == "marketplace"
+                        else None
+                    ),
                 )
+                if item.get("node_id"):
+                    check["node_id"] = str(item["node_id"])
+                checks.append(check)
         except Exception:  # noqa: BLE001 — el checklist base nunca se rompe
             pass
+
+    # Estado por nodo (badges del canvas): peor severidad por nodo, sin secretos.
+    node_issues: dict[str, dict[str, Any]] = {}
+    _rank = {"warning": 1, "error": 2}
+    for check in checks:
+        node_id = check.get("node_id") if isinstance(check, dict) else None
+        if not node_id or check.get("status") == "ok":
+            continue
+        current = node_issues.get(str(node_id))
+        if current is None or _rank.get(check["status"], 0) > _rank.get(current["status"], 0):
+            node_issues[str(node_id)] = {
+                "status": check["status"],
+                "message": str(check.get("message") or "")[:240],
+            }
 
     errors = [c for c in checks if c["status"] == "error"]
     warnings = [c for c in checks if c["status"] == "warning"]
@@ -224,6 +239,7 @@ async def workflow_readiness(
         "status": workflow.get("status"),
         "ready": not errors,
         "checks": checks,
+        "node_issues": node_issues,
         "errors": len(errors),
         "warnings": len(warnings),
     }

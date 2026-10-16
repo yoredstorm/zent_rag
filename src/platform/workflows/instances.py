@@ -38,6 +38,54 @@ TERMINAL_STATUSES: tuple[str, ...] = ("COMPLETED", "FAILED", "CANCELLED", "EXPIR
 
 _TIMEOUT_EVENT = "workflow.wait.timeout"
 _APPROVAL_EVENT = "approval.decided"
+#: Reaper: una instancia RUNNING sin cierre tras este margen se marca FAILED
+#: (proceso muerto a mitad de segmento). Conservador: los nodos tienen timeout
+#: de hasta 300s; 6h cubre cadenas largas legítimas.
+_REAP_MINUTES = 360
+#: Retención (fail-soft, por lotes): señales cerradas e instancias terminales.
+_SIGNAL_RETENTION_DAYS = 30
+_INSTANCE_RETENTION_DAYS = 180
+
+_instance_metrics: dict[str, Any] = {}
+
+
+def _ensure_metrics() -> None:
+    try:
+        from prometheus_client import Counter
+
+        _instance_metrics["transitions"] = Counter(
+            "workflow_instance_transitions_total",
+            "Transiciones de WorkflowInstance",
+            ["status"],
+        )
+        _instance_metrics["signals"] = Counter(
+            "workflow_instance_signals_total",
+            "Señales procesadas para instancias durables",
+            ["status"],
+        )
+    except Exception:  # noqa: BLE001 — métricas best-effort
+        _instance_metrics.clear()
+
+
+_ensure_metrics()
+
+
+def _emit_instance_metric(status: str) -> None:
+    try:
+        counter = _instance_metrics.get("transitions")
+        if counter is not None:
+            counter.labels(status=str(status)[:30]).inc()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _emit_signal_metric(status: str) -> None:
+    try:
+        counter = _instance_metrics.get("signals")
+        if counter is not None:
+            counter.labels(status=str(status)[:30]).inc()
+    except Exception:  # noqa: BLE001
+        pass
 
 #: Presets de wait_event → event_type por defecto (el nodo puede sobreescribir).
 WAIT_PRESET_EVENTS: dict[str, str] = {
@@ -790,6 +838,7 @@ async def _enter_wait(
         )
     except Exception as exc:  # noqa: BLE001 — timeline best-effort
         logger.warning("wait event failed", error=str(exc)[:200])
+    _emit_instance_metric("WAITING")
     # Race webhook-antes-de-WAIT: señales ya recibidas se consumen al llegar al wait.
     if event_type != _APPROVAL_EVENT:
         try:
@@ -850,6 +899,7 @@ async def _finalize_instance(
         )
     except Exception as exc:  # noqa: BLE001 — timeline best-effort
         logger.warning("instance finalize event failed", error=str(exc)[:200])
+    _emit_instance_metric(new_status)
 
 
 # ---------------------------------------------------------------------------
@@ -865,6 +915,7 @@ async def signal_workflow_instance(
     idempotency_key: str | None = None,
     source: str = "internal",
     instance_id: UUID | None = None,
+    workflow_id: UUID | None = None,
 ) -> dict:
     """Registra un evento y reanuda las instancias WAITING compatibles.
 
@@ -902,6 +953,7 @@ async def signal_workflow_instance(
         await session.close()
     if inserted is None:
         existing = await _find_duplicate_signal(org, et, external_event_id, idempotency_key)
+        _emit_signal_metric("duplicate")
         return {
             "status": "duplicate",
             "signal_id": existing.get("id") if existing else None,
@@ -914,6 +966,12 @@ async def signal_workflow_instance(
     if instance_id is not None:
         inst = await get_instance(org, UUID(str(instance_id)))
         if inst is not None and inst["status"] == "WAITING":
+            if workflow_id is not None and str(inst.get("workflow_id")) != str(workflow_id):
+                return {
+                    "status": "workflow_mismatch",
+                    "signal_id": signal_id,
+                    "resumed": False,
+                }
             wait_ck = inst.get("waiting_correlation_key") or ""
             if et != _TIMEOUT_EVENT and ck != wait_ck:
                 # Correlación incorrecta: la instancia no se despierta.
@@ -927,23 +985,24 @@ async def signal_workflow_instance(
     else:
         session = await get_async_session()
         try:
-            rows = (
-                await session.execute(
-                    text(
-                        f"SELECT {_INSTANCE_COLUMNS} FROM workflow_instances "
-                        "WHERE organization_id = :oid AND status = 'WAITING' "
-                        "AND waiting_event_type = :et "
-                        "AND COALESCE(waiting_correlation_key, '') = :ck "
-                        "ORDER BY updated_at ASC LIMIT 10"
-                    ),
-                    {"oid": str(org), "et": et, "ck": ck},
-                )
-            ).fetchall()
+            sql = (
+                f"SELECT {_INSTANCE_COLUMNS} FROM workflow_instances "
+                "WHERE organization_id = :oid AND status = 'WAITING' "
+                "AND waiting_event_type = :et "
+                "AND COALESCE(waiting_correlation_key, '') = :ck "
+            )
+            params: dict[str, Any] = {"oid": str(org), "et": et, "ck": ck}
+            if workflow_id is not None:
+                sql += "AND workflow_id = :wid "
+                params["wid"] = str(workflow_id)
+            sql += "ORDER BY updated_at ASC LIMIT 10"
+            rows = (await session.execute(text(sql), params)).fetchall()
         finally:
             await session.close()
         instances = [_instance_row(r) for r in rows]
 
     if not instances:
+        _emit_signal_metric("queued")
         return {"status": "queued", "signal_id": signal_id, "resumed": False}
 
     resumed: list[dict[str, Any]] = []
@@ -953,6 +1012,7 @@ async def signal_workflow_instance(
         resumed.append({"instance_id": inst["id"], **out})
         if out.get("claimed"):
             break
+    _emit_signal_metric("resumed" if any(r.get("claimed") for r in resumed) else "duplicate")
     return {
         "status": "resumed" if any(r.get("claimed") for r in resumed) else "duplicate",
         "signal_id": signal_id,
@@ -991,6 +1051,65 @@ async def _find_duplicate_signal(
     finally:
         await session.close()
     return {"id": str(row.id), "status": str(row.status)} if row else None
+
+
+async def signal_instance_from_hook(workflow_id: UUID, secret: str, body: dict[str, Any]) -> dict:
+    """Inbound público: valida el secret del workflow (mismo canal que el hook
+    de arranque) y emite una señal para sus instancias durables.
+
+    Acepta: {event_type|event, correlation, payload, external_event_id,
+    idempotency_key, instance_id}. Sin `instance_id` despierta instancias
+    WAITING de ESTE workflow compatibles con event_type + correlation."""
+    import hmac as _hmac
+
+    from src.platform.workflows.engine import _hash_hook_secret
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, organization_id, workspace_id, status, trigger_config "
+                    "FROM workflows WHERE id = :wid"
+                ),
+                {"wid": str(workflow_id)},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if row is None:
+        return {"error": "not_found"}
+    if str(row.status) == "paused":
+        return {"status": "paused", "message": "workflow pausado"}
+    if str(row.status) != "active":
+        return {"error": "inactive"}
+    tcfg = row.trigger_config if isinstance(row.trigger_config, dict) else {}
+    expected = str(tcfg.get("hook_secret_hash") or "")
+    got = _hash_hook_secret(secret or "")
+    if not expected or not _hmac.compare_digest(expected, got):
+        return {"error": "unauthorized"}
+    event_type = str(body.get("event_type") or body.get("event") or "").strip()
+    if not event_type:
+        return {"error": "missing_event_type"}
+    correlation = body.get("correlation") if isinstance(body.get("correlation"), dict) else {}
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+    external_event_id = str(body.get("external_event_id") or "").strip() or None
+    idempotency_key = str(body.get("idempotency_key") or "").strip() or None
+    instance_id = _uid(body.get("instance_id"))
+    out = await signal_workflow_instance(
+        organization_id=UUID(str(row.organization_id)),
+        event_type=event_type,
+        correlation=correlation,
+        payload=payload,
+        external_event_id=external_event_id,
+        idempotency_key=idempotency_key,
+        source="webhook",
+        instance_id=instance_id,
+        workflow_id=UUID(str(row.id)),
+    )
+    if out.get("status") == "workflow_mismatch":
+        return {"error": "not_found"}
+    return out
 
 
 async def _mark_signal_consumed(org: UUID, signal_id: str, iid: UUID, run_id: UUID | None) -> None:
@@ -1061,6 +1180,7 @@ async def _claim_and_resume(
     claimed = await _claim_instance(org, iid)
     if claimed is None:
         return {"claimed": False, "reason": "already_claimed"}
+    _emit_instance_metric("RUNNING")
     if signal_row is not None:
         try:
             await _mark_signal_consumed(org, signal_row["id"], iid, None)
@@ -1507,9 +1627,16 @@ async def signal_instances_from_event(event_type: str, payload: dict[str, Any]) 
 # Sweep (lo llama el scheduler único: engine.workflow_v2_scheduler_loop)
 # ---------------------------------------------------------------------------
 async def sweep_waiting_instances(*, limit: int = 50) -> dict:
-    """Timeouts de waits y expiración global. Cero procesos en memoria."""
+    """Timeouts de waits, expiración global, reaper y retención. Cero
+    procesos en memoria; lo llama el scheduler único."""
     await ensure_instance_tables()
-    stats = {"waits_timed_out": 0, "instances_expired": 0}
+    stats = {
+        "waits_timed_out": 0,
+        "instances_expired": 0,
+        "instances_reaped": 0,
+        "signals_pruned": 0,
+        "instances_pruned": 0,
+    }
     session = await get_async_session()
     try:
         rows = (
@@ -1574,4 +1701,72 @@ async def sweep_waiting_instances(*, limit: int = 50) -> dict:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("expire event failed", error=str(exc)[:200])
+
+    # Reaper: instancias RUNNING sin cierre (proceso muerto a mitad de segmento).
+    session = await get_async_session()
+    try:
+        reaped = (
+            await session.execute(
+                text(
+                    "UPDATE workflow_instances SET status = 'FAILED', completed_at = NOW(), "
+                    "updated_at = NOW(), status_reason = 'stale_segment', "
+                    "error = 'segmento interrumpido (proceso no disponible)' "
+                    "WHERE id IN ("
+                    "  SELECT id FROM workflow_instances WHERE status = 'RUNNING' "
+                    "  AND updated_at < NOW() - make_interval(mins => :cutoff) LIMIT :lim"
+                    ") RETURNING id, organization_id, last_run_id"
+                ),
+                {"cutoff": int(_REAP_MINUTES), "lim": int(limit)},
+            )
+        ).fetchall()
+        await session.commit()
+    finally:
+        await session.close()
+    for r in reaped:
+        stats["instances_reaped"] += 1
+        try:
+            from src.platform.workflows.context_store import append_run_event
+
+            if r.last_run_id:
+                await append_run_event(
+                    UUID(str(r.organization_id)),
+                    UUID(str(r.last_run_id)),
+                    "instance_failed",
+                    payload={"reason": "stale_segment"},
+                    instance_id=UUID(str(r.id)),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reaper event failed", error=str(exc)[:200])
+
+    # Retención por lotes (fail-soft): señales cerradas e instancias terminales.
+    session = await get_async_session()
+    try:
+        pruned_signals = await session.execute(
+            text(
+                "DELETE FROM workflow_signals WHERE id IN ("
+                "  SELECT id FROM workflow_signals "
+                "  WHERE status IN ('consumed', 'discarded') "
+                "  AND received_at < NOW() - make_interval(days => :days) LIMIT :lim"
+                ")"
+            ),
+            {"days": int(_SIGNAL_RETENTION_DAYS), "lim": int(limit) * 10},
+        )
+        pruned_instances = await session.execute(
+            text(
+                "DELETE FROM workflow_instances WHERE id IN ("
+                "  SELECT id FROM workflow_instances "
+                "  WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED') "
+                "  AND completed_at IS NOT NULL "
+                "  AND completed_at < NOW() - make_interval(days => :days) LIMIT :lim"
+                ")"
+            ),
+            {"days": int(_INSTANCE_RETENTION_DAYS), "lim": int(limit) * 4},
+        )
+        await session.commit()
+        stats["signals_pruned"] = int(pruned_signals.rowcount or 0)
+        stats["instances_pruned"] = int(pruned_instances.rowcount or 0)
+    except Exception as exc:  # noqa: BLE001 — la retención nunca rompe el sweep
+        logger.warning("retention prune failed", error=str(exc)[:200])
+    finally:
+        await session.close()
     return stats

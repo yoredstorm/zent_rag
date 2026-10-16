@@ -25,6 +25,8 @@ PLAN_STEP_TYPES = (
     "join",
     "merge",
     "human_approval",
+    "wait",
+    "state",
     "notify",
     "integration_action",
     "business_result",

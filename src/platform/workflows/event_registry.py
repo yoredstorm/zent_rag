@@ -99,6 +99,49 @@ _EVENTS: list[EventSchema] = [
             _field("seller", "Vendedor", "text", "Luis Ramos"),
         ],
     ),
+    # --- Procesos durables ----------------------------------------------
+    EventSchema(
+        id="conversation.message",
+        business_name="Un cliente envió un mensaje",
+        description="Llegó un mensaje de una conversación (chat, widget o canal).",
+        category="ventas",
+        icon="chat",
+        source_kind="internal_event",
+        fields=[
+            _field("text", "Mensaje", "text", "quiero un kilo de arroz"),
+            _field("conversation_id", "Conversación", "text", "a4f2c1e0-0000-0000-0000-000000000000"),
+            _field("channel", "Canal", "text", "chat"),
+            _field("participant_id", "Participante", "text", "cliente-42"),
+        ],
+    ),
+    EventSchema(
+        id="payment.succeeded",
+        business_name="Se confirmó un pago",
+        description="La pasarela de pago confirmó el cobro.",
+        category="ventas",
+        icon="credit-card",
+        source_kind="internal_event",
+        fields=[
+            _field("amount", "Monto", "money", 120.0),
+            _field("currency", "Moneda", "text", "PEN"),
+            _field("payment_reference", "Referencia de pago", "text", "PAY-20261016-01"),
+            _field("order_id", "Pedido", "text", "PED-8123"),
+        ],
+    ),
+    EventSchema(
+        id="payment.failed",
+        business_name="Falló un pago",
+        description="La pasarela de pago rechazó el cobro.",
+        category="ventas",
+        icon="credit-card",
+        source_kind="internal_event",
+        fields=[
+            _field("amount", "Monto", "money", 120.0),
+            _field("currency", "Moneda", "text", "PEN"),
+            _field("payment_reference", "Referencia de pago", "text", "PAY-20261016-01"),
+            _field("reason", "Motivo", "text", "fondos insuficientes"),
+        ],
+    ),
     # --- Inventario ---------------------------------------------------------
     EventSchema(
         id="inventory.stock.changed",

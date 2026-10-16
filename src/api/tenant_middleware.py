@@ -130,8 +130,11 @@ def _is_public(path: str, method: str) -> bool:
         return True
     if method == "POST" and path.startswith("/api/v1/payments/webhook"):
         return True
-    if method == "POST" and path.startswith("/api/v1/public/workflows/") and path.endswith("/hook"):
-        return True
+    if method == "POST" and path.startswith("/api/v1/public/workflows/"):
+        # Inbound de workflows: el secret del workflow es la autorización
+        # (arranque por hook y señales para instancias durables).
+        if path.endswith("/hook") or path.endswith("/instances/signal"):
+            return True
     if path.startswith("/api/v1/embed/"):
         return True
     if path == "/embed.js" or path.startswith("/embed/"):

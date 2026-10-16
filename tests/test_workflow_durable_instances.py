@@ -724,3 +724,249 @@ async def test_standing_run_contract_unchanged_without_instance(async_client: As
     body = resp.json()
     assert "instance_id" not in body
     assert "result" in body and "status" in body
+
+
+# ---------------------------------------------------------------------------
+# Ingress público de señales (webhook) + aprobación durable + retry + reaper
+# ---------------------------------------------------------------------------
+async def _rotated_secret(async_client: AsyncClient, org: dict, workflow_id: str) -> str:
+    resp = await async_client.post(
+        f"/api/v1/workflows/{workflow_id}/hook-secret/rotate",
+        headers={**_headers(org), "Idempotency-Key": f"sec-{uuid4().hex}"},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["hook_secret"]
+
+
+async def _publish(async_client: AsyncClient, org: dict, workflow_id: str) -> None:
+    resp = await async_client.post(
+        f"/api/v1/workflows/{workflow_id}/publish",
+        headers={**_headers(org), "Idempotency-Key": f"pub-{uuid4().hex}"},
+        json={},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_public_signal_hook_authenticates_and_resumes(async_client: AsyncClient) -> None:
+    """Proveedores externos empujan señales sin sesión: secret del workflow."""
+    org = await _org(async_client, "Durable Webhook")
+    workflow_id = await _workflow(async_client, org, "Pedido", _durable_graph())
+    secret = await _rotated_secret(async_client, org, workflow_id)
+    await _publish(async_client, org, workflow_id)
+    started = await _start_instance(async_client, org, workflow_id)
+
+    # Secret inválido → 401 y la instancia intacta.
+    bad = await async_client.post(
+        f"/api/v1/public/workflows/{workflow_id}/instances/signal",
+        headers={"X-Zent-Workflow-Secret": "nope"},
+        json={"event_type": "conversation.message", "correlation": {}},
+    )
+    assert bad.status_code == 401
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "WAITING"
+
+    # Secret válido, sin instance_id: matchea por workflow+evento.
+    ok = await async_client.post(
+        f"/api/v1/public/workflows/{workflow_id}/instances/signal",
+        headers={"X-Zent-Workflow-Secret": secret},
+        json={
+            "event_type": "conversation.message",
+            "correlation": {},
+            "payload": {"text": "ya listo"},
+            "external_event_id": "wa-msg-1",
+        },
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["status"] == "resumed"
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "COMPLETED"
+
+    # Duplicado del mismo external_event_id → dedupe real.
+    dup = await async_client.post(
+        f"/api/v1/public/workflows/{workflow_id}/instances/signal",
+        headers={"X-Zent-Workflow-Secret": secret},
+        json={
+            "event_type": "conversation.message",
+            "correlation": {},
+            "payload": {"text": "ya listo"},
+            "external_event_id": "wa-msg-1",
+        },
+    )
+    assert dup.json()["status"] == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_human_approval_inside_instance_resumes_by_signal(async_client: AsyncClient) -> None:
+    org = await _org(async_client, "Durable Approval")
+    graph = _graph(
+        nodes=[
+            _node("t", "trigger_webhook"),
+            _node("h1", "human_approval", {"action": "Aprobar pedido", "summary": "Pago verificado"}),
+            _node("s1", "state_set", {"path": "order.approved", "value": True}),
+            _node("end", "end"),
+        ],
+        edges=[_edge("e1", "t", "h1"), _edge("e2", "h1", "s1"), _edge("e3", "s1", "end")],
+        entrypoints=["t"],
+    )
+    workflow_id = await _workflow(async_client, org, "Aprobación", graph)
+    started = await _start_instance(async_client, org, workflow_id)
+    assert started["run"]["status"] == "pending_approval"
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "WAITING"
+    assert inst["waiting_event_type"] == "approval.decided"
+
+    run_id = started["run"]["run_id"]
+    approvals = await async_client.get(
+        f"/api/v1/workflows/runs/{run_id}/approvals", headers=_headers(org)
+    )
+    assert approvals.status_code == 200, approvals.text
+    approval_id = approvals.json()["approvals"][0]["id"]
+
+    decided = await async_client.post(
+        f"/api/v1/workflows/runs/{run_id}/approvals/{approval_id}/decide",
+        headers={**_headers(org), "Idempotency-Key": f"d-{uuid4().hex}"},
+        json={"decision": "approved"},
+    )
+    assert decided.status_code == 200, decided.text
+    body = decided.json()
+    assert body["instance_id"] == started["instance_id"]
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "COMPLETED"
+    assert inst["state"]["order"]["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_instance_segment_retries_within_run(async_client: AsyncClient) -> None:
+    """Retries por nodo siguen funcionando dentro de un segmento durable."""
+    org = await _org(async_client, "Durable Retry")
+    graph = _graph(
+        nodes=[
+            _node("t", "trigger_webhook"),
+            _node(
+                "n1",
+                "llm",
+                {"prompt": "x", "fail_once": True},
+                retry_policy={"max_attempts": 2},
+            ),
+            _wait_node("w1", {"preset": "message"}),
+            _node("end", "end"),
+        ],
+        edges=[_edge("e1", "t", "n1"), _edge("e2", "n1", "w1"), _edge("e3", "w1", "end")],
+        entrypoints=["t"],
+    )
+    workflow_id = await _workflow(async_client, org, "Retry", graph)
+    started = await _start_instance(async_client, org, workflow_id)
+    assert started["status"] == "running"
+    run_id = started["run"]["run_id"]
+    detail = await async_client.get(
+        f"/api/v1/workflows/runs/{run_id}", headers=_headers(org)
+    )
+    step = next(s for s in detail.json()["steps"] if s["node_id"] == "n1")
+    assert step["status"] == "succeeded"
+    assert int(step["retries"]) >= 1
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "WAITING"
+
+
+@pytest.mark.asyncio
+async def test_reaper_fails_stale_running_instance(async_client: AsyncClient) -> None:
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.workflows.instances import sweep_waiting_instances
+
+    org = await _org(async_client, "Durable Reaper")
+    workflow_id = await _workflow(async_client, org, "Pedido", _durable_graph())
+    started = await _start_instance(async_client, org, workflow_id)
+    session = await get_async_session()
+    try:
+        await session.execute(
+            _text(
+                "UPDATE workflow_instances SET status = 'RUNNING', "
+                "updated_at = NOW() - INTERVAL '7 hours' WHERE id = :iid"
+            ),
+            {"iid": started["instance_id"]},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    stats = await sweep_waiting_instances()
+    assert stats["instances_reaped"] >= 1
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "FAILED"
+    assert inst["status_reason"] == "stale_segment"
+
+
+# ---------------------------------------------------------------------------
+# Generador (plan compiler): wait/state compilan a nodos durables
+# ---------------------------------------------------------------------------
+def test_plan_compiler_supports_wait_and_state_actions() -> None:
+    from src.platform.workflows.intent import PlanAction, PlanTrigger, TriggerKind, WorkflowPlan
+    from src.platform.workflows.ir import validate_graph
+    from src.platform.workflows.plan_compiler import compile_plan
+
+    plan = WorkflowPlan(
+        name="Pedido conversacional",
+        description="Toma el pedido por chat, guarda el carrito y espera el pago.",
+        trigger=PlanTrigger(kind=TriggerKind.manual),
+        actions=[
+            PlanAction(kind="state", params={"op": "set", "path": "cart", "value": {"items": []}}),
+            PlanAction(
+                kind="wait",
+                params={"preset": "payment", "timeout_seconds": 3600, "on_timeout": "expire"},
+            ),
+        ],
+        confidence=0.8,
+    )
+    compiled = compile_plan(plan)
+    assert compiled.valid, [i.message for i in compiled.errors]
+    types = {n.type for n in compiled.graph.nodes}
+    assert "state_set" in types
+    assert "wait_event" in types
+    validate_graph(compiled.graph)
+
+
+@pytest.mark.asyncio
+async def test_durable_template_installs_and_waits(async_client: AsyncClient) -> None:
+    """El template durable de ejemplo corre como proceso vivo end-to-end."""
+    org = await _org(async_client, "Durable Template")
+    installed = await async_client.post(
+        "/api/v1/workflows/templates/pedido_conversacional/install",
+        headers={**_headers(org), "Idempotency-Key": f"t-{uuid4().hex}"},
+        json={},
+    )
+    assert installed.status_code == 200, installed.text
+    workflow_id = installed.json()["workflow_id"]
+
+    detail = await async_client.get(
+        f"/api/v1/workflows/{workflow_id}", headers=_headers(org)
+    )
+    graph_types = {n.get("type") for n in (detail.json().get("graph") or {}).get("nodes") or []}
+    assert "wait_event" in graph_types
+    assert "state_append" in graph_types
+
+    conversation_id = str(uuid4())
+    started = await _start_instance(
+        async_client,
+        org,
+        workflow_id,
+        payload={"text": "quiero un kilo de arroz"},
+        conversation_id=conversation_id,
+    )
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "WAITING"
+    assert inst["waiting_event_type"] == "conversation.message"
+
+    signal = await _signal(
+        async_client,
+        org,
+        started["instance_id"],
+        event_type="conversation.message",
+        correlation={"conversation_id": conversation_id},
+        payload={"text": "nada más"},
+    )
+    assert signal["status"] == "resumed"
+    inst = await _instance(async_client, org, started["instance_id"])
+    assert inst["status"] == "COMPLETED"
+    assert inst["state"]["order"]["confirmed"] is True

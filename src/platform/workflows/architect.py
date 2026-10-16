@@ -66,7 +66,7 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   "steps": [{
     "id": "t1", "type": "trigger_event"|"trigger_schedule"|"trigger_manual"|"business_query"|
             "knowledge_query"|"agent_analysis"|"decision"|"filter"|"for_each"|"join"|"merge"|
-            "human_approval"|"notify"|"integration_action"|"business_result"|"stop",
+            "human_approval"|"wait"|"state"|"notify"|"integration_action"|"business_result"|"stop",
     "goal": str, "depends_on": [str], "when": {"step": str, "outcome": true}|null,
     "inputs": [{"step": str, "field": str, "label": str|null}],
     "params": {}, "reason_summary": str, "optional": false
@@ -78,6 +78,9 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
 - Usa un agente SOLO cuando haga falta criterio; si una regla simple alcanza, no lo pongas.
 - knowledge_query: params.operation ∈ search|answer|find_evidence|extract_facts|compare|check_conflicts|investigate.
 - decision: referencia al paso que decide en "inputs" (p. ej. agente → field "risk" o "requires_review").
+- wait: proceso durable que espera un evento externo (params.preset ∈ message|payment|webhook|timer|human|signal;
+  params.timeout_seconds; params.on_timeout ∈ branch|expire|fail|continue). El flujo corre como proceso vivo.
+- state: estado durable del proceso (params.op ∈ get|set|merge|append|remove, params.path, params.value).
 - notify/integration_action solo con canales/acciones disponibles en el contexto.
 """
 

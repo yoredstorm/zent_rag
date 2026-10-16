@@ -139,11 +139,11 @@ def build_package(workflow_row: Any, graph: dict[str, Any]) -> dict[str, Any]:
     reqs = _extract_requirements(graph)
     dependencies = [
         *[
-            {"kind": "capability", "ref": c["ref"], "requirement": c["requirement"]}
+            {"kind": "capability", "ref": c["ref"], "requirement": c["requirement"], "node_id": c.get("node_id")}
             for c in reqs["capabilities"]
         ],
         *[
-            {"kind": "action", "ref": a["ref"], "requirement": a["requirement"]}
+            {"kind": "action", "ref": a["ref"], "requirement": a["requirement"], "node_id": a.get("node_id")}
             for a in reqs["actions"]
         ],
     ]
@@ -168,9 +168,13 @@ def build_package(workflow_row: Any, graph: dict[str, Any]) -> dict[str, Any]:
         },
         "dependencies": dependencies,
         "capabilities": [
-            {"ref": c["ref"], "requirement": c["requirement"]} for c in reqs["capabilities"]
+            {"ref": c["ref"], "requirement": c["requirement"], "node_id": c.get("node_id")}
+            for c in reqs["capabilities"]
         ],
-        "events": [{"ref": e["ref"], "requirement": e["requirement"]} for e in reqs["events"]],
+        "events": [
+            {"ref": e["ref"], "requirement": e["requirement"], "node_id": e.get("node_id")}
+            for e in reqs["events"]
+        ],
         "parameters": dict((graph.get("variables") or {})),
         "permissions": _node_permissions(graph),
         "tests": list((graph.get("metadata") or {}).get("tests") or []),
@@ -229,6 +233,7 @@ def _item(
     message: str = "",
     hint: str | None = None,
     resolution: str | None = None,
+    node_id: str | None = None,
 ) -> dict[str, Any]:
     return {
         "ref": ref,
@@ -238,6 +243,7 @@ def _item(
         "message": message,
         "hint": hint,
         "resolution": resolution,
+        "node_id": node_id,
     }
 
 
@@ -324,18 +330,38 @@ async def inspect_package(
             continue
         ref = str(cap.get("ref") or "")
         requirement = str(cap.get("requirement") or "required")
+        node_id = str(cap.get("node_id") or "") or None
         if not ref:
             continue
         binding = await resolve_binding(organization_id, ref, workspace_id)
         if binding is not None:
-            add(_item(ref, "capability", "RESOLVED", requirement, "binding configurado"))
+            add(_item(ref, "capability", "RESOLVED", requirement, "binding configurado", node_id=node_id))
             continue
         resolved = await resolve_capability(organization_id, ref, workspace_id=workspace_id)
         if not resolved.get("resolved"):
             status = "OPTIONAL_MISSING" if requirement == "optional" else "MISSING"
-            add(_item(ref, "capability", status, requirement, "sin provider publicado", resolution="marketplace"))
+            add(
+                _item(
+                    ref,
+                    "capability",
+                    status,
+                    requirement,
+                    "sin provider publicado",
+                    resolution="marketplace",
+                    node_id=node_id,
+                )
+            )
         elif resolved.get("installed"):
-            add(_item(ref, "capability", "RESOLVED", requirement, f"provider {resolved.get('integration_slug')}"))
+            add(
+                _item(
+                    ref,
+                    "capability",
+                    "RESOLVED",
+                    requirement,
+                    f"provider {resolved.get('integration_slug')}",
+                    node_id=node_id,
+                )
+            )
         else:
             add(
                 _item(
@@ -345,6 +371,7 @@ async def inspect_package(
                     requirement,
                     f"provider {resolved.get('provider_name')} disponible, falta instalar/conectar",
                     resolution="marketplace",
+                    node_id=node_id,
                 )
             )
 
@@ -356,6 +383,7 @@ async def inspect_package(
                 continue
             action_id = str(dep.get("ref") or "")
             requirement = str(dep.get("requirement") or "required")
+            node_id = str(dep.get("node_id") or "") or None
             if not action_id:
                 continue
             configured = (
@@ -372,7 +400,7 @@ async def inspect_package(
                 )
             ).fetchone()
             if configured:
-                add(_item(action_id, "action", "RESOLVED", requirement, "acción disponible"))
+                add(_item(action_id, "action", "RESOLVED", requirement, "acción disponible", node_id=node_id))
                 continue
             exists = (
                 await session.execute(
@@ -396,6 +424,7 @@ async def inspect_package(
                     requirement,
                     "instalar o habilitar la acción",
                     resolution="marketplace",
+                    node_id=node_id,
                 )
             )
     finally:
@@ -407,10 +436,11 @@ async def inspect_package(
             continue
         event_type = str(event.get("ref") or "")
         requirement = str(event.get("requirement") or "required")
+        node_id = str(event.get("node_id") or "") or None
         if not event_type:
             continue
         if is_registered(event_type):
-            add(_item(event_type, "event", "RESOLVED", requirement, "evento registrado"))
+            add(_item(event_type, "event", "RESOLVED", requirement, "evento registrado", node_id=node_id))
         elif event_type.startswith(("custom.", "webhook.", "signal.")):
             add(
                 _item(
@@ -419,10 +449,11 @@ async def inspect_package(
                     "NEEDS_CONFIGURATION",
                     requirement,
                     "evento custom: configura su emisor (webhook o API de señales)",
+                    node_id=node_id,
                 )
             )
         else:
-            add(_item(event_type, "event", "OPTIONAL_MISSING", requirement, "evento desconocido"))
+            add(_item(event_type, "event", "OPTIONAL_MISSING", requirement, "evento desconocido", node_id=node_id))
 
     # 7) permisos
     if permissions is not None:

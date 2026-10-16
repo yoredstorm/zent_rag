@@ -4,6 +4,7 @@ import { fmtLatency } from "../lib/format";
 import { Button, Drawer, ErrorInline, IconButton, StatusBadge } from "./ui";
 import { WorkflowApprovalPanel } from "./WorkflowApprovalPanel";
 import { DataView } from "./workflowStudio/DataView";
+import { InstanceTimeline } from "./workflowStudio/InstanceTimeline";
 
 export type RunStep = {
   step_index: number;
@@ -57,6 +58,9 @@ export type RunDetail = {
   error?: string | null;
   duration_ms?: number | null;
   correlation_id?: string | null;
+  /** Segmento de una WorkflowInstance durable (workflows de negocio). */
+  instance_id?: string | null;
+  instance_seq?: number | null;
   steps?: RunStep[];
   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
   result?: { notifications?: unknown[]; errors?: unknown[]; cost_ms?: number };
@@ -314,6 +318,8 @@ export function WorkflowRunInspector({
       )}
 
       <ErrorInline message={run.error} className="mb-0" />
+
+      {run.instance_id && <InstanceTimeline instanceId={run.instance_id} />}
 
       {run.status === "pending_approval" && <WorkflowApprovalPanel runId={run.id} />}
 

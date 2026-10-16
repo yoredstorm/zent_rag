@@ -56,7 +56,7 @@ Convierte la petición del usuario en un WorkflowIntent JSON. Reglas estrictas:
                     "event"|"agent"|"unknown",
                     "label": str|null, "ref": str|null}],
   "actions": [{"kind": "notify"|"agent_analysis"|"marketplace_action"|"api_call"|
-               "business_result"|"human_approval"|"stop",
+               "business_result"|"human_approval"|"wait"|"state"|"stop",
                "description": str|null,
                "channel": "zent"|"email"|"slack"|"teams"|"whatsapp"|"webhook"|null,
                "recipients": [{"kind": "person"|"team"|"email"|"channel"|"webhook",
