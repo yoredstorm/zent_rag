@@ -97,6 +97,7 @@ async def _install_template_pack(
         await _wire_pack_installs(workflow_id, install_ids)
 
     # 4. Registrar el pack como instalación (contexto del pack).
+    pack_install_id: str | None = None
     session = await get_async_session()
     try:
         m = (
@@ -106,20 +107,22 @@ async def _install_template_pack(
             )
         ).fetchone()
         if m is not None:
-            await session.execute(
+            inserted = await session.execute(
                 text(
                     "INSERT INTO installed_integrations "
                     "(id, organization_id, workspace_id, integration_id, version, created_by, "
                     "enabled_actions, auto_use_policy) "
-                    "VALUES (gen_random_uuid(), :oid, :ws, :iid, 1, :by, '[]', '{}')"
+                    "VALUES (gen_random_uuid(), :oid, :ws, :iid, 1, :by, '[]', '{}') "
+                    "RETURNING id"
                 ),
                 {"oid": organization_id, "ws": workspace_id, "iid": m.id, "by": created_by},
             )
+            pack_install_id = str(inserted.scalar())
         await session.commit()
     finally:
         await session.close()
     return {
-        "install_id": str(uuid4()),
+        "install_id": pack_install_id or str(uuid4()),
         "pack": True,
         "workflow_id": workflow_id,
         "integration_slug": source_slug,

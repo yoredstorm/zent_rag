@@ -128,7 +128,7 @@ async def load_capabilities(organization_id: UUID, workspace_id: UUID | None = N
                         "FROM integration_actions a "
                         "JOIN integration_manifests m ON m.id = a.integration_id "
                         "JOIN installed_integrations i ON i.integration_id = m.id "
-                        "WHERE i.organization_id = :oid AND i.status IN ('active', 'installed') "
+                        "WHERE i.organization_id = :oid AND i.status IN ('active', 'installed', 'connected') "
                         "AND (i.workspace_id IS NOT DISTINCT FROM :ws) "
                         "ORDER BY a.action_id LIMIT 500"
                     ),

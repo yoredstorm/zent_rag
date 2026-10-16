@@ -28,9 +28,14 @@ import {
   cn,
 } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
+import {
+  CATEGORY_LABEL,
+  priceLabel,
+  readinessMeta,
+  type MarketplaceProduct,
+  type ProductInstall,
+} from "../components/marketplace/model";
 
-type MarketAgent = { id: string; name: string; slug: string; description: string; category: string; tags: string[]; rating: number; installs: number; featured: boolean };
-type Install = { id: string; agent_id: string | null; agent_name: string; slug: string; category: string; usage_count: number; installed_at: string };
 type Msg = { id: string; role: string; content: string; intent: string | null; created_at: string };
 type Sugg = { intent: string; repeats: number; last_seen: string; suggested_name: string; sample_questions: string[]; suggestion: string };
 
@@ -44,8 +49,8 @@ const STARTERS = [
 
 export default function CopilotPage() {
   const { session } = useAuth();
-  const [market, setMarket] = useState<MarketAgent[]>([]);
-  const [installs, setInstalls] = useState<Install[]>([]);
+  const [market, setMarket] = useState<MarketplaceProduct[]>([]);
+  const [installs, setInstalls] = useState<ProductInstall[]>([]);
   const [sugg, setSugg] = useState<Sugg[]>([]);
   const [sessions, setSessions] = useState<{ id: string; title: string; last_activity_at: string; messages: number }[]>([]);
   const [activeSession, setActiveSession] = useState<string | null>(null);
@@ -63,12 +68,12 @@ export default function CopilotPage() {
     setLoadError("");
     try {
       const [m, i, s, ss] = await Promise.all([
-        api<{ agents: MarketAgent[] }>("/api/v1/copilot/marketplace", { token: session.token, organizationId: session.organizationId }),
-        api<{ installs: Install[] }>("/api/v1/copilot/marketplace/installs", { token: session.token, organizationId: session.organizationId }),
+        api<{ products: MarketplaceProduct[] }>("/api/v1/products?applies_to=AGENTS", { token: session.token, organizationId: session.organizationId }),
+        api<{ installs: ProductInstall[] }>("/api/v1/products/installs", { token: session.token, organizationId: session.organizationId }),
         api<{ suggestions: Sugg[] }>("/api/v1/copilot/automations/suggest", { token: session.token, organizationId: session.organizationId }),
         api<{ sessions: { id: string; title: string; last_activity_at: string; messages: number }[] }>("/api/v1/copilot/sessions", { token: session.token, organizationId: session.organizationId }),
       ]);
-      setMarket(m.agents || []);
+      setMarket(m.products || []);
       setInstalls(i.installs || []);
       setSugg(s.suggestions || []);
       setSessions(ss.sessions || []);
@@ -88,19 +93,19 @@ export default function CopilotPage() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs]);
 
-  async function install(slug: string) {
+  async function install(productId: string) {
     if (!session) return;
-    setBusy(`i-${slug}`);
+    setBusy(`i-${productId}`);
     setError("");
     setMsg("");
     try {
-      const out = await api<{ installed: boolean; agent_id: string }>("/api/v1/copilot/marketplace/install", {
+      await api(`/api/v1/products/${productId}/install`, {
         method: "POST",
         token: session.token,
         organizationId: session.organizationId,
-        body: JSON.stringify({ slug }),
+        body: JSON.stringify({ answers: {} }),
       });
-      setMsg(out.installed ? `Agente instalado (${out.agent_id.slice(0, 8)}…).` : "El agente ya estaba instalado.");
+      setMsg("Producto instalado desde el Marketplace global.");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -115,8 +120,12 @@ export default function CopilotPage() {
     setError("");
     setMsg("");
     try {
-      await api(`/api/v1/copilot/marketplace/${installId}/remove`, { method: "POST", token: session.token, organizationId: session.organizationId });
-      setMsg("Agente desinstalado.");
+      await api(`/api/v1/products/installs/${installId}?cascade=false`, {
+        method: "DELETE",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setMsg("Producto desinstalado.");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -350,44 +359,44 @@ export default function CopilotPage() {
           </section>
 
           <section className="flex flex-col gap-4">
-            {/* Marketplace de agentes */}
+            {/* Marketplace global (vista contextual de AGENTS) */}
             <Panel>
               <PanelHeader
-                title="Marketplace"
-                description="Agentes pre-entrenados listos para tu workspace."
+                title="Agregar desde Marketplace"
+                description="Productos del catálogo global que aportan funcionalidad a Agents."
               />
               {market.length === 0 ? (
                 <EmptyState
                   compact
                   icon={Robot}
-                  title="Sin agentes disponibles"
-                  body="Cuando el catálogo tenga agentes publicados van a aparecer acá."
+                  title="Sin productos para Agents"
+                  body="Cuando el catálogo publique productos que apliquen a Agents, van a aparecer acá."
                 />
               ) : (
                 <ul className="divide-y divide-border-soft">
                   {market.map((m) => {
-                    const installed = installs.some((i) => i.slug === m.slug);
+                    const installedProduct = installs.find((i) => i.product_id === m.id);
                     return (
                       <li key={m.id} className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-[13px] font-medium text-text">{m.name}</p>
-                          {m.featured && <Badge tone="warn">destacado</Badge>}
-                          <Badge>{m.category}</Badge>
+                          <Badge>{CATEGORY_LABEL[m.category] ?? m.category}</Badge>
+                          <span className="text-xs text-faint">{priceLabel(m.pricing)}</span>
                         </div>
-                        <p className="mt-1 text-xs leading-relaxed text-muted">{m.description}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-muted">{m.short_description}</p>
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs text-faint tabular-nums">
-                            ★ {m.rating} · {fmtNum(m.installs)} instalaciones
+                          <span className="text-xs text-faint">
+                            {installedProduct ? readinessMeta(installedProduct.readiness).label : "Disponible"}
                           </span>
-                          {installed ? (
+                          {installedProduct ? (
                             <Badge tone="ok">Instalado</Badge>
                           ) : (
                             <Button
                               size="sm"
                               variant="secondary"
                               leadingIcon={DownloadSimple}
-                              loading={busy === `i-${m.slug}`}
-                              onClick={() => void install(m.slug)}
+                              loading={busy === `i-${m.id}`}
+                              onClick={() => void install(m.id)}
                             >
                               Instalar
                             </Button>
@@ -400,27 +409,28 @@ export default function CopilotPage() {
               )}
             </Panel>
 
-            {/* Instalados: uso real y baja */}
+            {/* Instalados: estado real (misma instalación del marketplace) */}
             <Panel>
               <PanelHeader
-                title={`Tus agentes (${installs.length})`}
-                description="Instalados en este workspace y cuántas veces se usaron."
+                title={`Instalados (${installs.length})`}
+                description="Productos instalados en este workspace, con su estado real."
               />
               {installs.length === 0 ? (
                 <EmptyState
                   compact
                   icon={Robot}
-                  title="Sin agentes instalados"
-                  body="Instala un agente del marketplace para empezar a usarlo."
+                  title="Sin productos instalados"
+                  body="Instala un producto del Marketplace para empezar a usarlo."
                 />
               ) : (
                 <ul className="divide-y divide-border-soft">
                   {installs.map((i) => (
                     <li key={i.id} className="flex items-center justify-between gap-3 px-4 py-3">
                       <div className="min-w-0">
-                        <p className="truncate text-[13px] font-medium text-text">{i.agent_name}</p>
+                        <p className="truncate text-[13px] font-medium text-text">{i.product.name}</p>
                         <p className="mt-0.5 text-xs text-faint">
-                          {i.category} · {fmtNum(i.usage_count)} usos · {timeAgo(i.installed_at)}
+                          v{i.product_version} · {readinessMeta(i.readiness).label} ·{" "}
+                          {fmtNum(i.health.workflows ?? 0)} workflows · {timeAgo(i.created_at)}
                         </p>
                       </div>
                       <Button

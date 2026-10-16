@@ -1,6 +1,7 @@
 import { MagnifyingGlass, Plus, Sparkle, WarningCircle } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { CATEGORY_META, NODE_LIBRARY, PURPOSE_GROUPS, type NodeCategory, type NodeMeta } from "../lib/workflowGraph";
+import { priceLabel } from "./marketplace/model";
 
 export type MxInstall = {
   install_id: string;
@@ -18,6 +19,15 @@ export type MxAvailable = {
   requires_credentials: boolean;
   requires_purpose?: boolean;
   actions: MxInstall["actions"];
+  /** Producto del catálogo global (si el asset está sincronizado). */
+  legacy?: boolean;
+  product?: {
+    product_id: string;
+    product_slug: string;
+    product_name: string;
+    business_category: string;
+    pricing: { model?: string; amount?: number; currency?: string; interval?: string; unit?: string };
+  } | null;
 };
 
 export type MxRecommendation = {
@@ -209,7 +219,7 @@ function MarketplaceSection({
 
   return (
     <div data-testid="wf-mkt-section" className="space-y-2">
-      <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-fuchsia-400">Marketplace</p>
+      <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-fuchsia-400">Agregar desde Marketplace</p>
 
       {recommendations.length > 0 && (
         <div className="space-y-1" data-testid="wf-mkt-recommend">
@@ -273,6 +283,11 @@ function MarketplaceSection({
             <div key={a.slug} className="rounded-md border border-border bg-soft/60 px-2 py-1.5">
               <p className="text-[10px] font-medium text-text">{a.name}</p>
               <p className="mt-0.5 line-clamp-2 text-[9px] text-faint">{a.description || a.slug}</p>
+              {a.product && (
+                <p className="mt-0.5 text-[9px] font-medium text-accent">
+                  {priceLabel(a.product.pricing)}
+                </p>
+              )}
               <button
                 type="button"
                 data-testid={`wf-mkt-install-${a.slug}`}

@@ -6,6 +6,8 @@
 // introduce estado propio: todos leen y escriben `AgentConfig`.
 // =============================================================================
 import type { CSSProperties } from "react";
+import { useState } from "react";
+import { MarketplaceSurfaceDialog } from "../marketplace/MarketplaceSurfaceDialog";
 import { AgentField } from "./AgentField";
 import { AgentSettingGroup, type SettingMode } from "./AgentSettingGroup";
 import {
@@ -166,6 +168,7 @@ export function AgentToolsGroup({
   const dbAvailable = hasDbSources(sourceTypes);
   const capabilities = capabilityStates(flags, { dbAvailable });
   const active = capabilities.filter((capability) => capability.checked).length;
+  const [showMarketplace, setShowMarketplace] = useState(false);
 
   return (
     <AgentSettingGroup
@@ -231,6 +234,19 @@ export function AgentToolsGroup({
           </Button>
         </div>
       )}
+      <div className="flex flex-wrap items-center gap-2 border-t border-border-soft pt-3">
+        <Button variant="secondary" size="sm" onClick={() => setShowMarketplace(true)}>
+          Agregar desde Marketplace
+        </Button>
+        <span className="text-xs text-faint">
+          Instala herramientas e integraciones del catálogo global para Agents.
+        </span>
+      </div>
+      <MarketplaceSurfaceDialog
+        open={showMarketplace}
+        onOpenChange={setShowMarketplace}
+        surface="AGENTS"
+      />
     </AgentSettingGroup>
   );
 }

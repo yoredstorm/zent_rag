@@ -50,6 +50,7 @@ import {
   type Column,
 } from "../../components/ui";
 import { StatusBadge } from "../../components/ui/Badge";
+import { MarketplaceSurfaceDialog } from "../../components/marketplace/MarketplaceSurfaceDialog";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtNum } from "../../lib/format";
@@ -248,6 +249,7 @@ export default function KnowledgeSourcesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   // `?new=1` abre el alta: todos los puntos de entrada caen en el mismo flujo.
   const [showCreate, setShowCreate] = useState(() => searchParams.get("new") === "1");
+  const [showMarketplace, setShowMarketplace] = useState(false);
 
   const closeCreate = useCallback(() => {
     setShowCreate(false);
@@ -660,15 +662,26 @@ export default function KnowledgeSourcesPage() {
           </>
         }
         actions={
-          <Button
-            variant="primary"
-            leadingIcon={Plus}
-            aria-expanded={showCreate}
-            onClick={() => (showCreate ? closeCreate() : setShowCreate(true))}
-          >
-            Nueva fuente
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => setShowMarketplace(true)}>
+              Agregar desde Marketplace
+            </Button>
+            <Button
+              variant="primary"
+              leadingIcon={Plus}
+              aria-expanded={showCreate}
+              onClick={() => (showCreate ? closeCreate() : setShowCreate(true))}
+            >
+              Nueva fuente
+            </Button>
+          </div>
         }
+      />
+
+      <MarketplaceSurfaceDialog
+        open={showMarketplace}
+        onOpenChange={setShowMarketplace}
+        surface="KNOWLEDGE"
       />
 
       <div className="flex flex-col gap-4">

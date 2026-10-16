@@ -1,5 +1,6 @@
 import { BookOpen, Download, MagnifyingGlass, Star, Upload } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { platformApi } from "../../api";
 import {
   Badge,
@@ -200,13 +201,21 @@ export default function AdminMarketplacePage() {
     <div className="space-y-4">
       <PageHeader
         title="Agent Marketplace"
-        subtitle="Publicar agentes, instalar en tenants, reviews y prompt templates."
+        subtitle="Legacy: publicar agentes, instalar en tenants, reviews y prompt templates. El catálogo unificado vive en Marketplace Factory."
         actions={
           <Button variant="primary" leadingIcon={Upload} onClick={() => setShowPublish(true)}>
             Publicar
           </Button>
         }
       />
+      <div className="rounded-lg border border-border-soft bg-raised px-3.5 py-2.5 text-xs leading-relaxed text-muted">
+        Este panel está congelado como compatibilidad. Los listings nuevos se
+        proyectan al catálogo único (DRAFT) desde{" "}
+        <Link to="/control-center/marketplace-factory" className="text-accent hover:underline">
+          Marketplace Factory
+        </Link>
+        .
+      </div>
       {error && <ErrorInline>{error}</ErrorInline>}
       {notice && <SuccessInline message={notice} />}
 

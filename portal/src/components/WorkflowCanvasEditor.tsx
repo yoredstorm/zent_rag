@@ -343,16 +343,19 @@ export function WorkflowCanvasEditor({
     insertNode("marketplace_action", { install_id: "", action_id: rec.action_id, inputs: {} });
   }
 
-  async function installFromDrawer(slug: string) {
+  async function installFromDrawer(slug: string, productSlug?: string | null) {
     if (!session) return;
     setShopBusy(true);
     setError("");
     try {
+      const body = productSlug
+        ? { product_slug: productSlug, purpose: shopPurpose.trim() || null }
+        : { integration_slug: slug, purpose: shopPurpose.trim() || null };
       const r = await api<MarketRec>(`/api/v1/workflows/marketplace/install`, {
         method: "POST",
         token: session.token,
         organizationId: session.organizationId,
-        body: JSON.stringify({ integration_slug: slug, purpose: shopPurpose.trim() || null }),
+        body: JSON.stringify(body),
       });
       const fresh = await api<MarketplaceContext>("/api/v1/workflows/marketplace/context", {
         token: session.token,
@@ -495,7 +498,7 @@ export function WorkflowCanvasEditor({
         onInstall={(slug) => {
           const a = mkt?.available.find((x) => x.slug === slug);
           if (a) {
-            setShop({ slug: a.slug, name: a.name, description: a.description ?? "", requires_credentials: a.requires_credentials, requires_purpose: a.requires_purpose, actions: a.actions });
+            setShop({ slug: a.slug, name: a.name, description: a.description ?? "", requires_credentials: a.requires_credentials, requires_purpose: a.requires_purpose, actions: a.actions, product_slug: a.product?.product_slug ?? null });
           }
         }}
       />
@@ -712,7 +715,7 @@ export function WorkflowCanvasEditor({
               className="btn btn-primary mt-5 w-full gap-1.5 text-sm"
               disabled={shopBusy || (Boolean(shop.requires_purpose) && !shopPurpose.trim())}
               data-testid="wf-mkt-install-confirm"
-              onClick={() => void installFromDrawer(shop.slug)}
+              onClick={() => void installFromDrawer(shop.slug, shop.product_slug ?? null)}
             >
               <Plus size={15} aria-hidden />
               {shopBusy ? "Instalando…" : "Instalar"}

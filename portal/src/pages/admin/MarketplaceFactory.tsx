@@ -235,11 +235,13 @@ export default function MarketplaceFactoryPage() {
     setError("");
     setNotice("");
     try {
-      const r = await platformApi<{ created: number; skipped: string[] }>(
-        "/api/v1/platform/marketplace/migrate-legacy",
+      const r = await platformApi<{ created: number; updated?: number; skipped: string[] }>(
+        "/api/v1/platform/marketplace/sync",
         { method: "POST", token: session.token, body: "{}" }
       );
-      setNotice(`Migración legacy: ${r.created} productos creados.`);
+      setNotice(
+        `Catálogo sincronizado: ${r.created} creados, ${r.updated ?? 0} completados (idempotente).`
+      );
       await loadOverview();
       await loadProducts();
     } catch (e) {
@@ -648,6 +650,9 @@ function ProductWizard({
   const [integrations, setIntegrations] = useState<string[]>([]);
   const [workflows, setWorkflows] = useState<string[]>([]);
   const [pricingModel, setPricingModel] = useState("FREE");
+  const [appliesTo, setAppliesTo] = useState("");
+  const [pricingAmount, setPricingAmount] = useState("");
+  const [pricingCurrency, setPricingCurrency] = useState("PEN");
 
   async function save() {
     if (!session) return;
@@ -657,6 +662,13 @@ function ProductWizard({
       ...integrations.map((ref) => ({ kind: "integration", ref, alias: ref })),
       ...workflows.map((ref) => ({ kind: "workflow_template", ref, alias: ref })),
     ];
+    const pricing: Record<string, unknown> = { model: pricingModel };
+    if (["ONE_TIME", "SUBSCRIPTION", "USAGE"].includes(pricingModel)) {
+      pricing.amount = Number(pricingAmount) || 0;
+      pricing.currency = pricingCurrency || "PEN";
+      if (pricingModel === "SUBSCRIPTION") pricing.interval = "MONTH";
+      if (pricingModel === "USAGE") pricing.unit = "call";
+    }
     try {
       await platformApi(
         "/api/v1/platform/marketplace/products",
@@ -670,7 +682,11 @@ function ProductWizard({
             product_type: type,
             category,
             countries: countries.split(",").map((c) => c.trim()).filter(Boolean),
-            pricing: { model: pricingModel },
+            pricing,
+            applies_to: appliesTo
+              .split(",")
+              .map((s) => s.trim().toUpperCase())
+              .filter(Boolean),
             entitlements: {},
             dependencies: [],
             included_assets: assets,
@@ -768,6 +784,49 @@ function ProductWizard({
               placeholder="operations"
             />
           </Field>
+          <Field
+            label="Se usa en (superficies, coma)"
+            hint="AGENTS, WORKFLOWS, KNOWLEDGE, DATA, INTEGRATIONS, CHANNELS, PAYMENTS, AUTOMATIONS, ANALYTICS, ADMIN. Vacío = default por tipo."
+            className="sm:col-span-2"
+          >
+            <Input
+              className="font-mono"
+              value={appliesTo}
+              onChange={(e) => setAppliesTo(e.target.value)}
+              placeholder="WORKFLOWS, AGENTS"
+            />
+          </Field>
+          <Field label="Precio (modelo)">
+            <Select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)}>
+              {["FREE", "ONE_TIME", "SUBSCRIPTION", "USAGE", "CONTACT_SALES", "INCLUDED"].map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {["ONE_TIME", "SUBSCRIPTION", "USAGE"].includes(pricingModel) && (
+            <>
+              <Field label="Monto">
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={pricingAmount}
+                  onChange={(e) => setPricingAmount(e.target.value)}
+                  placeholder="29"
+                />
+              </Field>
+              <Field label="Moneda (ISO-4217)">
+                <Input
+                  className="font-mono"
+                  value={pricingCurrency}
+                  onChange={(e) => setPricingCurrency(e.target.value)}
+                  placeholder="PEN"
+                />
+              </Field>
+            </>
+          )}
           <Field label="Países (ISO, coma)" hint="Ej. PE,CL,MX">
             <Input
               className="font-mono"
@@ -829,15 +888,6 @@ function ProductWizard({
               )}
             </div>
           </div>
-          <Field label="Pricing model">
-            <Select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)}>
-              {["FREE", "ONE_TIME", "SUBSCRIPTION", "PER_USE", "BASE_PLUS_USAGE", "PLAN_INCLUDED", "CUSTOM"].map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </Select>
-          </Field>
         </div>
       )}
     </Modal>

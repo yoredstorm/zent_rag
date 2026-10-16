@@ -421,6 +421,13 @@ async def _run_startup() -> None:
         await ensure_demo_recipes()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Demo integrations seeding failed", error=str(exc)[:150])
+    # Catálogo único: proyecta assets técnicos a MarketplaceProduct (idempotente).
+    try:
+        from src.platform.marketplace.factory import sync_catalog_from_assets
+
+        await sync_catalog_from_assets()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Marketplace catalog sync failed", error=str(exc)[:150])
     if settings.ENVIRONMENT == "development":
         try:
             from src.infrastructure.postgres.relational_db import PostgresUserRepository

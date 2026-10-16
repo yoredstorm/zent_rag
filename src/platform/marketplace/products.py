@@ -28,6 +28,97 @@ PRODUCT_STATUSES = (
     "DRAFT", "INTERNAL_TEST", "SECURITY_REVIEW", "PRODUCT_REVIEW", "READY",
     "PUBLISHED", "PAUSED", "DEPRECATED", "END_OF_LIFE",
 )
+# Superficies de Zent donde un producto aporta funcionalidad. NO es ownership
+# técnico: un producto puede aplicar a varias superficies a la vez.
+PRODUCT_APPLIES_TO = (
+    "AGENTS", "WORKFLOWS", "KNOWLEDGE", "DATA", "INTEGRATIONS", "CHANNELS",
+    "PAYMENTS", "AUTOMATIONS", "ANALYTICS", "ADMIN",
+)
+# Contrato estándar de pricing (sin acoplar a proveedor de pagos).
+PRICING_MODELS = (
+    "FREE", "ONE_TIME", "SUBSCRIPTION", "USAGE", "CONTACT_SALES", "INCLUDED",
+    "CUSTOM",  # legacy: precios por cotización de la migración v1
+)
+# Modelos v1 del cost_model de manifests: tolerados para no romper legacy.
+LEGACY_PRICING_MODELS = (
+    "PER_CALL", "MONTHLY", "TIERED", "USAGE_PLUS_BASE", "BYOC_NO_MARKUP",
+    "ZENT_MANAGED_MARKUP",
+)
+_LEGACY_PRICING_MAP = {
+    "BYOC_NO_MARKUP": "INCLUDED",
+    "PER_CALL": "USAGE",
+    "MONTHLY": "SUBSCRIPTION",
+}
+
+
+def normalize_pricing(pricing: dict | None) -> dict:
+    """Normaliza pricing legacy (cost_model v1) al contrato estándar.
+
+    Preserva claves extra (p. ej. _pack_kind) y nunca inventa montos.
+    """
+    p = dict(pricing or {})
+    model = str(p.get("model") or "").upper()
+    if not model:
+        return {"model": "CUSTOM"}
+    if model not in LEGACY_PRICING_MODELS:
+        return p
+    target = _LEGACY_PRICING_MAP.get(model, "CUSTOM")
+    try:
+        amount = float(p.get("price")) if p.get("price") is not None else None
+    except (TypeError, ValueError):
+        amount = None
+    out = {**p, "model": target}
+    if target == "USAGE":
+        out["unit"] = str(p.get("unit") or "call")
+        out.setdefault("currency", str(p.get("currency") or "PEN"))
+        if amount is None:
+            out["model"] = "CUSTOM"
+        else:
+            out["amount"] = amount
+    elif target == "SUBSCRIPTION":
+        out["interval"] = "MONTH"
+        out.setdefault("currency", str(p.get("currency") or "PEN"))
+        if amount is None:
+            out["model"] = "CUSTOM"
+        else:
+            out["amount"] = amount
+    return out
+# Categorías de negocio para la navegación del marketplace (keys en inglés,
+# labels en el portal). Incluye categorías legacy v1 para no romper productos.
+BUSINESS_CATEGORIES = (
+    "sales", "support", "finance", "payments", "inventory", "ecommerce",
+    "productivity", "data", "intelligence", "communication", "marketing",
+    "security", "operations", "development", "erp_crm",
+    "government", "demo", "other",
+)
+_APPLIES_TO_BY_CATEGORY: dict[str, list[str]] = {
+    "government": ["WORKFLOWS", "DATA", "KNOWLEDGE"],
+    "sales": ["WORKFLOWS", "AGENTS", "ANALYTICS"],
+    "finance": ["WORKFLOWS", "AGENTS", "PAYMENTS", "ANALYTICS"],
+    "communication": ["WORKFLOWS", "AGENTS", "CHANNELS"],
+    "commerce": ["WORKFLOWS", "AGENTS", "PAYMENTS", "ANALYTICS"],
+    "operations": ["WORKFLOWS", "AGENTS", "AUTOMATIONS"],
+    "data": ["WORKFLOWS", "DATA", "KNOWLEDGE", "ANALYTICS"],
+    "productivity": ["WORKFLOWS", "AGENTS"],
+    "demo": ["WORKFLOWS", "AGENTS", "DATA", "KNOWLEDGE"],
+}
+_APPLIES_TO_BY_TYPE: dict[str, list[str]] = {
+    "WORKFLOW_TEMPLATE": ["WORKFLOWS"],
+    "AGENT_TEMPLATE": ["AGENTS"],
+    "INTELLIGENCE_PACK": ["KNOWLEDGE", "DATA"],
+    "SEMANTIC_PACK": ["KNOWLEDGE", "DATA"],
+    "BUSINESS_PACK": ["WORKFLOWS", "AGENTS"],
+    "COMPOSITE_PACK": ["WORKFLOWS", "AGENTS"],
+}
+_SECRET_KEY_HINTS = ("secret", "token", "password", "api_key", "apikey", "private_key")
+
+
+def default_applies_to(product_type: str, category: str | None) -> list[str]:
+    """Superficies por defecto de un producto nuevo (sin pisar lo explícito)."""
+    ptype = str(product_type or "").upper()
+    if ptype == "INTEGRATION":
+        return list(_APPLIES_TO_BY_CATEGORY.get(str(category or ""), ["WORKFLOWS", "AGENTS"]))
+    return list(_APPLIES_TO_BY_TYPE.get(ptype, []))
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "DRAFT": {"INTERNAL_TEST", "SECURITY_REVIEW", "PRODUCT_REVIEW", "READY", "DEPRECATED"},
     "INTERNAL_TEST": {"SECURITY_REVIEW", "READY", "PAUSED", "DRAFT"},
@@ -104,6 +195,34 @@ async def ensure_zend_provider() -> UUID:
         await session.close()
 
 
+def _validate_pricing_shape(pricing: dict) -> list[str]:
+    """Contrato de pricing: modelo, montos, moneda y sin secretos."""
+    errors: list[str] = []
+    model = str(pricing.get("model") or "")
+    if model and model not in PRICING_MODELS and model not in LEGACY_PRICING_MODELS:
+        errors.append(f"pricing.model inválido: {model}")
+    for key in pricing:
+        low = str(key).lower()
+        if any(hint in low for hint in _SECRET_KEY_HINTS):
+            errors.append("pricing no debe contener credenciales ni secretos")
+            break
+    if model in ("ONE_TIME", "SUBSCRIPTION", "USAGE"):
+        try:
+            amount = float(pricing.get("amount"))
+        except (TypeError, ValueError):
+            amount = -1.0
+        if amount < 0:
+            errors.append("pricing.amount requerido (>=0)")
+        if len(str(pricing.get("currency") or "")) != 3:
+            errors.append("pricing.currency requerido (ISO-4217)")
+    if model == "SUBSCRIPTION":
+        if str(pricing.get("interval") or "").upper() not in ("DAY", "WEEK", "MONTH", "YEAR"):
+            errors.append("pricing.interval requerido (DAY|WEEK|MONTH|YEAR)")
+    if model == "USAGE" and not str(pricing.get("unit") or "").strip():
+        errors.append("pricing.unit requerido para USAGE")
+    return errors
+
+
 def validate_product(payload: dict) -> list[str]:
     """Validación del publishing gate (estructural + negocio)."""
     errors: list[str] = []
@@ -118,14 +237,28 @@ def validate_product(payload: dict) -> list[str]:
     status = str(payload.get("status") or "DRAFT")
     if status not in PRODUCT_STATUSES:
         errors.append(f"status inválido: {status}")
+    applies = payload.get("applies_to") or []
+    if applies:
+        if not isinstance(applies, list):
+            errors.append("applies_to debe ser lista")
+        else:
+            bad = [a for a in applies if str(a).upper() not in PRODUCT_APPLIES_TO]
+            if bad:
+                errors.append(f"applies_to inválido: {', '.join(str(b) for b in bad[:4])}")
+    pricing = payload.get("pricing") or {}
+    if pricing and not isinstance(pricing, dict):
+        errors.append("pricing debe ser objeto")
+    else:
+        errors.extend(_validate_pricing_shape(pricing))
     if status == "PUBLISHED":
         if not (payload.get("included_assets") or []) and ptype not in (
             "INTEGRATION", "WORKFLOW_TEMPLATE", "AGENT_TEMPLATE"
         ):
             errors.append("un producto publicado necesita included_assets")
-        pricing = payload.get("pricing") or {}
         if not pricing.get("model"):
             errors.append("publishing: pricing.model requerido")
+        if not applies:
+            errors.append("publishing: applies_to requerido")
         if not payload.get("short_description"):
             errors.append("publishing: short_description requerido")
     deps = payload.get("dependencies") or []
@@ -140,10 +273,17 @@ async def save_product(
     created_by: UUID | None = None,
 ) -> dict:
     """Crea o actualiza un producto (v1) y guarda el snapshot de versión."""
+    if not (payload.get("applies_to") or []):
+        payload["applies_to"] = default_applies_to(
+            str(payload.get("product_type") or ""), payload.get("category")
+        )
     errors = validate_product(payload)
     if errors:
         raise ProductError("; ".join(errors[:8]))
     slug = payload["slug"]
+    applies = [str(a).upper() for a in (payload.get("applies_to") or [])]
+    capabilities = [str(c) for c in (payload.get("capabilities") or [])]
+    events = [str(e) for e in (payload.get("events") or [])]
     session = await get_async_session()
     try:
         existing = (
@@ -162,7 +302,8 @@ async def save_product(
                         "industries, logo, screenshots, documentation, pricing, entitlements, "
                         "dependencies, included_assets, installation_flow, configuration_schema, "
                         "result_surfaces, support, security, privacy, certification, release_notes, "
-                        "rollout, featured, collections, legacy_source, legacy_ref, created_by) "
+                        "rollout, featured, collections, applies_to, capabilities, events, "
+                        "legacy_source, legacy_ref, created_by) "
                         "VALUES (gen_random_uuid(), :slug, :name, :short, :long, :ptype, :pub, 1, "
                         ":status, :cat, CAST(:sub AS jsonb), CAST(:tags AS jsonb), "
                         "CAST(:countries AS jsonb), CAST(:ind AS jsonb), :logo, CAST(:shots AS jsonb), "
@@ -170,7 +311,9 @@ async def save_product(
                         "CAST(:assets AS jsonb), CAST(:flow AS jsonb), CAST(:cfg AS jsonb), "
                         "CAST(:surfaces AS jsonb), CAST(:support AS jsonb), CAST(:sec AS jsonb), "
                         "CAST(:priv AS jsonb), :cert, CAST(:notes AS jsonb), CAST(:rollout AS jsonb), "
-                        "CAST(:featured AS jsonb), CAST(:collections AS jsonb), :lsrc, :lref, :by) "
+                        "CAST(:featured AS jsonb), CAST(:collections AS jsonb), "
+                        "CAST(:applies AS jsonb), CAST(:caps AS jsonb), CAST(:evts AS jsonb), "
+                        ":lsrc, :lref, :by) "
                         "RETURNING id"
                     ),
                     {
@@ -204,6 +347,9 @@ async def save_product(
                         "rollout": json.dumps(payload.get("rollout") or {}),
                         "featured": json.dumps(payload.get("featured") or {}),
                         "collections": json.dumps(payload.get("collections") or []),
+                        "applies": json.dumps(applies),
+                        "caps": json.dumps(capabilities),
+                        "evts": json.dumps(events),
                         "lsrc": payload.get("legacy_source"),
                         "lref": payload.get("legacy_ref"),
                         "by": created_by,
@@ -242,6 +388,9 @@ async def save_product(
                 "rollout = CAST(:rollout AS jsonb)",
                 "featured = CAST(:featured AS jsonb)",
                 "collections = CAST(:collections AS jsonb)",
+                "applies_to = CAST(:applies AS jsonb)",
+                "capabilities = CAST(:caps AS jsonb)",
+                "events = CAST(:evts AS jsonb)",
                 "updated_at = NOW()",
             ]
             params: dict[str, Any] = {
@@ -273,6 +422,9 @@ async def save_product(
                 "rollout": json.dumps(payload.get("rollout") or {}),
                 "featured": json.dumps(payload.get("featured") or {}),
                 "collections": json.dumps(payload.get("collections") or []),
+                "applies": json.dumps(applies),
+                "caps": json.dumps(capabilities),
+                "evts": json.dumps(events),
             }
             await session.execute(
                 text("UPDATE marketplace_products SET " + ", ".join(sets) + " WHERE id = :pid"),  # noqa: S608
@@ -373,7 +525,8 @@ async def transition(product_id: UUID, target: str) -> dict:
             await session.execute(
                 text(
                     "SELECT id, status, version, name, product_type, short_description, "
-                    "included_assets, pricing FROM marketplace_products WHERE id = :pid"
+                    "included_assets, pricing, category, applies_to "
+                    "FROM marketplace_products WHERE id = :pid"
                 ),
                 {"pid": product_id},
             )
@@ -384,6 +537,16 @@ async def transition(product_id: UUID, target: str) -> dict:
         if target not in ALLOWED_TRANSITIONS.get(current, set()):
             raise ProductError(f"transición inválida: {current} → {target}")
         if target in ("PUBLISHED", "READY"):
+            applies = [str(a) for a in (prod.applies_to or [])]
+            if not applies:
+                applies = default_applies_to(prod.product_type, prod.category)
+                await session.execute(
+                    text(
+                        "UPDATE marketplace_products SET applies_to = CAST(:a AS jsonb) "
+                        "WHERE id = :pid"
+                    ),
+                    {"a": json.dumps(applies), "pid": product_id},
+                )
             # Publish gate: validación con el fin de negocio.
             gate_errors: list[str] = []
             payload = {
@@ -394,6 +557,7 @@ async def transition(product_id: UUID, target: str) -> dict:
                 "short_description": prod.short_description,
                 "included_assets": prod.included_assets or [],
                 "pricing": prod.pricing if isinstance(prod.pricing, dict) else {},
+                "applies_to": applies,
             }
             errors = validate_product(payload)
             if errors:
@@ -428,29 +592,57 @@ async def list_products(
     product_type: str | None = None,
     status: str | None = None,
     include_hidden: bool = False,
+    applies_to: str | None = None,
+    category: str | None = None,
+    pricing_model: str | None = None,
+    q: str | None = None,
+    limit: int = 200,
 ) -> dict:
+    """Catálogo único. Filtros: tipo, applies_to, categoría, precio y búsqueda."""
     session = await get_async_session()
     try:
         sql = (
-            "SELECT id, slug, name, short_description, product_type, version, status, "
-            "category, pricing, created_at, updated_at, published_at "
-            "FROM marketplace_products"
+            "SELECT p.id, p.slug, p.name, p.short_description, p.product_type, p.version, "
+            "p.status, p.category, p.pricing, p.applies_to, p.capabilities, p.logo, "
+            "p.certification, p.created_at, p.updated_at, p.published_at, "
+            "pr.name AS publisher_name "
+            "FROM marketplace_products p "
+            "LEFT JOIN marketplace_providers pr ON pr.id = p.publisher"
         )
         params: dict[str, Any] = {}
         wheres: list[str] = []
         if not include_hidden:
-            wheres.append("(status IN ('PUBLISHED', 'DEPRECATED', 'READY') OR status IS NULL)")
+            wheres.append(
+                "(p.status IN ('PUBLISHED', 'DEPRECATED', 'READY') OR p.status IS NULL)"
+            )
         if product_type:
-            wheres.append("product_type = :ptype")
+            wheres.append("p.product_type = :ptype")
             params["ptype"] = product_type
         if status:
-            wheres.append("status = :status")
+            wheres.append("p.status = :status")
             params["status"] = status
+        if applies_to:
+            wheres.append("p.applies_to @> CAST(:applies AS jsonb)")
+            params["applies"] = json.dumps([str(applies_to).upper()])
+        if category:
+            wheres.append("p.category = :cat")
+            params["cat"] = category
+        if pricing_model:
+            wheres.append("p.pricing->>'model' = :pm")
+            params["pm"] = str(pricing_model).upper()
+        if q:
+            wheres.append(
+                "(p.name ILIKE :q OR p.short_description ILIKE :q OR p.slug ILIKE :q)"
+            )
+            params["q"] = f"%{str(q)[:80]}%"
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
-        rows = (
-            await session.execute(text(sql + " ORDER BY created_at DESC"), params)
-        ).fetchall()
+        sql += (
+            " ORDER BY (p.featured <> '{}'::jsonb) DESC, "
+            "p.published_at DESC NULLS LAST, p.name ASC LIMIT :limit"
+        )
+        params["limit"] = max(1, min(int(limit or 200), 500))
+        rows = (await session.execute(text(sql), params)).fetchall()
     finally:
         await session.close()
     return {
@@ -464,12 +656,68 @@ async def list_products(
                 "version": int(r.version or 1),
                 "status": r.status,
                 "category": r.category,
-                "pricing": json.dumps(r.pricing or {}),
+                "applies_to": r.applies_to or [],
+                "capabilities": r.capabilities or [],
+                "logo": r.logo,
+                "certification": r.certification,
+                "publisher": r.publisher_name,
+                "pricing": r.pricing if isinstance(r.pricing, dict) else {},
                 "created_at": _iso(r.created_at),
+                "updated_at": _iso(r.updated_at),
                 "published_at": _iso(r.published_at),
             }
             for r in rows
         ]
+    }
+
+
+async def catalog_facets() -> dict:
+    """Facetas reales del catálogo visible: categorías, superficies y precios."""
+    session = await get_async_session()
+    visible = "(status IN ('PUBLISHED', 'DEPRECATED', 'READY') OR status IS NULL)"
+    try:
+        categories = (
+            await session.execute(
+                text(
+                    "SELECT category, COUNT(*) AS n FROM marketplace_products "  # noqa: S608
+                    f"WHERE {visible} GROUP BY category ORDER BY n DESC"
+                )
+            )
+        ).fetchall()
+        surfaces = (
+            await session.execute(
+                text(
+                    "SELECT surface, COUNT(DISTINCT id) AS n FROM ("  # noqa: S608
+                    "SELECT id, jsonb_array_elements_text(applies_to) AS surface "
+                    f"FROM marketplace_products WHERE {visible}"
+                    ") s GROUP BY surface ORDER BY n DESC"
+                )
+            )
+        ).fetchall()
+        pricing = (
+            await session.execute(
+                text(
+                    "SELECT COALESCE(pricing->>'model', 'FREE') AS model, COUNT(*) AS n "  # noqa: S608
+                    f"FROM marketplace_products WHERE {visible} "
+                    "GROUP BY model ORDER BY n DESC"
+                )
+            )
+        ).fetchall()
+        types = (
+            await session.execute(
+                text(
+                    "SELECT product_type, COUNT(*) AS n FROM marketplace_products "  # noqa: S608
+                    f"WHERE {visible} GROUP BY product_type ORDER BY n DESC"
+                )
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    return {
+        "categories": [{"key": r.category, "count": int(r.n)} for r in categories],
+        "applies_to": [{"key": r.surface, "count": int(r.n)} for r in surfaces],
+        "pricing_models": [{"key": r.model, "count": int(r.n)} for r in pricing],
+        "product_types": [{"key": r.product_type, "count": int(r.n)} for r in types],
     }
 
 
@@ -480,13 +728,17 @@ async def get_product(product_id: UUID | None = None, slug: str | None = None) -
             row = (
                 await session.execute(
                     text(
-                        "SELECT id, slug, name, short_description, long_description, product_type, "
-                        "publisher, version, status, category, subcategories, tags, countries, "
-                        "industries, logo, screenshots, documentation, pricing, entitlements, "
-                        "dependencies, included_assets, installation_flow, configuration_schema, "
-                        "result_surfaces, support, security, privacy, certification, release_notes, "
-                        "rollout, featured, collections, published_at, created_at, updated_at "
-                        "FROM marketplace_products WHERE id = :pid"
+                        "SELECT p.id, p.slug, p.name, p.short_description, p.long_description, "
+                        "p.product_type, p.publisher, pr.name AS publisher_name, p.version, p.status, "
+                        "p.category, p.subcategories, p.tags, p.countries, p.industries, p.logo, "
+                        "p.screenshots, p.documentation, p.pricing, p.entitlements, p.dependencies, "
+                        "p.included_assets, p.installation_flow, p.configuration_schema, "
+                        "p.result_surfaces, p.support, p.security, p.privacy, p.certification, "
+                        "p.release_notes, p.rollout, p.featured, p.collections, p.applies_to, "
+                        "p.capabilities, p.events, p.published_at, p.created_at, p.updated_at "
+                        "FROM marketplace_products p "
+                        "LEFT JOIN marketplace_providers pr ON pr.id = p.publisher "
+                        "WHERE p.id = :pid"
                     ),
                     {"pid": product_id},
                 )
@@ -495,13 +747,17 @@ async def get_product(product_id: UUID | None = None, slug: str | None = None) -
             row = (
                 await session.execute(
                     text(
-                        "SELECT id, slug, name, short_description, long_description, product_type, "
-                        "publisher, version, status, category, subcategories, tags, countries, "
-                        "industries, logo, screenshots, documentation, pricing, entitlements, "
-                        "dependencies, included_assets, installation_flow, configuration_schema, "
-                        "result_surfaces, support, security, privacy, certification, release_notes, "
-                        "rollout, featured, collections, published_at, created_at, updated_at "
-                        "FROM marketplace_products WHERE slug = :slug"
+                        "SELECT p.id, p.slug, p.name, p.short_description, p.long_description, "
+                        "p.product_type, p.publisher, pr.name AS publisher_name, p.version, p.status, "
+                        "p.category, p.subcategories, p.tags, p.countries, p.industries, p.logo, "
+                        "p.screenshots, p.documentation, p.pricing, p.entitlements, p.dependencies, "
+                        "p.included_assets, p.installation_flow, p.configuration_schema, "
+                        "p.result_surfaces, p.support, p.security, p.privacy, p.certification, "
+                        "p.release_notes, p.rollout, p.featured, p.collections, p.applies_to, "
+                        "p.capabilities, p.events, p.published_at, p.created_at, p.updated_at "
+                        "FROM marketplace_products p "
+                        "LEFT JOIN marketplace_providers pr ON pr.id = p.publisher "
+                        "WHERE p.slug = :slug"
                     ),
                     {"slug": slug},
                 )
@@ -518,31 +774,35 @@ async def get_product(product_id: UUID | None = None, slug: str | None = None) -
         "long_description": row.long_description,
         "product_type": row.product_type,
         "publisher": str(row.publisher) if row.publisher else None,
+        "publisher_name": row.publisher_name,
         "version": int(row.version or 1),
         "status": row.status,
         "category": row.category,
         "subcategories": row.subcategories or [],
-        "tags": json.dumps(row.tags or []),
-        "countries": json.dumps(row.countries or []),
+        "tags": row.tags or [],
+        "countries": row.countries or [],
         "industries": row.industries or [],
         "logo": row.logo,
         "screenshots": row.screenshots or [],
         "documentation": row.documentation,
-        "pricing": json.dumps(row.pricing or {}),
+        "pricing": row.pricing if isinstance(row.pricing, dict) else {},
         "entitlements": row.entitlements or {},
         "dependencies": row.dependencies or [],
         "included_assets": row.included_assets or [],
         "installation_flow": row.installation_flow or [],
         "configuration_schema": row.configuration_schema or {},
         "result_surfaces": row.result_surfaces or [],
-        "support": json.dumps(row.support or {}),
+        "applies_to": row.applies_to or [],
+        "capabilities": row.capabilities or [],
+        "events": row.events or [],
+        "support": row.support or {},
         "security": row.security or {},
         "privacy": row.privacy or {},
         "certification": row.certification,
         "release_notes": row.release_notes or [],
-        "rollout": json.dumps(row.rollout or {}),
-        "featured": json.dumps(row.featured or {}),
-        "collections": json.dumps(row.collections or []),
+        "rollout": row.rollout or {},
+        "featured": row.featured or {},
+        "collections": row.collections or [],
         "published_at": _iso(row.published_at),
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),

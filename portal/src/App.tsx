@@ -107,8 +107,7 @@ const ChatInsightsPage = lazy(() => import("./pages/ChatInsights"));
 const AdminChatInsightsPage = lazy(() => import("./pages/admin/ChatInsights"));
 const RiskCenterPage = lazy(() => import("./pages/RiskCenter"));
 const AdminRiskCenterPage = lazy(() => import("./pages/admin/RiskCenter"));
-const EcosystemMarketplacePage = lazy(() => import("./pages/EcosystemMarketplace"));
-const MarketplaceProductsPage = lazy(() => import("./pages/MarketplaceProducts"));
+const MarketplacePage = lazy(() => import("./pages/marketplace/MarketplacePage"));
 const AdminEcosystemPage = lazy(() => import("./pages/admin/Ecosystem"));
 const SecurityCenterPage = lazy(() => import("./pages/SecurityCenter"));
 const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"));
@@ -650,8 +649,8 @@ export default function App() {
         {/* Knowledge Hub legacy retirado: la página se absorbió en /knowledge. */}
         <Route path="/knowledge-hub" element={<Navigate to="/knowledge" replace />} />
         <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
-        <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><EcosystemMarketplacePage /></Suspense>} />
-<Route path="/products" element={<Suspense fallback={<PageFallback />}><MarketplaceProductsPage /></Suspense>} />
+        <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><MarketplacePage /></Suspense>} />
+        <Route path="/products" element={<Navigate to="/marketplace" replace />} />
         <Route path="/security-center" element={<Suspense fallback={<PageFallback />}><SecurityCenterPage /></Suspense>} />
         <Route path="/governance" element={<Suspense fallback={<PageFallback />}><GovernancePage /></Suspense>} />
         <Route path="/disaster-recovery" element={<Suspense fallback={<PageFallback />}><DisasterRecoveryPage /></Suspense>} />

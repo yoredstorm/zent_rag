@@ -169,17 +169,68 @@ async def _installed_status(
     return states
 
 
+async def _product_asset_index(organization_id: UUID) -> dict[str, dict]:
+    """asset ref (integration slug) -> producto del catálogo único.
+
+    Se usa para que el canvas muestre productos (con precio/categoría/applies_to)
+    en lugar de un catálogo paralelo. No crea catálogo: lee marketplace_products.
+    """
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT p.id::text AS id, p.slug, p.name, p.category, p.pricing, "
+                    "p.applies_to, p.logo, p.certification, p.included_assets "
+                    "FROM marketplace_products p "
+                    "WHERE p.status IN ('PUBLISHED', 'READY', 'DEPRECATED')"
+                )
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    index: dict[str, dict] = {}
+    for r in rows:
+        for asset in r.included_assets or []:
+            kind = str(asset.get("kind") or "")
+            ref = str(asset.get("ref") or "")
+            if kind in ("integration", "capability", "action") and ref:
+                index.setdefault(
+                    ref,
+                    {
+                        "product_id": r.id,
+                        "product_slug": r.slug,
+                        "product_name": r.name,
+                        "business_category": r.category,
+                        "pricing": r.pricing if isinstance(r.pricing, dict) else {},
+                        "applies_to": r.applies_to or [],
+                        "logo": r.logo,
+                        "certification": r.certification,
+                    },
+                )
+    return index
+
+
 async def canvas_context(
     organization_id: UUID,
     workspace_id: UUID | None = None,
 ) -> dict:
-    """Todo lo que el canvas necesita: instaladas, disponibles, costos y estados."""
+    """Todo lo que el canvas necesita: instaladas, disponibles, costos y estados.
+
+    Disponibles = producto del catálogo único que aplica a WORKFLOWS. Un
+    manifest sin producto (no sincronizado) se incluye marcado `legacy` para
+    no romper canvas existentes.
+    """
     manifests = await _org_manifests(organization_id)
     installed = await _installed_status(organization_id, workspace_id, manifests)
+    products = await _product_asset_index(organization_id)
 
     installed_slugs = {s["integration"]["slug"] for s in installed.values()}
     available: list[dict] = []
     for slug, m in manifests.items():
+        product = products.get(slug)
+        if product is not None and "WORKFLOWS" not in (product.get("applies_to") or []):
+            continue
         if slug in installed_slugs:
             continue
         available.append(
@@ -191,8 +242,15 @@ async def canvas_context(
                 "requires_credentials": m["requires_credentials"],
                 "requires_purpose": m["requires_purpose"],
                 "actions": m["actions"],
+                "legacy": product is None,
+                "product": product,
             }
         )
+
+    for state in installed.values():
+        product = products.get(state["integration"]["slug"])
+        if product is not None:
+            state["product"] = product
 
     return {
         "installed": sorted(installed.values(), key=lambda s: s["integration"]["name"]),
@@ -385,15 +443,77 @@ async def cost_estimate(organization_id: UUID, graph: dict, trigger_config: dict
 
 async def install_inline(
     organization_id: UUID,
-    integration_slug: str,
+    integration_slug: str | None = None,
     *,
+    product_slug: str | None = None,
     workspace_id: UUID | None = None,
     created_by: UUID | None = None,
     purpose: str | None = None,
 ) -> dict:
-    """Instala una integración desde el canvas (reusa instalación existente)."""
-    from src.platform.marketplace.runtime import install_integration
+    """Instala desde el canvas reusando SIEMPRE el Marketplace global.
 
+    - product_slug: instala el PRODUCTO (misma instalación que /marketplace).
+    - integration_slug: compatibilidad; instala la integración del producto.
+    """
+    from src.platform.marketplace.factory import install_product
+    from src.platform.marketplace.products import ProductError, get_product
+    from src.platform.marketplace.runtime import MarketplaceError, install_integration
+
+    if product_slug:
+        product = await get_product(slug=product_slug)
+        if product is None or product["status"] not in ("PUBLISHED", "READY"):
+            raise MarketplaceError("producto no publicado o inexistente")
+        try:
+            result = await install_product(
+                organization_id,
+                UUID(product["id"]),
+                workspace_id=workspace_id,
+                created_by=created_by,
+                install_answers={"purpose": purpose} if purpose else None,
+                purpose=purpose,
+            )
+        except ProductError as exc:
+            raise MarketplaceError(str(exc)) from exc
+        asset_ref = next(
+            (
+                str(a.get("ref"))
+                for a in (product.get("included_assets") or [])
+                if str(a.get("kind") or "") in ("integration", "capability", "action")
+            ),
+            None,
+        )
+        integration_install_id: str | None = None
+        if asset_ref:
+            install = await install_integration(
+                organization_id,
+                asset_ref,
+                workspace_id=workspace_id,
+                created_by=created_by,
+                purpose=purpose,
+            )
+            integration_install_id = str(install["install_id"])
+        manifests = await _org_manifests(organization_id)
+        manifest = manifests.get(str(asset_ref or ""), {})
+        return {
+            "install_id": integration_install_id or result["install_id"],
+            "product_install_id": result["install_id"],
+            "reused": bool(result.get("reused")),
+            "status": result.get("status", "active"),
+            "readiness": result.get("readiness"),
+            "product": {
+                "slug": product["slug"],
+                "name": product["name"],
+                "applies_to": product.get("applies_to") or [],
+            },
+            "integration": {
+                "slug": asset_ref,
+                "name": manifest.get("name", asset_ref or ""),
+                "actions": manifest.get("actions", []),
+            },
+        }
+
+    if not integration_slug:
+        raise MarketplaceError("integración o producto requerido")
     install = await install_integration(
         organization_id,
         integration_slug,

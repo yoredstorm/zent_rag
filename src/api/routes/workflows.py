@@ -956,7 +956,7 @@ async def tenant_workflow_marketplace_context(request: Request):
     return await canvas_context(ctx.organization_id, await _workspace_id(request))
 
 
-@router.post("/marketplace/install", summary="Instalar integración inline desde el canvas")
+@router.post("/marketplace/install", summary="Instalar desde el Marketplace global (canvas)")
 async def tenant_workflow_marketplace_install(body: InlineInstallIn, request: Request):
     from src.platform.marketplace.runtime import (
         MarketplaceError,
@@ -966,10 +966,13 @@ async def tenant_workflow_marketplace_install(body: InlineInstallIn, request: Re
     from src.platform.workflows.capabilities import install_inline
 
     ctx = require_permission(request, "workflows:update")
+    if not body.product_slug and not body.integration_slug:
+        raise HTTPException(422, "product_slug o integration_slug requerido")
     try:
         return await install_inline(
             ctx.organization_id,
             body.integration_slug,
+            product_slug=body.product_slug,
             workspace_id=await _workspace_id(request),
             created_by=ctx.user_id,
             purpose=body.purpose,
@@ -1017,7 +1020,9 @@ async def tenant_workflow_cost_estimate(body: EstimateIn, request: Request):
 
 
 class InlineInstallIn(BaseModel):
-    integration_slug: str = Field(min_length=1, max_length=100)
+    # Compat: integración directa (canvas existente) o producto del catálogo.
+    integration_slug: str | None = Field(default=None, min_length=1, max_length=100)
+    product_slug: str | None = Field(default=None, min_length=1, max_length=100)
     purpose: str | None = Field(default=None, max_length=80)
 
 

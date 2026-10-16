@@ -14,6 +14,8 @@ export type ShopInstall = {
   requires_credentials: boolean;
   requires_purpose?: boolean;
   actions: ShopAction[];
+  /** Producto del catálogo global: la instalación se hace por producto. */
+  product_slug?: string | null;
 };
 
 export type MarketRec = {

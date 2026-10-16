@@ -137,7 +137,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: "/workspaces", label: "Workspaces", icon: Buildings },
       { to: "/projects", label: "Proyectos", icon: FolderSimple },
       { to: "/marketplace", label: "Marketplace", icon: Storefront },
-      { to: "/products", label: "Catálogo de productos", icon: Storefront, key: "products" },
       { to: "/releases", label: "Releases", icon: Rocket },
       { to: "/migrations", label: "Migraciones", icon: Swap },
       { to: "/training", label: "Training", icon: GraduationCap },

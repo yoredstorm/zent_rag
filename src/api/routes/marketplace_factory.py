@@ -74,6 +74,14 @@ async def factory_migrate_legacy(request: Request):
     return await migrate_legacy_to_products(created_by=ctx.user_id)
 
 
+@cc_router.post("/sync", summary="Sincronizar catálogo único desde assets técnicos")
+async def factory_sync(request: Request):
+    ctx = _cc_require(request)
+    from src.platform.marketplace.factory import sync_catalog_from_assets
+
+    return await sync_catalog_from_assets(created_by=ctx.user_id)
+
+
 # ---------------------------------------------------------------------------
 # Control Center — Products CRUD + pipeline
 # ---------------------------------------------------------------------------
@@ -173,29 +181,96 @@ async def factory_test_normalizer(body: NormalizerIn, request: Request):
 # Tenant — catálogo de productos publicados
 # ---------------------------------------------------------------------------
 @tenant_router.get("", summary="Catálogo de productos publicados")
-async def product_catalog(request: Request, product_type: str | None = None):
+async def product_catalog(
+    request: Request,
+    product_type: str | None = None,
+    applies_to: str | None = None,
+    category: str | None = None,
+    pricing_model: str | None = None,
+    q: str | None = None,
+):
     _tenant_require(request, "marketplace_products:read")
     from src.platform.marketplace.products import list_products
 
-    return await list_products(product_type=product_type)
+    return await list_products(
+        product_type=product_type,
+        applies_to=applies_to,
+        category=category,
+        pricing_model=pricing_model,
+        q=q,
+    )
 
 
 @tenant_router.get("/installs", summary="Mis instalaciones de productos")
-async def product_installs(request: Request):
+async def product_installs(request: Request, only_updates: bool = False):
     ctx = _tenant_require(request, "marketplace_products:read")
     from src.platform.marketplace.factory import list_tenant_installs
 
-    return await list_tenant_installs(ctx.organization_id, await _workspace_id(request))
+    return await list_tenant_installs(
+        ctx.organization_id, await _workspace_id(request), only_updates=only_updates
+    )
 
 
-@tenant_router.delete("/installs/{install_id}", summary="Desinstalar producto")
-async def product_uninstall(install_id: str, request: Request):
+@tenant_router.get("/updates", summary="Instalaciones con actualización disponible")
+async def product_updates(request: Request):
+    ctx = _tenant_require(request, "marketplace_products:read")
+    from src.platform.marketplace.factory import list_tenant_installs
+
+    return await list_tenant_installs(
+        ctx.organization_id, await _workspace_id(request), only_updates=True
+    )
+
+
+@tenant_router.get("/categories", summary="Facetas del catálogo")
+async def product_facets(request: Request):
+    _tenant_require(request, "marketplace_products:read")
+    from src.platform.marketplace.products import catalog_facets
+
+    return await catalog_facets()
+
+
+@tenant_router.get("/installs/{install_id}", summary="Detalle de instalación (salud real)")
+async def product_install_detail(install_id: str, request: Request):
+    ctx = _tenant_require(request, "marketplace_products:read")
+    from src.platform.marketplace.factory import refresh_installation_health
+
+    result = await refresh_installation_health(ctx.organization_id, UUID(install_id))
+    if result is None:
+        raise HTTPException(404, "Instalación no encontrada")
+    return result
+
+
+@tenant_router.get("/installs/{install_id}/impact", summary="Impacto antes de desinstalar")
+async def product_install_impact(install_id: str, request: Request):
+    ctx = _tenant_require(request, "marketplace_products:read")
+    from src.platform.marketplace.factory import installation_impact
+
+    result = await installation_impact(ctx.organization_id, UUID(install_id))
+    if result is None:
+        raise HTTPException(404, "Instalación no encontrada")
+    return result
+
+
+@tenant_router.post("/installs/{install_id}/update", summary="Aplicar actualización del producto")
+async def product_install_update(install_id: str, request: Request):
+    ctx = _tenant_require(request, "marketplace:manage")
+    from src.platform.marketplace.factory import update_product_installation
+
+    result = await update_product_installation(ctx.organization_id, UUID(install_id))
+    if result is None:
+        raise HTTPException(404, "Instalación no encontrada")
+    return result
+
+
+@tenant_router.delete("/installs/{install_id}", summary="Desinstalar producto (muestra impacto)")
+async def product_uninstall(install_id: str, request: Request, cascade: bool = False):
     ctx = _tenant_require(request, "marketplace:manage")
     from src.platform.marketplace.factory import uninstall_product
 
-    if not await uninstall_product(ctx.organization_id, UUID(install_id)):
+    result = await uninstall_product(ctx.organization_id, UUID(install_id), cascade=cascade)
+    if result is None:
         raise HTTPException(404, "Instalación no encontrada")
-    return {"deleted": True}
+    return result
 
 
 @tenant_router.get("/{product_id}", summary="Detalle público de producto")
@@ -203,7 +278,11 @@ async def product_catalog_detail(product_id: str, request: Request):
     _tenant_require(request, "marketplace_products:read")
     from src.platform.marketplace.products import get_product
 
-    result = await get_product(product_id=UUID(product_id))
+    result: dict | None = None
+    try:
+        result = await get_product(product_id=UUID(product_id))
+    except ValueError:
+        result = await get_product(slug=product_id)
     if result is None or result["status"] not in ("PUBLISHED", "READY"):
         raise HTTPException(404, "Producto no encontrado")
     return result
