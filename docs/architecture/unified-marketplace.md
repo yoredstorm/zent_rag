@@ -194,6 +194,13 @@ transiciones (publishing gate), rollout, impact, analytics, test lab, `sync`.
 
 ## Pendiente (fuera de esta fase)
 
-- Pagos reales (Stripe/IZIPAY): capa PAYMENT separada de CATALOG/ENTITLEMENT.
 - Reviews: solo con datos reales; hoy no se muestran estrellas.
 - Migración de órdenes legacy (`marketplace_orders`) a entitlements.
+
+## Pagos (implementado después de F53)
+
+La capa PAYMENT ya existe y sigue separada de CATALOG/ENTITLEMENT:
+
+- Contrato independiente del proveedor: [`payment-capabilities.md`](payment-capabilities.md).
+- Addon de pagos declarado en el manifest v2: [`addon-contract-v2.md`](addon-contract-v2.md).
+- El embudo de ventas que la usa de punta a punta: [`sales-funnel-gold-workflow.md`](sales-funnel-gold-workflow.md).

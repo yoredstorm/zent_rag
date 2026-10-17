@@ -78,8 +78,33 @@ status `waiting`. `human_approval` sigue existiendo (control
 `on_timeout` (expiración del wait): `branch` (puerto `timeout` si existe edge),
 `expire` (default sin rama), `fail`, `continue` (default en preset `timer`).
 
-## Reanudación = segmento nuevo (sin re-ejecutar)
+## LOOP como primitiva (re-entrada acotada)
 
+Un proceso de negocio real repite pasos (el cliente agrega otro producto, pide
+cambiar algo, reintenta el pago). El grafo sigue siendo **acíclico y validable**:
+`validate_graph` ignora los edges que salen de un nodo `loop`, porque no son
+ciclos sino re-entradas.
+
+Nodo `loop` (`config.target`, `config.max_iterations`):
+
+1. `_exec_loop` exige instancia durable (igual que `wait_event`) y cuenta las
+   repeticiones en el estado durable (`__loops.<target>`); al pasar el límite
+   falla con mensaje explícito.
+2. El handler devuelve `control="loop_back"`; el runtime cierra el segmento con
+   `status="looping"` (el worker se libera igual que en un WAIT).
+3. `instances._continue_loop` calcula el **cuerpo del bucle**
+   (`_loop_body`: alcanzables desde `target` que vuelven al nodo `loop`),
+   re-ejecuta ese cuerpo y conserva el resto del checkpoint
+   (`preload_scope` = preload acumulado − cuerpo). Carrito, orden y datos ya
+   resueltos no se re-ejecutan.
+4. Los edges que salen de un nodo `loop` no cuentan para la readiness del
+   destino (no son un join): el destino se libera por su predecesor normal.
+
+Diferencia con WAIT: un WAIT espera algo externo y la instancia queda WAITING;
+un LOOP continúa en el acto (el siguiente segmento corre en la misma llamada) y
+la instancia solo queda WAITING si el cuerpo vuelve a encontrarse un WAIT.
+
+## Reanudación = segmento nuevo (sin re-ejecutar)
 `instances.py`:
 
 1. Claim atómico `WAITING → RUNNING` (`UPDATE ... WHERE status='WAITING'
@@ -104,7 +129,10 @@ external_event_id, idempotency_key, instance_id)`:
 1. INSERT en inbox (`ON CONFLICT DO NOTHING`): dedupe real por constraints.
 2. Match tenant-scoped por `(waiting_event_type, waiting_correlation_key)`
    (índice parcial de WAITING) o directo por `instance_id` (timeouts), con
-   validación de correlación en el camino directo.
+   validación de correlación **y de tipo de evento** en el camino directo: un
+   `payment.failed` no despierta un WAIT de `payment.succeeded` (si lo hiciera,
+   un rechazo del proveedor terminaría en venta). Devuelve `event_mismatch` y la
+   señal queda en el inbox. `workflow.wait.timeout` está exento (lo emite el sweep).
 3. Claim + resume inline; si no hay waiter queda `pending` → cubre la carrera
    **webhook-antes-de-WAIT** (al entrar al wait se consume el pendiente).
 
@@ -191,3 +219,8 @@ payment success, timeout (expire y branch), expiración global, cancelación,
 suspensión, cross-tenant, wrong conversation, exactly-one-winner concurrente,
 estado durable (merge/append/remove), versión congelada, business_key
 idempotente, portabilidad y compatibilidad de runs sin instancia.
+
+La certificación de negocio (Gold Workflow de ventas: conversación → carrito →
+WAIT/RESUME → pago verificado → venta → inventario, más reinicio, duplicados,
+fallo de pago, fallo del proveedor, aislamiento, portabilidad y contrato de
+addons) vive en `tests/certification/workflows/` y corre en CI como paso propio.
