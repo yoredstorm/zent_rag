@@ -130,6 +130,11 @@ def _is_public(path: str, method: str) -> bool:
         return True
     if method == "POST" and path.startswith("/api/v1/payments/webhook"):
         return True
+    if method == "POST" and path.startswith("/api/v1/public/payments/"):
+        # Webhook de proveedor de pagos del tenant (IZIPAY/Stripe/sandbox):
+        # público; la ÚNICA autorización es la firma verificada dentro de la
+        # ruta (y el tenant se resuelve desde NUESTRO registro, no del payload).
+        return True
     if method == "POST" and path.startswith("/api/v1/public/workflows/"):
         # Inbound de workflows: el secret del workflow es la autorización
         # (arranque por hook y señales para instancias durables).

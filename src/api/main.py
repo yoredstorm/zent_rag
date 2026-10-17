@@ -655,6 +655,11 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
     new_app.include_router(workflows_public_router)
+    from src.api.routes.commerce import public_router as commerce_public_router
+    from src.api.routes.commerce import router as commerce_router
+
+    new_app.include_router(commerce_router)
+    new_app.include_router(commerce_public_router)
     from src.api.routes.marketplace import router as marketplace_router
 
     new_app.include_router(marketplace_router)
