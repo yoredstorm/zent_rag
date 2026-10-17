@@ -28,7 +28,7 @@ async def providers_for_capability(capability_ref: str) -> list[dict[str, Any]]:
         rows = (
             await session.execute(
                 text(
-                    "SELECT m.id, m.slug, m.name, m.status "
+                    "SELECT m.id, m.slug, m.name, m.status, m.auth_modes "
                     "FROM integration_capabilities c "
                     "JOIN integration_manifests m ON m.id = c.integration_id "
                     "WHERE c.slug = :cap AND m.status IN ('PUBLISHED', 'DEPRECATED') "
@@ -45,6 +45,7 @@ async def providers_for_capability(capability_ref: str) -> list[dict[str, Any]]:
             "slug": r.slug,
             "name": r.name,
             "status": r.status,
+            "auth_modes": list(r.auth_modes or []),
         }
         for r in rows
     ]
@@ -89,6 +90,18 @@ async def _installed_for(
     return out
 
 
+def _requires_installation(candidate: dict[str, Any]) -> bool:
+    """¿El tenant tiene que instalar/conectar el provider?
+
+    Un addon incorporado (sin credenciales: `auth_modes` = NONE) ya funciona:
+    pedir una instalación manual sería fricción sin valor.
+    """
+    modes = {str(m).upper() for m in (candidate.get("auth_modes") or [])}
+    if not modes:
+        return True
+    return modes - {"NONE"} != set()
+
+
 async def resolve_capability(
     organization_id: UUID,
     capability_ref: str,
@@ -121,6 +134,8 @@ async def resolve_capability(
                 "integration_slug": c["slug"],
                 "provider_name": c["name"],
                 "provider_id": c["integration_id"],
+                "auth_modes": list(c.get("auth_modes") or []),
+                "requires_installation": False,
             }
     first = candidates[0]
     return {
@@ -128,6 +143,8 @@ async def resolve_capability(
         "resolved": True,
         "installed": False,
         "install_id": None,
+        "auth_modes": list(first.get("auth_modes") or []),
+        "requires_installation": _requires_installation(first),
         "integration_slug": first["slug"],
         "provider_name": first["name"],
         "provider_id": first["integration_id"],

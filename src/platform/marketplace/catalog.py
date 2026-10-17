@@ -13,6 +13,8 @@ from src.infrastructure.postgres.session import get_async_session
 from src.platform.marketplace.models import (
     ManifestValidationError,
     can_transition,
+    contract_version,
+    normalize_contract,
     validate_integration_manifest,
 )
 
@@ -21,7 +23,8 @@ logger = get_logger(__name__)
 _CATALOG_SELECT = (
     "SELECT id, slug, name, provider, version, description, category, logo_ref, "
     "countries, auth_modes, scopes, pricing, rate_limits, data_policy, support, "
-    "certification, status, organization_id, events FROM integration_manifests"
+    "certification, status, organization_id, events, contract, contract_version, "
+    "applies_to FROM integration_manifests"
 )
 
 
@@ -114,6 +117,9 @@ def _row_to_manifest(r) -> dict:
         "status": r.status,
         "organization_id": str(r.organization_id) if r.organization_id else None,
         "events": r.events if hasattr(r, "events") else [],
+        "contract": dict(r.contract or {}) if hasattr(r, "contract") else {},
+        "contract_version": int(r.contract_version or 1) if hasattr(r, "contract_version") else 1,
+        "applies_to": list(r.applies_to or []) if hasattr(r, "applies_to") else [],
     }
 
 
@@ -287,11 +293,13 @@ async def register_manifest(
                         "INSERT INTO integration_manifests "
                         "(slug, name, provider, version, description, category, logo_ref, "
                         "countries, auth_modes, scopes, pricing, rate_limits, data_policy, "
-                        "support, certification, status, created_by, organization_id) "
+                        "support, certification, status, created_by, organization_id, "
+                        "contract, contract_version, applies_to) "
                         "VALUES (:slug, :name, :provider, 1, :desc, :cat, :logo, "
                         "CAST(:countries AS jsonb), CAST(:auth AS jsonb), CAST(:scopes AS jsonb), "
                         "CAST(:pricing AS jsonb), CAST(:rl AS jsonb), CAST(:dp AS jsonb), "
-                        "CAST(:support AS jsonb), :cert, :status, :by, :oid) RETURNING id"
+                        "CAST(:support AS jsonb), :cert, :status, :by, :oid, "
+                        "CAST(:contract AS jsonb), :cver, CAST(:applies AS jsonb)) RETURNING id"
                     ),
                     {
                         "slug": manifest["slug"],
@@ -311,6 +319,11 @@ async def register_manifest(
                         "status": status,
                         "by": created_by,
                         "oid": org_id,
+                        "contract": json.dumps(normalize_contract(manifest), ensure_ascii=False),
+                        "cver": contract_version(manifest),
+                        "applies": json.dumps(
+                            [str(s).upper() for s in (manifest.get("applies_to") or [])]
+                        ),
                     },
                 )
             ).scalar()
@@ -344,7 +357,9 @@ async def register_manifest(
                     "name = :name, provider = :provider, description = :desc, "
                     "auth_modes = CAST(:auth AS jsonb), rate_limits = CAST(:rl AS jsonb), "
                     "data_policy = CAST(:dp AS jsonb), support = CAST(:support AS jsonb), "
-                    "pricing = CAST(:pricing AS jsonb) WHERE id = :mid"
+                    "pricing = CAST(:pricing AS jsonb), contract = CAST(:contract AS jsonb), "
+                    "contract_version = :cver, applies_to = CAST(:applies AS jsonb) "
+                    "WHERE id = :mid"
                 ),
                 {
                     "status": status,
@@ -356,6 +371,11 @@ async def register_manifest(
                     "dp": json.dumps(manifest.get("data_policy") or {}),
                     "support": json.dumps(manifest.get("support") or {}),
                     "pricing": json.dumps(manifest.get("pricing") or {}),
+                    "contract": json.dumps(normalize_contract(manifest), ensure_ascii=False),
+                    "cver": contract_version(manifest),
+                    "applies": json.dumps(
+                        [str(s).upper() for s in (manifest.get("applies_to") or [])]
+                    ),
                     "mid": existing.id,
                 },
             )

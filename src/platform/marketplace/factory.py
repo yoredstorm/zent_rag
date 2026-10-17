@@ -1013,7 +1013,8 @@ async def sync_catalog_from_assets(*, created_by: UUID | None = None) -> dict:
             await session.execute(
                 text(
                     "SELECT m.slug, m.name, m.description, m.category, m.pricing, "
-                    "m.data_policy, m.status, m.certification, m.countries, m.events "
+                    "m.data_policy, m.status, m.certification, m.countries, m.events, "
+                    "m.applies_to, m.contract_version "
                     "FROM integration_manifests m ORDER BY m.slug"
                 )
             )
@@ -1133,7 +1134,11 @@ async def sync_catalog_from_assets(*, created_by: UUID | None = None) -> dict:
                 "dependencies": [],
                 "capabilities": caps_by_slug.get(str(m.slug), []),
                 "events": [str(e) for e in (m.events or [])],
-                "applies_to": default_applies_to("INTEGRATION", m.category),
+                "applies_to": (
+                    list(m.applies_to or [])
+                    if getattr(m, "applies_to", None)
+                    else default_applies_to("INTEGRATION", m.category)
+                ),
                 "status": "PUBLISHED" if m.status == "PUBLISHED" else (
                     "DEPRECATED" if m.status == "DEPRECATED" else "DRAFT"
                 ),
