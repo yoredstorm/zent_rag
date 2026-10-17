@@ -112,6 +112,19 @@ def _extract_requirements(graph: dict[str, Any]) -> dict[str, list[dict[str, Any
             event_type = str(config.get("event_type") or "").strip()
             if event_type:
                 events.append({"ref": event_type, "requirement": "required", "node_id": str(node.get("id"))})
+        elif ntype == "wait_event":
+            # Un WAIT también declara una dependencia de evento: el paquete debe
+            # decir que el proceso espera `payment.succeeded`, no solo el trigger.
+            event_type = str(config.get("event_type") or "").strip()
+            if not event_type:
+                from src.platform.workflows.instances import WAIT_PRESET_EVENTS
+
+                preset = str(config.get("preset") or "")
+                event_type = str(WAIT_PRESET_EVENTS.get(preset, ""))
+                if preset == "webhook" and event_type == "webhook":
+                    event_type = f"webhook.{node.get('id')}"
+            if event_type and event_type not in ("signal", "workflow.wait.timeout"):
+                events.append({"ref": event_type, "requirement": "required", "node_id": str(node.get("id"))})
     return {"capabilities": capabilities, "actions": actions, "events": events}
 
 
@@ -359,6 +372,17 @@ async def inspect_package(
                     "RESOLVED",
                     requirement,
                     f"provider {resolved.get('integration_slug')}",
+                    node_id=node_id,
+                )
+            )
+        elif not resolved.get("requires_installation", True):
+            add(
+                _item(
+                    ref,
+                    "capability",
+                    "RESOLVED",
+                    requirement,
+                    f"proveedor incorporado {resolved.get('integration_slug')}",
                     node_id=node_id,
                 )
             )

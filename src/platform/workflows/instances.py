@@ -368,9 +368,13 @@ async def find_waiting_instance_by_conversation(
 
 
 async def load_instance_preload(
-    organization_id: UUID, instance_id: UUID
+    organization_id: UUID, instance_id: UUID, *, scope: list[str] | None = None
 ) -> dict[str, tuple[str, dict, str | None, int]]:
-    """Union de steps exitosos de TODOS los segmentos: checkpoint acumulado."""
+    """Union de steps exitosos de TODOS los segmentos: checkpoint acumulado.
+
+    `scope` acota el checkpoint a un conjunto de nodos: lo usa la re-entrada de
+    bucle, que re-ejecuta el cuerpo del bucle y conserva el resto del proceso.
+    """
     session = await get_async_session()
     try:
         rows = (
@@ -387,9 +391,11 @@ async def load_instance_preload(
         ).fetchall()
     finally:
         await session.close()
+    allowed = set(scope) if scope is not None else None
     return {
         str(r.node_id): (str(r.status), dict(r.output or {}), r.error, int(r.retries or 0))
         for r in rows
+        if allowed is None or str(r.node_id) in allowed
     }
 
 
@@ -677,6 +683,7 @@ async def _run_instance_segment(
     system_context: bool = True,
     correlation: str | None = None,
     preload_ports: dict[str, str] | None = None,
+    preload_scope: list[str] | None = None,
     run_seq: int | None = None,
 ) -> dict:
     """Ejecuta un segmento de la instancia reutilizando run_workflow."""
@@ -703,6 +710,7 @@ async def _run_instance_segment(
         instance_id=iid,
         instance_seq=seq,
         preload_ports=preload_ports,
+        preload_scope=preload_scope,
     )
 
 
@@ -717,10 +725,26 @@ async def handle_segment_result(
     waiting: dict[str, Any] | None,
     wait_node_id: str | None,
     wait_port: str,
+    looping: dict[str, Any] | None = None,
+    loop_node_id: str | None = None,
 ) -> None:
     """Cierre de segmento: WAITING (checkpoint) o terminal. Nunca deja proceso vivo."""
     org = UUID(str(organization_id))
     iid = UUID(str(instance_id))
+    if status == "looping":
+        logger.info(
+            "instance loop segment", instance_id=str(iid), spec=dict(looping or {})
+        )
+    if status == "looping" and looping:
+        await _continue_loop(
+            org=org,
+            iid=iid,
+            run_id=UUID(str(run_id)),
+            instance_seq=instance_seq,
+            loop_spec=looping,
+            loop_node_id=loop_node_id or "",
+        )
+        return
     if status == "waiting" and waiting:
         await _enter_wait(
             org=org,
@@ -780,6 +804,120 @@ async def handle_segment_result(
             reason="segment_failed",
             error=error,
         )
+
+
+async def _run_trigger_payload(org: UUID, run_id: UUID) -> dict[str, Any]:
+    """Payload del segmento que pidió la re-entrada (continuidad del trigger)."""
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT trigger_payload FROM workflow_runs WHERE id = :rid AND organization_id = :oid"
+                ),
+                {"rid": str(run_id), "oid": str(org)},
+            )
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("loop trigger payload lookup failed", error=str(exc)[:160])
+        row = None
+    finally:
+        await session.close()
+    return dict(row.trigger_payload or {}) if row else {}
+
+
+def _loop_body(graph: dict[str, Any], target: str, loop_node_id: str) -> set[str]:
+    """Nodos que se re-ejecutan: alcanzables desde `target` que vuelven al loop."""
+    edges = list(graph.get("edges") or [])
+    forward: dict[str, set[str]] = {}
+    backward: dict[str, set[str]] = {}
+    for edge in edges:
+        src, dst = str(edge.get("from_node")), str(edge.get("to_node"))
+        forward.setdefault(src, set()).add(dst)
+        backward.setdefault(dst, set()).add(src)
+
+    def _walk(start: str, graph_map: dict[str, set[str]]) -> set[str]:
+        seen: set[str] = set()
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            for nxt in graph_map.get(node, set()):
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                stack.append(nxt)
+        return seen
+
+    from_target = _walk(target, forward) | {target}
+    to_loop = _walk(loop_node_id, backward) | {loop_node_id}
+    return (from_target & to_loop) or {target, loop_node_id}
+
+
+async def _continue_loop(
+    *,
+    org: UUID,
+    iid: UUID,
+    run_id: UUID,
+    instance_seq: int,
+    loop_spec: dict[str, Any],
+    loop_node_id: str,
+) -> None:
+    """Re-entrada de bucle: repite el cuerpo sin re-ejecutar el resto del proceso.
+
+    El grafo sigue siendo acíclico; lo que se acota es el checkpoint: el cuerpo
+    del bucle queda fuera del preload del nuevo segmento y todo lo demás se
+    conserva (contexto, carrito, orden, datos ya resueltos).
+    """
+    instance = await get_instance(org, iid)
+    if instance is None:
+        return
+    status = str(instance.get("status") or "")
+    if status not in ("NEW", "RUNNING", "WAITING", "SUSPENDED"):
+        return  # CANCELLED/terminal: el cierre no revive procesos
+    graph = (instance.get("definition_snapshot") or {}).get("graph") or {}
+    target = str(loop_spec.get("target") or "")
+    node_ids = {str(n.get("id")) for n in (graph.get("nodes") or [])}
+    if not target or target not in node_ids:
+        await _finalize_instance(
+            org=org,
+            iid=iid,
+            run_id=run_id,
+            instance_seq=instance_seq,
+            new_status="FAILED",
+            reason="loop_target_missing",
+            error=f"nodo de re-entrada inexistente: {target}",
+        )
+        return
+    body = _loop_body(graph, target, loop_node_id)
+    full = await load_instance_preload(org, iid)
+    scope = [nid for nid in full if nid not in body]
+    payload = await _run_trigger_payload(org, run_id)
+    from src.platform.workflows.context_store import append_run_event
+
+    await append_run_event(
+        org,
+        run_id,
+        "loop_reentered",
+        node_id=loop_node_id or None,
+        payload={
+            "target": target,
+            "iteration": loop_spec.get("iteration"),
+            "reset_nodes": sorted(body),
+            "segment_seq": instance_seq,
+        },
+        instance_id=iid,
+    )
+    # El segmento nuevo cierra por sí mismo (wait / loop / terminal): el cierre
+    # de instancia lo hace `handle_segment_result` dentro de run_workflow.
+    await _run_instance_segment(
+        instance,
+        trigger="loop",
+        payload=payload,
+        correlation=f"inst:{iid}:r{instance_seq + 1}",
+        preload_scope=scope,
+        run_seq=instance_seq + 1,
+    )
+    _emit_instance_metric("LOOP")
 
 
 async def _enter_wait(
@@ -980,6 +1118,17 @@ async def signal_workflow_instance(
                     "signal_id": signal_id,
                     "resumed": False,
                     "expected_correlation": wait_ck,
+                }
+            wait_et = str(inst.get("waiting_event_type") or "")
+            if et != _TIMEOUT_EVENT and wait_et and et != wait_et:
+                # Tipo de evento incorrecto: un `payment.failed` no puede
+                # despertar un wait de `payment.succeeded` (jamás convierte un
+                # fallo en una venta). El signal queda en el inbox.
+                return {
+                    "status": "event_mismatch",
+                    "signal_id": signal_id,
+                    "resumed": False,
+                    "expected_event_type": wait_et,
                 }
             instances = [inst]
     else:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -125,6 +126,8 @@ class NodeOutcome:
     #: Spec del wait durable cuando control == "wait_event" (event_type,
     #: correlation, timeout_seconds, port).
     waiting: dict[str, Any] | None = None
+    #: Spec de re-entrada cuando control == "loop_back" (target, iteration).
+    looping: dict[str, Any] | None = None
 
 
 @dataclass
@@ -200,7 +203,11 @@ def _resolve_ref(value: Any, rctx: NodeContext) -> Any:
     instance_state = rctx.instance.state if rctx.instance is not None else None
     if isinstance(value, str):
         resolved = resolve_stable_references(
-            value, rctx.node_outputs, rctx.trigger, instance_state=instance_state
+            value,
+            rctx.node_outputs,
+            rctx.trigger,
+            instance_state=instance_state,
+            variables=rctx.variables,
         )
         if isinstance(resolved, str) and "{{" not in resolved:
             v = resolved
@@ -213,7 +220,13 @@ def _resolve_ref(value: Any, rctx: NodeContext) -> Any:
             except ValueError:
                 return v
         return resolved
-    return resolve_stable_references(value, rctx.node_outputs, instance_state=instance_state)
+    return resolve_stable_references(
+        value,
+        rctx.node_outputs,
+        rctx.trigger,
+        instance_state=instance_state,
+        variables=rctx.variables,
+    )
 
 
 def _deny(outcome: NodeOutcome, permission: str, node_type: str) -> NodeOutcome:
@@ -2238,7 +2251,9 @@ async def _exec_condition(rctx: NodeContext) -> NodeOutcome:
 
     # Formato legacy / condición única: mismo shape de salida que siempre.
     field = str(cfg.get("field", ""))
-    operator = str(cfg.get("operator", "=="))
+    # El operador también puede venir de una variable del flujo (parámetro
+    # configurable del embudo), no solo del literal del editor.
+    operator = str(_resolve_ref(cfg.get("operator", "=="), rctx) or "==")
     value = _resolve_ref(cfg.get("value", ""), rctx)
     actual = _resolve_condition_field(field, rctx)
     result = _eval(actual, operator, value)
@@ -2974,6 +2989,70 @@ async def _exec_wait_event(rctx: NodeContext) -> NodeOutcome:
     )
 
 
+async def _exec_loop(rctx: NodeContext) -> NodeOutcome:
+    """Vuelve a un nodo anterior SIN crear ciclos en el grafo.
+
+    Un proceso de negocio real repite pasos (el cliente agrega otro producto,
+    pide cambiar la dirección, reintenta el pago). El grafo se mantiene acíclico
+    y validable: este nodo cierra el segmento y la instancia durable re-entra en
+    `target` con un checkpoint acotado al cuerpo del bucle, de modo que el resto
+    del proceso no se re-ejecuta.
+
+    Requiere instancia durable (igual que `wait_event`): el estado del bucle
+    vive en la instancia, nunca en memoria.
+    """
+    cfg = rctx.node.config or {}
+    target = str(cfg.get("target") or "").strip()
+    if not target:
+        return NodeOutcome(error="loop requiere config.target (nodo de re-entrada)")
+    try:
+        max_iterations = max(1, min(int(cfg.get("max_iterations") or 20), 100))
+    except (TypeError, ValueError):
+        max_iterations = 20
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "loop", "target": target, "max_iterations": max_iterations},
+            output={"looping": True, "target": target, "simulated": True},
+        )
+    if rctx.instance is None:
+        return NodeOutcome(error="loop requiere una instancia durable (inicia el flujo como proceso)")
+
+    key = re.sub(r"[^a-zA-Z0-9_]", "_", target)[:60]
+    path = f"__loops.{key}"
+    from src.platform.workflows.instances import InstanceStateError, mutate_instance_state
+
+    try:
+        current = await mutate_instance_state(
+            rctx.organization_id, rctx.instance.id, op="get", path=path
+        )
+        iteration = int(current.get("value") or 0) + 1
+        if iteration > max_iterations:
+            return NodeOutcome(
+                error=f"límite de repeticiones alcanzado ({max_iterations}) en {target}"
+            )
+        result = await mutate_instance_state(
+            rctx.organization_id, rctx.instance.id, op="set", path=path, value=iteration
+        )
+        rctx.instance.state = dict(result.get("state") or {})
+    except InstanceStateError as exc:
+        return NodeOutcome(error=str(exc)[:200])
+    except (TypeError, ValueError):
+        return NodeOutcome(error=f"contador de repeticiones inválido para {target}")
+
+    spec = {
+        "loop": True,
+        "target": target,
+        "iteration": iteration,
+        "max_iterations": max_iterations,
+    }
+    return NodeOutcome(
+        output={"looping": True, "target": target, "iteration": iteration},
+        control="loop_back",
+        looping=spec,
+    )
+
+
 async def _exec_state_op(rctx: NodeContext, op: str) -> NodeOutcome:
     """Business state durable de la instancia (el LLM propone; el nodo aplica)."""
     if rctx.simulate:
@@ -2990,6 +3069,16 @@ async def _exec_state_op(rctx: NodeContext, op: str) -> NodeOutcome:
     if not path:
         return NodeOutcome(error=f"state.{op} requiere path")
     value = _resolve_ref(cfg.get("value"), rctx) if "value" in cfg else None
+    if isinstance(value, str):
+        # Las referencias del grafo serializan objetos/listas como JSON; el
+        # estado durable debe guardar la estructura, no su representación.
+        stripped = value.strip()
+        if stripped[:1] in ("{", "[") and stripped[-1:] in ("}", "]"):
+            try:
+                parsed = json.loads(stripped)
+                value = parsed
+            except ValueError:
+                pass
     from src.platform.workflows.instances import InstanceStateError, mutate_instance_state
 
     try:
@@ -3055,6 +3144,8 @@ async def _exec_capability_call(rctx: NodeContext) -> NodeOutcome:
             actor_id=rctx.execution.actor_id,
             workflow_id=rctx.execution.workflow_id,
             run_id=rctx.execution.run_id,
+            instance_id=rctx.execution.instance_id,
+            node_id=rctx.node_id,
         )
     except BindingError as exc:
         return NodeOutcome(error=f"{exc.code}: {exc.message}"[:300])
@@ -3767,6 +3858,18 @@ def _register_defaults() -> None:
         outputs={"out": {"type": "json"}, "timeout": {"type": "json"}},
         execute=_exec_wait_event,
         **semantic_metadata("wait_event"),
+    )
+    registry.register(
+        "loop",
+        version=1,
+        label="Volver a un paso",
+        category="control",
+        risk_level="info",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_loop,
+        **semantic_metadata("loop"),
     )
     _state_ops = {
         "get": _exec_state_get,

@@ -326,6 +326,7 @@ async def run_workflow(
     instance_id: UUID | None = None,
     instance_seq: int | None = None,
     preload_ports: dict[str, str] | None = None,
+    preload_scope: list[str] | None = None,
 ) -> dict:
     """Ejecuta el workflow bajo un ExecutionContext explícito.
 
@@ -523,7 +524,9 @@ async def run_workflow(
         from src.platform.workflows.instances import load_instance_preload
 
         try:
-            preloaded = await load_instance_preload(eff_org, UUID(str(instance_id)))
+            preloaded = await load_instance_preload(
+                eff_org, UUID(str(instance_id)), scope=preload_scope
+            )
         except Exception as exc:  # noqa: BLE001 — sin preload se re-ejecuta lo resuelto
             logger.warning(
                 "instance preload failed", instance_id=str(instance_id), error=str(exc)[:200]
@@ -700,6 +703,8 @@ async def run_workflow(
                 waiting=result.waiting,
                 wait_node_id=result.wait_node_id,
                 wait_port=result.wait_port,
+                looping=result.looping,
+                loop_node_id=result.loop_node_id,
             )
         except Exception as exc:  # noqa: BLE001 — el run ya es durable; el sweep reconcilia
             logger.warning(

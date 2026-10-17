@@ -257,10 +257,14 @@ def validate_graph(graph: WorkflowGraph) -> None:
         if e.from_node == e.to_node:
             raise WorkflowGraphError(f"edge {e.id}: self-loop prohibido")
 
-    # Ciclos: DFS desde entrypoints (restringidos a edges sin condición de
-    # iteración; los loops reales se modelan con for_each, no con edges).
+    # Ciclos: DFS desde entrypoints. Un edge que SALE de un nodo `loop` es una
+    # re-entrada durable acotada (la instancia repite el cuerpo con checkpoint
+    # acotado), no un ciclo en el grafo: se excluye de la detección y el resto
+    # del grafo sigue siendo acíclico y validable.
     adj: dict[str, list[str]] = {n.id: [] for n in graph.nodes}
     for e in graph.edges:
+        if node_map[e.from_node].type == "loop":
+            continue
         adj[e.from_node].append(e.to_node)
 
     WHITE, GRAY, BLACK = 0, 1, 2
@@ -462,9 +466,10 @@ def resolve_stable_references(
     trigger: dict[str, Any] | None = None,
     *,
     instance_state: dict[str, Any] | None = None,
+    variables: dict[str, Any] | None = None,
 ) -> Any:
     """Resuelve referencias estables por node id ({{nodes.<id>.output.<path>}}),
-    {{trigger.<path>}}, {{variables.<name>}} y {{instance.state.<path>}}
+    {{trigger.<path>}}, {{instance.state.<path>}} y {{variables.<name>}}
     contra datos ya disponibles."""
 
     def _walk(cur: Any, path: str) -> Any:
@@ -503,19 +508,32 @@ def resolve_stable_references(
         return _render(_walk(instance_state, match.group(1)))
 
     def repl_variable(match: re.Match) -> str:
-        return match.group(0)
+        if variables is None:
+            return match.group(0)
+        resolved = _walk(variables, match.group(1))
+        if resolved is None:
+            return match.group(0)
+        return _render(resolved)
 
     if isinstance(value, str):
         out = value
         out = _TRIGGER_REF_RE.sub(repl_trigger, out)
         out = _INSTANCE_STATE_REF_RE.sub(repl_instance, out)
+        out = _VARIABLE_REF_RE.sub(repl_variable, out)
         out = _NODE_REF_RE.sub(repl, out)
         return out
     if isinstance(value, dict):
         return {
-            k: resolve_stable_references(v, node_outputs, trigger, instance_state=instance_state)
+            k: resolve_stable_references(
+                v, node_outputs, trigger, instance_state=instance_state, variables=variables
+            )
             for k, v in value.items()
         }
     if isinstance(value, list):
-        return [resolve_stable_references(v, node_outputs, trigger) for v in value]
+        return [
+            resolve_stable_references(
+                v, node_outputs, trigger, instance_state=instance_state, variables=variables
+            )
+            for v in value
+        ]
     return value

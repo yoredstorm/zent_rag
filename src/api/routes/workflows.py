@@ -551,6 +551,12 @@ async def tenant_workflow_instance_signal(
     from src.platform.workflows.instances import signal_workflow_instance
 
     ctx = require_permission(request, "workflows:run")
+    from src.platform.workflows.instances import get_instance
+
+    if await get_instance(ctx.organization_id, UUID(instance_id)) is None:
+        # Una instancia de otro tenant no existe para este caller: la señal no
+        # se acepta (nunca se encola para un proceso ajeno).
+        raise HTTPException(404, "instancia no encontrada")
     return await signal_workflow_instance(
         organization_id=ctx.organization_id,
         event_type=body.event_type,
@@ -594,9 +600,10 @@ async def tenant_workflow_instance_resume(instance_id: str, request: Request):
 # Capability bindings + paquetes portables (import/export)
 # ---------------------------------------------------------------------------
 class BindingIn(BaseModel):
+    #: Provider kinds del binder (fuente única: `bindings.PROVIDER_KINDS`).
     provider_kind: str = Field(
         ...,
-        pattern="^(managed_db|connected_db|marketplace_action|semantic_query|rest_api|erp|custom)$",
+        pattern="^(managed_db|connected_db|marketplace_action|semantic_query|rest_api|erp|custom|commerce|payment_provider|conversation)$",
     )
     config: dict = Field(default_factory=dict)
     contract_input_schema: dict = Field(default_factory=dict)

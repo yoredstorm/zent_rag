@@ -197,11 +197,19 @@ async def test_duplicate_signal_does_not_run_twice(async_client: AsyncClient) ->
     instance_id = started["instance_id"]
 
     first = await _signal(
-        async_client, org, instance_id, event_type="signal.manual", idempotency_key="msg-1"
+        async_client,
+        org,
+        instance_id,
+        event_type="conversation.message",
+        idempotency_key="msg-1",
     )
     assert first["status"] == "resumed"
     second = await _signal(
-        async_client, org, instance_id, event_type="signal.manual", idempotency_key="msg-1"
+        async_client,
+        org,
+        instance_id,
+        event_type="conversation.message",
+        idempotency_key="msg-1",
     )
     assert second["status"] == "duplicate"
     timeline = await _timeline(async_client, org, instance_id)

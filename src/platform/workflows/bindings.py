@@ -33,6 +33,12 @@ PROVIDER_KINDS: tuple[str, ...] = (
     "rest_api",
     "erp",
     "custom",
+    # Datos de negocio de Zent (catálogo, inventario, ventas) y pago
+    # desacoplado del proveedor (Stripe / IZIPAY / sandbox).
+    "commerce",
+    "payment_provider",
+    # Mensajería al cliente resuelta por binding (in_app/email/webhook).
+    "conversation",
 )
 
 _IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$")
@@ -239,6 +245,22 @@ def _type_ok(value: Any, want: str) -> bool:
     return True
 
 
+def _coerce_structured(value: Any, want: str) -> Any:
+    """Las referencias del grafo serializan listas/objetos como JSON.
+
+    Un `items: "{{instance.state.cart.items}}"` llega como string JSON; el
+    contrato debe validar la ESTRUCTURA, no su representación textual."""
+    if want not in ("array", "object") or not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped or stripped[:1] not in ("[", "{"):
+        return value
+    try:
+        return json.loads(stripped)
+    except ValueError:
+        return value
+
+
 def validate_contract(payload: dict[str, Any], schema: dict[str, Any] | None) -> list[str]:
     """Errores de contrato (required + tipos básicos). Vacío = OK."""
     schema = schema or {}
@@ -251,7 +273,8 @@ def validate_contract(payload: dict[str, Any], schema: dict[str, Any] | None) ->
         if key not in payload or payload.get(key) is None:
             continue
         want = str((spec or {}).get("type") or "")
-        if want and not _type_ok(payload.get(key), want):
+        value = _coerce_structured(payload.get(key), want)
+        if want and not _type_ok(value, want):
             errors.append(f"tipo inválido en {key}: esperado {want}")
     return errors
 
@@ -276,8 +299,14 @@ async def execute_binding(
     actor_id: UUID | None = None,
     workflow_id: UUID | None = None,
     run_id: UUID | None = None,
+    instance_id: UUID | None = None,
+    node_id: str | None = None,
 ) -> dict[str, Any]:
     """Ejecuta una capacidad resuelta por el binding del tenant.
+
+    `instance_id` + `node_id` forman, junto al `business_operation_id`, la
+    identidad lógica estable de una operación financiera: un retry repite la
+    MISMA operación y nunca duplica un cobro.
 
     Lanza BindingError(code) para estados accionables: NEEDS_CONFIGURATION,
     NEEDS_CREDENTIALS, DISABLED, PROVIDER_NOT_IMPLEMENTED, CONTRACT_INVALID."""
@@ -304,6 +333,31 @@ async def execute_binding(
         out = await _execute_managed_select(organization_id, binding, payload, workspace_id=workspace_id)
     elif kind == "rest_api":
         out = await _execute_rest(organization_id, binding, payload)
+    elif kind == "commerce":
+        out = await _execute_commerce(
+            organization_id, binding, payload, workspace_id=workspace_id, instance_id=instance_id,
+            node_id=node_id, workflow_id=workflow_id, run_id=run_id,
+        )
+    elif kind == "payment_provider":
+        out = await _execute_payment(
+            organization_id, binding, payload, workspace_id=workspace_id, instance_id=instance_id,
+            node_id=node_id, workflow_id=workflow_id, run_id=run_id,
+        )
+    elif kind == "conversation":
+        from src.platform.workflows.conversation_capability import (
+            execute_conversation_capability,
+        )
+
+        try:
+            out = await execute_conversation_capability(
+                organization_id, binding["capability_ref"], payload, workspace_id=workspace_id,
+                instance_id=instance_id, node_id=node_id, workflow_id=workflow_id, run_id=run_id,
+                binding=binding,
+            )
+        except BindingError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise BindingError("PROVIDER_ERROR", f"mensajería falló: {str(exc)[:200]}") from exc
     else:
         raise BindingError(
             "PROVIDER_NOT_IMPLEMENTED",
@@ -313,6 +367,100 @@ async def execute_binding(
     if output_errors:
         raise BindingError("CONTRACT_INVALID", "salida: " + "; ".join(output_errors[:5]))
     return {"capability": capability_ref, "provider_kind": kind, "output": out}
+
+
+def _business_error(exc: Exception) -> BindingError:
+    """Traduce errores de negocio a códigos accionables del binder."""
+    code = str(getattr(exc, "code", "") or "PROVIDER_ERROR")
+    message = str(getattr(exc, "message", "") or str(exc))[:300]
+    aliases = {
+        "NEEDS_CREDENTIALS": "NEEDS_CREDENTIALS",
+        "PROVIDER_UNKNOWN": "NEEDS_CONFIGURATION",
+        "ORDER_NOT_FOUND": "NOT_FOUND",
+        "CHECKOUT_NOT_FOUND": "NOT_FOUND",
+        "PRODUCT_NOT_FOUND": "NOT_FOUND",
+        "INVALID_ORDER_TRANSITION": "CONFLICT",
+        "ORDER_CONFLICT": "CONFLICT",
+        "CHECKOUT_CONFLICT": "CONFLICT",
+        "ALREADY_PAID": "CONFLICT",
+        "NOT_PAID": "CONFLICT",
+        "ORDER_CLOSED": "CONFLICT",
+        "INSUFFICIENT_STOCK": "CONFLICT",
+    }
+    return BindingError(aliases.get(code, code), message)
+
+
+async def _execute_commerce(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+    instance_id: UUID | None,
+    node_id: str | None,
+    workflow_id: UUID | None,
+    run_id: UUID | None,
+) -> dict[str, Any]:
+    from src.platform.commerce.capabilities import execute_commerce_capability
+    from src.platform.commerce.store import CommerceError
+
+    try:
+        return await execute_commerce_capability(
+            organization_id,
+            binding["capability_ref"],
+            payload,
+            workspace_id=workspace_id,
+            instance_id=instance_id,
+            node_id=node_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            binding=binding,
+        )
+    except CommerceError as exc:
+        raise _business_error(exc) from exc
+    except BindingError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise BindingError("PROVIDER_ERROR", f"commerce falló: {str(exc)[:200]}") from exc
+
+
+async def _execute_payment(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+    instance_id: UUID | None,
+    node_id: str | None,
+    workflow_id: UUID | None,
+    run_id: UUID | None,
+) -> dict[str, Any]:
+    from src.platform.commerce.capabilities import execute_payment_capability
+    from src.platform.commerce.payments.base import PaymentProviderError
+
+    # El tenant elige el proveedor en el binding; el payload puede forzarlo
+    # (multi-proveedor) sin que el workflow nombre a ninguno.
+    config_provider = str((binding.get("config") or {}).get("provider") or "")
+    if config_provider and not payload.get("provider"):
+        payload = {**payload, "provider": config_provider}
+    try:
+        return await execute_payment_capability(
+            organization_id,
+            binding["capability_ref"],
+            payload,
+            workspace_id=workspace_id,
+            instance_id=instance_id,
+            node_id=node_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            binding=binding,
+        )
+    except PaymentProviderError as exc:
+        raise _business_error(exc) from exc
+    except BindingError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise BindingError("PROVIDER_ERROR", f"pago falló: {str(exc)[:200]}") from exc
 
 
 async def _execute_marketplace_action(
@@ -503,8 +651,12 @@ async def _execute_rest(
     credential_ref = binding.get("credential_ref")
     if credential_ref:
         try:
+            from uuid import UUID as _UUID
+
             store = get_secret_store()
-            secret = await store.get(credential_ref) if store else None
+            secret = (
+                await store.get(organization_id, _UUID(str(credential_ref))) if store else None
+            )
             if isinstance(secret, dict):
                 headers.update({str(k): str(v) for k, v in secret.get("headers", {}).items()})
                 if secret.get("api_key"):

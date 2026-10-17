@@ -58,6 +58,8 @@ class NodeExecution:
     control: str | None = None
     cost_ms: float = 0.0
     contribution: dict[str, Any] = field(default_factory=dict)
+    #: Spec de re-entrada de bucle (control == "loop_back").
+    looping: dict[str, Any] = field(default_factory=dict)
     #: Spec de suspensión durable cuando control == "wait_event".
     waiting: dict[str, Any] = field(default_factory=dict)
 
@@ -76,6 +78,9 @@ class RunExecutionResult:
     waiting: dict[str, Any] | None = None
     wait_node_id: str | None = None
     wait_port: str = "out"
+    #: Re-entrada de bucle durable: nodo y spec del loop (target, iteration).
+    looping: dict[str, Any] | None = None
+    loop_node_id: str | None = None
 
 
 def _ensure_metrics() -> None:
@@ -231,8 +236,13 @@ async def execute_graph(
     branch_of: dict[str, str] = {}  # nodo del subgrafo for_each → for_each padre
     for edge in graph.edges:
         outgoing.setdefault(edge.from_node, []).append(edge)
-        incoming.setdefault(edge.to_node, []).append(edge)
         src = node_map.get(edge.from_node)
+        if src is not None and src.type == "loop":
+            # Un edge que sale de un nodo `loop` es una RE-ENTRADA durable, no un
+            # join: no debe bloquear la readiness del destino (el cuerpo del
+            # bucle se re-ejecuta con checkpoint acotado, no espera a nadie).
+            continue
+        incoming.setdefault(edge.to_node, []).append(edge)
         if src is not None and src.type == "for_each" and edge.from_port == "out":
             branch_of[edge.to_node] = edge.from_node
 
@@ -251,6 +261,8 @@ async def execute_graph(
     run_error: str | None = None
     wait_node_id: str | None = None
     wait_port: str = "out"
+    loop_node_id: str | None = None
+    loop_spec: dict[str, Any] | None = None
     step_index = step_index_start
     variables: dict[str, Any] = dict(graph.variables or {})
     trigger = payload or {}
@@ -351,6 +363,7 @@ async def execute_graph(
                     "duration_ms": exec_.duration_ms,
                     "simulated": exec_.simulated,
                 },
+                instance_id=ctx.instance_id,
             )
         except Exception as exc:  # noqa: BLE001 — el timeline no rompe el run
             logger.warning("run event persist failed", node_id=node_id, error=str(exc)[:200])
@@ -359,7 +372,7 @@ async def execute_graph(
             planned_effects.append({"node_id": node_id, "node_type": node_type, "planned": exec_.planned})
 
     async def run_node(node_id: str) -> None:
-        nonlocal run_status, run_error, wait_node_id, wait_port
+        nonlocal run_status, run_error, wait_node_id, wait_port, loop_node_id, loop_spec
         node = node_map[node_id]
         node_def = registry.get(node.type)
         started = datetime.now(timezone.utc)
@@ -486,6 +499,7 @@ async def execute_graph(
                     control=outcome.control,
                     cost_ms=float(outcome.cost_ms or 0.0),
                     waiting=dict(outcome.waiting or {}),
+                    looping=dict(outcome.looping or {}),
                 )
                 break
             if outcome is not None and outcome.error:
@@ -567,6 +581,13 @@ async def execute_graph(
             run_status = "waiting"
             wait_node_id = node_id
             wait_port = str((exec_.waiting or {}).get("port") or "out")
+            return
+        if exec_.control == "loop_back":
+            # Re-entrada acotada: el grafo sigue acíclico y la instancia durable
+            # repite el cuerpo del bucle desde `target` con checkpoint acotado.
+            run_status = "looping"
+            loop_node_id = node_id
+            loop_spec = dict(exec_.looping or {})
             return
 
 
@@ -770,7 +791,7 @@ async def execute_graph(
     # Nodos del subgrafo for_each y no ejecutados → skipped de cierre.
     for node_id, _node in node_map.items():
         if node_id not in resolved and node_id not in branch_of:
-            if run_status in ("failed", "pending_approval", "waiting", "stopped") or partial_stop:
+            if run_status in ("failed", "pending_approval", "waiting", "looping", "stopped") or partial_stop:
                 executions[node_id] = NodeExecution(status="skipped", output={})
                 resolved.add(node_id)
                 if partial_stop:
@@ -798,6 +819,8 @@ async def execute_graph(
         ),
         wait_node_id=wait_node_id,
         wait_port=wait_port,
+        looping=loop_spec,
+        loop_node_id=loop_node_id,
     )
 
 

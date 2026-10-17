@@ -486,8 +486,34 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         context_reads=("trigger", "variables"),
         supports_simulation=True,
     ),
-    "state_get": _meta(
-        "Leer estado de negocio",
+    "loop": _meta(
+        "Volver a un paso",
+        "Repite una parte del proceso sin crear ciclos en el grafo.",
+        long_description=(
+            "Cierra el segmento y re-entra en el nodo objetivo con un checkpoint "
+            "acotado al cuerpo del bucle: el resto del proceso (carrito, orden, "
+            "datos ya resueltos) no se vuelve a ejecutar. Requiere instancia "
+            "durable y acota las repeticiones con max_iterations."
+        ),
+        when_to_use=(
+            "el cliente agrega otro producto y hay que volver a buscar en el catálogo",
+            "un paso debe repetirse hasta que una condición de negocio se cumpla",
+        ),
+        when_not_to_use=("el grafo puede resolverse sin repetir pasos",),
+        examples=(
+            {
+                "title": "Volver al catálogo por otro producto",
+                "config": {"target": "buscar", "max_iterations": 20},
+            },
+            {
+                "title": "Volver a pedir confirmación",
+                "config": {"target": "pedir_confirmacion", "max_iterations": 3},
+            },
+        ),
+        context_reads=("trigger", "variables"),
+        supports_simulation=True,
+    ),
+    "state_get": _meta(        "Leer estado de negocio",
         "Lee un dato del estado durable del proceso (carrito, cliente, pedido...).",
         long_description=(
             "El estado de negocio vive en la instancia durable y sobrevive "

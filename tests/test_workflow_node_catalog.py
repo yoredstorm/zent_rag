@@ -87,14 +87,26 @@ def test_supports_flags_are_explicit() -> None:
 
 
 def test_simulation_supported_flags() -> None:
+    # Nodos que planifican su efecto en simulación (devuelven planned/simulated
+    # sin ejecutar efectos). Incluye los durables (`wait_event`, `loop`), la
+    # capacidad de negocio y el estado durable, que declaran su intención sin
+    # suspender ni escribir nada.
     expected_true = {
-        "notify",
-        "api_call",
-        "marketplace_action",
-        "business_result",
-        "business_node",
-        "human_approval",
         "ai_decision",
+        "api_call",
+        "business_node",
+        "business_result",
+        "capability_call",
+        "human_approval",
+        "loop",
+        "marketplace_action",
+        "notify",
+        "state_append",
+        "state_get",
+        "state_merge",
+        "state_remove",
+        "state_set",
+        "wait_event",
     }
     for node_def in registry.all():
         if node_def.node_type in expected_true:

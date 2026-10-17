@@ -142,6 +142,44 @@ _EVENTS: list[EventSchema] = [
             _field("reason", "Motivo", "text", "fondos insuficientes"),
         ],
     ),
+    EventSchema(
+        id="payment.pending",
+        business_name="Pago pendiente",
+        description="El cliente inició el pago y aún no se confirma.",
+        category="ventas",
+        icon="credit-card",
+        source_kind="internal_event",
+        fields=[
+            _field("amount", "Monto", "money", 120.0),
+            _field("currency", "Moneda", "text", "PEN"),
+            _field("payment_reference", "Referencia de pago", "text", "PAY-20261016-01"),
+        ],
+    ),
+    EventSchema(
+        id="payment.expired",
+        business_name="Pago expirado",
+        description="El pago no se completó dentro del tiempo de espera.",
+        category="ventas",
+        icon="credit-card",
+        source_kind="internal_event",
+        fields=[
+            _field("payment_reference", "Referencia de pago", "text", "PAY-20261016-01"),
+            _field("order_id", "Pedido", "text", "PED-8123"),
+        ],
+    ),
+    EventSchema(
+        id="payment.refunded",
+        business_name="Pago devuelto",
+        description="El pago confirmado fue devuelto al cliente.",
+        category="ventas",
+        icon="credit-card",
+        source_kind="internal_event",
+        fields=[
+            _field("amount", "Monto", "money", 120.0),
+            _field("currency", "Moneda", "text", "PEN"),
+            _field("payment_reference", "Referencia de pago", "text", "PAY-20261016-01"),
+        ],
+    ),
     # --- Inventario ---------------------------------------------------------
     EventSchema(
         id="inventory.stock.changed",
