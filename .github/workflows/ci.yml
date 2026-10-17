@@ -200,6 +200,25 @@ jobs:
           uv run --frozen --no-sync pytest tests/ -v --tb=short --timeout=300 $XFLAG \
             --junitxml=artifacts/junit-tests.xml 2>&1 | tee /tmp/pytest.log
 
+      - name: Certification — Gold Workflow (Retail Sales Funnel)
+        # Benchmark arquitectónico permanente: conversación → workflow durable →
+        # datos reales → carrito → WAIT/RESUME → pago verificado → venta →
+        # inventario → cierre, más portabilidad e idempotencia de extremo a extremo.
+        run: |
+          set -o pipefail
+          uv run --frozen --no-sync pytest tests/certification/workflows \
+            -v --tb=short --timeout=900 \
+            --junitxml=artifacts/junit-certification-workflows.xml 2>&1 | tee /tmp/certification.log
+
+      - name: Annotate certification failure
+        if: failure()
+        run: |
+          if [ -f /tmp/certification.log ]; then
+            grep -E "^(FAILED|ERROR) " /tmp/certification.log | head -n 5 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+
       - name: Annotate test failure
         if: failure()
         run: |

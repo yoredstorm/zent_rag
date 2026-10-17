@@ -55,6 +55,17 @@ _ALLOWED_CATALOG_TABLES = {
     "partner_commissions",
     "partner_subtenants",
     "partner_usage",
+    # datos de NEGOCIO del tenant (migración 158): catálogo del comercio,
+    # inventario, órdenes y pagos. NO son catálogo de marketplace: no hay
+    # listings, ni instalaciones, ni superficies de venta aquí.
+    "commerce_products",
+    "commerce_stock",
+    "commerce_orders",
+    "commerce_order_items",
+    "commerce_reservations",
+    "commerce_checkout_sessions",
+    "commerce_payment_providers",
+    "commerce_provider_events",
 }
 _CATALOG_TABLE_RE = re.compile(r"(marketplace|listing|product|ecosystem|payout)", re.I)
 
