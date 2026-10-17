@@ -1137,6 +1137,7 @@ async def sync_catalog_from_assets(*, created_by: UUID | None = None) -> dict:
                 "applies_to": (
                     list(m.applies_to or [])
                     if getattr(m, "applies_to", None)
+                    and int(getattr(m, "contract_version", 1) or 1) >= 2
                     else default_applies_to("INTEGRATION", m.category)
                 ),
                 "status": "PUBLISHED" if m.status == "PUBLISHED" else (
