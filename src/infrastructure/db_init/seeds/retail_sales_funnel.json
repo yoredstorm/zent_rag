@@ -1,0 +1,2826 @@
+{
+  "capability_contracts": [
+    {
+      "description": "Catálogo de productos del tenant",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "Buscar productos",
+      "output_schema": {
+        "properties": {
+          "cart_lines": {
+            "type": "array"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "parsed": {
+            "type": "object"
+          },
+          "products": {
+            "type": "array"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": true,
+      "ref": "catalog.products.search"
+    },
+    {
+      "description": "Producto del catálogo por id, sku o texto",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "sku": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Obtener producto",
+      "output_schema": {
+        "properties": {
+          "product": {
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": true,
+      "ref": "catalog.product.get"
+    },
+    {
+      "description": "Precio y moneda reales del catálogo",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "sku": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Precio de producto",
+      "output_schema": {
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": true,
+      "ref": "catalog.product.price"
+    },
+    {
+      "description": "Disponibilidad real por producto",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "warehouse": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Consultar stock",
+      "output_schema": {
+        "properties": {
+          "available": {
+            "type": "number"
+          },
+          "in_stock": {
+            "type": "boolean"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "reserved": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": true,
+      "ref": "inventory.stock.get"
+    },
+    {
+      "description": "Retiene stock sin venderlo",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "reservation_id": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Reservar stock",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "inventory.reserve"
+    },
+    {
+      "description": "Devuelve stock reservado",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "reservation_id": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Liberar stock",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "inventory.release"
+    },
+    {
+      "description": "Descuenta stock tras el pago",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "reservation_id": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Confirmar stock",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "inventory.commit"
+    },
+    {
+      "description": "Orden de venta con precios del catálogo",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "business_operation_id": {
+            "type": "string"
+          },
+          "cart": {
+            "type": "object"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "items": {
+            "type": "array"
+          },
+          "reservation_policy": {
+            "type": "string"
+          },
+          "workflow_instance_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Crear venta",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.order.create"
+    },
+    {
+      "description": "Total del carrito sin persistir",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Cotizar carrito",
+      "output_schema": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": true,
+      "ref": "sales.cart.quote"
+    },
+    {
+      "description": "Estado de la orden",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "payment_reference": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Consultar venta",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": true,
+      "ref": "sales.order.get"
+    },
+    {
+      "description": "Pasa la orden a espera de pago",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "payment_reference": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Confirmar venta",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.order.confirm"
+    },
+    {
+      "description": "La orden pasa a PAID",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "payment_reference": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Marcar pagada",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.order.mark_paid"
+    },
+    {
+      "description": "La orden pasa a FULFILLED",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "payment_reference": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Completar venta",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.order.fulfill"
+    },
+    {
+      "description": "La orden pasa a CANCELLED",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "payment_reference": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Cancelar venta",
+      "output_schema": {
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.order.cancel"
+    },
+    {
+      "description": "Sesión de pago con el proveedor del tenant",
+      "financial": true,
+      "idempotency_required": true,
+      "input_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Crear checkout",
+      "output_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "checkout_id": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "payment_provider"
+      ],
+      "read_only": false,
+      "ref": "payments.checkout.create"
+    },
+    {
+      "description": "QR o link de pago del checkout",
+      "financial": true,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "checkout_id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Crear QR",
+      "output_schema": {
+        "properties": {
+          "qr_image_url": {
+            "type": "string"
+          },
+          "qr_payload": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "payment_provider"
+      ],
+      "read_only": false,
+      "ref": "payments.qr.create"
+    },
+    {
+      "description": "Estado del pago",
+      "financial": true,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "checkout_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Consultar pago",
+      "output_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "payment_provider"
+      ],
+      "read_only": true,
+      "ref": "payments.status.get"
+    },
+    {
+      "description": "Anula el checkout pendiente",
+      "financial": true,
+      "idempotency_required": true,
+      "input_schema": {
+        "properties": {
+          "checkout_id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Cancelar pago",
+      "output_schema": {
+        "properties": {
+          "cancelled": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "payment_provider"
+      ],
+      "read_only": false,
+      "ref": "payments.cancel"
+    },
+    {
+      "description": "Devuelve un pago confirmado",
+      "financial": true,
+      "idempotency_required": true,
+      "input_schema": {
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Reembolsar",
+      "output_schema": {
+        "properties": {
+          "refunded": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "payment_provider"
+      ],
+      "read_only": false,
+      "ref": "payments.refund"
+    },
+    {
+      "description": "Mensaje saliente al cliente del proceso",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {},
+      "name": "Enviar mensaje",
+      "output_schema": {},
+      "provider_kinds": [
+        "conversation"
+      ],
+      "read_only": true,
+      "ref": "conversation.send"
+    }
+  ],
+  "events": [
+    {
+      "description": "Pago iniciado y aún no confirmado",
+      "event_type": "payment.pending"
+    },
+    {
+      "description": "Pago confirmado por el proveedor",
+      "event_type": "payment.succeeded"
+    },
+    {
+      "description": "Pago rechazado por el proveedor",
+      "event_type": "payment.failed"
+    },
+    {
+      "description": "Pago expirado sin confirmarse",
+      "event_type": "payment.expired"
+    },
+    {
+      "description": "Pago devuelto al cliente",
+      "event_type": "payment.refunded"
+    },
+    {
+      "description": "Mensaje entrante del cliente",
+      "event_type": "conversation.message"
+    }
+  ],
+  "product": {
+    "applies_to": [
+      "WORKFLOWS",
+      "AGENTS"
+    ],
+    "capabilities": [
+      "catalog.products.search",
+      "catalog.product.get",
+      "sales.cart.quote",
+      "inventory.stock.get",
+      "sales.order.create",
+      "sales.order.mark_paid",
+      "inventory.commit",
+      "payments.checkout.create",
+      "conversation.send"
+    ],
+    "category": "sales",
+    "certification": {
+      "gold_workflow": true
+    },
+    "configuration_schema": {
+      "properties": {
+        "allow_alternatives": {
+          "default": true,
+          "type": "boolean"
+        },
+        "allow_cross_sell": {
+          "default": false,
+          "type": "boolean"
+        },
+        "completion_message": {
+          "type": "string"
+        },
+        "confirmation_message": {
+          "type": "string"
+        },
+        "currency": {
+          "default": "PEN",
+          "type": "string"
+        },
+        "maximum_cart_items": {
+          "default": 20,
+          "type": "integer"
+        },
+        "payment_timeout": {
+          "default": "PT30M",
+          "type": "string"
+        },
+        "require_stock": {
+          "default": true,
+          "type": "boolean"
+        },
+        "reservation_policy": {
+          "default": "checkout",
+          "enum": [
+            "checkout",
+            "none",
+            "payment"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "entitlements": {
+      "workflows": 1
+    },
+    "events": [
+      "payment.succeeded",
+      "conversation.message"
+    ],
+    "featured": {
+      "homepage": true,
+      "order": 1
+    },
+    "included_assets": [
+      {
+        "alias": "funnel",
+        "kind": "workflow_template",
+        "ref": "retail_sales_funnel"
+      },
+      {
+        "alias": "catalog",
+        "kind": "capability",
+        "ref": "catalog.products.search"
+      },
+      {
+        "alias": "payments",
+        "kind": "capability",
+        "ref": "payments.checkout.create"
+      }
+    ],
+    "long_description": "Embudo de ventas conversacional durable: entiende el pedido, busca en tu catálogo real, arma el carrito, confirma, cobra por QR o link y cierra la venta con inventario confirmado. Cada turno es un WAIT durable: el proceso sobrevive reinicios y no pierde el contexto.",
+    "name": "Retail Sales Funnel",
+    "pricing": {
+      "model": "FREE"
+    },
+    "privacy": {
+      "contains_personal_data": true,
+      "data_classes": [
+        "customer_contact"
+      ]
+    },
+    "product_type": "WORKFLOW_TEMPLATE",
+    "security": {
+      "contains_secrets": false,
+      "llm_controls_amount": false,
+      "monetary_values": "server_side"
+    },
+    "short_description": "Convierte conversaciones en ventas usando tu catálogo, inventario y proveedor de pagos.",
+    "slug": "retail-sales-funnel",
+    "status": "PUBLISHED",
+    "tags": [
+      "ventas",
+      "pagos",
+      "conversacional",
+      "durable"
+    ],
+    "version": 1
+  },
+  "template": {
+    "category": "ventas",
+    "description": "Convierte conversaciones en ventas usando tu catálogo, inventario y proveedor de pagos.",
+    "graph": {
+      "edges": [
+        {
+          "from_node": "cliente",
+          "from_port": "out",
+          "id": "e1",
+          "to_node": "buscar",
+          "to_port": "in"
+        },
+        {
+          "from_node": "buscar",
+          "from_port": "out",
+          "id": "e2",
+          "to_node": "encontrado",
+          "to_port": "in"
+        },
+        {
+          "from_node": "encontrado",
+          "from_port": "then",
+          "id": "e3",
+          "label": "sí",
+          "to_node": "unico",
+          "to_port": "in"
+        },
+        {
+          "from_node": "encontrado",
+          "from_port": "else",
+          "id": "e4",
+          "label": "no",
+          "to_node": "preguntar_otra_vez",
+          "to_port": "in"
+        },
+        {
+          "from_node": "unico",
+          "from_port": "then",
+          "id": "e5",
+          "label": "una sola",
+          "to_node": "agregar_directo",
+          "to_port": "in"
+        },
+        {
+          "from_node": "unico",
+          "from_port": "else",
+          "id": "e6",
+          "label": "varias",
+          "to_node": "guardar_opciones",
+          "to_port": "in"
+        },
+        {
+          "from_node": "agregar_directo",
+          "from_port": "out",
+          "id": "e5b",
+          "to_node": "resumen_carrito",
+          "to_port": "in"
+        },
+        {
+          "from_node": "guardar_opciones",
+          "from_port": "out",
+          "id": "e5c",
+          "to_node": "mostrar_opciones",
+          "to_port": "in"
+        },
+        {
+          "from_node": "mostrar_opciones",
+          "from_port": "out",
+          "id": "e6b",
+          "to_node": "esperar_eleccion",
+          "to_port": "in"
+        },
+        {
+          "from_node": "esperar_eleccion",
+          "from_port": "out",
+          "id": "e7",
+          "to_node": "elegir",
+          "to_port": "in"
+        },
+        {
+          "from_node": "preguntar_otra_vez",
+          "from_port": "out",
+          "id": "e8",
+          "to_node": "esperar_aclaracion",
+          "to_port": "in"
+        },
+        {
+          "from_node": "esperar_aclaracion",
+          "from_port": "out",
+          "id": "e9",
+          "to_node": "reintentar_busqueda",
+          "to_port": "in"
+        },
+        {
+          "from_node": "reintentar_busqueda",
+          "from_port": "out",
+          "id": "e10",
+          "to_node": "buscar",
+          "to_port": "in"
+        },
+        {
+          "from_node": "elegir",
+          "from_port": "out",
+          "id": "e11",
+          "to_node": "eleccion_valida",
+          "to_port": "in"
+        },
+        {
+          "from_node": "eleccion_valida",
+          "from_port": "then",
+          "id": "e12",
+          "label": "sí",
+          "to_node": "verificar_stock",
+          "to_port": "in"
+        },
+        {
+          "from_node": "eleccion_valida",
+          "from_port": "else",
+          "id": "e13",
+          "label": "no",
+          "to_node": "no_entendido",
+          "to_port": "in"
+        },
+        {
+          "from_node": "no_entendido",
+          "from_port": "out",
+          "id": "e14",
+          "to_node": "esperar_reintento_eleccion",
+          "to_port": "in"
+        },
+        {
+          "from_node": "esperar_reintento_eleccion",
+          "from_port": "out",
+          "id": "e15",
+          "to_node": "reintentar_eleccion",
+          "to_port": "in"
+        },
+        {
+          "from_node": "reintentar_eleccion",
+          "from_port": "out",
+          "id": "e16",
+          "to_node": "elegir",
+          "to_port": "in"
+        },
+        {
+          "from_node": "verificar_stock",
+          "from_port": "out",
+          "id": "e17",
+          "to_node": "agregar_carrito",
+          "to_port": "in"
+        },
+        {
+          "from_node": "agregar_carrito",
+          "from_port": "out",
+          "id": "e18",
+          "to_node": "resumen_carrito",
+          "to_port": "in"
+        },
+        {
+          "from_node": "resumen_carrito",
+          "from_port": "out",
+          "id": "e19",
+          "to_node": "preguntar_mas",
+          "to_port": "in"
+        },
+        {
+          "from_node": "preguntar_mas",
+          "from_port": "out",
+          "id": "e20",
+          "to_node": "esperar_mas",
+          "to_port": "in"
+        },
+        {
+          "from_node": "esperar_mas",
+          "from_port": "out",
+          "id": "e21",
+          "to_node": "nada_mas",
+          "to_port": "in"
+        },
+        {
+          "from_node": "nada_mas",
+          "from_port": "then",
+          "id": "e22",
+          "label": "nada más",
+          "to_node": "pedir_confirmacion",
+          "to_port": "in"
+        },
+        {
+          "from_node": "nada_mas",
+          "from_port": "else",
+          "id": "e23",
+          "label": "otro producto",
+          "to_node": "volver_al_catalogo",
+          "to_port": "in"
+        },
+        {
+          "from_node": "volver_al_catalogo",
+          "from_port": "out",
+          "id": "e24",
+          "to_node": "buscar",
+          "to_port": "in"
+        },
+        {
+          "from_node": "pedir_confirmacion",
+          "from_port": "out",
+          "id": "e25",
+          "to_node": "esperar_confirmacion",
+          "to_port": "in"
+        },
+        {
+          "from_node": "esperar_confirmacion",
+          "from_port": "out",
+          "id": "e26",
+          "to_node": "confirmado",
+          "to_port": "in"
+        },
+        {
+          "from_node": "confirmado",
+          "from_port": "then",
+          "id": "e27",
+          "label": "sí",
+          "to_node": "crear_orden",
+          "to_port": "in"
+        },
+        {
+          "from_node": "confirmado",
+          "from_port": "else",
+          "id": "e28",
+          "label": "no",
+          "to_node": "confirmar_otra_vez",
+          "to_port": "in"
+        },
+        {
+          "from_node": "confirmar_otra_vez",
+          "from_port": "out",
+          "id": "e29",
+          "to_node": "pedir_confirmacion",
+          "to_port": "in"
+        },
+        {
+          "from_node": "crear_orden",
+          "from_port": "out",
+          "id": "e30",
+          "to_node": "crear_checkout",
+          "to_port": "in"
+        },
+        {
+          "from_node": "crear_checkout",
+          "from_port": "out",
+          "id": "e31",
+          "to_node": "enviar_pago",
+          "to_port": "in"
+        },
+        {
+          "from_node": "enviar_pago",
+          "from_port": "out",
+          "id": "e32",
+          "to_node": "esperar_pago",
+          "to_port": "in"
+        },
+        {
+          "from_node": "esperar_pago",
+          "from_port": "out",
+          "id": "e33",
+          "to_node": "marcar_pagada",
+          "to_port": "in"
+        },
+        {
+          "from_node": "marcar_pagada",
+          "from_port": "out",
+          "id": "e34",
+          "to_node": "confirmar_inventario",
+          "to_port": "in"
+        },
+        {
+          "from_node": "confirmar_inventario",
+          "from_port": "out",
+          "id": "e35",
+          "to_node": "mensaje_final",
+          "to_port": "in"
+        },
+        {
+          "from_node": "mensaje_final",
+          "from_port": "out",
+          "id": "e36",
+          "to_node": "resultado",
+          "to_port": "in"
+        },
+        {
+          "from_node": "resultado",
+          "from_port": "out",
+          "id": "e37",
+          "to_node": "fin",
+          "to_port": "in"
+        },
+        {
+          "from_node": "esperar_pago",
+          "from_port": "timeout",
+          "id": "e38",
+          "label": "sin pago",
+          "to_node": "pago_no_completado",
+          "to_port": "in"
+        },
+        {
+          "from_node": "pago_no_completado",
+          "from_port": "out",
+          "id": "e39",
+          "to_node": "cancelar_orden",
+          "to_port": "in"
+        },
+        {
+          "from_node": "cancelar_orden",
+          "from_port": "out",
+          "id": "e40",
+          "to_node": "liberar_inventario",
+          "to_port": "in"
+        },
+        {
+          "from_node": "liberar_inventario",
+          "from_port": "out",
+          "id": "e41",
+          "to_node": "fin_pago",
+          "to_port": "in"
+        }
+      ],
+      "entrypoints": [
+        "cliente"
+      ],
+      "metadata": {
+        "applies_to": [
+          "WORKFLOWS",
+          "AGENTS"
+        ],
+        "canvas": {
+          "legend": {
+            "action": "action",
+            "ai": "ai",
+            "business_result": "business_result",
+            "data": "data",
+            "decision": "decision",
+            "end": "end",
+            "payment": "payment",
+            "trigger": "trigger",
+            "wait": "wait"
+          },
+          "roles": {
+            "agregar_carrito": "data",
+            "agregar_directo": "data",
+            "buscar": "data",
+            "cancelar_orden": "action",
+            "cliente": "trigger",
+            "confirmado": "decision",
+            "confirmar_inventario": "data",
+            "confirmar_otra_vez": "action",
+            "crear_checkout": "payment",
+            "crear_orden": "action",
+            "eleccion_valida": "decision",
+            "elegir": "data",
+            "encontrado": "decision",
+            "enviar_pago": "action",
+            "esperar_aclaracion": "wait",
+            "esperar_confirmacion": "wait",
+            "esperar_eleccion": "wait",
+            "esperar_mas": "wait",
+            "esperar_pago": "payment",
+            "esperar_reintento_eleccion": "wait",
+            "fin": "end",
+            "fin_pago": "end",
+            "guardar_opciones": "data",
+            "liberar_inventario": "data",
+            "marcar_pagada": "action",
+            "mensaje_final": "action",
+            "mostrar_opciones": "action",
+            "nada_mas": "decision",
+            "no_entendido": "action",
+            "pago_no_completado": "action",
+            "pedir_confirmacion": "action",
+            "preguntar_mas": "action",
+            "preguntar_otra_vez": "action",
+            "reintentar_busqueda": "action",
+            "reintentar_eleccion": "action",
+            "resultado": "business_result",
+            "resumen_carrito": "action",
+            "unico": "decision",
+            "verificar_stock": "data",
+            "volver_al_catalogo": "action"
+          }
+        },
+        "category": "ventas",
+        "template": "retail_sales_funnel"
+      },
+      "nodes": [
+        {
+          "config": {
+            "event_type": "conversation.message"
+          },
+          "error_policy": "fail",
+          "id": "cliente",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Mensaje del cliente",
+          "metadata": {
+            "canvas_role": "trigger"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "trigger_event"
+        },
+        {
+          "config": {
+            "capability": "catalog.products.search",
+            "inputs": {
+              "limit": 3,
+              "query": "{{trigger.text}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "buscar",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Buscar producto",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "field": "{{nodes.buscar.output.count}}",
+            "operator": ">",
+            "value": 0
+          },
+          "error_policy": "fail",
+          "id": "encontrado",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "¿Encontrado?",
+          "metadata": {
+            "canvas_role": "decision"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "then",
+              "type": "json"
+            },
+            {
+              "name": "else",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "condition"
+        },
+        {
+          "config": {
+            "field": "{{nodes.buscar.output.count}}",
+            "operator": "==",
+            "value": 1
+          },
+          "error_policy": "fail",
+          "id": "unico",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "¿Una sola opción?",
+          "metadata": {
+            "canvas_role": "decision"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "then",
+              "type": "json"
+            },
+            {
+              "name": "else",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "condition"
+        },
+        {
+          "config": {
+            "path": "cart.items",
+            "value": "{{nodes.buscar.output.cart_lines.0}}"
+          },
+          "error_policy": "fail",
+          "id": "agregar_directo",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Agregar producto",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "state_append"
+        },
+        {
+          "config": {
+            "path": "catalog.options",
+            "value": "{{nodes.buscar.output.products}}"
+          },
+          "error_policy": "continue",
+          "id": "guardar_opciones",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Guardar opciones",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "state_set"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "{{nodes.buscar.output.summary}}\n¿Cuál prefieres?",
+              "title": "Opciones disponibles"
+            }
+          },
+          "error_policy": "continue",
+          "id": "mostrar_opciones",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Mostrar opciones",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "on_timeout": "expire",
+            "preset": "message",
+            "timeout_seconds": 86400
+          },
+          "error_policy": "fail",
+          "id": "esperar_eleccion",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "WAIT: elección del cliente",
+          "metadata": {
+            "canvas_role": "wait"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "timeout",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "wait_event"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "No encontré ese producto en el catálogo. ¿Me lo describes de otra forma?",
+              "title": "No encontré ese producto"
+            }
+          },
+          "error_policy": "continue",
+          "id": "preguntar_otra_vez",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Pedir aclaración",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "on_timeout": "expire",
+            "preset": "message",
+            "timeout_seconds": 86400
+          },
+          "error_policy": "fail",
+          "id": "esperar_aclaracion",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "WAIT: nueva descripción",
+          "metadata": {
+            "canvas_role": "wait"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "timeout",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "wait_event"
+        },
+        {
+          "config": {
+            "max_iterations": 12,
+            "target": "buscar"
+          },
+          "error_policy": "fail",
+          "id": "reintentar_busqueda",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Volver a buscar",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "loop"
+        },
+        {
+          "config": {
+            "capability": "catalog.product.get",
+            "inputs": {
+              "query": "{{trigger.text}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "elegir",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Interpretar selección",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "field": "{{nodes.elegir.output.found}}",
+            "operator": "==",
+            "value": true
+          },
+          "error_policy": "fail",
+          "id": "eleccion_valida",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "¿Selección válida?",
+          "metadata": {
+            "canvas_role": "decision"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "then",
+              "type": "json"
+            },
+            {
+              "name": "else",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "condition"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "No identifiqué cuál opción prefieres. Dime el nombre del producto, por ejemplo: «arroz integral».",
+              "title": "No te entendí"
+            }
+          },
+          "error_policy": "continue",
+          "id": "no_entendido",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Selección no entendida",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "on_timeout": "expire",
+            "preset": "message",
+            "timeout_seconds": 86400
+          },
+          "error_policy": "fail",
+          "id": "esperar_reintento_eleccion",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "WAIT: reintento de elección",
+          "metadata": {
+            "canvas_role": "wait"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "timeout",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "wait_event"
+        },
+        {
+          "config": {
+            "max_iterations": 12,
+            "target": "elegir"
+          },
+          "error_policy": "fail",
+          "id": "reintentar_eleccion",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Volver a interpretar",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "loop"
+        },
+        {
+          "config": {
+            "capability": "inventory.stock.get",
+            "inputs": {
+              "product_id": "{{nodes.elegir.output.product.product_id}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "verificar_stock",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Verificar stock",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "path": "cart.items",
+            "value": "{{nodes.elegir.output.cart_line}}"
+          },
+          "error_policy": "fail",
+          "id": "agregar_carrito",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Actualizar carrito",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "state_append"
+        },
+        {
+          "config": {
+            "capability": "sales.cart.quote",
+            "inputs": {
+              "items": "{{instance.state.cart.items}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "resumen_carrito",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Calcular carrito",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "{{nodes.resumen_carrito.output.summary}}\n¿Deseas algo más?",
+              "title": "Carrito actualizado"
+            }
+          },
+          "error_policy": "continue",
+          "id": "preguntar_mas",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "¿Algo más?",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "on_timeout": "expire",
+            "preset": "message",
+            "timeout_seconds": 86400
+          },
+          "error_policy": "fail",
+          "id": "esperar_mas",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "WAIT: ¿algo más?",
+          "metadata": {
+            "canvas_role": "wait"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "timeout",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "wait_event"
+        },
+        {
+          "config": {
+            "field": "{{trigger.text}}",
+            "operator": "contains",
+            "value": "{{variables.closer_markers}}"
+          },
+          "error_policy": "fail",
+          "id": "nada_mas",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "¿Nada más?",
+          "metadata": {
+            "canvas_role": "decision"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "then",
+              "type": "json"
+            },
+            {
+              "name": "else",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "condition"
+        },
+        {
+          "config": {
+            "max_iterations": 20,
+            "target": "buscar"
+          },
+          "error_policy": "fail",
+          "id": "volver_al_catalogo",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Volver al catálogo",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "loop"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "{{nodes.resumen_carrito.output.summary}}\n{{variables.confirmation_message}}",
+              "title": "Confirmar pedido"
+            }
+          },
+          "error_policy": "continue",
+          "id": "pedir_confirmacion",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Pedir confirmación",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "on_timeout": "expire",
+            "preset": "message",
+            "timeout_seconds": 86400
+          },
+          "error_policy": "fail",
+          "id": "esperar_confirmacion",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "WAIT: confirmación",
+          "metadata": {
+            "canvas_role": "wait"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "timeout",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "wait_event"
+        },
+        {
+          "config": {
+            "field": "{{trigger.text}}",
+            "operator": "{{variables.affirmative_operator}}",
+            "value": "{{variables.affirmative_marker}}"
+          },
+          "error_policy": "fail",
+          "id": "confirmado",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "¿Confirmado?",
+          "metadata": {
+            "canvas_role": "decision"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "then",
+              "type": "json"
+            },
+            {
+              "name": "else",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "condition"
+        },
+        {
+          "config": {
+            "max_iterations": 3,
+            "target": "pedir_confirmacion"
+          },
+          "error_policy": "fail",
+          "id": "confirmar_otra_vez",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Volver a pedir confirmación",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "loop"
+        },
+        {
+          "config": {
+            "capability": "sales.order.create",
+            "inputs": {
+              "business_operation_id": "{{trigger.order_operation_id}}",
+              "conversation_id": "{{trigger.conversation_id}}",
+              "currency": "{{variables.currency}}",
+              "items": "{{instance.state.cart.items}}",
+              "reservation_policy": "{{variables.reservation_policy}}"
+            }
+          },
+          "error_policy": "fail",
+          "id": "crear_orden",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Crear venta",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "payments.checkout.create",
+            "inputs": {
+              "order_id": "{{nodes.crear_orden.output.order_id}}"
+            }
+          },
+          "error_policy": "fail",
+          "id": "crear_checkout",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Crear checkout",
+          "metadata": {
+            "canvas_role": "payment"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "{{nodes.crear_checkout.output.payment_instructions}}",
+              "title": "Pago pendiente"
+            }
+          },
+          "error_policy": "continue",
+          "id": "enviar_pago",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "QR / link de pago",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "correlation": {
+              "payment_reference": "{{nodes.crear_orden.output.order_number}}"
+            },
+            "on_timeout": "branch",
+            "preset": "payment",
+            "timeout": "PT30M"
+          },
+          "error_policy": "fail",
+          "id": "esperar_pago",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "WAIT: pago",
+          "metadata": {
+            "canvas_role": "payment"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "timeout",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "wait_event"
+        },
+        {
+          "config": {
+            "capability": "sales.order.mark_paid",
+            "inputs": {
+              "order_id": "{{nodes.crear_orden.output.order_id}}",
+              "payment_reference": "{{trigger.payment_reference}}",
+              "provider": "{{trigger.provider}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "marcar_pagada",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Confirmar venta",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "inventory.commit",
+            "inputs": {
+              "order_id": "{{nodes.crear_orden.output.order_id}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "confirmar_inventario",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Actualizar inventario",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "{{variables.completion_message}}",
+              "title": "Pago confirmado"
+            }
+          },
+          "error_policy": "continue",
+          "id": "mensaje_final",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Confirmación al cliente",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "section": "sales",
+            "summary": "Pedido {{nodes.crear_orden.output.order_number}} pagado y confirmado.",
+            "title": "Venta concretada"
+          },
+          "error_policy": "continue",
+          "id": "resultado",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Registrar venta",
+          "metadata": {
+            "canvas_role": "business_result"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "business_result"
+        },
+        {
+          "config": {},
+          "error_policy": "fail",
+          "id": "fin",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Fin",
+          "metadata": {
+            "canvas_role": "end"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "end"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "message": "No recibimos el pago a tiempo y el pedido quedó cancelado. Puedes pedirme de nuevo lo que necesitas.",
+              "title": "Pago no completado"
+            }
+          },
+          "error_policy": "continue",
+          "id": "pago_no_completado",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Pago no completado",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "sales.order.cancel",
+            "inputs": {
+              "order_id": "{{nodes.crear_orden.output.order_id}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "cancelar_orden",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Cancelar venta",
+          "metadata": {
+            "canvas_role": "action"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "inventory.release",
+            "inputs": {
+              "order_id": "{{nodes.crear_orden.output.order_id}}"
+            }
+          },
+          "error_policy": "continue",
+          "id": "liberar_inventario",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Liberar inventario",
+          "metadata": {
+            "canvas_role": "data"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "capability_call"
+        },
+        {
+          "config": {},
+          "error_policy": "fail",
+          "id": "fin_pago",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Fin (sin pago)",
+          "metadata": {
+            "canvas_role": "end"
+          },
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "retry_policy": {
+            "backoff_seconds": 0,
+            "max_attempts": 1
+          },
+          "timeout_ms": 60000,
+          "type": "end"
+        }
+      ],
+      "variables": {
+        "affirmative_marker": "no",
+        "affirmative_operator": "not_contains",
+        "allow_alternatives": true,
+        "allow_cross_sell": false,
+        "closer_markers": "nada",
+        "completion_message": "¡Pago confirmado! Tu pedido está en preparación.",
+        "confirmation_message": "¿Confirmas el pedido?",
+        "currency": "PEN",
+        "maximum_cart_items": 20,
+        "payment_timeout": "PT30M",
+        "require_stock": true,
+        "reservation_policy": "checkout"
+      },
+      "workflow_version": 2
+    },
+    "name": "Retail Sales Funnel",
+    "package": {
+      "capabilities": [
+        {
+          "kind": "capability",
+          "ref": "catalog.products.search",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "catalog.product.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.quote",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "inventory.stock.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.mark_paid",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "inventory.commit",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "payments.checkout.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "conversation.send",
+          "requirement": "required"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "capability",
+          "ref": "catalog.products.search",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "catalog.product.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.quote",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "inventory.stock.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.mark_paid",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "inventory.commit",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "payments.checkout.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "conversation.send",
+          "requirement": "required"
+        },
+        {
+          "kind": "event",
+          "ref": "payment.succeeded",
+          "requirement": "required"
+        },
+        {
+          "kind": "event",
+          "ref": "conversation.message",
+          "requirement": "required"
+        }
+      ],
+      "events": [
+        {
+          "kind": "event",
+          "ref": "payment.succeeded",
+          "requirement": "required"
+        },
+        {
+          "kind": "event",
+          "ref": "conversation.message",
+          "requirement": "required"
+        }
+      ],
+      "metadata": {
+        "applies_to": [
+          "WORKFLOWS",
+          "AGENTS"
+        ],
+        "category": "ventas",
+        "description": "Convierte conversaciones en ventas usando tu catálogo, inventario y proveedor de pagos.",
+        "min_zent_version": null,
+        "name": "Retail Sales Funnel"
+      },
+      "package_version": "1.0.0",
+      "parameters": {
+        "affirmative_marker": "no",
+        "affirmative_operator": "not_contains",
+        "allow_alternatives": true,
+        "allow_cross_sell": false,
+        "closer_markers": "nada",
+        "completion_message": "¡Pago confirmado! Tu pedido está en preparación.",
+        "confirmation_message": "¿Confirmas el pedido?",
+        "currency": "PEN",
+        "maximum_cart_items": 20,
+        "payment_timeout": "PT30M",
+        "require_stock": true,
+        "reservation_policy": "checkout"
+      },
+      "permissions": [
+        "workflows:run",
+        "external_actions:execute"
+      ],
+      "schema": "zent.workflow.package/v1",
+      "security": {
+        "contains_secrets": false,
+        "tenant_scoped": false
+      },
+      "tests": [
+        "customer: quiero 1 kilo de arroz → opciones con precio real",
+        "customer: mejor integral → carrito con arroz integral",
+        "customer: también una leche → carrito con 2 líneas",
+        "customer: nada más → resumen y confirmación",
+        "customer: sí → checkout + QR",
+        "provider: payment.succeeded → orden PAID + inventario confirmado"
+      ]
+    },
+    "slug": "retail_sales_funnel",
+    "trigger_config": {
+      "event_type": "conversation.message"
+    },
+    "trigger_type": "event"
+  }
+}
