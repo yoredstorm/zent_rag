@@ -8,6 +8,7 @@ import {
   Storefront,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -43,15 +44,19 @@ type Tab = "discover" | "all" | "categories" | "installed" | "updates" | "purcha
 
 export default function MarketplacePage() {
   const { session } = useAuth();
-  const [tab, setTab] = useState<Tab>("discover");
+  const [searchParams] = useSearchParams();
+  // Deep links (p. ej. el checklist del embudo) abren el catálogo ya filtrado.
+  const initialQuery = searchParams.get("q") ?? "";
+  const initialSurface = searchParams.get("applies_to") ?? "";
+  const [tab, setTab] = useState<Tab>(initialQuery || initialSurface ? "all" : "discover");
   const [products, setProducts] = useState<MarketplaceProduct[]>([]);
   const [installs, setInstalls] = useState<ProductInstall[]>([]);
   const [facets, setFacets] = useState<CatalogFacets | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState("");
-  const [surface, setSurface] = useState("");
+  const [surface, setSurface] = useState(initialSurface);
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 

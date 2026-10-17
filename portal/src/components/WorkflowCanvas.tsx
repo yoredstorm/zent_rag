@@ -1,5 +1,6 @@
 import { Plus, Minus, Crosshair, Trash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CANVAS_ROLE_META, resolveCanvasRole } from "../lib/canvasRole";
 import type { GraphEdge, GraphNode, WorkflowGraph } from "../lib/workflowGraph";
 import { CATEGORY_META, nodeMeta, portCompatible } from "../lib/workflowGraph";
 
@@ -421,6 +422,9 @@ export function WorkflowCanvas({
 
         {graph.nodes.map((n) => {
           const meta = nodeMeta(n.type);
+          const role = resolveCanvasRole(n, graph.metadata);
+          const roleMeta = CANVAS_ROLE_META[role];
+          const RoleIcon = roleMeta.icon;
           const run = overlay?.[n.id];
           const issue = nodeIssues?.[n.id];
           const selected = selectedNodeId === n.id;
@@ -455,10 +459,12 @@ export function WorkflowCanvas({
             >
               <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
                 <span
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border-soft bg-soft text-[13px] text-muted"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border-soft bg-soft"
+                  data-canvas-role={role}
+                  title={roleMeta.label}
                   aria-hidden
                 >
-                  {meta.icon}
+                  <RoleIcon size={14} weight="regular" className={roleMeta.color} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12px] font-semibold text-text">{meta.label}</span>

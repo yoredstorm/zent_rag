@@ -27,6 +27,8 @@ import type { RunOverlay } from "../components/WorkflowCanvas";
 import type { RunDetail } from "../components/WorkflowRunInspector";
 import { WorkflowApiPanel } from "../components/workflowStudio/WorkflowApiPanel";
 import { WorkflowHealthBar } from "../components/workflowStudio/WorkflowHealthBar";
+import { SalesFunnelChecklist } from "../components/commerce/SalesFunnelChecklist";
+import { SalesFunnelKpis } from "../components/commerce/SalesFunnelKpis";
 import { WorkflowPatchPanel } from "../components/workflowStudio/WorkflowPatchPanel";
 import { WorkflowTestPanel } from "../components/workflowStudio/WorkflowTestPanel";
 import { WorkflowVersionsPanel } from "../components/workflowStudio/WorkflowVersionsPanel";
@@ -53,6 +55,12 @@ import {
 type StudioState = { hookSecret?: string };
 
 /** Grafo inicial de un workflow nuevo: trigger webhook conectado a un fin. */
+/** ¿El grafo es el embudo de ventas oficial? (metadata.template de la plantilla). */
+function isSalesFunnel(graph: WorkflowGraph | null | undefined): boolean {
+  const metadata = (graph?.metadata ?? {}) as Record<string, unknown>;
+  return metadata.template === "retail_sales_funnel";
+}
+
 function starterGraph(): WorkflowGraph {
   const g = emptyGraph("webhook");
   const trigger = g.nodes[0];
@@ -572,6 +580,14 @@ export default function WorkflowStudioPage() {
       {error && <ErrorInline message={error} className="mb-0 shrink-0" />}
 
       {id && <WorkflowHealthBar workflowId={id} refreshKey={detail?.updated_at ?? ""} />}
+
+      {/* Embudo de ventas: checklist de configuración y KPIs del proceso vivo. */}
+      {id && isSalesFunnel(graph) && (
+        <div className="grid shrink-0 gap-3 xl:grid-cols-2" data-testid="funnel-panels">
+          <SalesFunnelChecklist />
+          <SalesFunnelKpis />
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="min-w-0 flex-1">
