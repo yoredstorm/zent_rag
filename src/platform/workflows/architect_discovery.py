@@ -27,6 +27,7 @@ _REQUIREMENT_LABELS: dict[str, str] = {
     "installed_integrations": "integraciones instaladas",
     "managed_db": "una base de datos de negocio conectada",
     "notification_email": "correo saliente configurado",
+    "approval:human": "una aprobación humana",
 }
 
 
@@ -139,6 +140,7 @@ def capabilities_from_snapshot(snapshot: CapabilitySnapshot) -> dict[str, Any]:
         "managed_db": managed_db,
         "resources": resources,
         "tools": tools,
+        "events": [event.event_type for event in snapshot.events],
         "capability_index": capability_index,
         "capability_snapshot": snapshot.summary(),
         "available": available,

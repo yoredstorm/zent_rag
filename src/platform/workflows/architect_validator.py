@@ -242,10 +242,23 @@ def validate_semantic_plan(
                                 code="missing.capability_input",
                                 severity="error",
                                 step_id=step.id,
+                                field="params.inputs",
                                 message=(
                                     f"«{step.goal}» necesita: "
                                     + ", ".join(missing_inputs[:6])
                                     + "."
+                                ),
+                                expected=", ".join(
+                                    (descriptor.get("required_inputs") or [])[:12]
+                                ),
+                                received=", ".join(sorted(provided)[:12]) or "sin inputs",
+                                alternatives=[
+                                    f"input:{item}"
+                                    for item in (descriptor.get("required_inputs") or [])[:8]
+                                ],
+                                action_required=(
+                                    "Proporciona los campos requeridos por el contrato "
+                                    "o conéctalos desde un paso anterior."
                                 ),
                             )
                         )
@@ -412,6 +425,186 @@ def validate_semantic_plan(
                     message=f"«{step.goal}»: falta elegir la lista a filtrar.",
                 )
             )
+        elif step.type == "wait":
+            preset = str(step.params.get("preset") or "message").strip().lower()
+            if preset not in ("message", "webhook", "payment", "timer", "human", "signal"):
+                issues.append(
+                    PlanIssue(
+                        code="wait.invalid_preset",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.preset",
+                        message=f"«{step.goal}» usa un preset de espera desconocido: {preset}.",
+                        expected="message|webhook|payment|timer|human|signal",
+                        received=preset,
+                        action_required="Usa un preset soportado o cambia a una acción normal.",
+                    )
+                )
+            on_timeout = str(step.params.get("on_timeout") or "").strip().lower()
+            if on_timeout and on_timeout not in ("branch", "expire", "fail", "continue"):
+                issues.append(
+                    PlanIssue(
+                        code="wait.invalid_timeout_policy",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.on_timeout",
+                        message=f"«{step.goal}» usa una política de timeout desconocida: {on_timeout}.",
+                        expected="branch|expire|fail|continue",
+                        received=on_timeout,
+                        alternatives=["continue", "fail", "expire"],
+                        action_required="Elige una política de timeout válida.",
+                    )
+                )
+            if on_timeout == "branch":
+                has_timeout_branch = any(
+                    other.when is not None
+                    and other.when.step == step.id
+                    and other.when.outcome is False
+                    for other in plan.steps
+                )
+                if not has_timeout_branch:
+                    issues.append(
+                        PlanIssue(
+                            code="wait.timeout_branch_missing",
+                            severity="error",
+                            step_id=step.id,
+                            field="params.on_timeout",
+                            message=(
+                                f"«{step.goal}» deriva por timeout pero no tiene un paso "
+                                "para esa rama."
+                            ),
+                            expected="paso con when {step, outcome:false}",
+                            received="sin rama de timeout",
+                            alternatives=["agregar paso de timeout", "usar expire/fail/continue"],
+                            action_required="Agrega la rama de timeout o cambia on_timeout.",
+                        )
+                    )
+            event_type = str(step.params.get("event_type") or "").strip()
+            known_events = {str(item) for item in (capabilities.get("events") or [])}
+            if event_type and known_events and event_type not in known_events and not event_type.startswith(
+                ("custom.", "webhook.", "signal.", "watcher.")
+            ):
+                issues.append(
+                    PlanIssue(
+                        code="wait.unknown_event",
+                        severity="warning",
+                        step_id=step.id,
+                        field="params.event_type",
+                        message=f"«{step.goal}» espera un evento no registrado: {event_type}.",
+                        expected="evento del catálogo o custom./webhook./signal.",
+                        received=event_type,
+                        action_required="Verifica el catálogo de eventos o configura el emisor.",
+                    )
+                )
+        elif step.type == "state":
+            if not str(step.params.get("path") or "").strip():
+                issues.append(
+                    PlanIssue(
+                        code="state.path_required",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.path",
+                        message=f"«{step.goal}» necesita un path de estado.",
+                        expected="path no vacío (ej. cart.items)",
+                        received="",
+                        action_required="Define el path del estado durable.",
+                    )
+                )
+        elif step.type == "loop":
+            target = str(step.params.get("target") or "").strip()
+            if not target:
+                issues.append(
+                    PlanIssue(
+                        code="loop.target_required",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.target",
+                        message=f"«{step.goal}» necesita el paso al que vuelve.",
+                        expected="id de un paso anterior",
+                        received="",
+                        action_required="Define params.target con un id existente.",
+                    )
+                )
+            elif target not in by_id:
+                issues.append(
+                    PlanIssue(
+                        code="loop.unknown_target",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.target",
+                        message=f"«{step.goal}» vuelve a un paso que no existe ({target}).",
+                        expected="id de un paso del plan",
+                        received=target,
+                        alternatives=[item.id for item in plan.steps if item.id != step.id][:5],
+                        action_required="Elige un target existente.",
+                    )
+                )
+            elif target == step.id:
+                issues.append(
+                    PlanIssue(
+                        code="loop.self_target",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.target",
+                        message=f"«{step.goal}» no puede volver a sí mismo.",
+                        expected="otro paso",
+                        received=step.id,
+                        action_required="Elige otro target.",
+                    )
+                )
+            else:
+                target_step = by_id[target]
+                order = {item.id: index for index, item in enumerate(plan.steps)}
+                if order.get(target, 0) >= order.get(step.id, 0):
+                    issues.append(
+                        PlanIssue(
+                            code="loop.target_order",
+                            severity="error",
+                            step_id=step.id,
+                            field="params.target",
+                            message=f"«{step.goal}» debe volver a un paso anterior.",
+                            expected="paso anterior al loop",
+                            received=target,
+                            action_required="Mueve el loop después del cuerpo o corrige el target.",
+                        )
+                    )
+                if target_step.type.startswith("trigger_") or target_step.type in (
+                    "loop",
+                    "stop",
+                    "business_result",
+                ):
+                    issues.append(
+                        PlanIssue(
+                            code="loop.invalid_target",
+                            severity="error",
+                            step_id=step.id,
+                            field="params.target",
+                            message=(
+                                f"«{step.goal}» no puede repetir un paso "
+                                f"{target_step.type}."
+                            ),
+                            expected="paso de trabajo repetible",
+                            received=target_step.type,
+                            action_required="Elige el inicio del cuerpo del loop.",
+                        )
+                    )
+            try:
+                max_iterations = int(step.params.get("max_iterations") or 20)
+            except (TypeError, ValueError):
+                max_iterations = 0
+            if not 1 <= max_iterations <= 100:
+                issues.append(
+                    PlanIssue(
+                        code="loop.max_iterations",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.max_iterations",
+                        message=f"«{step.goal}» necesita un límite entre 1 y 100.",
+                        expected="1..100",
+                        received=str(step.params.get("max_iterations")),
+                        action_required="Acota las repeticiones.",
+                    )
+                )
         elif step.type == "for_each":
             issues.append(
                 PlanIssue(

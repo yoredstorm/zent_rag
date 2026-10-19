@@ -206,6 +206,18 @@ def _step_config(
         if "value" in params:
             state_config["value"] = params.get("value")
         return (f"state_{op}", state_config, {"inputs": ["in"], "outputs": ["out"]})
+    if step.type == "loop":
+        target_step = str(params.get("target") or "")
+        target_node = steps_map.get(target_step, "")
+        try:
+            max_iterations = max(1, min(int(params.get("max_iterations") or 20), 100))
+        except (TypeError, ValueError):
+            max_iterations = 20
+        return (
+            "loop",
+            {"target": target_node, "max_iterations": max_iterations},
+            {"inputs": ["in"], "outputs": ["out"]},
+        )
     if step.type == "notify":
         return (
             "notify",
@@ -379,9 +391,9 @@ def compile_semantic_plan(
                 "config": config,
                 "input_ports": input_ports,
                 "output_ports": output_ports,
-                "retry_policy": {"max_attempts": 1},
-                "timeout_ms": 60_000,
-                "error_policy": "fail",
+                "retry_policy": {"max_attempts": int(step.retries or 0) + 1},
+                "timeout_ms": max(1, int(step.timeout_seconds or 60)) * 1000,
+                "error_policy": step.on_error or "fail",
                 "metadata": {
                     "architect": {
                         "step_id": step.id,
@@ -464,6 +476,26 @@ def compile_semantic_plan(
                 }
             )
         levels[step.id] = 1 + max((levels.get(source, 0) for source in sources), default=0)
+
+    # Un nodo `loop` materializa la re-entrada con un edge explícito al target.
+    # El runtime excluye ese edge de la readiness; el IR lo reconoce como
+    # re-entrada durable acotada (no un ciclo del grafo).
+    for step in plan.steps:
+        if step.type != "loop":
+            continue
+        target_node = steps_map.get(str(step.params.get("target") or ""))
+        if not target_node:
+            continue
+        edge_index += 1
+        edges.append(
+            {
+                "id": f"e{edge_index}",
+                "from_node": steps_map[step.id],
+                "from_port": "out",
+                "to_node": target_node,
+                "to_port": "in",
+            }
+        )
 
     per_level: dict[int, int] = {}
     for node in nodes:

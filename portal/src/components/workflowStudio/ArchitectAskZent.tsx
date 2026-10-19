@@ -113,7 +113,7 @@ export function ArchitectAskZent({
   }
 
   async function applyPatch() {
-    if (!session || !proposal || patchText.trim().length < 3) return;
+    if (!session || !proposal || !proposal.plan || !proposal.plan_hash || patchText.trim().length < 3) return;
     setBusy("patch");
     setError("");
     try {
@@ -304,6 +304,75 @@ export function ArchitectAskZent({
               ))}
             </ol>
           </div>
+
+          {proposal.matches && proposal.matches.length > 0 && (
+            <div data-testid="ask-matches">
+              <h3 className="text-h3 mb-2">Capacidades seleccionadas</h3>
+              <ul className="space-y-1.5">
+                {proposal.matches.map((item) => (
+                  <li
+                    key={`${item.need}-${item.capability_ref}`}
+                    className="rounded-md border border-border-soft bg-surface px-3 py-2 text-[12px] leading-relaxed"
+                  >
+                    <p className="text-text">
+                      <span className="mono text-[11px] text-accent">{item.capability_ref}</span>
+                      {item.version ? ` v${item.version}` : ""} · {item.need}
+                    </p>
+                    {item.reason && <p className="mt-0.5 text-muted">{item.reason}</p>}
+                    <p className="mt-0.5 text-faint">
+                      {item.availability ?? "sin verificar"}
+                      {item.unresolved && item.unresolved.length > 0
+                        ? ` · falta: ${item.unresolved.join(", ")}`
+                        : ""}
+                      {item.alternatives && item.alternatives.length > 0
+                        ? ` · alternativas: ${item.alternatives.join(", ")}`
+                        : ""}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {proposal.requires_durable_instance && (
+            <p
+              className="rounded-md border border-border-soft bg-surface px-3 py-2 text-[12px] text-muted"
+              data-testid="ask-durable"
+            >
+              Este plan usa esperas o repeticiones: debe iniciarse como proceso durable
+              para conservar el estado.
+            </p>
+          )}
+
+          {proposal.trace && proposal.trace.tool_calls.length > 0 && (
+            <details
+              className="rounded-md border border-border-soft bg-surface px-3 py-2"
+              data-testid="ask-trace"
+            >
+              <summary className="cursor-pointer text-[12px] font-medium text-text">
+                Cómo lo investigué: {proposal.trace.tool_calls.length} consulta(s) al
+                catálogo
+              </summary>
+              <ol className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-faint">
+                {proposal.trace.stages.map((stage, index) => (
+                  <li key={`${stage.name}-${index}`}>
+                    {stage.name} ({stage.duration_ms} ms)
+                  </li>
+                ))}
+              </ol>
+              <ul className="mt-2 space-y-1 text-[11px] text-muted">
+                {proposal.trace.tool_calls.map((call, index) => (
+                  <li key={`${call.tool}-${index}`}>
+                    <span className={call.ok ? "text-text" : "text-danger"}>
+                      {call.ok ? "OK" : "RECHAZADA"}
+                    </span>{" "}
+                    {call.tool}
+                    {call.error ? ` · ${call.error}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           {hasClarifications && (
             <div

@@ -77,6 +77,41 @@ const BASE: ArchitectProposal = {
     coverage: { total_capabilities: 63, business_capabilities: 34, business_complete: 25, business_completeness: 0.7353 },
   },
   simulation: null,
+  matches: [
+    {
+      need: "buscar productos",
+      capability_ref: "catalog.products.search",
+      version: 1,
+      reason: "Cubre la búsqueda del catálogo.",
+      availability: "AVAILABLE",
+      alternatives: ["inventory.stock.get"],
+    },
+  ],
+  trace: {
+    path: ["NECESIDAD", "BÚSQUEDA", "INSPECCIÓN", "SELECCIÓN", "PLAN", "VALIDACIÓN", "REPARACIÓN"],
+    stages: [
+      { name: "UNDERSTAND", duration_ms: 10 },
+      { name: "BÚSQUEDA", duration_ms: 4 },
+      { name: "VALIDACIÓN", duration_ms: 2 },
+    ],
+    tool_calls: [
+      { tool: "capability.search", ok: true, duration_ms: 4 },
+      { tool: "danger.delete", ok: false, error: "tool_not_allowed" },
+    ],
+    repair_attempts: 1,
+  },
+  usage: {
+    llm_calls: 3,
+    tool_calls: 2,
+    prompt_tokens: 120,
+    completion_tokens: 80,
+    total_tokens: 200,
+    estimated_cost_usd: 0,
+    duration_ms: 40,
+    repairs: 1,
+    cancelled: false,
+  },
+  requires_durable_instance: false,
   notes: [],
 };
 
@@ -88,7 +123,7 @@ function stubApi(overrides: Partial<ArchitectProposal> = {}, draft = true) {
         json({ enabled: true, planner_version: "architect/1.2.0", states: [] }),
       );
     }
-    if (url.includes("/architect/plan")) return Promise.resolve(json({ ...BASE, ...overrides }));
+    if (url.includes("/architect/agentic-plan")) return Promise.resolve(json({ ...BASE, ...overrides }));
     if (url.includes("/architect/patch")) {
       return Promise.resolve(
         json({
@@ -136,6 +171,9 @@ describe("ArchitectAskZent", () => {
     expect(screen.getByTestId("ask-understanding")).toHaveTextContent("CUANDO");
     expect(screen.getByTestId("ask-checks")).toHaveTextContent("Sin bloqueos");
     expect(screen.getByTestId("ask-catalog")).toHaveTextContent("63 capacidades");
+    expect(screen.getByTestId("ask-matches")).toHaveTextContent("catalog.products.search");
+    expect(screen.getByTestId("ask-trace")).toHaveTextContent("tool_not_allowed");
+    expect(screen.queryByTestId("ask-durable")).not.toBeInTheDocument();
     expect(NAVIGATE).not.toHaveBeenCalled();
   });
 
@@ -182,7 +220,7 @@ describe("ArchitectAskZent", () => {
     await user.type(screen.getByTestId("ask-clarify-answer"), "compras@zent.test");
     await user.click(screen.getByTestId("ask-clarify-submit"));
     await waitFor(() => {
-      const calls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("/architect/plan"));
+      const calls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("/architect/agentic-plan"));
       expect(calls.length).toBe(2);
       const body = JSON.parse(String((calls[1][1] as RequestInit)?.body ?? "{}"));
       expect(body.prompt).toContain("Datos confirmados por el usuario: compras@zent.test");

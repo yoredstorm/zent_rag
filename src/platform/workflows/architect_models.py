@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 MODEL_CONFIG = ConfigDict(extra="forbid")
 
@@ -28,6 +28,7 @@ PLAN_STEP_TYPES = (
     "human_approval",
     "wait",
     "state",
+    "loop",
     "notify",
     "integration_action",
     "business_result",
@@ -96,6 +97,10 @@ class PlanStep(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     reason_summary: str = Field(default="", max_length=400)
     optional: bool = False
+    #: Política real del runtime: reintentos, timeout y manejo de error.
+    retries: int = Field(default=0, ge=0, le=5)
+    timeout_seconds: int = Field(default=60, ge=1, le=3600)
+    on_error: Literal["fail", "continue", "stop"] = "fail"
 
 
 class ArchitectIntent(BaseModel):
@@ -144,6 +149,18 @@ class PlanIssue(BaseModel):
     step_id: str | None = Field(default=None, max_length=80)
     message: str = Field(min_length=1, max_length=400)
     requirement: str | None = Field(default=None, max_length=120)
+    #: Contrato estructurado para reparación automática (Prompt 03).
+    field: str | None = Field(default=None, max_length=120)
+    expected: str | None = Field(default=None, max_length=400)
+    received: str | None = Field(default=None, max_length=400)
+    alternatives: list[str] = Field(default_factory=list, max_length=8)
+    action_required: str | None = Field(default=None, max_length=400)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def issue_code(self) -> str:
+        """Alias estable para el protocolo de reparación (Prompt 03)."""
+        return self.code
 
 
 __all__ = [

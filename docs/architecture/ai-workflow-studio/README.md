@@ -19,6 +19,7 @@
 | 8 | [`08-findings-plan-risks.md`](08-findings-plan-risks.md) | Tabla de hallazgos, plan de implementación por archivos, riesgos de regresión y evidencia de verificación |
 | 9 | [`09-canonical-architect.md`](09-canonical-architect.md) | Prompt 01: unificación del Architect, contrato canónico, estados, flag y resultados |
 | 10 | [`10-capability-registry.md`](10-capability-registry.md) | Prompt 02: inventario, contrato `zent.capability/v1`, búsqueda, disponibilidad, composición, snapshots y métricas |
+| 11 | [`11-agentic-planner.md`](11-agentic-planner.md) | Prompt 03: planner agéntico, tool calling read-only, presupuesto, MATCH/VERIFY/REPAIR y matriz de 23 pruebas |
 
 ## Alcance
 

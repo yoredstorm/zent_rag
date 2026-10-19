@@ -1,5 +1,10 @@
 # 09 — Prompt 01: unificación del AI Workflow Architect
 
+> **Actualización Prompt 03:** el portal ya usa `POST /architect/agentic-plan`
+> (planner con tool calling read-only, MATCH/VERIFY/REPAIR). `POST /architect/plan`
+> queda como compatibilidad para el camino de una sola pasada y para tests
+> existentes. Ver [`11-agentic-planner.md`](11-agentic-planner.md).
+
 > Fecha: 2026-10-19. Base: `master` @ `70620a9` + cambios de esta entrega.
 > Alcance: convertir el Architect semántico en el camino principal de creación
 > con IA, sin romper el Copilot legacy ni los workflows existentes.

@@ -86,20 +86,26 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   "steps": [{
     "id": "t1", "type": "trigger_event"|"trigger_schedule"|"trigger_manual"|"business_query"|
             "knowledge_query"|"capability_call"|"agent_analysis"|"decision"|"filter"|"join"|"merge"|
-            "human_approval"|"wait"|"state"|"notify"|"integration_action"|"business_result"|"stop",
+            "human_approval"|"wait"|"state"|"loop"|"notify"|"integration_action"|"business_result"|"stop",
     "goal": str, "depends_on": [str], "when": {"step": str, "outcome": true}|null,
     "inputs": [{"step": str, "field": str, "label": str|null, "to": str|null}],
-    "params": {}, "reason_summary": str, "optional": false
+    "params": {}, "reason_summary": str, "optional": false,
+    "retries": 0, "timeout_seconds": 60, "on_error": "fail"|"continue"|"stop"
   }],
   "assumptions": [{"statement": str, "impact": "low"|"high", "needs_confirmation": bool}],
   "uncertainties": [str], "notes": [str]
 }
 - Un solo disparador. Cada paso declara de quién depende (depends_on).
 - No uses "for_each": el plan semántico no expresa cuerpos de iteración; divide el flujo en pasos.
-- capability_call: params.capability debe ser una ref EXACTA de "Capacidades relevantes".
+- capability_call: params.capability debe ser una ref EXACTA de una capacidad que
+  exista en el catálogo del tenant. Si no la has inspeccionado, búscala primero.
   params.inputs lleva valores literales. Para usar la salida de otro paso, agrega
   en "inputs" {"step": "<paso>", "field": "<campo de salida>", "to": "<campo de entrada>"}.
   Si la capacidad está NEEDS_CONFIGURATION, no la uses como si estuviera activa.
+- loop: params.target = id de un paso anterior, params.max_iterations entre 1 y 100. El flujo
+  debe ejecutarse como proceso durable; no lo uses para reemplazar una decisión.
+- wait: declara params.preset, timeout_seconds y on_timeout; si on_timeout="branch",
+  agrega un paso con when {"step": "<wait>", "outcome": false} para el timeout.
 - Usa un agente SOLO cuando haga falta criterio; si una regla simple alcanza, no lo pongas.
 - knowledge_query: params.operation ∈ search|answer|find_evidence|extract_facts|compare|check_conflicts|investigate.
 - decision: referencia al paso que decide en "inputs" (p. ej. agente → field "risk" o "requires_review").
@@ -345,6 +351,8 @@ _PREVIEW_KIND_BY_TYPE: dict[str, str] = {
     "join": "then",
     "merge": "then",
     "human_approval": "then",
+    "state": "then",
+    "loop": "then",
     "notify": "after",
     "integration_action": "then",
     "business_result": "after",
@@ -376,6 +384,8 @@ def semantic_preview(plan: SemanticPlan) -> list[dict[str, str]]:
             text = f"Analizar con {agent_name or 'un agente'}: {step.goal}"
         elif step.type == "capability_call":
             text = f"Ejecutar {step.params.get('capability') or 'una capacidad'}: {step.goal}"
+        elif step.type == "loop":
+            text = f"Volver a un paso anterior (máx. {step.params.get('max_iterations') or 20} veces)."
         elif step.type == "notify":
             text = f"Avisar por {step.params.get('channel') or 'Zent'}: {step.goal}"
         elif step.type == "human_approval":
@@ -768,6 +778,8 @@ def simulation_plan(plan: SemanticPlan) -> list[dict[str, str]]:
         elif step.type == "capability_call":
             capability = str(step.params.get("capability") or "la capacidad")
             expectation = f"Ejecutaría {capability} (sin efectos en la vista previa)."
+        elif step.type == "loop":
+            expectation = "Volvería al paso indicado, dentro del límite configurado."
         elif step.type == "agent_analysis":
             agent_name = str(step.params.get("agent_name") or "el agente")
             expectation = f"{agent_name} respondería una conclusión (sin efecto real)."

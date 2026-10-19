@@ -55,6 +55,52 @@ export type ArchitectPreviewItem = {
   text: string;
 };
 
+export type ArchitectMatch = {
+  need: string;
+  capability_ref: string;
+  version?: number | null;
+  reason?: string;
+  availability?: string | null;
+  bindings?: string[];
+  unresolved?: string[];
+  alternatives?: string[];
+};
+
+export type ArchitectTraceStage = {
+  name: string;
+  duration_ms: number;
+  detail?: string;
+};
+
+export type ArchitectToolCall = {
+  tool: string;
+  arguments?: Record<string, unknown>;
+  ok: boolean;
+  error?: string | null;
+  duration_ms?: number;
+  result_hash?: string | null;
+  result_summary?: string | null;
+};
+
+export type ArchitectTrace = {
+  path: string[];
+  stages: ArchitectTraceStage[];
+  tool_calls: ArchitectToolCall[];
+  repair_attempts: number;
+};
+
+export type ArchitectUsage = {
+  llm_calls: number;
+  tool_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+  duration_ms: number;
+  repairs: number;
+  cancelled: boolean;
+};
+
 export type ArchitectPhase = { name: string; duration_ms: number };
 
 export type ArchitectFallback = {
@@ -123,12 +169,13 @@ export type ArchitectProposal = {
   };
   phases: ArchitectPhase[];
   fallback: ArchitectFallback | null;
-  plan_hash: string;
+  plan_hash: string | null;
   publishable: boolean;
   blockers: ArchitectBlocker[];
   source: "llm" | "heuristics";
+  mode?: "agentic" | string;
   intent: Record<string, unknown> | null;
-  plan: Record<string, unknown>;
+  plan: Record<string, unknown> | null;
   issues: ArchitectIssue[];
   preview: ArchitectPreviewItem[];
   graph: ArchitectGraph | null;
@@ -141,6 +188,11 @@ export type ArchitectProposal = {
   readiness: ArchitectReadiness | null;
   simulation: { step_id: string; goal: string; expectation: string; effects: string }[] | null;
   capability_snapshot?: CapabilitySnapshotSummary | null;
+  specification?: Record<string, unknown> | null;
+  matches?: ArchitectMatch[];
+  trace?: ArchitectTrace;
+  usage?: ArchitectUsage;
+  requires_durable_instance?: boolean;
   notes: string[];
   patch?: {
     summary?: string;
@@ -188,7 +240,7 @@ export async function planWithArchitect(
   sessionId?: string,
   agentId?: string,
 ): Promise<ArchitectProposal> {
-  return api<ArchitectProposal>("/api/v1/workflows/architect/plan", {
+  return api<ArchitectProposal>("/api/v1/workflows/architect/agentic-plan", {
     method: "POST",
     ...auth(session),
     body: JSON.stringify({

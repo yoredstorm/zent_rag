@@ -10,6 +10,8 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -237,6 +239,72 @@ async def tenant_workflow_architect_plan(body: ArchitectPlanIn, request: Request
         actor_id=ctx.user_id,
         preferred_agent_id=body.agent_id,
     )
+
+
+@router.post(
+    "/architect/agentic-plan",
+    summary="Workflow Architect: planner agéntico con tool calling read-only",
+)
+async def tenant_workflow_architect_agentic_plan(
+    body: ArchitectAgenticPlanIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.planner_session import (
+        PlannerBudget,
+        PlannerBudgetExceeded,
+        PlanningCancelled,
+        WorkflowPlanningSession,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    session = WorkflowPlanningSession(
+        ctx.organization_id,
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+        model=body.model,
+        budget=PlannerBudget.from_settings(),
+        session_id=body.session_id,
+        clarification_history=body.clarification_history,
+    )
+    task = asyncio.create_task(session.run(body.prompt.strip()))
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=0.5)
+            if await request.is_disconnected() and not task.done():
+                session.cancel_event.set()
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:  # noqa: BLE001 — el cliente ya se fue
+                    pass
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error_code": "PLANNER_CANCELLED",
+                        "message": "La planificación se canceló porque el cliente cerró la conexión.",
+                    },
+                )
+        result = task.result()
+    except PlannerBudgetExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error_code": "PLANNER_BUDGET_EXCEEDED",
+                "reason": exc.reason,
+                "message": str(exc),
+                "usage": exc.usage.as_dict(),
+            },
+        )
+    except PlanningCancelled as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "PLANNER_CANCELLED", "message": str(exc)},
+        )
+    response = JSONResponse(status_code=200, content=result)
+    response.headers["X-Zent-Planner"] = "agentic"
+    return response
 
 
 @router.post(
@@ -1259,6 +1327,15 @@ class ArchitectPlanIn(BaseModel):
     model: str | None = Field(default=None, max_length=120)
     session_id: str | None = Field(default=None, max_length=80)
     agent_id: str | None = Field(default=None, max_length=64)
+
+
+class ArchitectAgenticPlanIn(BaseModel):
+    prompt: str = Field(min_length=8, max_length=4000)
+    model: str | None = Field(default=None, max_length=120)
+    session_id: str | None = Field(default=None, max_length=80)
+    clarification_history: list[Annotated[str, Field(max_length=2000)]] = Field(
+        default_factory=list, max_length=8
+    )
 
 
 class ArchitectPatchIn(BaseModel):
