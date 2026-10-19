@@ -275,6 +275,20 @@ REDIS=${REDIS_URL:-redis://127.0.0.1:6379/0}
   pero rompió la app: rollback de la app (runbook 12) y evaluar `downgrade` de
   la revisión (ver `docs/architecture/certification/migrations.md`: qué
   revisiones tienen downgrade probado y cuáles son forward-only).
+- **Local (docker compose)**: el contenedor `api` ejecuta `alembic upgrade head`
+  al arrancar, así que una imagen **anterior** a la última migración entra en
+  bucle de reinicio con
+  `ERROR [alembic.util.messaging] Can't locate revision identified by '<N>'`
+  (`docker ps` → `Restarting (255)`). La base ya está en `<N>` pero el código
+  empaquetado no conoce esa revisión. Acción:
+  ```bash
+  docker compose build api ingestion-worker
+  docker compose up -d api            # el worker depende de api healthy
+  docker compose up -d ingestion-worker
+  docker exec rag-api alembic current  # debe reportar la última revisión (head)
+  ```
+  Regla práctica: **después de añadir una migración, reconstruye la imagen
+  local** antes de levantar el stack.
 - **Rollback**: `uv run --frozen --no-sync alembic downgrade -1` **solo** para
   revisiones con downgrade probado; si no, restaurar snapshot de DB.
 - **Owner**: Platform.
