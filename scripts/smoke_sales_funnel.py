@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import secrets
 import sys
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -25,7 +26,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-SANDBOX_SECRET = "smoke-sandbox-webhook-secret"
+SANDBOX_SECRET = secrets.token_urlsafe(24)  # efímero: se firma y verifica en la misma corrida
 
 CATALOG = [
     {"sku": "ARZ-COS-1KG", "name": "Arroz Costeño", "price": 5.90, "unit": "KG", "stock": 40},

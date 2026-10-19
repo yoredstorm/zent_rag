@@ -500,11 +500,25 @@ async def _run_startup() -> None:
                         email=plat_email,
                     )
                 if plat is not None and not plat.password_hash:
-                    await user_repo.set_password(
-                        plat.id,
-                        hash_password(settings.PORTAL_DEV_PASSWORD.get_secret_value()),
-                    )
-                    logger.info("Dev platform admin password seeded", email=plat_email)
+                    # Provisión de credencial del admin: en development cae al
+                    # password de portal; en cualquier entorno usa
+                    # PLATFORM_ADMIN_PASSWORD si está definido. NUNCA pisa un
+                    # hash existente (para forzar cambio:
+                    # scripts/seed_platform_admin.py --reset-password).
+                    provisioned = settings.PLATFORM_ADMIN_PASSWORD
+                    if provisioned is not None and provisioned.get_secret_value():
+                        await user_repo.set_password(
+                            plat.id, hash_password(provisioned.get_secret_value())
+                        )
+                        logger.info(
+                            "Platform admin password provisioned from env", email=plat_email
+                        )
+                    elif settings.ENVIRONMENT == "development" and settings.PORTAL_DEV_PASSWORD:
+                        await user_repo.set_password(
+                            plat.id,
+                            hash_password(settings.PORTAL_DEV_PASSWORD.get_secret_value()),
+                        )
+                        logger.info("Dev platform admin password seeded", email=plat_email)
         except Exception as exc:
             logger.warning("Could not seed portal dev password", error=str(exc))
 

@@ -2622,7 +2622,19 @@ class Settings(BaseSettings):
     PLATFORM_ADMIN_EMAIL: str | None = Field(
         default=None,
         validation_alias=AliasChoices("PLATFORM_ADMIN_EMAIL", "RAG_PLATFORM_ADMIN_EMAIL"),
-        description="Email of the seeded platform admin (password is never stored in env).",
+        description="Email of the seeded platform admin.",
+    )
+    PLATFORM_ADMIN_PASSWORD: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PLATFORM_ADMIN_PASSWORD", "RAG_PLATFORM_ADMIN_PASSWORD"
+        ),
+        description=(
+            "Password provisionado para el platform admin. Solo RELLENA un hash "
+            "ausente (nunca pisa uno existente) y vive en el entorno de despliegue, "
+            "nunca en el repositorio. Para forzar un cambio: "
+            "scripts/seed_platform_admin.py --reset-password."
+        ),
     )
 
     # -------------------------------------------------------------------------
@@ -2822,6 +2834,12 @@ class Settings(BaseSettings):
             if dev_pw in _INSECURE_PORTAL_DEV_PASSWORDS:
                 raise ValueError(
                     "PORTAL_DEV_PASSWORD must not use the insecure development "
+                    "default in production. Unset it or set a strong password."
+                )
+            admin_pw = _secret_raw(self.PLATFORM_ADMIN_PASSWORD)
+            if admin_pw in _INSECURE_PORTAL_DEV_PASSWORDS:
+                raise ValueError(
+                    "PLATFORM_ADMIN_PASSWORD must not use the insecure development "
                     "default in production. Unset it or set a strong password."
                 )
             if _secret_raw(self.POSTGRES_PASSWORD) == "changeme_in_production":

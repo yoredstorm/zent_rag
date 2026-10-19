@@ -6,15 +6,18 @@ Uso (desde la raíz del repo, con .env cargando RAG_POSTGRES_*):
     python scripts/seed_platform_admin.py --email ppimentel@omnio.pe
     python scripts/seed_platform_admin.py --email x@y.z --password 'secreta'
 
-Sin --password usa RAG_PORTAL_DEV_PASSWORD del entorno/.env. Si el usuario ya
+Sin --password usa RAG_PLATFORM_ADMIN_PASSWORD (entorno de despliegue) o, en su
+defecto, RAG_PORTAL_DEV_PASSWORD. Si el usuario ya
 existe y tiene password, no lo pisa (usa --password o --reset-password para
 forzarlo). Si el email ya existe como usuario tenant, lo promueve a platform
 admin conservando su organización (identidad dual, migración 140); si no
 existe, crea la fila is_platform_admin con organization_id NULL. Asigna el rol
 de plataforma (default super_admin) y es seguro de re-ejecutar.
 
-En producción el bootstrap automático del API no corre (solo development):
-este script es la vía soportada para provisionar el admin.
+En producción el API no crea usuarios de plataforma (el bootstrap de creación es
+solo de development), pero sí RELLENA la contraseña de un admin existente sin
+hash si `RAG_PLATFORM_ADMIN_PASSWORD` está definido. Para crear o forzar el
+cambio, este script es la vía soportada.
 """
 from __future__ import annotations
 
@@ -48,8 +51,18 @@ async def seed(email: str, password: str | None, role: str, reset_password: bool
 
     explicit_password = password is not None
     if password is None:
-        secret = settings.PORTAL_DEV_PASSWORD
-        password = secret.get_secret_value() if secret is not None else None
+        # Orden: PLATFORM_ADMIN_PASSWORD (entorno de despliegue) →
+        # PORTAL_DEV_PASSWORD (development). Ninguno vive en el repositorio.
+        for candidate in (
+            getattr(settings, "PLATFORM_ADMIN_PASSWORD", None),
+            settings.PORTAL_DEV_PASSWORD,
+        ):
+            if candidate is None:
+                continue
+            raw = candidate.get_secret_value() if hasattr(candidate, "get_secret_value") else str(candidate)
+            if raw:
+                password = raw
+                break
 
     try:
         user = await repo.get_by_email(normalized)
