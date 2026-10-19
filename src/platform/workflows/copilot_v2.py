@@ -1,9 +1,10 @@
 # =============================================================================
-# Workflow Copilot V2 — lenguaje natural → WorkflowIntent → WorkflowPlan.
+# Workflow Copilot V2 (LEGACY) — lenguaje natural → WorkflowIntent → WorkflowPlan.
 #
-# Reutiliza el gateway LLM existente (LiteLLM + router + circuit breaker). Las
-# heurísticas de copilot.py se conservan como fallback cuando el LLM no está
-# disponible o devuelve algo inválido. El backend valida; el LLM propone.
+# LEGACY: se conserva solo para consumidores anteriores y rollback del flag
+# `RAG_WORKFLOW_ARCHITECT_ENABLED`. El camino canónico es architect.py
+# (discovery → intent → semantic plan → validate → compile).
+# Retirada: docs/architecture/ai-workflow-studio/09-canonical-architect.md
 # =============================================================================
 from __future__ import annotations
 
@@ -360,3 +361,6 @@ __all__ = [
     "heuristic_intent",
     "propose_workflow",
 ]
+
+#: Marca interna del camino legacy (endpoints /copilot/*).
+LEGACY_COPILOT = True

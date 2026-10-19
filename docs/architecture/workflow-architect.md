@@ -1,6 +1,7 @@
 # Zent AI Workflow Architect — Phase 0 Architecture Audit
 
 > **Status:** Phase 0 (auditoría) completa. **Fases 1–10 implementadas** (first delivery + clarificación, patching conversacional, UX semántica de nodos, readiness/simulación y evaluación con métricas).
+> **Prompt 01 (2026-10-19):** el portal consume el Architect (`/architect/plan|patch|draft`) detrás de `RAG_WORKFLOW_ARCHITECT_ENABLED`; el Copilot legacy queda como rollback con headers de deprecación. Ver `ai-workflow-studio/09-canonical-architect.md`.
 > **Fecha:** 2026-09-15
 > **Base:** `feat/knowledge-cognitive-os` @ `08803fe` (Workflow Semantic Core + Cognitive Workflows completos).
 > **Prerrequisitos verificados:** contexto compartido y nodos knowledge/agent/data con resultado tipado, evidencia y decisiones.

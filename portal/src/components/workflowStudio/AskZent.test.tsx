@@ -56,6 +56,9 @@ function stubApi() {
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/architect/config")) {
+        return Promise.resolve(json({ enabled: false, planner_version: "architect/1.2.0", states: [] }));
+      }
       if (url.includes("/copilot/intent")) return Promise.resolve(json(PROPOSAL));
       if (url.includes("/copilot/compile")) return Promise.resolve(json(COMPILED));
       if (url.endsWith("/api/v1/workflows") && (init?.method ?? "GET") === "POST") {
@@ -81,7 +84,7 @@ describe("AskZent", () => {
       </MemoryRouter>,
     );
     await user.type(
-      screen.getByTestId("ask-prompt"),
+      await screen.findByTestId("ask-prompt"),
       "Cuando el stock sea menor a 10 avisa por correo al equipo de compras",
     );
     await user.click(screen.getByTestId("ask-submit"));
@@ -102,7 +105,7 @@ describe("AskZent", () => {
         <AskZent />
       </MemoryRouter>,
     );
-    await user.type(screen.getByTestId("ask-prompt"), "Cuando el stock sea menor a 10 avisa por correo");
+    await user.type(await screen.findByTestId("ask-prompt"), "Cuando el stock sea menor a 10 avisa por correo");
     await user.click(screen.getByTestId("ask-submit"));
     await waitFor(() => expect(screen.getByTestId("ask-create")).toBeInTheDocument());
     await user.click(screen.getByTestId("ask-create"));
@@ -132,7 +135,7 @@ describe("AskZent", () => {
         <AskZent />
       </MemoryRouter>,
     );
-    await user.type(screen.getByTestId("ask-prompt"), "avísame cuando haya stock bajo");
+    await user.type(await screen.findByTestId("ask-prompt"), "avísame cuando haya stock bajo");
     await user.click(screen.getByTestId("ask-submit"));
     await waitFor(() => expect(screen.getByTestId("ask-questions")).toHaveTextContent("Falta elegir a quién avisar."));
     expect(screen.getByTestId("ask-questions")).toHaveTextContent("¿Dónde está el inventario?");

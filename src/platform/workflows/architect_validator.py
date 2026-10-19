@@ -111,13 +111,13 @@ def validate_semantic_plan(
                         message=f"«{step.goal}» espera una decisión que no existe ({step.when.step}).",
                     )
                 )
-            elif source.type != "decision":
+            elif source.type not in ("decision", "wait"):
                 issues.append(
                     PlanIssue(
                         code="plan.when_not_decision",
                         severity="warning",
                         step_id=step.id,
-                        message=f"«{step.goal}» usa una rama de un paso que no es una decisión.",
+                        message=f"«{step.goal}» usa una rama de un paso que no decide ni espera.",
                     )
                 )
         if step.depends_on and step.type in TRIGGER_STEP_TYPES:
@@ -310,13 +310,17 @@ def validate_semantic_plan(
                     message=f"«{step.goal}»: falta elegir la lista a filtrar.",
                 )
             )
-        elif step.type == "for_each" and not step.inputs:
+        elif step.type == "for_each":
             issues.append(
                 PlanIssue(
-                    code="missing.loop_collection",
-                    severity="warning",
+                    code="plan.for_each_unsupported",
+                    severity="error",
                     step_id=step.id,
-                    message=f"«{step.goal}»: falta elegir la lista a recorrer.",
+                    message=(
+                        f"«{step.goal}» necesita un cuerpo que la planificación semántica "
+                        "todavía no puede expresar. Divídelo en pasos o constrúyelo en el "
+                        "lienzo avanzado."
+                    ),
                 )
             )
 

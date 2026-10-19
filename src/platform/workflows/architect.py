@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 from uuid import UUID
+
+from pydantic import ValidationError
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.platform.workflows.architect_clarifications import (
@@ -27,8 +30,25 @@ from src.platform.workflows.architect_discovery import (
 from src.platform.workflows.architect_models import (
     ArchitectIntent,
     PlanAssumption,
+    PlanIssue,
     PlanStep,
     SemanticPlan,
+)
+from src.platform.workflows.architect_observability import (
+    PLANNER_VERSION,
+    STATE_BLOCKED,
+    STATE_DRAFT_READY,
+    ArchitectBlocked,
+    PlanHashMismatch,
+    build_blockers,
+    design_state,
+    elapsed_ms,
+    fallback_payload,
+    log_design,
+    normalize_session_id,
+    plan_hash,
+    prompt_hash,
+    provider_info,
 )
 from src.platform.workflows.architect_validator import validate_semantic_plan
 
@@ -65,7 +85,7 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   "goal": str,
   "steps": [{
     "id": "t1", "type": "trigger_event"|"trigger_schedule"|"trigger_manual"|"business_query"|
-            "knowledge_query"|"agent_analysis"|"decision"|"filter"|"for_each"|"join"|"merge"|
+            "knowledge_query"|"agent_analysis"|"decision"|"filter"|"join"|"merge"|
             "human_approval"|"wait"|"state"|"notify"|"integration_action"|"business_result"|"stop",
     "goal": str, "depends_on": [str], "when": {"step": str, "outcome": true}|null,
     "inputs": [{"step": str, "field": str, "label": str|null}],
@@ -75,6 +95,7 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   "uncertainties": [str], "notes": [str]
 }
 - Un solo disparador. Cada paso declara de quién depende (depends_on).
+- No uses "for_each": el plan semántico no expresa cuerpos de iteración; divide el flujo en pasos.
 - Usa un agente SOLO cuando haga falta criterio; si una regla simple alcanza, no lo pongas.
 - knowledge_query: params.operation ∈ search|answer|find_evidence|extract_facts|compare|check_conflicts|investigate.
 - decision: referencia al paso que decide en "inputs" (p. ej. agente → field "risk" o "requires_review").
@@ -345,6 +366,57 @@ def semantic_preview(plan: SemanticPlan) -> list[dict[str, str]]:
     return preview
 
 
+def _apply_preferred_agent(
+    plan: SemanticPlan,
+    capabilities: dict[str, Any],
+    preferred_agent_id: str | None,
+) -> tuple[SemanticPlan, list[PlanIssue]]:
+    """Asocia el asistente elegido a los pasos de IA que no fijaron uno.
+
+    Solo actúa si el agente realmente existe para el tenant; si no, devuelve un
+    warning para que la UI lo muestre (nunca inventa un agente).
+    """
+    agent_id = str(preferred_agent_id or "").strip()
+    if not agent_id:
+        return plan, []
+    agents = {
+        str(agent.get("id")): agent for agent in (capabilities.get("agents") or [])
+    }
+    if agent_id not in agents:
+        return plan, [
+            PlanIssue(
+                code="plan.preferred_agent_unavailable",
+                severity="warning",
+                message=(
+                    "El asistente elegido no está disponible en este espacio; "
+                    "elige uno antes de publicar."
+                ),
+                requirement="agents",
+            )
+        ]
+    changed = False
+    steps: list[PlanStep] = []
+    for step in plan.steps:
+        if step.type == "agent_analysis" and not str(step.params.get("agent_id") or "").strip():
+            steps.append(
+                step.model_copy(
+                    update={
+                        "params": {
+                            **step.params,
+                            "agent_id": agent_id,
+                            "agent_name": str(agents[agent_id].get("name") or ""),
+                        }
+                    }
+                )
+            )
+            changed = True
+        else:
+            steps.append(step)
+    if not changed:
+        return plan, []
+    return plan.model_copy(update={"steps": steps}), []
+
+
 def _trigger_config_for_cost(plan: SemanticPlan) -> dict[str, Any]:
     for step in plan.steps:
         if step.type == "trigger_event":
@@ -368,6 +440,9 @@ async def patch_workflow_plan(
     provider: Any = None,
     model: str | None = None,
     capabilities: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    plan_hash_value: str | None = None,
+    actor_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Patch conversacional: aplica sobre el plan, re-valida y recompila."""
     from src.platform.workflows.architect_patch import (
@@ -375,59 +450,141 @@ async def patch_workflow_plan(
         propose_plan_patch,
     )
 
+    session = normalize_session_id(session_id)
+    started = time.monotonic()
+    phases: list[dict[str, Any]] = []
     semantic_plan = SemanticPlan.model_validate(plan)
+    if plan_hash_value and plan_hash(semantic_plan) != plan_hash_value:
+        raise PlanHashMismatch(
+            "El plan cambió desde que abriste la edición; vuelve a interpretar antes de aplicar el cambio."
+        )
+    not_found_reason: str | None = None
+    phase_started = time.monotonic()
     if capabilities is None:
         capabilities = await discover_capabilities(
             organization_id, workspace_id=workspace_id, permissions=permissions
         )
+    phases.append({"name": "discovery", "duration_ms": elapsed_ms(phase_started)})
+
     notes: list[str] = []
     source = "llm"
+    resolved = None
+    patch = None
+    fallback: dict[str, Any] | None = None
+    phase_started = time.monotonic()
     try:
         resolved = _resolve_provider(provider)
         patch = await propose_plan_patch(
             semantic_plan, instruction, provider=resolved, model=model
         )
     except Exception as exc:  # noqa: BLE001 — fallback determinístico
-        logger.info("architect patch: fallback", error=str(exc)[:200])
+        logger.info(
+            "architect patch: fallback",
+            error_type=type(exc).__name__,
+            session_id=session,
+        )
         patch = heuristic_plan_patch(instruction, semantic_plan)
         source = "heuristics"
         if patch is None:
-            raise ValueError(
+            not_found_reason = (
                 "No pude interpretar el cambio; prueba «cambia el umbral a 50000», "
                 "«quita la aprobación» o «solo lunes a viernes»."
-            ) from exc
+            )
+        else:
+            fallback = {
+                "used": True,
+                "reason_code": _fallback_reason(exc),
+                "limitations": [
+                    "El cambio se interpretó con reglas determinísticas; revisa el resultado.",
+                ],
+                "requires_review": True,
+                "publishable": False,
+                "preserved_requirement": instruction[:600],
+            }
+    if not_found_reason is not None:
+        raise ValueError(not_found_reason)
+    phases.append({"name": "patching", "duration_ms": elapsed_ms(phase_started)})
+
     updated, notes = apply_semantic_patch(semantic_plan, patch)
+    phase_started = time.monotonic()
     issues = validate_semantic_plan(updated, capabilities, permissions=permissions)
+    phases.append({"name": "validation", "duration_ms": elapsed_ms(phase_started)})
+
     graph: dict[str, Any] | None = None
+    steps_map: dict[str, str] = {}
     cost: dict[str, Any] | None = None
     if not any(issue.severity == "error" for issue in issues):
-        compiled = compile_semantic_plan(updated, capabilities)
-        graph = compiled["graph"]
-        issues = [*issues, *compiled["issues"]]
-        try:
-            from src.platform.workflows.capabilities import cost_estimate
+        phase_started = time.monotonic()
+        graph, steps_map, compile_issues = _compile_validated(updated, capabilities)
+        issues = [*issues, *compile_issues]
+        phases.append({"name": "compilation", "duration_ms": elapsed_ms(phase_started)})
+        if graph is not None:
+            try:
+                from src.platform.workflows.capabilities import cost_estimate
 
-            cost = await cost_estimate(organization_id, graph, _trigger_config_for_cost(updated))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("architect patch cost failed", error=str(exc)[:150])
+                cost = await cost_estimate(
+                    organization_id, graph, _trigger_config_for_cost(updated)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("architect patch cost failed", error=str(exc)[:150])
+
     try:
         from src.platform.workflows.architect_metrics import record_revision
 
         record_revision()
     except Exception as exc:  # noqa: BLE001
         logger.warning("architect revision metric failed", error=str(exc)[:150])
+
     clarifications = build_clarifications(updated, issues)
+    requirements = build_requirements(issues)
+    readiness = _readiness(graph, capabilities) if graph is not None else None
+    state = design_state(
+        graph=graph,
+        issues=issues,
+        clarifications=clarifications,
+        requirements=requirements,
+        readiness=readiness,
+        # Un patch heurístico mantiene la revisión humana, pero no convierte
+        # todo el plan en "no listo": el usuario pidió un cambio concreto.
+        fallback_used=False,
+    )
+    blockers = build_blockers(issues=issues, requirements=requirements, readiness=readiness)
+    planner = _planner_payload(resolved, model, source)
+    log_design(
+        "architect.patch",
+        session_id=session,
+        organization_id=str(organization_id),
+        workspace_id=str(workspace_id) if workspace_id else None,
+        actor_id=str(actor_id) if actor_id else None,
+        planner=planner,
+        state=state,
+        phases=phases,
+        total_duration_ms=elapsed_ms(started),
+        issue_codes=[issue.code for issue in issues],
+        requirements=[item.get("requirement") for item in requirements],
+        fallback_used=bool(fallback),
+        instruction_chars=len(instruction or ""),
+    )
     return {
+        "session_id": session,
+        "state": state,
+        "planner": planner,
+        "phases": phases,
+        "fallback": fallback,
+        "plan_hash": plan_hash(updated),
+        "publishable": state == STATE_DRAFT_READY,
+        "blockers": blockers,
         "source": source,
         "plan": updated.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
         "issues": [issue.model_dump(mode="json") for issue in issues],
         "preview": semantic_preview(updated),
         "graph": graph,
+        "steps_map": steps_map,
         "cost": cost,
         "clarifications": clarifications,
-        "requirements": build_requirements(issues),
-        "readiness": _readiness(graph, capabilities) if graph is not None else None,
+        "requirements": requirements,
+        "readiness": readiness,
         "simulation": simulation_plan(updated) if graph is not None else None,
         "notes": notes,
     }
@@ -507,6 +664,54 @@ def _readiness(graph: dict[str, Any], capabilities: dict[str, Any]) -> dict[str,
     }
 
 
+def _compile_validated(
+    plan: SemanticPlan,
+    capabilities: dict[str, Any],
+    *,
+    intent: ArchitectIntent | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, str], list[PlanIssue]]:
+    """Compila y valida el grafo. Nunca devuelve un grafo que `validate_graph` rechace."""
+    from src.platform.workflows.ir import WorkflowGraph, WorkflowGraphError, validate_graph
+
+    compiled = compile_semantic_plan(plan, capabilities, intent=intent)
+    graph = compiled["graph"]
+    extra: list[PlanIssue] = []
+    try:
+        validate_graph(WorkflowGraph.from_dict(graph))
+    except (WorkflowGraphError, KeyError, TypeError, ValueError) as exc:
+        logger.warning("architect compiled an invalid graph", error=str(exc)[:200])
+        extra.append(
+            PlanIssue(
+                code="compile.invalid_graph",
+                severity="error",
+                message=f"No pude armar un flujo válido: {str(exc)[:240]}",
+            )
+        )
+        graph = None
+    return graph, compiled["steps_map"], [*compiled["issues"], *extra]
+
+
+def _graph_trigger(graph: dict[str, Any] | None) -> tuple[str, dict[str, Any]]:
+    for node in (graph or {}).get("nodes") or []:
+        node_type = str(node.get("type") or "")
+        if node_type == "trigger_schedule":
+            return "schedule", dict(node.get("config") or {})
+        if node_type == "trigger_event":
+            return "event", dict(node.get("config") or {})
+    return "webhook", {}
+
+
+def _fallback_reason(exc: Exception) -> str:
+    text_ = f"{type(exc).__name__}: {exc}".lower()
+    if isinstance(exc, ValidationError) or "json" in text_ or "valid" in text_:
+        return "invalid_llm_response"
+    return "llm_unavailable"
+
+
+def _planner_payload(provider: Any, model: str | None, source: str) -> dict[str, Any]:
+    return {"version": PLANNER_VERSION, **provider_info(provider, model), "source": source}
+
+
 _KNOWLEDGE_SIMULATION: dict[str, str] = {
     "answer": "Respondería citando los fragmentos encontrados.",
     "find_evidence": "Devolvería evidencia localizable para la afirmación.",
@@ -575,58 +780,118 @@ async def plan_workflow(
     provider: Any = None,
     model: str | None = None,
     capabilities: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    actor_id: UUID | None = None,
+    preferred_agent_id: str | None = None,
 ) -> dict[str, Any]:
-    """Pipeline completo (sin persistir): intent → plan → validación → grafo."""
+    """Pipeline completo (sin persistir): intent → plan → validación → grafo.
+
+    Devuelve el contrato canónico del Workflow Architect: estado del proceso,
+    planner, fases, fallback informado, bloqueos y hash del plan.
+    """
+    session = normalize_session_id(session_id)
+    started = time.monotonic()
+    phases: list[dict[str, Any]] = []
+    phase_started = time.monotonic()
     if capabilities is None:
         capabilities = await discover_capabilities(
             organization_id, workspace_id=workspace_id, permissions=permissions
         )
+    phases.append({"name": "discovery", "duration_ms": elapsed_ms(phase_started)})
+
     source = "llm"
     intent: ArchitectIntent | None = None
     plan: SemanticPlan | None = None
     notes: list[str] = []
+    fallback: dict[str, Any] | None = None
+    resolved: Any = None
+    phase_started = time.monotonic()
     try:
         resolved = _resolve_provider(provider)
         intent = await extract_intent_with_architect(
             prompt, capabilities=capabilities, provider=resolved, model=model
         )
+        phases.append({"name": "intent", "duration_ms": elapsed_ms(phase_started)})
+        phase_started = time.monotonic()
         plan = await extract_plan_with_architect(
             intent, capabilities=capabilities, provider=resolved, model=model
         )
-    except Exception as exc:  # noqa: BLE001 — fallback determinístico
-        logger.info("architect: fallback heurístico", error=str(exc)[:200])
+        phases.append({"name": "planning", "duration_ms": elapsed_ms(phase_started)})
+    except Exception as exc:  # noqa: BLE001 — fallback determinístico informado
+        reason = _fallback_reason(exc)
+        logger.info(
+            "architect: fallback heurístico",
+            reason_code=reason,
+            error_type=type(exc).__name__,
+            session_id=session,
+        )
         source = "heuristics"
         intent = None
         plan = heuristic_semantic_plan(prompt)
-        notes.append("No pude usar el modelo; armé un plan con reglas. Revísalo.")
+        notes.append(
+            "No pude usar el modelo; armé un borrador con reglas. "
+            "Revisa los pasos y confírmalo antes de publicar."
+        )
+        fallback = fallback_payload(reason, prompt)
+        phases.append({"name": "planning", "duration_ms": elapsed_ms(phase_started)})
 
-    issues = validate_semantic_plan(plan, capabilities, permissions=permissions)
+    preferred_issues: list[PlanIssue] = []
+    if preferred_agent_id:
+        plan, preferred_issues = _apply_preferred_agent(
+            plan, capabilities, preferred_agent_id
+        )
+
+    phase_started = time.monotonic()
+    issues = [
+        *preferred_issues,
+        *validate_semantic_plan(plan, capabilities, permissions=permissions),
+    ]
+    phases.append({"name": "validation", "duration_ms": elapsed_ms(phase_started)})
+
     graph: dict[str, Any] | None = None
     steps_map: dict[str, str] = {}
     cost: dict[str, Any] | None = None
     if not any(issue.severity == "error" for issue in issues):
-        compiled = compile_semantic_plan(plan, capabilities, intent=intent)
-        graph = compiled["graph"]
-        steps_map = compiled["steps_map"]
-        issues = [*issues, *compiled["issues"]]
-        try:
-            from src.platform.workflows.capabilities import cost_estimate
+        phase_started = time.monotonic()
+        graph, steps_map, compile_issues = _compile_validated(
+            plan, capabilities, intent=intent
+        )
+        issues = [*issues, *compile_issues]
+        phases.append({"name": "compilation", "duration_ms": elapsed_ms(phase_started)})
+        if graph is not None:
+            try:
+                from src.platform.workflows.capabilities import cost_estimate
 
-            cost = await cost_estimate(
-                organization_id, graph, _trigger_config_for_cost(plan)
-            )
-        except Exception as exc:  # noqa: BLE001 — costo best-effort
-            logger.warning("architect cost estimate failed", error=str(exc)[:200])
+                cost = await cost_estimate(
+                    organization_id, graph, _trigger_config_for_cost(plan)
+                )
+            except Exception as exc:  # noqa: BLE001 — costo best-effort
+                logger.warning("architect cost estimate failed", error=str(exc)[:200])
 
     questions = [
         issue.message
         for issue in issues
         if issue.severity == "warning" and issue.code.startswith(("missing.", "assumption."))
     ]
+    phase_started = time.monotonic()
     clarifications = build_clarifications(plan, issues, intent=intent)
     requirements = build_requirements(issues)
     readiness = _readiness(graph, capabilities) if graph is not None else None
     simulation = simulation_plan(plan) if graph is not None else None
+    phases.append({"name": "readiness", "duration_ms": elapsed_ms(phase_started)})
+
+    state = design_state(
+        graph=graph,
+        issues=issues,
+        clarifications=clarifications,
+        requirements=requirements,
+        readiness=readiness,
+        fallback_used=source == "heuristics",
+    )
+    blockers = build_blockers(issues=issues, requirements=requirements, readiness=readiness)
+    planner = _planner_payload(resolved, model, source)
+    publishable = state == STATE_DRAFT_READY and fallback is None
+
     has_agent = any(step.type == "agent_analysis" for step in plan.steps)
     unnecessary_agent = bool(has_agent and intent is not None and not intent.reasoning_needs)
     try:
@@ -641,7 +906,34 @@ async def plan_workflow(
         )
     except Exception as exc:  # noqa: BLE001 — métricas no rompen el plan
         logger.warning("architect metrics failed", error=str(exc)[:150])
+
+    log_design(
+        "architect.plan",
+        session_id=session,
+        organization_id=str(organization_id),
+        workspace_id=str(workspace_id) if workspace_id else None,
+        actor_id=str(actor_id) if actor_id else None,
+        planner=planner,
+        state=state,
+        phases=phases,
+        total_duration_ms=elapsed_ms(started),
+        issue_codes=[issue.code for issue in issues],
+        requirements=[item.get("requirement") for item in requirements],
+        fallback_used=bool(fallback),
+        fallback_reason=fallback.get("reason_code") if fallback else None,
+        graph_nodes=len(graph.get("nodes") or []) if graph else 0,
+        prompt_hash=prompt_hash(prompt),
+        prompt_chars=len(prompt or ""),
+    )
     return {
+        "session_id": session,
+        "state": state,
+        "planner": planner,
+        "phases": phases,
+        "fallback": fallback,
+        "plan_hash": plan_hash(plan),
+        "publishable": publishable,
+        "blockers": blockers,
         "source": source,
         "intent": intent.model_dump(mode="json") if intent is not None else None,
         "plan": plan.model_dump(mode="json"),
@@ -660,6 +952,156 @@ async def plan_workflow(
     }
 
 
+async def save_architect_draft(
+    organization_id: UUID,
+    plan_payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None = None,
+    permissions: frozenset[str] | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    editor_state: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    plan_hash_value: str | None = None,
+    source: str = "llm",
+    actor_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Persiste un borrador re-validando TODO en el servidor.
+
+    El portal no envía el grafo: envía el plan. El backend vuelve a descubrir
+    capacidades, valida, compila y valida el grafo antes de guardar. Nunca
+    activa el workflow ni confía en la validación de React.
+    """
+    from src.platform.workflows.engine import create_workflow
+
+    session = normalize_session_id(session_id)
+    started = time.monotonic()
+    plan = SemanticPlan.model_validate(plan_payload)
+    if plan_hash_value and plan_hash(plan) != plan_hash_value:
+        raise PlanHashMismatch(
+            "El plan cambió desde que se mostró la vista previa; vuelve a interpretarlo antes de guardar."
+        )
+
+    phase_started = time.monotonic()
+    capabilities = await discover_capabilities(
+        organization_id, workspace_id=workspace_id, permissions=permissions
+    )
+    discovery_ms = elapsed_ms(phase_started)
+
+    phase_started = time.monotonic()
+    issues = validate_semantic_plan(plan, capabilities, permissions=permissions)
+    validation_ms = elapsed_ms(phase_started)
+
+    graph: dict[str, Any] | None = None
+    steps_map: dict[str, str] = {}
+    if not any(issue.severity == "error" for issue in issues):
+        phase_started = time.monotonic()
+        graph, steps_map, compile_issues = _compile_validated(plan, capabilities)
+        issues = [*issues, *compile_issues]
+        compilation_ms = elapsed_ms(phase_started)
+    else:
+        compilation_ms = 0
+
+    clarifications = build_clarifications(plan, issues)
+    requirements = build_requirements(issues)
+    readiness = _readiness(graph, capabilities) if graph is not None else None
+    state = design_state(
+        graph=graph,
+        issues=issues,
+        clarifications=clarifications,
+        requirements=requirements,
+        readiness=readiness,
+        fallback_used=False,
+    )
+    blockers = build_blockers(issues=issues, requirements=requirements, readiness=readiness)
+    normalized_source = "heuristics" if str(source) == "heuristics" else "llm"
+
+    if graph is None or state == STATE_BLOCKED:
+        log_design(
+            "architect.draft.blocked",
+            session_id=session,
+            organization_id=str(organization_id),
+            workspace_id=str(workspace_id) if workspace_id else None,
+            state=state,
+            issue_codes=[issue.code for issue in issues],
+            requirements=[item.get("requirement") for item in requirements],
+        )
+        raise ArchitectBlocked(
+            state=state,
+            issues=[issue.model_dump(mode="json") for issue in issues],
+            requirements=requirements,
+            clarifications=clarifications,
+            session_id=session,
+        )
+
+    trigger_type, trigger_config = _graph_trigger(graph)
+    graph["metadata"] = {
+        **(graph.get("metadata") or {}),
+        "architect": True,
+        "architect_state": state,
+        "architect_source": normalized_source,
+        "architect_session_id": session,
+        "planner_version": PLANNER_VERSION,
+        "architect_blockers": [item.get("code") for item in blockers],
+    }
+    resolved_editor_state = {
+        **(editor_state or {}),
+        "architect": {
+            "session_id": session,
+            "state": state,
+            "source": normalized_source,
+            "planner_version": PLANNER_VERSION,
+            "requirements": [item.get("requirement") for item in requirements],
+        },
+    }
+    draft_name = (name or plan.goal or "Automatización")[:150]
+    draft_description = description or plan.goal
+    workflow = await create_workflow(
+        organization_id,
+        draft_name,
+        trigger_type,
+        trigger_config,
+        [],
+        draft_description,
+        actor_id,
+        resolved_editor_state,
+        workspace_id=workspace_id,
+        graph=graph,
+        workflow_version=2,
+    )
+    log_design(
+        "architect.draft.saved",
+        session_id=session,
+        organization_id=str(organization_id),
+        workspace_id=str(workspace_id) if workspace_id else None,
+        actor_id=str(actor_id) if actor_id else None,
+        workflow_id=workflow.get("workflow_id"),
+        state=state,
+        source=normalized_source,
+        planner_version=PLANNER_VERSION,
+        phases={
+            "discovery": discovery_ms,
+            "validation": validation_ms,
+            "compilation": compilation_ms,
+        },
+        issue_codes=[issue.code for issue in issues],
+        requirements=[item.get("requirement") for item in requirements],
+        graph_nodes=len(graph.get("nodes") or []),
+        plan_hash=plan_hash(plan),
+    )
+    return {
+        **workflow,
+        "state": state,
+        "session_id": session,
+        "plan_hash": plan_hash(plan),
+        "requirements": requirements,
+        "readiness": readiness,
+        "blockers": blockers,
+        "publishable": state == STATE_DRAFT_READY and normalized_source == "llm",
+        "source": normalized_source,
+    }
+
+
 __all__ = [
     "extract_intent_with_architect",
     "extract_plan_with_architect",
@@ -667,6 +1109,7 @@ __all__ = [
     "heuristic_semantic_plan",
     "patch_workflow_plan",
     "plan_workflow",
+    "save_architect_draft",
     "semantic_preview",
     "simulation_plan",
 ]

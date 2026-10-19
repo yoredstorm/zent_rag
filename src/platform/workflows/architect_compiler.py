@@ -302,6 +302,20 @@ def _input_ref(step: PlanStep, steps_map: dict[str, str], *, default_field: str)
     return f"{{{{trigger.{default_field}}}}}"
 
 
+def _when_port(node_type: str, outcome: bool) -> str | None:
+    """Puerto de salida correcto para una rama `when`.
+
+    `condition`/`ai_decision` ramifican por then/else; `wait_event` por
+    out/timeout. Cualquier otro nodo no tiene puertos de rama: devolver None
+    evita edges inválidos (regresión F-24 del Prompt 00).
+    """
+    if node_type in ("condition", "ai_decision"):
+        return "then" if outcome else "else"
+    if node_type == "wait_event":
+        return "out" if outcome else "timeout"
+    return None
+
+
 def compile_semantic_plan(
     plan: SemanticPlan,
     capabilities: dict[str, Any],
@@ -383,9 +397,43 @@ def compile_semantic_plan(
             source_node = steps_map.get(source_id)
             if not source_node:
                 continue
+            source_type = node_types.get(source_id, "")
             from_port = "out"
             if step.when is not None and step.when.step == source_id:
-                from_port = "then" if step.when.outcome else "else"
+                branch_port = _when_port(source_type, step.when.outcome)
+                if branch_port is None:
+                    issues.append(
+                        PlanIssue(
+                            code="compile.when_unsupported",
+                            severity="warning",
+                            step_id=step.id,
+                            message=(
+                                f"«{step.goal}» declara una rama sobre un paso que no "
+                                "ramifica; se conectó a su salida normal."
+                            ),
+                        )
+                    )
+                else:
+                    from_port = branch_port
+            elif source_type == "for_each":
+                from_port = "done"
+            elif source_type in ("condition", "ai_decision"):
+                # Depender de una decisión sin declarar `when` es ambiguo:
+                # se usa la rama verdadera (comportamiento implícito histórico)
+                # y se advierte, en vez de emitir un edge desde el puerto
+                # booleano `out` que `validate_graph` rechaza.
+                from_port = "then"
+                issues.append(
+                    PlanIssue(
+                        code="compile.implicit_then",
+                        severity="warning",
+                        step_id=step.id,
+                        message=(
+                            f"«{step.goal}» no declara qué rama de la decisión usa; "
+                            "se conectó a la rama «sí»."
+                        ),
+                    )
+                )
             edge_index += 1
             edges.append(
                 {

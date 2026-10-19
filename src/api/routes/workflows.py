@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.infrastructure.observability.logging_config import get_logger
@@ -42,6 +43,20 @@ async def _workspace_id(request: Request) -> UUID | None:
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+#: Fecha de retirada anunciada del camino Copilot legacy.
+_LEGACY_SUNSET = "Wed, 31 Dec 2026 23:59:59 GMT"
+
+
+def _mark_legacy(response: Response) -> None:
+    """Marca los endpoints Copilot como legacy sin romper a sus consumidores."""
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = _LEGACY_SUNSET
+    response.headers["Link"] = '</api/v1/workflows/architect/plan>; rel="successor-version"'
+    response.headers["Warning"] = (
+        '299 - "Copilot legacy: usa /api/v1/workflows/architect/plan"'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -143,11 +158,14 @@ async def tenant_workflow_notification_targets(request: Request):
     return await notification_targets(ctx.organization_id, await _workspace_id(request))
 
 
-@router.post("/copilot/intent", summary="Copiloto: describir qué automatizar → Intent + Plan")
-async def tenant_workflow_copilot_intent(body: CopilotIntentIn, request: Request):
+@router.post("/copilot/intent", summary="Copiloto legacy: describir qué automatizar → Intent + Plan")
+async def tenant_workflow_copilot_intent(
+    body: CopilotIntentIn, request: Request, response: Response
+):
     from src.platform.rbac.policy import require_permission
     from src.platform.workflows.copilot_v2 import propose_workflow
 
+    _mark_legacy(response)
     ctx = require_permission(request, "workflows:create")
     try:
         return await propose_workflow(
@@ -159,13 +177,16 @@ async def tenant_workflow_copilot_intent(body: CopilotIntentIn, request: Request
         raise HTTPException(400, str(exc)) from exc
 
 
-@router.post("/copilot/compile", summary="Copiloto: WorkflowPlan → WorkflowGraph validado")
-async def tenant_workflow_copilot_compile(body: CopilotCompileIn, request: Request):
+@router.post("/copilot/compile", summary="Copiloto legacy: WorkflowPlan → WorkflowGraph validado")
+async def tenant_workflow_copilot_compile(
+    body: CopilotCompileIn, request: Request, response: Response
+):
     from pydantic import ValidationError as PydanticValidationError
 
     from src.platform.rbac.policy import require_permission
     from src.platform.workflows.copilot_v2 import compile_proposal
 
+    _mark_legacy(response)
     ctx = require_permission(request, "workflows:create")
     try:
         return await compile_proposal(
@@ -175,6 +196,26 @@ async def tenant_workflow_copilot_compile(body: CopilotCompileIn, request: Reque
         )
     except (PydanticValidationError, ValueError) as exc:
         raise HTTPException(400, f"plan inválido: {exc}") from exc
+
+
+@router.get(
+    "/architect/config",
+    summary="Workflow Architect: feature flag y contrato de estados",
+)
+async def tenant_workflow_architect_config(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect_observability import (
+        DESIGN_STATES,
+        PLANNER_VERSION,
+        architect_ui_enabled,
+    )
+
+    require_permission(request, "workflows:read")
+    return {
+        "enabled": architect_ui_enabled(),
+        "planner_version": PLANNER_VERSION,
+        "states": list(DESIGN_STATES),
+    }
 
 
 @router.post(
@@ -192,6 +233,9 @@ async def tenant_workflow_architect_plan(body: ArchitectPlanIn, request: Request
         workspace_id=await _workspace_id(request),
         permissions=ctx.permissions,
         model=body.model,
+        session_id=body.session_id,
+        actor_id=ctx.user_id,
+        preferred_agent_id=body.agent_id,
     )
 
 
@@ -204,6 +248,7 @@ async def tenant_workflow_architect_patch(body: ArchitectPatchIn, request: Reque
 
     from src.platform.rbac.policy import require_permission
     from src.platform.workflows.architect import patch_workflow_plan
+    from src.platform.workflows.architect_observability import PlanHashMismatch
 
     ctx = require_permission(request, "workflows:create")
     try:
@@ -214,9 +259,57 @@ async def tenant_workflow_architect_patch(body: ArchitectPatchIn, request: Reque
             workspace_id=await _workspace_id(request),
             permissions=ctx.permissions,
             model=body.model,
+            session_id=body.session_id,
+            plan_hash_value=body.plan_hash,
+            actor_id=ctx.user_id,
         )
+    except PlanHashMismatch as exc:
+        raise HTTPException(409, str(exc)) from exc
     except (PydanticValidationError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.post(
+    "/architect/draft",
+    summary="Workflow Architect: guardar borrador (re-valida plan y grafo en el servidor)",
+)
+async def tenant_workflow_architect_draft(body: ArchitectDraftIn, request: Request):
+    from pydantic import ValidationError as PydanticValidationError
+
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect import save_architect_draft
+    from src.platform.workflows.architect_observability import (
+        ArchitectBlocked,
+        PlanHashMismatch,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    ws_id = await _workspace_id(request)
+    if body.workspace_id:
+        try:
+            ws_id = UUID(body.workspace_id)
+        except ValueError as exc:
+            raise HTTPException(400, "workspace_id inválido") from exc
+    try:
+        return await save_architect_draft(
+            ctx.organization_id,
+            body.plan,
+            workspace_id=ws_id,
+            permissions=ctx.permissions,
+            name=body.name,
+            description=body.description,
+            editor_state=body.editor_state,
+            session_id=body.session_id,
+            plan_hash_value=body.plan_hash,
+            source=body.source,
+            actor_id=ctx.user_id,
+        )
+    except PlanHashMismatch as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ArchitectBlocked as exc:
+        return JSONResponse(status_code=422, content=exc.payload())
+    except (PydanticValidationError, ValueError) as exc:
+        raise HTTPException(400, f"plan inválido: {exc}") from exc
 
 
 @router.post("/{workflow_id}/patch/preview", summary="Editar con IA: propuesta de diff")
@@ -1069,6 +1162,7 @@ async def tenant_workflow_publish(
             UUID(workflow_id),
             notes=body.notes if body else None,
             created_by=ctx.user_id,
+            confirm_architect_draft=bool(body.confirm_architect_draft) if body else False,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -1114,6 +1208,7 @@ class PinnedDataIn(BaseModel):
 
 class VersionIn(BaseModel):
     notes: str | None = Field(default=None, max_length=500)
+    confirm_architect_draft: bool = False
 
 
 class PromoteIn(BaseModel):
@@ -1150,12 +1245,27 @@ class CopilotCompileIn(BaseModel):
 class ArchitectPlanIn(BaseModel):
     prompt: str = Field(min_length=8, max_length=2000)
     model: str | None = Field(default=None, max_length=120)
+    session_id: str | None = Field(default=None, max_length=80)
+    agent_id: str | None = Field(default=None, max_length=64)
 
 
 class ArchitectPatchIn(BaseModel):
     plan: dict
-    instruction: str = Field(min_length=3, max_length=500)
+    instruction: str = Field(min_length=3, max_length=1000)
     model: str | None = Field(default=None, max_length=120)
+    session_id: str | None = Field(default=None, max_length=80)
+    plan_hash: str | None = Field(default=None, max_length=64)
+
+
+class ArchitectDraftIn(BaseModel):
+    plan: dict
+    plan_hash: str | None = Field(default=None, max_length=64)
+    session_id: str | None = Field(default=None, max_length=80)
+    name: str | None = Field(default=None, max_length=150)
+    description: str | None = Field(default=None, max_length=2000)
+    editor_state: dict | None = None
+    source: str = Field(default="llm", pattern="^(llm|heuristics)$")
+    workspace_id: str | None = None
 
 
 class PatchPreviewIn(BaseModel):

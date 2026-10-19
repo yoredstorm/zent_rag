@@ -189,6 +189,9 @@ class Settings(BaseSettings):
     #: thinking en el gateway (`chat_template_kwargs.thinking=false`) para que
     #: el tope sea texto visible y no se corte la respuesta a mitad de frase.
     LLM_DISABLE_THINKING: bool = Field(default=False)
+    #: Camino canónico de creación con IA (Workflow Architect). `false` es el
+    #: rollback: el portal vuelve al Copilot legacy sin cambiar los endpoints.
+    WORKFLOW_ARCHITECT_ENABLED: bool = Field(default=True)
     #: Reintentos explícitos de embeddings ante un fallo transitorio del
     #: proveedor (429/5xx/timeout). No se delega en `litellm.num_retries`: ese
     #: global se pisa en runtime y quedaba en None, así que un 429 tumbaba la

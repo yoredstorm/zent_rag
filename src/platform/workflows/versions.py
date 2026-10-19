@@ -288,19 +288,90 @@ async def restore_version(
     }
 
 
+async def _architect_publication_problems(
+    organization_id: UUID, workflow_id: UUID
+) -> list[str]:
+    """Re-valida un workflow nacido del Architect antes de publicarlo.
+
+    El estado guardado es la señal de revisión humana (fallback/clarificaciones);
+    las dependencias se recalculan SIEMPRE contra las capacidades actuales.
+    """
+    from src.platform.workflows.ir import (
+        LegacyWorkflowAdapter,
+        WorkflowGraph,
+        WorkflowGraphError,
+        validate_graph,
+    )
+    from src.platform.workflows.plan_compiler import load_capabilities
+    from src.platform.workflows.readiness import readiness_checks
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT graph, steps, trigger_type, trigger_config, workspace_id "
+                    "FROM workflows WHERE id = :wid AND organization_id = :oid"
+                ),
+                {"wid": str(workflow_id), "oid": str(organization_id)},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if row is None:
+        return ["workflow inexistente"]
+
+    graph = dict(row.graph) if row.graph else None
+    if graph is None:
+        graph = LegacyWorkflowAdapter.steps_to_graph(
+            row.steps or [],
+            str(row.trigger_type or "webhook"),
+            dict(row.trigger_config or {}),
+        ).to_dict()
+    metadata = graph.get("metadata") or {}
+    if not metadata.get("architect"):
+        return []  # workflows manuales/legacy: comportamiento existente
+
+    problems: list[str] = []
+    state = str(metadata.get("architect_state") or "")
+    if state == "BLOCKED":
+        problems.append("el diseño quedó bloqueado; corrígelo antes de publicar")
+    try:
+        validate_graph(WorkflowGraph.from_dict(graph))
+    except (WorkflowGraphError, KeyError, TypeError, ValueError) as exc:
+        problems.append(f"grafo inválido: {str(exc)[:160]}")
+
+    for node in graph.get("nodes") or []:
+        if str(node.get("type")) == "llm" and not str(
+            (node.get("config") or {}).get("agent_id") or ""
+        ).strip():
+            problems.append("hay un paso de IA sin agente asignado")
+            break
+
+    workspace_id = UUID(str(row.workspace_id)) if row.workspace_id else None
+    capabilities = await load_capabilities(organization_id, workspace_id)
+    for check in readiness_checks(graph, capabilities):
+        if check.get("status") == "error":
+            problems.append(str(check.get("message") or check.get("key")))
+    return problems
+
+
 async def publish_workflow(
     organization_id: UUID,
     workflow_id: UUID,
     *,
     notes: str | None = None,
     created_by: UUID | None = None,
+    confirm_architect_draft: bool = False,
 ) -> dict | None:
     """Publicar = snapshot en production + workflow activo (webhook/schedule).
 
     Gate de portabilidad: un workflow importado (package) no se publica con
     requisitos críticos pendientes (capabilities sin binding, credenciales,
-    permisos)."""
-    from src.platform.workflows.engine import set_workflow_status
+    permisos). Gate del Architect: re-valida grafo, agente y dependencias
+    actuales; un borrador marcado para revisión exige confirmación explícita.
+    """
+    from src.platform.workflows.engine import get_workflow, set_workflow_status
     from src.platform.workflows.packages import publication_blockers
 
     blockers = await publication_blockers(organization_id, workflow_id)
@@ -309,6 +380,28 @@ async def publish_workflow(
             "requisitos sin resolver: "
             + "; ".join(f"{b['ref']} ({b['status']})" for b in blockers[:5])
         )
+
+    workflow = await get_workflow(organization_id, workflow_id)
+    if workflow is None:
+        return None
+    architect_metadata = ((workflow.get("graph") or {}).get("metadata") or {})
+    if architect_metadata.get("architect"):
+        state = str(architect_metadata.get("architect_state") or "")
+        architect_source = str(architect_metadata.get("architect_source") or "")
+        if architect_source == "heuristics" and not confirm_architect_draft:
+            raise ValueError(
+                "el borrador se generó por reglas (el modelo no estuvo disponible); "
+                "revísalo y confirma la publicación con confirm_architect_draft=true"
+            )
+        if state and state != "DRAFT_READY" and not confirm_architect_draft:
+            raise ValueError(
+                f"el borrador quedó en {state}; revísalo y confirma la publicación "
+                "con confirm_architect_draft=true"
+            )
+        problems = await _architect_publication_problems(organization_id, workflow_id)
+        if problems:
+            raise ValueError("requisitos sin resolver: " + "; ".join(problems[:5]))
+
     version = await create_version(
         organization_id,
         workflow_id,
