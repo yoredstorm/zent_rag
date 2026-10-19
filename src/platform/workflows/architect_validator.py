@@ -59,7 +59,15 @@ def validate_semantic_plan(
     """Lista de issues ordenada por severidad. `error` impide compilar."""
     issues: list[PlanIssue] = []
     available = capabilities.get("available") or {}
-    actions = {str(item.get("action_id")) for item in capabilities.get("actions") or []}
+    raw_actions = capabilities.get("actions") or {}
+    if isinstance(raw_actions, dict):
+        actions = {str(key) for key in raw_actions}
+        action_meta = raw_actions
+    else:
+        actions = {str(item.get("action_id")) for item in raw_actions}
+        action_meta = {
+            str(item.get("action_id")): item for item in raw_actions if isinstance(item, dict)
+        }
     agent_ids = {str(item.get("id")) for item in capabilities.get("agents") or []}
     kb_ids = {str(item) for item in capabilities.get("knowledge_bases") or []}
     by_id = {step.id: step for step in plan.steps}
@@ -182,6 +190,83 @@ def validate_semantic_plan(
                         message=f"«{step.goal}» necesita indicar qué comparar (lado A y lado B).",
                     )
                 )
+        elif step.type == "capability_call":
+            capability_ref = str(step.params.get("capability") or "").strip()
+            if not capability_ref:
+                issues.append(
+                    PlanIssue(
+                        code="missing.capability",
+                        severity="error",
+                        step_id=step.id,
+                        message=f"«{step.goal}» necesita una capacidad concreta.",
+                    )
+                )
+            else:
+                descriptor = (capabilities.get("capability_index") or {}).get(capability_ref)
+                if descriptor is None:
+                    issues.append(
+                        PlanIssue(
+                            code="missing.capability",
+                            severity="error",
+                            step_id=step.id,
+                            message=requirement_message("capability", capability_ref),
+                            requirement=f"capability:{capability_ref}",
+                        )
+                    )
+                else:
+                    availability = descriptor.get("availability") or {}
+                    if not availability.get("executable", False):
+                        reasons = "; ".join(availability.get("reasons") or []) or str(
+                            availability.get("status") or "no disponible"
+                        )
+                        issues.append(
+                            PlanIssue(
+                                code="capability.unavailable",
+                                severity="error",
+                                step_id=step.id,
+                                message=f"La capacidad {capability_ref} no está disponible: {reasons}.",
+                                requirement=f"capability:{capability_ref}",
+                            )
+                        )
+                    provided = set((step.params.get("inputs") or {}).keys())
+                    for input_ref in step.inputs:
+                        provided.add(input_ref.to or input_ref.field)
+                    missing_inputs = [
+                        key
+                        for key in (descriptor.get("required_inputs") or [])
+                        if key not in provided
+                    ]
+                    if missing_inputs:
+                        issues.append(
+                            PlanIssue(
+                                code="missing.capability_input",
+                                severity="error",
+                                step_id=step.id,
+                                message=(
+                                    f"«{step.goal}» necesita: "
+                                    + ", ".join(missing_inputs[:6])
+                                    + "."
+                                ),
+                            )
+                        )
+                    if permissions is not None:
+                        missing_permissions = [
+                            permission
+                            for permission in (descriptor.get("required_permissions") or [])
+                            if permission not in permissions and "admin:*" not in permissions
+                        ]
+                        if missing_permissions:
+                            issues.append(
+                                PlanIssue(
+                                    code="permission.capability",
+                                    severity="warning",
+                                    step_id=step.id,
+                                    message=(
+                                        "Tu rol no puede ejecutar esta capacidad: "
+                                        + ", ".join(missing_permissions[:3])
+                                    ),
+                                )
+                            )
         elif step.type == "agent_analysis":
             agent_steps += 1
             if not available.get("agents"):
@@ -246,6 +331,23 @@ def validate_semantic_plan(
                         requirement=f"integration:{action_id}",
                     )
                 )
+            else:
+                meta = action_meta.get(action_id) or {}
+                if meta.get("executable", True) is False:
+                    reasons = "; ".join(
+                        str(item) for item in (meta.get("reasons") or [])[:2]
+                    ) or str(meta.get("status") or "no disponible")
+                    issues.append(
+                        PlanIssue(
+                            code="capability.unavailable",
+                            severity="error",
+                            step_id=step.id,
+                            message=(
+                                f"La acción {action_id} no está ejecutable: {reasons}."
+                            ),
+                            requirement=f"integration:{action_id}",
+                        )
+                    )
             if permissions is not None and "external_actions:execute" not in permissions:
                 issues.append(
                     PlanIssue(

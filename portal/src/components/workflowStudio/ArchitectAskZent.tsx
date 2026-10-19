@@ -375,7 +375,7 @@ export function ArchitectAskZent({
             </div>
           )}
 
-          <dl className="grid gap-3 sm:grid-cols-3" data-testid="ask-checks">
+          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="ask-checks">
             <div>
               <dt className="eyebrow">DISPONIBILIDAD</dt>
               <dd className="mt-0.5 text-[13px] text-text">
@@ -396,6 +396,18 @@ export function ArchitectAskZent({
               <dt className="eyebrow">PASOS</dt>
               <dd className="mt-0.5 text-[13px] text-text tabular-nums">
                 {proposal.graph?.nodes.length ?? 0} nodos
+              </dd>
+            </div>
+            <div>
+              <dt className="eyebrow">CATÁLOGO</dt>
+              <dd className="mt-0.5 text-[13px] text-text tabular-nums" data-testid="ask-catalog">
+                {proposal.capability_snapshot?.counts?.capabilities
+                  ? `${proposal.capability_snapshot.counts.capabilities} capacidades`
+                  : "—"}
+                {typeof proposal.capability_snapshot?.coverage?.business_completeness === "number" &&
+                  ` · ${Math.round(
+                    proposal.capability_snapshot.coverage.business_completeness * 100,
+                  )}% contratos`}
               </dd>
             </div>
           </dl>

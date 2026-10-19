@@ -128,6 +128,20 @@ def _step_config(
         if params.get("subject"):
             config["subject"] = str(params["subject"])
         return ("kb_query", config, {"inputs": ["in"], "outputs": ["out"]})
+    if step.type == "capability_call":
+        capability = str(params.get("capability") or "").strip()
+        inputs = dict(params.get("inputs") or {})
+        for ref in step.inputs:
+            source_node = steps_map.get(ref.step)
+            if not source_node:
+                continue
+            field = ref.field if ref.field != "output" else "output"
+            inputs[str(ref.to or ref.field)] = _ref(source_node, field)
+        return (
+            "capability_call",
+            {"capability": capability, "inputs": inputs},
+            {"inputs": ["in"], "outputs": ["out"]},
+        )
     if step.type == "agent_analysis":
         agent_id, agent_name, _score = _choose_agent(step, capabilities)
         selectors: list[str] = []
@@ -206,9 +220,14 @@ def _step_config(
     if step.type == "integration_action":
         action_id = str(params.get("action_id") or "")
         install_id = str(params.get("install_id") or "")
-        if not install_id and action_id:
-            for action in capabilities.get("actions") or []:
-                if str(action.get("action_id")) == action_id:
+        raw_actions = capabilities.get("actions") or {}
+        if isinstance(raw_actions, dict):
+            entry = raw_actions.get(action_id) or {}
+            if not install_id:
+                install_id = str(entry.get("install_id") or "")
+        elif not install_id:
+            for action in raw_actions:
+                if isinstance(action, dict) and str(action.get("action_id")) == action_id:
                     install_id = str(action.get("install_id") or "")
                     break
         return (

@@ -282,6 +282,7 @@ async def tenant_workflow_architect_draft(body: ArchitectDraftIn, request: Reque
         ArchitectBlocked,
         PlanHashMismatch,
     )
+    from src.platform.workflows.capability_registry import CapabilitySnapshotStale
 
     ctx = require_permission(request, "workflows:create")
     ws_id = await _workspace_id(request)
@@ -301,11 +302,22 @@ async def tenant_workflow_architect_draft(body: ArchitectDraftIn, request: Reque
             editor_state=body.editor_state,
             session_id=body.session_id,
             plan_hash_value=body.plan_hash,
+            capability_snapshot_hash=body.capability_snapshot_hash,
             source=body.source,
             actor_id=ctx.user_id,
         )
     except PlanHashMismatch as exc:
         raise HTTPException(409, str(exc)) from exc
+    except CapabilitySnapshotStale as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "CAPABILITY_SNAPSHOT_STALE",
+                "message": str(exc),
+                "changed_refs": exc.changed_refs,
+                "reason": exc.reason,
+            },
+        )
     except ArchitectBlocked as exc:
         return JSONResponse(status_code=422, content=exc.payload())
     except (PydanticValidationError, ValueError) as exc:
@@ -1260,6 +1272,7 @@ class ArchitectPatchIn(BaseModel):
 class ArchitectDraftIn(BaseModel):
     plan: dict
     plan_hash: str | None = Field(default=None, max_length=64)
+    capability_snapshot_hash: str | None = Field(default=None, max_length=64)
     session_id: str | None = Field(default=None, max_length=80)
     name: str | None = Field(default=None, max_length=150)
     description: str | None = Field(default=None, max_length=2000)

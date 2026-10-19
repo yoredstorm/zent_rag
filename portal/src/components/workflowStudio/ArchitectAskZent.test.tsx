@@ -70,6 +70,12 @@ const BASE: ArchitectProposal = {
   clarifications: [],
   requirements: [],
   readiness: { ready: true, passed: 5, warnings: 0, errors: 0, total: 5, checks: [] },
+  capability_snapshot: {
+    snapshot_hash: "c".repeat(64),
+    generated_at: "2026-10-19T00:00:00Z",
+    counts: { capabilities: 63, resources: 3, events: 37 },
+    coverage: { total_capabilities: 63, business_capabilities: 34, business_complete: 25, business_completeness: 0.7353 },
+  },
   simulation: null,
   notes: [],
 };
@@ -129,6 +135,7 @@ describe("ArchitectAskZent", () => {
     expect(screen.getByTestId("ask-phases")).toHaveTextContent("Capacidades");
     expect(screen.getByTestId("ask-understanding")).toHaveTextContent("CUANDO");
     expect(screen.getByTestId("ask-checks")).toHaveTextContent("Sin bloqueos");
+    expect(screen.getByTestId("ask-catalog")).toHaveTextContent("63 capacidades");
     expect(NAVIGATE).not.toHaveBeenCalled();
   });
 
@@ -144,6 +151,7 @@ describe("ArchitectAskZent", () => {
     const body = JSON.parse(String((saveCall?.[1] as RequestInit)?.body ?? "{}"));
     expect(body.plan).toBeTruthy();
     expect(body.plan_hash).toBe("a".repeat(64));
+    expect(body.capability_snapshot_hash).toBe("c".repeat(64));
     expect(body.graph).toBeUndefined();
   });
 

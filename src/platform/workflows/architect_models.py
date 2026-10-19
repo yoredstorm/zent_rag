@@ -18,6 +18,7 @@ PLAN_STEP_TYPES = (
     "trigger_manual",
     "business_query",
     "knowledge_query",
+    "capability_call",
     "agent_analysis",
     "decision",
     "filter",
@@ -77,6 +78,8 @@ class PlanInputRef(BaseModel):
     step: str = Field(min_length=1, max_length=80)
     field: str = Field(default="output", min_length=1, max_length=80)
     label: str | None = Field(default=None, max_length=160)
+    #: Campo de entrada de la capacidad que recibe esta referencia.
+    to: str | None = Field(default=None, max_length=80)
 
 
 class PlanStep(BaseModel):

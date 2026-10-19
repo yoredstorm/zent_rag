@@ -99,6 +99,19 @@ export type ArchitectCost = {
   warnings?: { code: string; message: string }[];
 };
 
+export type CapabilitySnapshotSummary = {
+  snapshot_hash: string;
+  generated_at: string;
+  catalog_version?: number;
+  counts?: { capabilities?: number; resources?: number; events?: number };
+  coverage?: {
+    total_capabilities?: number;
+    business_capabilities?: number;
+    business_complete?: number;
+    business_completeness?: number;
+  };
+};
+
 export type ArchitectProposal = {
   session_id: string;
   state: DesignState;
@@ -127,6 +140,7 @@ export type ArchitectProposal = {
   requirements: ArchitectRequirement[];
   readiness: ArchitectReadiness | null;
   simulation: { step_id: string; goal: string; expectation: string; effects: string }[] | null;
+  capability_snapshot?: CapabilitySnapshotSummary | null;
   notes: string[];
   patch?: {
     summary?: string;
@@ -221,6 +235,7 @@ export async function saveArchitectDraft(
     body: JSON.stringify({
       plan: input.proposal.plan,
       plan_hash: input.proposal.plan_hash,
+      capability_snapshot_hash: input.proposal.capability_snapshot?.snapshot_hash,
       session_id: input.proposal.session_id,
       name: input.name,
       description: input.description,

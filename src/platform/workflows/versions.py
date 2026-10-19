@@ -333,6 +333,7 @@ async def _architect_publication_problems(
         return []  # workflows manuales/legacy: comportamiento existente
 
     problems: list[str] = []
+    workspace_id = UUID(str(row.workspace_id)) if row.workspace_id else None
     state = str(metadata.get("architect_state") or "")
     if state == "BLOCKED":
         problems.append("el diseño quedó bloqueado; corrígelo antes de publicar")
@@ -348,7 +349,36 @@ async def _architect_publication_problems(
             problems.append("hay un paso de IA sin agente asignado")
             break
 
-    workspace_id = UUID(str(row.workspace_id)) if row.workspace_id else None
+    try:
+        from src.platform.workflows.capability_registry import build_capability_snapshot
+
+        snapshot = await build_capability_snapshot(
+            organization_id, workspace_id, permissions=None, force_refresh=True
+        )
+        index = snapshot.index()
+        for node in graph.get("nodes") or []:
+            node_type = str(node.get("type"))
+            config = node.get("config") or {}
+            ref = ""
+            if node_type == "capability_call":
+                ref = str(config.get("capability") or "")
+            elif node_type == "marketplace_action":
+                ref = str(config.get("action_id") or "")
+            if not ref:
+                continue
+            descriptor = index.get(ref)
+            if descriptor is None:
+                problems.append(f"la capacidad {ref} ya no existe")
+            elif not descriptor.availability.executable:
+                reasons = "; ".join(descriptor.availability.reasons[:2])
+                problems.append(
+                    f"la capacidad {ref} no está ejecutable ({descriptor.availability.status}"
+                    + (f": {reasons}" if reasons else "")
+                    + ")"
+                )
+    except Exception as exc:  # noqa: BLE001 — sin snapshot, el readiness base sigue
+        logger.warning("architect publish capability check failed", error=str(exc)[:160])
+
     capabilities = await load_capabilities(organization_id, workspace_id)
     for check in readiness_checks(graph, capabilities):
         if check.get("status") == "error":

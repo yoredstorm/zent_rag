@@ -44,6 +44,7 @@ from src.api.routes.audit_reports import router as audit_reports_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
 from src.api.routes.billing_webhooks import router as billing_webhooks_router
+from src.api.routes.capabilities import router as capabilities_router
 from src.api.routes.chat_insights import router as chat_insights_router
 from src.api.routes.connectors import router as connectors_router
 from src.api.routes.copilot import router as copilot_router
@@ -669,6 +670,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
     new_app.include_router(workflows_public_router)
+    new_app.include_router(capabilities_router)
     from src.api.routes.commerce import public_router as commerce_public_router
     from src.api.routes.commerce import router as commerce_router
 

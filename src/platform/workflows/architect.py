@@ -85,10 +85,10 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   "goal": str,
   "steps": [{
     "id": "t1", "type": "trigger_event"|"trigger_schedule"|"trigger_manual"|"business_query"|
-            "knowledge_query"|"agent_analysis"|"decision"|"filter"|"join"|"merge"|
+            "knowledge_query"|"capability_call"|"agent_analysis"|"decision"|"filter"|"join"|"merge"|
             "human_approval"|"wait"|"state"|"notify"|"integration_action"|"business_result"|"stop",
     "goal": str, "depends_on": [str], "when": {"step": str, "outcome": true}|null,
-    "inputs": [{"step": str, "field": str, "label": str|null}],
+    "inputs": [{"step": str, "field": str, "label": str|null, "to": str|null}],
     "params": {}, "reason_summary": str, "optional": false
   }],
   "assumptions": [{"statement": str, "impact": "low"|"high", "needs_confirmation": bool}],
@@ -96,6 +96,10 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
 }
 - Un solo disparador. Cada paso declara de quién depende (depends_on).
 - No uses "for_each": el plan semántico no expresa cuerpos de iteración; divide el flujo en pasos.
+- capability_call: params.capability debe ser una ref EXACTA de "Capacidades relevantes".
+  params.inputs lleva valores literales. Para usar la salida de otro paso, agrega
+  en "inputs" {"step": "<paso>", "field": "<campo de salida>", "to": "<campo de entrada>"}.
+  Si la capacidad está NEEDS_CONFIGURATION, no la uses como si estuviera activa.
 - Usa un agente SOLO cuando haga falta criterio; si una regla simple alcanza, no lo pongas.
 - knowledge_query: params.operation ∈ search|answer|find_evidence|extract_facts|compare|check_conflicts|investigate.
 - decision: referencia al paso que decide en "inputs" (p. ej. agente → field "risk" o "requires_review").
@@ -151,7 +155,11 @@ async def extract_intent_with_architect(
     provider: Any,
     model: str | None = None,
 ) -> ArchitectIntent:
-    system = INTENT_SYSTEM_PROMPT + "\nCapacidades del tenant:\n" + capability_digest(capabilities)
+    system = (
+        INTENT_SYSTEM_PROMPT
+        + "\nCapacidades del tenant:\n"
+        + capability_digest(capabilities, query=prompt)
+    )
     data = await _generate_json(
         provider, system=system, prompt=prompt, model=model, max_tokens=1200
     )
@@ -166,7 +174,14 @@ async def extract_plan_with_architect(
     provider: Any,
     model: str | None = None,
 ) -> SemanticPlan:
-    system = PLAN_SYSTEM_PROMPT + "\nCapacidades del tenant:\n" + capability_digest(capabilities)
+    query = " ".join(
+        item for item in (intent.goal, intent.raw_prompt or "") if item
+    )
+    system = (
+        PLAN_SYSTEM_PROMPT
+        + "\nCapacidades del tenant:\n"
+        + capability_digest(capabilities, query=query)
+    )
     prompt = (
         "ArchitectIntent:\n"
         + json.dumps(intent.model_dump(mode="json"), ensure_ascii=False)
@@ -322,6 +337,7 @@ _PREVIEW_KIND_BY_TYPE: dict[str, str] = {
     "trigger_manual": "when",
     "business_query": "get",
     "knowledge_query": "consult",
+    "capability_call": "then",
     "agent_analysis": "analyze",
     "decision": "if",
     "filter": "get",
@@ -358,6 +374,8 @@ def semantic_preview(plan: SemanticPlan) -> list[dict[str, str]]:
         elif step.type == "agent_analysis":
             agent_name = str(step.params.get("agent_name") or "")
             text = f"Analizar con {agent_name or 'un agente'}: {step.goal}"
+        elif step.type == "capability_call":
+            text = f"Ejecutar {step.params.get('capability') or 'una capacidad'}: {step.goal}"
         elif step.type == "notify":
             text = f"Avisar por {step.params.get('channel') or 'Zent'}: {step.goal}"
         elif step.type == "human_approval":
@@ -574,6 +592,7 @@ async def patch_workflow_plan(
         "plan_hash": plan_hash(updated),
         "publishable": state == STATE_DRAFT_READY,
         "blockers": blockers,
+        "capability_snapshot": capabilities.get("capability_snapshot"),
         "source": source,
         "plan": updated.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
@@ -640,6 +659,15 @@ def _readiness(graph: dict[str, Any], capabilities: dict[str, Any]) -> dict[str,
     """Readiness de negocio del grafo compilado (brief §26)."""
     from src.platform.workflows.readiness import readiness_checks
 
+    raw_actions = capabilities.get("actions") or {}
+    if isinstance(raw_actions, dict):
+        actions = {str(key): value for key, value in raw_actions.items()}
+    else:
+        actions = {
+            str(action.get("action_id")): action
+            for action in raw_actions
+            if isinstance(action, dict)
+        }
     caps = {
         "agents": {
             str(agent["id"]): str(agent.get("name") or "")
@@ -648,10 +676,7 @@ def _readiness(graph: dict[str, Any], capabilities: dict[str, Any]) -> dict[str,
         "knowledge_bases": {
             str(kb): str(kb) for kb in capabilities.get("knowledge_bases") or []
         },
-        "actions": {
-            str(action.get("action_id")): action
-            for action in capabilities.get("actions") or []
-        },
+        "actions": actions,
     }
     checks = readiness_checks(graph, caps)
     return {
@@ -740,6 +765,9 @@ def simulation_plan(plan: SemanticPlan) -> list[dict[str, str]]:
         elif step.type == "knowledge_query":
             operation = str(step.params.get("operation") or "search")
             expectation = _KNOWLEDGE_SIMULATION.get(operation, "Buscaría conocimiento.")
+        elif step.type == "capability_call":
+            capability = str(step.params.get("capability") or "la capacidad")
+            expectation = f"Ejecutaría {capability} (sin efectos en la vista previa)."
         elif step.type == "agent_analysis":
             agent_name = str(step.params.get("agent_name") or "el agente")
             expectation = f"{agent_name} respondería una conclusión (sin efecto real)."
@@ -934,6 +962,7 @@ async def plan_workflow(
         "plan_hash": plan_hash(plan),
         "publishable": publishable,
         "blockers": blockers,
+        "capability_snapshot": capabilities.get("capability_snapshot"),
         "source": source,
         "intent": intent.model_dump(mode="json") if intent is not None else None,
         "plan": plan.model_dump(mode="json"),
@@ -963,6 +992,7 @@ async def save_architect_draft(
     editor_state: dict[str, Any] | None = None,
     session_id: str | None = None,
     plan_hash_value: str | None = None,
+    capability_snapshot_hash: str | None = None,
     source: str = "llm",
     actor_id: UUID | None = None,
 ) -> dict[str, Any]:
@@ -972,6 +1002,12 @@ async def save_architect_draft(
     capacidades, valida, compila y valida el grafo antes de guardar. Nunca
     activa el workflow ni confía en la validación de React.
     """
+    from src.platform.workflows.capability_registry import (
+        CapabilitySnapshotStale,
+        build_capability_snapshot,
+        refs_for_plan,
+        verify_snapshot,
+    )
     from src.platform.workflows.engine import create_workflow
 
     session = normalize_session_id(session_id)
@@ -982,9 +1018,43 @@ async def save_architect_draft(
             "El plan cambió desde que se mostró la vista previa; vuelve a interpretarlo antes de guardar."
         )
 
+    fresh_snapshot = None
+    if capability_snapshot_hash:
+        try:
+            fresh_snapshot = await build_capability_snapshot(
+                organization_id,
+                workspace_id,
+                permissions=permissions,
+                force_refresh=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — sin snapshot se revalida igual
+            logger.warning(
+                "architect draft snapshot refresh failed", error=str(exc)[:180]
+            )
+        if fresh_snapshot is not None:
+            check = verify_snapshot(
+                capability_snapshot_hash, fresh_snapshot, refs_for_plan(plan)
+            )
+            if not check.get("valid"):
+                log_design(
+                    "architect.draft.stale_snapshot",
+                    session_id=session,
+                    organization_id=str(organization_id),
+                    snapshot_hash=capability_snapshot_hash,
+                    changed_refs=check.get("changed_refs"),
+                    reason=check.get("reason"),
+                )
+                raise CapabilitySnapshotStale(
+                    list(check.get("changed_refs") or []),
+                    str(check.get("reason") or "stale_snapshot"),
+                )
+
     phase_started = time.monotonic()
     capabilities = await discover_capabilities(
-        organization_id, workspace_id=workspace_id, permissions=permissions
+        organization_id,
+        workspace_id=workspace_id,
+        permissions=permissions,
+        snapshot=fresh_snapshot,
     )
     discovery_ms = elapsed_ms(phase_started)
 
@@ -1079,6 +1149,11 @@ async def save_architect_draft(
         state=state,
         source=normalized_source,
         planner_version=PLANNER_VERSION,
+        capability_snapshot_hash=(
+            fresh_snapshot.snapshot_hash
+            if fresh_snapshot is not None
+            else (capabilities.get("capability_snapshot") or {}).get("snapshot_hash")
+        ),
         phases={
             "discovery": discovery_ms,
             "validation": validation_ms,
@@ -1097,6 +1172,9 @@ async def save_architect_draft(
         "requirements": requirements,
         "readiness": readiness,
         "blockers": blockers,
+        "capability_snapshot": (
+            fresh_snapshot.summary() if fresh_snapshot is not None else capabilities.get("capability_snapshot")
+        ),
         "publishable": state == STATE_DRAFT_READY and normalized_source == "llm",
         "source": normalized_source,
     }
