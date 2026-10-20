@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -55,7 +54,6 @@ from src.platform.workflows.planner_verify import (
 logger = get_logger(__name__)
 
 MODEL_CONFIG = ConfigDict(extra="forbid")
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 AGENTIC_PATH = [
     "NECESIDAD",
@@ -73,14 +71,14 @@ class PlannerBudget(BaseModel):
 
     model_config = MODEL_CONFIG
 
-    max_llm_calls: int = Field(default=8, ge=1, le=20)
-    max_tool_calls: int = Field(default=16, ge=1, le=40)
-    max_tokens: int = Field(default=20_000, ge=1_000, le=200_000)
+    max_llm_calls: int = Field(default=12, ge=1, le=20)
+    max_tool_calls: int = Field(default=24, ge=1, le=40)
+    max_tokens: int = Field(default=120_000, ge=1_000, le=200_000)
     max_cost_usd: float = Field(default=0.50, ge=0.0, le=100.0)
-    max_duration_seconds: float = Field(default=90.0, ge=1.0, le=600.0)
+    max_duration_seconds: float = Field(default=240.0, ge=1.0, le=600.0)
     max_repair_attempts: int = Field(default=2, ge=0, le=3)
     max_candidates: int = Field(default=5, ge=1, le=10)
-    max_steps: int = Field(default=8, ge=2, le=20)
+    max_steps: int = Field(default=20, ge=2, le=20)
     cost_per_1k_input: float = Field(default=0.0, ge=0.0)
     cost_per_1k_output: float = Field(default=0.0, ge=0.0)
 
@@ -91,12 +89,12 @@ class PlannerBudget(BaseModel):
 
             settings = get_settings()
             return cls(
-                max_llm_calls=int(getattr(settings, "WORKFLOW_PLANNER_MAX_LLM_CALLS", 8)),
-                max_tool_calls=int(getattr(settings, "WORKFLOW_PLANNER_MAX_TOOL_CALLS", 16)),
-                max_tokens=int(getattr(settings, "WORKFLOW_PLANNER_MAX_TOKENS", 20_000)),
+                max_llm_calls=int(getattr(settings, "WORKFLOW_PLANNER_MAX_LLM_CALLS", 12)),
+                max_tool_calls=int(getattr(settings, "WORKFLOW_PLANNER_MAX_TOOL_CALLS", 24)),
+                max_tokens=int(getattr(settings, "WORKFLOW_PLANNER_MAX_TOKENS", 120_000)),
                 max_cost_usd=float(getattr(settings, "WORKFLOW_PLANNER_MAX_COST_USD", 0.50)),
                 max_duration_seconds=float(
-                    getattr(settings, "WORKFLOW_PLANNER_MAX_DURATION_SECONDS", 90.0)
+                    getattr(settings, "WORKFLOW_PLANNER_MAX_DURATION_SECONDS", 240.0)
                 ),
                 max_repair_attempts=int(
                     getattr(settings, "WORKFLOW_PLANNER_MAX_REPAIRS", 2)
@@ -104,7 +102,7 @@ class PlannerBudget(BaseModel):
                 max_candidates=int(
                     getattr(settings, "WORKFLOW_PLANNER_MAX_CANDIDATES", 5)
                 ),
-                max_steps=int(getattr(settings, "WORKFLOW_PLANNER_MAX_STEPS", 8)),
+                max_steps=int(getattr(settings, "WORKFLOW_PLANNER_MAX_STEPS", 20)),
                 cost_per_1k_input=float(
                     getattr(settings, "WORKFLOW_PLANNER_COST_PER_1K_INPUT", 0.0)
                 ),
@@ -173,14 +171,16 @@ class WorkflowSpecification(BaseModel):
     external_actions: list[str] = Field(default_factory=list, max_length=20)
     durable_state: list[str] = Field(default_factory=list, max_length=20)
     wait_events: list[str] = Field(default_factory=list, max_length=20)
-    retries: list[str] = Field(default_factory=list, max_length=10)
-    timeouts: list[str] = Field(default_factory=list, max_length=10)
+    retries: list[str] = Field(default_factory=list, max_length=20)
+    timeouts: list[str] = Field(default_factory=list, max_length=20)
     expected_errors: list[str] = Field(default_factory=list, max_length=20)
     completion_conditions: list[str] = Field(default_factory=list, max_length=20)
     irreversible_operations: list[str] = Field(default_factory=list, max_length=20)
     approvals: list[str] = Field(default_factory=list, max_length=20)
-    assumptions: list[str] = Field(default_factory=list, max_length=10)
-    missing_information: list[str] = Field(default_factory=list, max_length=10)
+    assumptions: list[str] = Field(default_factory=list, max_length=20)
+    # Procesos empresariales largos pueden enumerar más de 10 faltantes; el
+    # contrato no debe convertir una lista extensa en planner.invalid_specification.
+    missing_information: list[str] = Field(default_factory=list, max_length=30)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
@@ -259,6 +259,9 @@ def _planner_system_prompt() -> str:
         " unresolved/requirements.\n"
         "- Si no puedes resolver una capacidad, responde clarify o un plan con"
         " requisitos explícitos; nunca simules que está resuelta.\n"
+        "- Investigación acotada: reutiliza observaciones y no repitas la misma"
+        " búsqueda. Después de 5 llamadas de herramienta debes responder con"
+        " action=plan o action=clarify; no sigas explorando.\n"
         "- Para catálogo, stock, precios, tablas o campos usa resource.resolve y"
         " resource.inspect_schema; no uses knowledge_query para datos transaccionales.\n"
         "- Si resource.resolve devuelve ambigüedad o autoridad faltante, no elijas"
@@ -269,14 +272,24 @@ def _planner_system_prompt() -> str:
 
 
 def _parse_json_object(text: str) -> dict[str, Any] | None:
-    match = _JSON_OBJECT_RE.search(str(text or ""))
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    """Extrae el primer objeto JSON completo, ignorando texto/DSML posterior.
+
+    Los modelos con entrenamiento de tool calling pueden devolver un JSON
+    válido seguido de markup especial (`<|DSML|...`). El regex greedy anterior
+    capturaba ambos y convertía una acción válida en inválida.
+    """
+    raw = str(text or "")
+    decoder = json.JSONDecoder()
+    for position, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            data, _end = decoder.raw_decode(raw[position:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
 
 
 def _brief(value: Any, limit: int = 160) -> str:
@@ -477,6 +490,13 @@ class WorkflowPlanningSession:
         try:
             for _ in range(self.budget.max_steps):
                 self._check_control()
+                if self.runtime.usage.tool_calls >= 5 and plan is None:
+                    transcript_extra = (
+                        transcript_extra
+                        + "\nPRESUPUESTO DE DESCUBRIMIENTO CASI AGOTADO: no llames "
+                        "más herramientas. Responde ahora action=plan con lo que "
+                        "tengas, o action=clarify si falta una decisión humana."
+                    )
                 action = await self._next_action(
                     prompt, observations, transcript_extra
                 )
@@ -844,7 +864,10 @@ class WorkflowPlanningSession:
         content = await self._llm(
             UNDERSTAND_SYSTEM_PROMPT,
             f"Pedido del usuario:\n{prompt}{history}\n\nDevuelve la especificación JSON.",
-            max_tokens=1200,
+            # El contrato UNDERSTAND incluye listas de fuentes, decisiones,
+            # supuestos y preguntas. Algunos modelos de razonamiento consumen
+            # tokens ocultos antes del JSON; 1200/2600 truncaban la respuesta.
+            max_tokens=6000,
         )
         data = _parse_json_object(content)
         if data is None:
@@ -905,9 +928,18 @@ class WorkflowPlanningSession:
             + "\n\nResponde SOLO con la siguiente acción JSON."
         )
         content = await self._llm(
-            _planner_system_prompt(), (head + observation_text + tail)[:24000], max_tokens=3000
+            _planner_system_prompt(),
+            (head + observation_text + tail)[:24000],
+            max_tokens=12_000,
         )
-        return _parse_json_object(content)
+        parsed = _parse_json_object(content)
+        if parsed is None:
+            logger.warning(
+                "planner action output invalid",
+                session_id=self.session_id,
+                content_chars=len(content),
+            )
+        return parsed
 
     def _verify(
         self,

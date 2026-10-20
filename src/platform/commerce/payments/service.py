@@ -577,21 +577,18 @@ async def ingest_provider_webhook(
     # Se prueban los tenants que tienen ese proveedor configurado; la firma
     # falla cerrada si ninguno valida.
     candidates = await _tenants_with_provider(key)
-    normalized: NormalizedPaymentEvent | None = None
-    signature_mode = ""
+    verified: list[tuple[UUID, NormalizedPaymentEvent]] = []
     last_error: Exception | None = None
     for organization_id in candidates:
         _provider, adapter = await ensure_provider(
             organization_id, provider=key, config={"query_provider_status": False}
         )
         try:
-            normalized = adapter.verify_webhook(raw_body, headers)
-            signature_mode = normalized.signature_mode
-            break
+            verified.append((organization_id, adapter.verify_webhook(raw_body, headers)))
         except Exception as exc:  # noqa: BLE001 — se prueba el siguiente tenant
             last_error = exc
             continue
-    if normalized is None:
+    if not verified:
         await store.record_provider_event(
             provider=key,
             provider_event_id=_fallback_event_id(raw_body),
@@ -608,54 +605,147 @@ async def ingest_provider_webhook(
             "SIGNATURE_INVALID",
             "no se pudo verificar la firma del webhook con ningún proveedor configurado",
         )
-    checkout = None
-    if normalized.provider_reference:
-        checkout = await store.find_checkout_any_tenant(
-            provider=key, provider_reference=str(normalized.provider_reference)
-        )
-    if checkout is None and normalized.reference:
-        checkout = await store.find_checkout_by_reference_any_tenant(normalized.reference)
-    if checkout is None:
+
+    # La firma identifica al tenant firmante. El checkout DEBE pertenecer a ese
+    # mismo tenant; validar la firma y luego buscar una referencia global sería
+    # cross-tenant. Se prueban solo los tenants cuya firma verificó.
+    checkout: dict[str, Any] | None = None
+    normalized: NormalizedPaymentEvent | None = None
+    signer_organization_id: UUID | None = None
+    for organization_id, event in verified:
+        candidate = None
+        if event.provider_reference:
+            candidate = await store.find_checkout(
+                organization_id,
+                provider_reference=str(event.provider_reference),
+                provider=key,
+            )
+        if candidate is None and event.reference:
+            candidate = await store.find_checkout(
+                organization_id, reference=str(event.reference), provider=key
+            )
+        if candidate is None:
+            continue
+        if str(candidate.get("provider") or "") != key:
+            continue
+        if checkout is not None and checkout["checkout_id"] != candidate["checkout_id"]:
+            raise PaymentProviderError(
+                "TENANT_MISMATCH",
+                "el evento resuelve más de un checkout para firmantes distintos",
+            )
+        checkout = candidate
+        normalized = event
+        signer_organization_id = organization_id
+
+    if checkout is None or normalized is None or signer_organization_id is None:
+        first = verified[0][1]
+        foreign = None
+        if first.provider_reference:
+            foreign = await store.find_checkout_any_tenant(
+                provider=key, provider_reference=str(first.provider_reference)
+            )
+        if foreign is None and first.reference:
+            foreign = await store.find_checkout_by_reference_any_tenant(first.reference)
+        if foreign is not None:
+            await store.record_provider_event(
+                provider=key,
+                provider_event_id=first.provider_event_id,
+                event_type=first.event_type,
+                organization_id=str(foreign["organization_id"]),
+                verified=True,
+                normalized_event=first.payload(),
+                correlation=first.correlation(),
+                processing_status="tenant_mismatch",
+                processing_error="la firma y el checkout pertenecen a tenants distintos",
+                signature_mode=first.signature_mode,
+            )
+            raise PaymentProviderError(
+                "TENANT_MISMATCH",
+                "el checkout no pertenece al tenant cuya credencial firmó el webhook",
+            )
         outcome, _ = await store.record_provider_event(
+            provider=key,
+            provider_event_id=first.provider_event_id,
+            event_type=first.event_type,
+            organization_id=None,
+            verified=True,
+            normalized_event=first.payload(),
+            correlation=first.correlation(),
+            processing_status="unmatched",
+            processing_error="checkout no encontrado para el tenant que firmó el evento",
+            signature_mode=first.signature_mode,
+        )
+        return {"status": outcome, "event_type": first.event_type, "matched": False}
+
+    organization_id = str(checkout["organization_id"])
+    if str(signer_organization_id) != organization_id:
+        await store.record_provider_event(
             provider=key,
             provider_event_id=normalized.provider_event_id,
             event_type=normalized.event_type,
-            organization_id=None,
+            organization_id=organization_id,
             verified=True,
             normalized_event=normalized.payload(),
             correlation=normalized.correlation(),
-            processing_status="unmatched",
-            processing_error="checkout no encontrado para la referencia del evento",
-            signature_mode=signature_mode,
+            processing_status="tenant_mismatch",
+            processing_error="la firma y el checkout pertenecen a tenants distintos",
+            signature_mode=normalized.signature_mode,
         )
-        return {"status": outcome, "event_type": normalized.event_type, "matched": False}
-    organization_id = str(checkout["organization_id"])
-    # El monto del evento debe coincidir con el de NUESTRO checkout: un payload
-    # con otro importe no puede avanzar el proceso (ni marcar una venta).
-    if normalized.amount is not None:
-        from decimal import Decimal as _Decimal
+        raise PaymentProviderError(
+            "TENANT_MISMATCH",
+            "el checkout no pertenece al tenant cuya credencial firmó el webhook",
+        )
 
-        if _Decimal(str(normalized.amount)) != _Decimal(str(checkout["amount"])):
-            await store.record_provider_event(
-                provider=key,
-                provider_event_id=normalized.provider_event_id,
-                event_type=normalized.event_type,
-                organization_id=organization_id,
-                verified=True,
-                normalized_event=normalized.payload(),
-                correlation=normalized.correlation(),
-                processing_status="amount_mismatch",
-                processing_error=(
-                    f"monto del evento {normalized.amount} != checkout {checkout['amount']}"
-                ),
-                signature_mode=signature_mode,
-            )
-            raise PaymentProviderError(
-                "AMOUNT_MISMATCH",
-                "el monto del evento no coincide con el checkout registrado",
-            )
+    # Monto y moneda deben coincidir con NUESTRO checkout. Un payload firmado
+    # con otro importe o moneda no puede avanzar el proceso ni marcar venta.
+    from decimal import Decimal as _Decimal
+
+    if normalized.amount is not None and _Decimal(str(normalized.amount)) != _Decimal(
+        str(checkout["amount"])
+    ):
+        await store.record_provider_event(
+            provider=key,
+            provider_event_id=normalized.provider_event_id,
+            event_type=normalized.event_type,
+            organization_id=organization_id,
+            verified=True,
+            normalized_event=normalized.payload(),
+            correlation=normalized.correlation(),
+            processing_status="amount_mismatch",
+            processing_error=(
+                f"monto del evento {normalized.amount} != checkout {checkout['amount']}"
+            ),
+            signature_mode=normalized.signature_mode,
+        )
+        raise PaymentProviderError(
+            "AMOUNT_MISMATCH",
+            "el monto del evento no coincide con el checkout registrado",
+        )
+    if (
+        normalized.currency
+        and str(normalized.currency).strip().upper()
+        != str(checkout["currency"]).strip().upper()
+    ):
+        await store.record_provider_event(
+            provider=key,
+            provider_event_id=normalized.provider_event_id,
+            event_type=normalized.event_type,
+            organization_id=organization_id,
+            verified=True,
+            normalized_event=normalized.payload(),
+            correlation=normalized.correlation(),
+            processing_status="currency_mismatch",
+            processing_error=(
+                f"moneda del evento {normalized.currency} != checkout {checkout['currency']}"
+            ),
+            signature_mode=normalized.signature_mode,
+        )
+        raise PaymentProviderError(
+            "CURRENCY_MISMATCH",
+            "la moneda del evento no coincide con el checkout registrado",
+        )
     correlation = normalized.correlation()
-    outcome, _existing = await store.record_provider_event(
+    outcome, existing = await store.record_provider_event(
         provider=key,
         provider_event_id=normalized.provider_event_id,
         event_type=normalized.event_type,
@@ -664,20 +754,50 @@ async def ingest_provider_webhook(
         normalized_event=normalized.payload(),
         correlation=correlation,
         processing_status="received",
-        signature_mode=signature_mode,
+        signature_mode=normalized.signature_mode,
     )
     if outcome == "duplicate":
-        return {
-            "status": "duplicate",
-            "event_type": normalized.event_type,
-            "matched": True,
-            "organization_id": organization_id,
-        }
-    await _apply_event_state(organization_id, checkout, normalized)
-    signal_result = await _signal_from_event(
-        organization_id, checkout, normalized, provider=key
-    )
-    await store.mark_provider_event(normalized.provider_event_id, status="processed")
+        existing_status = str((existing or {}).get("processing_status") or "")
+        existing_org = (existing or {}).get("organization_id")
+        if existing_org and str(existing_org) != str(organization_id):
+            raise PaymentProviderError(
+                "TENANT_MISMATCH",
+                "el evento ya existe asociado a otro tenant",
+            )
+        # Un evento que quedó `received`/`processing`/`failed` por una caída
+        # debe poder recuperarse. Los efectos son idempotentes; solo
+        # `processed` se considera terminalmente aplicado.
+        if existing_status not in ("received", "processing", "failed"):
+            return {
+                "status": "duplicate",
+                "event_type": normalized.event_type,
+                "matched": True,
+                "organization_id": organization_id,
+            }
+        logger.warning(
+            "recovering incomplete provider event",
+            provider=key,
+            provider_event_id=normalized.provider_event_id,
+            previous_status=existing_status,
+        )
+    try:
+        await _apply_event_state(organization_id, checkout, normalized)
+        signal_result = await _signal_from_event(
+            organization_id, checkout, normalized, provider=key
+        )
+        await store.mark_provider_event(
+            normalized.provider_event_id, status="processed"
+        )
+    except Exception as exc:  # noqa: BLE001 — deja el evento recuperable
+        try:
+            await store.mark_provider_event(
+                normalized.provider_event_id,
+                status="failed",
+                error=str(exc)[:400],
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("provider event failure mark failed", provider=key)
+        raise
     return {
         "status": "processed",
         "event_type": normalized.event_type,
@@ -685,6 +805,7 @@ async def ingest_provider_webhook(
         "organization_id": organization_id,
         "checkout_id": checkout["checkout_id"],
         "signal": signal_result,
+        "recovered": bool(outcome == "duplicate"),
     }
 
 
@@ -703,10 +824,19 @@ async def _apply_event_state(
     }
     local_status = status_map.get(event.event_type, "pending")
     current = str(checkout.get("status"))
+    if current == "succeeded" and local_status != "refunded":
+        # Recuperación tras caída: si el evento alcanzó a marcar el checkout
+        # pero no la reserva, se restituye solo mientras la orden siga abierta.
+        order = await store.get_order(org, order_id=checkout["order_id"])
+        if (
+            event.event_type == C.EVENT_PAYMENT_SUCCEEDED
+            and order is not None
+            and order["status"] not in (C.ORDER_PAID, C.ORDER_CANCELLED, C.ORDER_EXPIRED)
+        ):
+            await _ensure_reservation(org, order, checkout)
+        return
     # Idempotencia: un checkout ya cerrado no vuelve atrás.
     if current in _TERMINAL_CHECKOUT and current == local_status:
-        return
-    if current == "succeeded" and local_status != "refunded":
         return
     await store.update_checkout_status(
         organization_id=org,

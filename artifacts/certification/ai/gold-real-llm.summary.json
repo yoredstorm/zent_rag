@@ -1,0 +1,70 @@
+{
+  "source_artifact": "artifacts/certification/ai/gold-real-llm.json",
+  "status_code": 200,
+  "initial": {
+    "state": "BLOCKED",
+    "publishable": false,
+    "usage": {
+      "repairs": 0,
+      "cancelled": false,
+      "llm_calls": 9,
+      "tool_calls": 5,
+      "duration_ms": 213514,
+      "total_tokens": 119911,
+      "prompt_tokens": 66678,
+      "completion_tokens": 53233,
+      "estimated_cost_usd": 0.0
+    },
+    "issues": [
+      {
+        "code": "planner.invalid_llm_output",
+        "message": "El LLM no devolvió una acción JSON válida.",
+        "severity": "error"
+      }
+    ],
+    "clarifications": [],
+    "plan_steps": 0,
+    "graph_nodes": 0,
+    "trace_stages": [
+      "UNDERSTAND",
+      "BÚSQUEDA",
+      "BÚSQUEDA",
+      "INSPECCIÓN",
+      "BÚSQUEDA",
+      "BÚSQUEDA"
+    ]
+  },
+  "follow_up": {
+    "state": "BLOCKED",
+    "publishable": false,
+    "usage": {
+      "repairs": 0,
+      "cancelled": false,
+      "llm_calls": 9,
+      "tool_calls": 5,
+      "duration_ms": 213514,
+      "total_tokens": 119911,
+      "prompt_tokens": 66678,
+      "completion_tokens": 53233,
+      "estimated_cost_usd": 0.0
+    },
+    "issues": [
+      {
+        "code": "planner.invalid_llm_output",
+        "message": "El LLM no devolvió una acción JSON válida.",
+        "severity": "error"
+      }
+    ],
+    "clarifications": [],
+    "plan_steps": 0,
+    "graph_nodes": 0,
+    "trace_stages": [
+      "UNDERSTAND",
+      "BÚSQUEDA",
+      "BÚSQUEDA",
+      "INSPECCIÓN",
+      "BÚSQUEDA",
+      "BÚSQUEDA"
+    ]
+  }
+}

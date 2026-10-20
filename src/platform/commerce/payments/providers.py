@@ -325,15 +325,32 @@ class StripePaymentAdapter(PaymentProviderAdapter):
             amount = _cents_to_decimal(obj["amount_total"])
         elif obj.get("amount") is not None:
             amount = _cents_to_decimal(obj["amount"])
-        event_type = {
-            "checkout.session.completed": "payment.succeeded",
-            "checkout.session.expired": "payment.expired",
-            "payment_intent.succeeded": "payment.succeeded",
-            "payment_intent.payment_failed": "payment.failed",
-            "charge.refunded": "payment.refunded",
-        }.get(provider_type, "")
+        payment_status = str(
+            obj.get("payment_status") or obj.get("status") or ""
+        ).strip().lower()
+        # Stripe: `checkout.session.completed` NO significa fondos confirmados.
+        # En métodos asíncronos llega con payment_status=unpaid y la confirmación
+        # real llega por checkout.session.async_payment_succeeded. Uncompleted
+        # unpaid no puede despertar un WAIT de payment.succeeded.
+        if provider_type == "checkout.session.completed":
+            event_type = (
+                "payment.succeeded"
+                if payment_status in ("paid", "no_payment_required")
+                else "payment.pending"
+            )
+        elif provider_type == "checkout.session.async_payment_succeeded":
+            event_type = "payment.succeeded"
+        elif provider_type == "checkout.session.async_payment_failed":
+            event_type = "payment.failed"
+        else:
+            event_type = {
+                "checkout.session.expired": "payment.expired",
+                "payment_intent.succeeded": "payment.succeeded",
+                "payment_intent.payment_failed": "payment.failed",
+                "charge.refunded": "payment.refunded",
+            }.get(provider_type, "")
         if not event_type:
-            event_type = _event_type_for_status(obj.get("payment_status") or obj.get("status") or "")
+            event_type = _event_type_for_status(payment_status)
         return NormalizedPaymentEvent(
             provider=self.name,
             provider_event_id=event_id,
@@ -522,7 +539,15 @@ class IzipayPaymentAdapter(PaymentProviderAdapter):
         hash_key_kind = str(body.get("kr-hash-key") or "")
         if not raw_answer or not provided_hash:
             raise SignatureVerificationError("falta kr-answer o kr-hash")
-        secret = self._api_key() if hash_key_kind == "password" else self._hash_key()
+        # IPN oficial V4 firma `kr-answer` con el PASSWORD de la API y usa
+        # HMAC-SHA256 hexadecimal. El front puede usar la clave HMAC separada
+        # (`kr-hash-key=sha256_hmac`). Si el IPN no declara el tipo, se usa
+        # password para no aceptar una firma calculada con otra clave.
+        secret = (
+            self._api_key()
+            if hash_key_kind in ("", "password")
+            else self._hash_key()
+        )
         if not secret:
             raise SignatureVerificationError("sin llave para verificar la firma")
         expected = hmac.new(

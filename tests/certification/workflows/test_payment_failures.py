@@ -119,6 +119,67 @@ async def test_payment_failed_releases_stock_and_keeps_order_unpaid(
 
 
 @pytest.mark.asyncio
+async def test_signed_event_with_wrong_amount_or_currency_does_not_sell(
+    async_client: AsyncClient,
+) -> None:
+    """Monto o moneda distintos del checkout firmado no avanzan la venta."""
+    org, instance_id, _conv, order = await _ready_for_payment(
+        async_client, "Cert PayMismatch"
+    )
+    reference = order["order_number"]
+    checkout = await _checkout_of(org["organization_id"], reference)
+
+    wrong_amount = await send_provider_event(
+        async_client,
+        reference=reference,
+        provider_reference=checkout.get("provider_reference"),
+        amount_cents=1,
+    )
+    assert wrong_amount.status_code == 422, wrong_amount.text
+    assert wrong_amount.json()["details"]["code"] == "AMOUNT_MISMATCH"
+
+    wrong_currency = await send_provider_event(
+        async_client,
+        reference=reference,
+        provider_reference=checkout.get("provider_reference"),
+        amount_cents=GOLD_TOTAL_CENTS,
+        currency="USD",
+    )
+    assert wrong_currency.status_code == 422, wrong_currency.text
+    assert wrong_currency.json()["details"]["code"] == "CURRENCY_MISMATCH"
+
+    orders = await fetch_orders(async_client, org)
+    assert orders[0]["status"] == "AWAITING_PAYMENT"
+    integral = await fetch_stock(org["organization_id"], "ARZ-INT-1KG")
+    assert integral["available"] == 15
+    state = await instance(async_client, org, instance_id)
+    assert state["status"] == "WAITING"
+
+
+@pytest.mark.asyncio
+async def test_unknown_payment_reference_is_unmatched_and_has_no_effect(
+    async_client: AsyncClient,
+) -> None:
+    org, instance_id, _conv, order = await _ready_for_payment(
+        async_client, "Cert PayUnknownRef"
+    )
+    checkout = await _checkout_of(org["organization_id"], order["order_number"])
+    response = await send_provider_event(
+        async_client,
+        reference="Z-000000-00000-UNKNOWN",
+        provider_reference="sbx_unknown",
+        amount_cents=GOLD_TOTAL_CENTS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["matched"] is False
+    orders = await fetch_orders(async_client, org)
+    assert orders[0]["status"] == "AWAITING_PAYMENT"
+    state = await instance(async_client, org, instance_id)
+    assert state["status"] == "WAITING"
+    assert checkout["status"] == "pending"
+
+
+@pytest.mark.asyncio
 async def test_payment_expired_releases_stock(async_client: AsyncClient) -> None:
     org, _instance_id, _conv, order = await _ready_for_payment(async_client, "Cert PayExpire")
     reference = order["order_number"]

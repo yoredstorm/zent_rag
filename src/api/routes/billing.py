@@ -903,11 +903,16 @@ async def tenant_invoice_pdf(invoice_id: str, request: Request):
     })
 
 
-@router.post("/invoices/{invoice_id}/pay", summary="Simular pago (webhook interno)")
+@router.post("/invoices/{invoice_id}/pay", summary="Simular pago (solo desarrollo)")
 async def tenant_invoice_pay(invoice_id: str, request: Request):
+    from src.core.config import get_settings
     from src.platform.billing.invoices import get_invoice, handle_payment_webhook
     from src.platform.rbac.policy import require_permission
 
+    # Nunca permitir que un endpoint administrativo simule un pago en
+    # producción: allí la única autoridad es el webhook firmado del proveedor.
+    if get_settings().ENVIRONMENT == "production":
+        raise HTTPException(404, "Not found")
     ctx = require_permission(request, "billing:write")
     invoice = await get_invoice(UUID(invoice_id))
     if invoice is None or UUID(invoice["organization_id"]) != ctx.organization_id:

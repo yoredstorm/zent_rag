@@ -258,7 +258,11 @@ async def payment_provider_webhook(provider: str, request: Request):
             provider, raw_body=raw_body, headers=headers
         )
     except PaymentProviderError as exc:
-        status_code = 400 if exc.code in ("SIGNATURE_INVALID", "PROVIDER_UNKNOWN") else 422
+        status_code = (
+            400
+            if exc.code in ("SIGNATURE_INVALID", "PROVIDER_UNKNOWN", "TENANT_MISMATCH")
+            else 422
+        )
         logger.warning(
             "provider webhook rejected", provider=provider, code=exc.code, error=exc.message[:200]
         )

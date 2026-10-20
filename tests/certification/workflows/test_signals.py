@@ -95,6 +95,68 @@ async def test_wrong_correlation_does_not_wake_the_payment_wait(
 
 
 @pytest.mark.asyncio
+async def test_incomplete_provider_event_is_recovered_without_duplicate_effect(
+    async_client: AsyncClient,
+) -> None:
+    """Un evento marcado `received` por una caída se reprocesa al reintentarse."""
+    org = await ready_tenant(async_client, "Cert Signals Recover", catalog=CATALOG)
+    workflow_id = await install_funnel(async_client, org)
+    started = await start_funnel(async_client, org, workflow_id, text="quiero 1 kilo de arroz")
+    instance_id, conversation_id = started["instance_id"], started["conversation_id"]
+    for turn in GOLD_TURNS:
+        await say(async_client, org, instance_id, text=turn, conversation_id=conversation_id)
+    orders = await fetch_orders(async_client, org)
+    reference = orders[0]["order_number"]
+
+    from uuid import UUID
+
+    from src.platform.commerce import store as commerce_store
+
+    checkout = await commerce_store.find_checkout(
+        UUID(str(org["organization_id"])), reference=reference
+    )
+    assert checkout is not None
+    event_id = f"evt-recover-{uuid4().hex}"
+    first = await send_provider_event(
+        async_client,
+        reference=reference,
+        provider_reference=checkout.get("provider_reference"),
+        event_id=event_id,
+        amount_cents=GOLD_TOTAL_CENTS,
+    )
+    assert first.status_code == 200 and first.json()["status"] == "processed"
+    state = await instance(async_client, org, instance_id)
+    assert state["status"] == "COMPLETED"
+
+    # Simula caída entre el registro y la marca final.
+    await commerce_store.mark_provider_event(event_id, status="received")
+    recovered = await send_provider_event(
+        async_client,
+        reference=reference,
+        provider_reference=checkout.get("provider_reference"),
+        event_id=event_id,
+        amount_cents=GOLD_TOTAL_CENTS,
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["status"] == "processed", recovered.json()
+    assert recovered.json()["recovered"] is True
+
+    orders = await fetch_orders(async_client, org)
+    assert len(orders) == 1 and orders[0]["status"] == "PAID"
+    integral = await fetch_stock(org["organization_id"], "ARZ-INT-1KG")
+    assert integral["available"] == 14
+    timeline = await async_client.get(
+        f"/api/v1/workflows/instances/{instance_id}/timeline", headers=_headers(org)
+    )
+    completed = [
+        event
+        for event in timeline.json()["events"]
+        if event.get("kind") == "instance_completed"
+    ]
+    assert len(completed) == 1
+
+
+@pytest.mark.asyncio
 async def test_late_provider_event_with_new_id_has_no_second_effect(
     async_client: AsyncClient,
 ) -> None:

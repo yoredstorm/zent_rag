@@ -1239,9 +1239,14 @@ async def find_checkout(
                 await session.execute(
                     text(
                         f"SELECT {_CHECKOUT_COLS} FROM commerce_checkout_sessions "
-                        "WHERE provider = :prov AND provider_reference = :pref LIMIT 1"
+                        "WHERE organization_id = :oid AND provider = :prov "
+                        "AND provider_reference = :pref LIMIT 1"
                     ),
-                    {"prov": provider, "pref": str(provider_reference)},
+                    {
+                        "oid": str(organization_id),
+                        "prov": provider,
+                        "pref": str(provider_reference),
+                    },
                 )
             ).fetchone()
     finally:
@@ -1585,14 +1590,22 @@ async def record_provider_event(
             existing = (
                 await session.execute(
                     text(
-                        "SELECT id, processing_status FROM commerce_provider_events "
+                        "SELECT id, processing_status, organization_id, event_type "
+                        "FROM commerce_provider_events "
                         "WHERE provider = :prov AND provider_event_id = :eid LIMIT 1"
                     ),
                     {"prov": provider[:40], "eid": provider_event_id[:200]},
                 )
             ).fetchone()
             return "duplicate", (
-                {"id": str(existing.id), "processing_status": str(existing.processing_status)}
+                {
+                    "id": str(existing.id),
+                    "processing_status": str(existing.processing_status),
+                    "organization_id": (
+                        str(existing.organization_id) if existing.organization_id else None
+                    ),
+                    "event_type": str(existing.event_type),
+                }
                 if existing
                 else None
             )

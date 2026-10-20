@@ -29,6 +29,7 @@ from src.platform.workflows.planner_session import (
     PlanningCancelled,
     WorkflowPlanningSession,
     WorkflowSpecification,
+    _parse_json_object,
 )
 from src.platform.workflows.planner_tools import (
     PlannerToolContext,
@@ -269,6 +270,19 @@ def _session(
         record_usage=False,
         estimate_cost=False,
     )
+
+
+def test_parser_ignores_dsml_tool_markup_after_valid_json() -> None:
+    content = (
+        '{"action":"tool","tool":"capability.search",'
+        '"arguments":{"query":"catalogo","limit":5}}\n\n'
+        "<|DSML| invokes><|DSML| invoke name=\"capability.search\">"
+        "<|DSML| parameter name=\"query\">catalogo</|DSML| parameter>"
+    )
+    parsed = _parse_json_object(content)
+    assert parsed is not None
+    assert parsed["action"] == "tool"
+    assert parsed["arguments"]["query"] == "catalogo"
 
 
 async def test_01_exact_capability_is_discovered_inspected_and_planned() -> None:

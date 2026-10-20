@@ -56,8 +56,8 @@ _PUBLIC_SSO_GET = {
     "/api/v1/auth/sso/start",
     "/api/v1/auth/sso/callback",
 }
-# Webhook de pagos (stripe-like): la firma es la autorización.
-_PUBLIC_PAYMENTS_POST = {"/api/v1/payments/webhook"}
+# Legacy payments webhook: solo devuelve 410; no procesa pagos.
+_PUBLIC_LEGACY_PAYMENTS_POST = {"/api/v1/payments/webhook"}
 
 # Dev-only SQL admin (not prompt management)
 _ADMIN_SQL_PREFIXES = (
@@ -128,7 +128,8 @@ def _is_public(path: str, method: str) -> bool:
     # criptográfica verificada dentro de la ruta.
     if method == "POST" and path.startswith("/api/v1/billing/webhooks/"):
         return True
-    if method == "POST" and path.startswith("/api/v1/payments/webhook"):
+    if method == "POST" and path in _PUBLIC_LEGACY_PAYMENTS_POST:
+        # La ruta existe solo para responder 410; no tiene lógica de pago.
         return True
     if method == "POST" and path.startswith("/api/v1/public/payments/"):
         # Webhook de proveedor de pagos del tenant (IZIPAY/Stripe/sandbox):

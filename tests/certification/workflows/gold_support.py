@@ -247,6 +247,7 @@ async def send_provider_event(
     event_id: str | None = None,
     status: str = "paid",
     amount_cents: int | None = None,
+    currency: str | None = None,
     secret: str = SANDBOX_WEBHOOK_SECRET,
 ) -> Any:
     payload: dict[str, Any] = {
@@ -259,6 +260,8 @@ async def send_provider_event(
         payload["provider_reference"] = provider_reference
     if amount_cents is not None:
         payload["amount_cents"] = amount_cents
+    if currency is not None:
+        payload["currency"] = currency
     signed = sign_sandbox_event(payload, secret=secret)
     return await client.post(
         f"/api/v1/public/payments/{provider}/webhook",

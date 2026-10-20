@@ -86,6 +86,15 @@ jobs:
           uv run --frozen --no-sync pytest tests/ -q --tb=short --timeout=600 \
             --junitxml=artifacts/junit-nightly-full.xml 2>&1 | tee /tmp/nightly-full.log
 
+      - name: "Certificación: reinicio real de proceso API"
+        env:
+          RAG_CERT_REAL_RESTART: "1"
+        run: |
+          set -o pipefail
+          uv run --frozen --no-sync pytest tests/certification/restart \
+            -q --tb=short --timeout=600 \
+            --junitxml=artifacts/junit-certification-restart.xml 2>&1 | tee /tmp/nightly-restart.log
+
       - name: "Certificación: batería adversarial, tenant, contabilidad y determinismo"
         # Evidencia por escenario (docs/architecture/certification/). Un
         # escenario sin test que lo pruebe cuenta como NO DEMOSTRADO.

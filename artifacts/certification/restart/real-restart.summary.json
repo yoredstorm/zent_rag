@@ -1,0 +1,15 @@
+{
+  "test": "tests/certification/restart/test_real_restart.py::test_real_process_restart_resumes_and_does_not_duplicate",
+  "command": "RAG_CERT_REAL_RESTART=1 pytest tests/certification/restart/test_real_restart.py -q",
+  "result": "1 passed",
+  "duration_seconds": 222.42,
+  "method": "uvicorn subprocess terminated and restarted; same PostgreSQL WorkflowInstance; signed webhook after restart",
+  "assertions": [
+    "instance_status_COMPLETED",
+    "orders=1",
+    "checkouts=1",
+    "stock_arroz_integral=14",
+    "stock_leche=29",
+    "duplicate_event_single_effect"
+  ]
+}

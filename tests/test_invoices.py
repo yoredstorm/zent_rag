@@ -180,7 +180,7 @@ async def test_payment_webhook_marks_paid_and_dedupes(async_client: AsyncClient)
     )
     invoice = gen.json()
 
-    # Webhook público (sin auth).
+    # El webhook legacy sin firma está desactivado y NO puede marcar la factura.
     payload = {
         "type": "payment_intent.succeeded",
         "id": f"evt_{uuid4().hex[:12]}",
@@ -193,49 +193,17 @@ async def test_payment_webhook_marks_paid_and_dedupes(async_client: AsyncClient)
             }
         },
     }
-    first = await async_client.post("/api/v1/payments/webhook", json=payload)
-    assert first.status_code == 200, first.text
-    assert first.json()["status"] == "processed"
+    rejected = await async_client.post("/api/v1/payments/webhook", json=payload)
+    assert rejected.status_code == 410, rejected.text
+    assert rejected.json()["error_code"] == "LEGACY_WEBHOOK_DISABLED"
 
     detail = await async_client.get(
         f"/api/v1/billing/invoices/{invoice['id']}", headers={**_headers(org)}
     )
-    assert detail.json()["status"] == "paid"
-    assert detail.json()["paid_at"] is not None
-    assert detail.json()["payment_intent_id"] is not None
+    assert detail.json()["status"] != "paid"
+    assert detail.json()["paid_at"] is None
 
-    # Dedupe: mismo provider_event_id → duplicate, sin doble evento.
-    second = await async_client.post("/api/v1/payments/webhook", json=payload)
-    assert second.status_code == 200, second.text
-    assert second.json()["status"] == "duplicate"
-
-    from sqlalchemy import text
-
-    from src.infrastructure.postgres.session import get_async_session
-
-    session = await get_async_session()
-    try:
-        count = (
-            await session.execute(
-                text(
-                    "SELECT COUNT(*) FROM payment_events "
-                    "WHERE provider_event_id = :pid"
-                ),
-                {"pid": payload["data"]["object"]["id"]},
-            )
-        ).scalar()
-        inv_status = (
-            await session.execute(
-                text("SELECT status FROM invoices WHERE id = :iid"),
-                {"iid": UUID(invoice["id"])},
-            )
-        ).scalar()
-    finally:
-        await session.close()
-    assert count == 1
-    assert inv_status == "paid"
-
-    # Pay simulado (endpoint tenant).
+    # Pay simulado (endpoint tenant autenticado; solo desarrollo).
     pay = await async_client.post(
         f"/api/v1/billing/invoices/{invoice['id']}/pay",
         headers={**_headers(org), "Idempotency-Key": f"inv-pay-{uuid4().hex}"},

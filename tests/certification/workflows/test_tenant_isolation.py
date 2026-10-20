@@ -17,6 +17,7 @@ from tests.certification.workflows.gold_support import (
     CATALOG,
     GOLD_TOTAL_CENTS,
     GOLD_TURNS,
+    configure_sandbox_payments,
     fetch_orders,
     install_funnel,
     instance,
@@ -139,6 +140,60 @@ async def test_provider_webhook_resolves_tenant_from_own_record(async_client: As
     body = response.json()
     assert body["organization_id"] == tenant_a["organization_id"]
     assert await fetch_orders(async_client, tenant_b) == []
+
+
+@pytest.mark.asyncio
+async def test_signed_webhook_from_other_tenant_cannot_pay_foreign_checkout(
+    async_client: AsyncClient,
+) -> None:
+    """Firma válida de B + checkout de A = rechazo, sin efecto en A."""
+    tenant_a = await ready_tenant(async_client, "Cert Iso Sign A", catalog=CATALOG)
+    tenant_b = await ready_tenant(async_client, "Cert Iso Sign B", catalog=CATALOG)
+    await configure_sandbox_payments(tenant_a["organization_id"], webhook_secret="secret-a")
+    await configure_sandbox_payments(tenant_b["organization_id"], webhook_secret="secret-b")
+    workflow_a = await install_funnel(async_client, tenant_a)
+    started = await start_funnel(
+        async_client, tenant_a, workflow_a, text="quiero 1 kilo de arroz"
+    )
+    instance_id, conversation_id = started["instance_id"], started["conversation_id"]
+    for turn in GOLD_TURNS:
+        await say(async_client, tenant_a, instance_id, text=turn, conversation_id=conversation_id)
+    orders = await fetch_orders(async_client, tenant_a)
+    reference = orders[0]["order_number"]
+
+    from uuid import UUID
+
+    from src.platform.commerce import store as commerce_store
+
+    checkout = await commerce_store.find_checkout(
+        UUID(str(tenant_a["organization_id"])), reference=reference
+    )
+    assert checkout is not None
+
+    forged = await send_provider_event(
+        async_client,
+        reference=reference,
+        provider_reference=checkout.get("provider_reference"),
+        amount_cents=GOLD_TOTAL_CENTS,
+        secret="secret-b",
+    )
+    assert forged.status_code == 400, forged.text
+    assert forged.json()["details"]["code"] == "TENANT_MISMATCH", forged.json()
+
+    orders = await fetch_orders(async_client, tenant_a)
+    assert orders[0]["status"] == "AWAITING_PAYMENT"
+    state = await instance(async_client, tenant_a, instance_id)
+    assert state["status"] == "WAITING"
+    integral = await commerce_store.stock_get(
+        UUID(str(tenant_a["organization_id"])),
+        product_id=(
+            await commerce_store.get_product(
+                UUID(str(tenant_a["organization_id"])), sku="ARZ-INT-1KG"
+            )
+        )["product_id"],
+    )
+    assert integral["available"] == 15
+    assert integral["reserved"] == 1
 
 
 @pytest.mark.asyncio
