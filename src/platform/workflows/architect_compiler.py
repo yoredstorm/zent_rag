@@ -16,7 +16,9 @@ from src.platform.workflows.architect_models import (
     PlanIssue,
     PlanStep,
     SemanticPlan,
+    normalize_semantic_plan,
 )
+from src.platform.workflows.architect_step_contracts import typed_params
 
 logger = get_logger(__name__)
 
@@ -56,6 +58,31 @@ def _node_id(step_id: str, used: set[str]) -> str:
 
 def _ref(step_node_id: str, field: str) -> str:
     return f"{{{{nodes.{step_node_id}.output.{field}}}}}"
+
+
+def _correlation_config(
+    raw: Any, steps_map: dict[str, str]
+) -> dict[str, Any]:
+    """Correlación estable: valores literales o {step, field} → nodo real."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in raw.items():
+        if isinstance(value, dict) and value.get("step"):
+            node_id = steps_map.get(str(value.get("step")))
+            if node_id:
+                out[str(key)] = _ref(node_id, str(value.get("field") or "output"))
+                continue
+        out[str(key)] = value
+    return out
+
+
+def _reference_value(raw: Any, steps_map: dict[str, str]) -> str | None:
+    if isinstance(raw, dict) and raw.get("step"):
+        node_id = steps_map.get(str(raw.get("step")))
+        if node_id:
+            return _ref(node_id, str(raw.get("field") or "output"))
+    return None
 
 
 def _choose_agent(step: PlanStep, capabilities: dict[str, Any]) -> tuple[str, str, int]:
@@ -99,6 +126,15 @@ def _step_config(
             },
             {"inputs": [], "outputs": ["out"]},
         )
+    if step.type == "trigger_conversation":
+        return (
+            "trigger_event",
+            {
+                "event_type": str(params.get("event_type") or "conversation.message"),
+                "filters": params.get("filters") or {},
+            },
+            {"inputs": [], "outputs": ["out"]},
+        )
     if step.type == "trigger_schedule":
         schedule = params.get("schedule") if isinstance(params.get("schedule"), dict) else params
         return ("trigger_schedule", dict(schedule or {}), {"inputs": [], "outputs": ["out"]})
@@ -137,9 +173,36 @@ def _step_config(
                 continue
             field = ref.field if ref.field != "output" else "output"
             inputs[str(ref.to or ref.field)] = _ref(source_node, field)
+        descriptor = (capabilities.get("capability_index") or {}).get(capability) or {}
+        typed = typed_params(step)
+        config = {
+            "capability": capability,
+            "inputs": inputs,
+            "contract_version": int(
+                getattr(typed, "contract_version", None)
+                or step.contract_version
+                or descriptor.get("version")
+                or 1
+            ),
+            "contract_hash": str(descriptor.get("contract_hash") or ""),
+            "provider_kind": str(descriptor.get("provider_kind") or ""),
+            "source": str(descriptor.get("source") or ""),
+            "risk_level": str(descriptor.get("risk_level") or "normal"),
+            "idempotency": str(
+                getattr(typed, "idempotency", None) or step.idempotency or "best_effort"
+            ),
+            "outputs_expected": list(
+                getattr(typed, "outputs_expected", None)
+                or step.outputs_expected
+                or []
+            )[:20],
+            "required_permissions": list(
+                descriptor.get("required_permissions") or []
+            )[:20],
+        }
         return (
             "capability_call",
-            {"capability": capability, "inputs": inputs},
+            config,
             {"inputs": ["in"], "outputs": ["out"]},
         )
     if step.type == "agent_analysis":
@@ -184,38 +247,166 @@ def _step_config(
             {"inputs": ["in"], "outputs": ["out"]},
         )
     if step.type == "wait":
-        wait_config: dict = {"preset": str(params.get("preset") or "message")}
-        if params.get("event_type"):
-            wait_config["event_type"] = str(params["event_type"])
-        correlation = params.get("correlation")
-        if isinstance(correlation, dict) and correlation:
+        typed_wait = typed_params(step)
+        wait_config: dict = {
+            "preset": str(
+                getattr(typed_wait, "preset", None)
+                or params.get("preset")
+                or "message"
+            )
+        }
+        event_type = (
+            getattr(typed_wait, "event_type", None)
+            or params.get("event_type")
+        )
+        if event_type:
+            wait_config["event_type"] = str(event_type)[:160]
+        correlation = _correlation_config(
+            getattr(typed_wait, "correlation", None) or params.get("correlation"),
+            steps_map,
+        )
+        if correlation:
             wait_config["correlation"] = correlation
-        if params.get("timeout_seconds"):
+        timeout_seconds = (
+            getattr(typed_wait, "timeout_seconds", None)
+            or params.get("timeout_seconds")
+        )
+        if timeout_seconds:
             try:
-                wait_config["timeout_seconds"] = int(params["timeout_seconds"])
+                wait_config["timeout_seconds"] = int(timeout_seconds)
             except (TypeError, ValueError):
                 pass
-        if params.get("on_timeout"):
-            wait_config["on_timeout"] = str(params["on_timeout"])
+        on_timeout = getattr(typed_wait, "on_timeout", None) or params.get("on_timeout")
+        if on_timeout:
+            wait_config["on_timeout"] = str(on_timeout)
+        expected_schema = (
+            getattr(typed_wait, "expected_payload_schema", None)
+            or params.get("expected_payload_schema")
+        )
+        if isinstance(expected_schema, dict) and expected_schema:
+            wait_config["expected_payload_schema"] = expected_schema
+        wait_config["resume_mode"] = "durable_instance"
         return ("wait_event", wait_config, {"inputs": ["in"], "outputs": ["out", "timeout"]})
     if step.type == "state":
-        op = str(params.get("op") or "set")
+        typed_state = typed_params(step)
+        op = str(
+            getattr(typed_state, "op", None) or params.get("op") or "set"
+        )
         if op not in ("get", "set", "merge", "append", "remove"):
             op = "set"
-        state_config: dict = {"path": str(params.get("path") or "")[:200]}
-        if "value" in params:
+        state_config: dict = {
+            "path": str(
+                getattr(typed_state, "path", None) or params.get("path") or ""
+            )[:200]
+        }
+        source_ref = (
+            getattr(typed_state, "source_reference", None)
+            or params.get("source_reference")
+        )
+        source_value = _reference_value(source_ref, steps_map)
+        if source_value is not None:
+            state_config["value"] = source_value
+        elif "value" in params:
             state_config["value"] = params.get("value")
+        value_type = (
+            getattr(typed_state, "value_type", None)
+            or params.get("value_type")
+        )
+        if value_type:
+            state_config["value_type"] = str(value_type)[:40]
         return (f"state_{op}", state_config, {"inputs": ["in"], "outputs": ["out"]})
     if step.type == "loop":
-        target_step = str(params.get("target") or "")
+        typed_loop = typed_params(step)
+        target_step = str(
+            getattr(typed_loop, "target", None) or params.get("target") or ""
+        )
         target_node = steps_map.get(target_step, "")
         try:
-            max_iterations = max(1, min(int(params.get("max_iterations") or 20), 100))
+            max_iterations = max(
+                1,
+                min(
+                    int(
+                        getattr(typed_loop, "max_iterations", None)
+                        or params.get("max_iterations")
+                        or 20
+                    ),
+                    100,
+                ),
+            )
         except (TypeError, ValueError):
             max_iterations = 20
+        loop_config: dict[str, Any] = {
+            "target": target_node,
+            "max_iterations": max_iterations,
+        }
+        exit_condition = (
+            getattr(typed_loop, "exit_condition", None)
+            or params.get("exit_condition")
+        )
+        if exit_condition is not None:
+            loop_config["exit_condition"] = exit_condition
+        state_dependencies = (
+            getattr(typed_loop, "state_dependencies", None)
+            or params.get("state_dependencies")
+        )
+        if state_dependencies:
+            loop_config["state_dependencies"] = list(state_dependencies)[:10]
         return (
             "loop",
-            {"target": target_node, "max_iterations": max_iterations},
+            loop_config,
+            {"inputs": ["in"], "outputs": ["out"]},
+        )
+    if step.type == "compensation":
+        typed_comp = typed_params(step)
+        target_step = str(
+            getattr(typed_comp, "target_step", None)
+            or params.get("target_step")
+            or ""
+        )
+        target_node = steps_map.get(target_step, "")
+        capability = str(
+            getattr(typed_comp, "capability", None)
+            or params.get("capability")
+            or ""
+        ).strip()
+        action_id = str(
+            getattr(typed_comp, "action_id", None)
+            or params.get("action_id")
+            or ""
+        ).strip()
+        inputs = dict(
+            getattr(typed_comp, "inputs", None) or params.get("inputs") or {}
+        )
+        for ref in step.inputs:
+            source_node = steps_map.get(ref.step)
+            if source_node:
+                inputs[str(ref.to or ref.field)] = _ref(source_node, ref.field)
+        if capability:
+            node_type = "capability_call"
+            comp_config: dict[str, Any] = {
+                "capability": capability,
+                "inputs": inputs,
+                "compensation_for": target_node,
+                "idempotency": str(getattr(typed_comp, "idempotency", None) or "required"),
+            }
+        else:
+            node_type = "marketplace_action"
+            install_id = str(params.get("install_id") or "")
+            raw_actions = capabilities.get("actions") or {}
+            if isinstance(raw_actions, dict):
+                entry = raw_actions.get(action_id) or {}
+                install_id = install_id or str(entry.get("install_id") or "")
+            comp_config = {
+                "install_id": install_id,
+                "action_id": action_id,
+                "inputs": inputs,
+                "purpose": str(params.get("purpose") or "compensación")[:200],
+                "compensation_for": target_node,
+                "idempotency": str(getattr(typed_comp, "idempotency", None) or "required"),
+            }
+        return (
+            node_type,
+            comp_config,
             {"inputs": ["in"], "outputs": ["out"]},
         )
     if step.type == "notify":
@@ -242,6 +433,7 @@ def _step_config(
                 if isinstance(action, dict) and str(action.get("action_id")) == action_id:
                     install_id = str(action.get("install_id") or "")
                     break
+        typed_action = typed_params(step)
         return (
             "marketplace_action",
             {
@@ -249,6 +441,21 @@ def _step_config(
                 "action_id": action_id,
                 "inputs": params.get("inputs") or {},
                 "purpose": str(params.get("purpose") or "workflow architect")[:200],
+                "contract_version": int(
+                    getattr(typed_action, "contract_version", None)
+                    or step.contract_version
+                    or 1
+                ),
+                "outputs_expected": list(
+                    getattr(typed_action, "outputs_expected", None)
+                    or step.outputs_expected
+                    or []
+                )[:20],
+                "idempotency": str(
+                    getattr(typed_action, "idempotency", None)
+                    or step.idempotency
+                    or "best_effort"
+                ),
             },
             {"inputs": ["in"], "outputs": ["out"]},
         )
@@ -354,6 +561,7 @@ def compile_semantic_plan(
     intent: ArchitectIntent | None = None,
 ) -> dict[str, Any]:
     """Compila el plan semántico a WorkflowGraph v2 (determinístico)."""
+    plan = normalize_semantic_plan(plan)
     issues: list[PlanIssue] = []
     step_by_id = {step.id: step for step in plan.steps}
 
@@ -363,6 +571,17 @@ def compile_semantic_plan(
     for step in plan.steps:
         node_id = _node_id(step.id, used)
         steps_map[step.id] = node_id
+
+    # target_step → nodo de compensación. El target obtiene un puerto `error` y
+    # una política de rama: su fallo no detiene el segmento, activa la
+    # compensación y salta la continuación normal.
+    compensation_targets: dict[str, str] = {}
+    for step in plan.steps:
+        if step.type != "compensation":
+            continue
+        target = str(step.params.get("target_step") or "").strip()
+        if target:
+            compensation_targets[target] = step.id
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -382,6 +601,8 @@ def compile_semantic_plan(
         for port in ports["outputs"]:
             port_type = "boolean" if (node_type == "condition" and port == "out") else "json"
             output_ports.append({"name": port, "type": port_type})
+        if step.id in compensation_targets:
+            output_ports.append({"name": "error", "type": "json"})
         nodes.append(
             {
                 "id": node_id,
@@ -393,11 +614,17 @@ def compile_semantic_plan(
                 "output_ports": output_ports,
                 "retry_policy": {"max_attempts": int(step.retries or 0) + 1},
                 "timeout_ms": max(1, int(step.timeout_seconds or 60)) * 1000,
-                "error_policy": step.on_error or "fail",
+                "error_policy": (
+                    "branch" if step.id in compensation_targets else (step.on_error or "fail")
+                ),
                 "metadata": {
                     "architect": {
                         "step_id": step.id,
                         "reason": (step.reason_summary or step.goal)[:400],
+                        "plan_schema_version": plan.schema_version,
+                        "contract_version": step.contract_version,
+                        "outputs_expected": list(step.outputs_expected),
+                        "idempotency": step.idempotency,
                     }
                 },
             }
@@ -410,6 +637,25 @@ def compile_semantic_plan(
     edge_index = 0
     for step in plan.steps:
         if step.id == trigger_step.id and not step.depends_on:
+            continue
+        if step.type == "compensation":
+            target_step = str(
+                step.params.get("target_step")
+                or ""
+            )
+            target_node = steps_map.get(target_step)
+            if target_node:
+                edge_index += 1
+                edges.append(
+                    {
+                        "id": f"e{edge_index}",
+                        "from_node": target_node,
+                        "from_port": "error",
+                        "to_node": steps_map[step.id],
+                        "to_port": "in",
+                    }
+                )
+                levels[step.id] = 1 + max(levels.values(), default=0)
             continue
         sources = list(step.depends_on)
         if step.when is not None and step.when.step not in sources:
@@ -511,7 +757,12 @@ def compile_semantic_plan(
         "edges": edges,
         "variables": {},
         "entrypoints": entrypoints,
-        "metadata": {"architect": True, "goal": plan.goal},
+        "metadata": {
+            "architect": True,
+            "goal": plan.goal,
+            "plan_schema_version": plan.schema_version,
+            "max_steps": len(plan.steps),
+        },
     }
     return {
         "graph": graph,

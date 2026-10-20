@@ -15,7 +15,10 @@ from src.platform.workflows.architect_models import (
     TRIGGER_STEP_TYPES,
     PlanIssue,
     SemanticPlan,
+    normalize_semantic_plan,
 )
+from src.platform.workflows.architect_step_contracts import validate_step_params
+from src.platform.workflows.architect_typecheck import contract_issues
 
 _SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 
@@ -57,6 +60,7 @@ def validate_semantic_plan(
     permissions: frozenset[str] | None = None,
 ) -> list[PlanIssue]:
     """Lista de issues ordenada por severidad. `error` impide compilar."""
+    plan = normalize_semantic_plan(plan)
     issues: list[PlanIssue] = []
     available = capabilities.get("available") or {}
     raw_actions = capabilities.get("actions") or {}
@@ -135,6 +139,35 @@ def validate_semantic_plan(
                     severity="error",
                     step_id=step.id,
                     message="El disparador no puede depender de otros pasos.",
+                )
+            )
+
+        _typed, param_issues = validate_step_params(step)
+        for param_issue in param_issues:
+            issues.append(
+                PlanIssue(
+                    code=param_issue.code,
+                    severity="error",
+                    step_id=step.id,
+                    field=param_issue.field,
+                    message=param_issue.message,
+                    expected=param_issue.expected,
+                    received=param_issue.received,
+                    action_required="Corrige params para cumplir el contrato tipado del paso.",
+                )
+            )
+        for contract_issue in contract_issues(step, capabilities, by_id):
+            issues.append(
+                PlanIssue(
+                    code=contract_issue.code,
+                    severity="error",
+                    step_id=contract_issue.step_id,
+                    field=contract_issue.field,
+                    message=contract_issue.message,
+                    expected=contract_issue.expected,
+                    received=contract_issue.received,
+                    alternatives=list(contract_issue.alternatives),
+                    action_required=contract_issue.action_required or None,
                 )
             )
 
@@ -370,6 +403,196 @@ def validate_semantic_plan(
                         message="Tu rol actual no puede ejecutar acciones externas.",
                     )
                 )
+        elif step.type == "compensation":
+            target_id = str(step.params.get("target_step") or "").strip()
+            target_step = by_id.get(target_id)
+            capability_ref = str(step.params.get("capability") or "").strip()
+            action_id = str(step.params.get("action_id") or "").strip()
+            if not target_id:
+                issues.append(
+                    PlanIssue(
+                        code="compensation.target_required",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.target_step",
+                        message=f"«{step.goal}» necesita la acción que compensa.",
+                        expected="id de un paso capability_call/integration_action anterior",
+                        received="",
+                        action_required="Define target_step.",
+                    )
+                )
+            elif target_step is None:
+                issues.append(
+                    PlanIssue(
+                        code="compensation.unknown_target",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.target_step",
+                        message=f"«{step.goal}» compensa un paso inexistente ({target_id}).",
+                        expected="paso existente",
+                        received=target_id,
+                        alternatives=[item.id for item in plan.steps if item.id != step.id][:5],
+                        action_required="Corrige target_step.",
+                    )
+                )
+            else:
+                order = {item.id: index for index, item in enumerate(plan.steps)}
+                if order.get(target_id, 0) >= order.get(step.id, 0):
+                    issues.append(
+                        PlanIssue(
+                            code="compensation.target_order",
+                            severity="error",
+                            step_id=step.id,
+                            field="params.target_step",
+                            message="La compensación debe declararse después de la acción que protege.",
+                            expected="paso anterior a la compensación",
+                            received=target_id,
+                            action_required="Mueve la compensación después del paso original.",
+                        )
+                    )
+                if target_step.type not in ("capability_call", "integration_action"):
+                    issues.append(
+                        PlanIssue(
+                            code="compensation.invalid_target",
+                            severity="error",
+                            step_id=step.id,
+                            field="params.target_step",
+                            message=(
+                                "Solo se compensan capacidades o acciones externas con efecto, "
+                                f"no {target_step.type}."
+                            ),
+                            expected="capability_call|integration_action",
+                            received=target_step.type,
+                            action_required="Apunta al paso que ejecuta la acción de negocio.",
+                        )
+                    )
+                if target_id not in step.depends_on:
+                    issues.append(
+                        PlanIssue(
+                            code="compensation.target_dependency",
+                            severity="warning",
+                            step_id=step.id,
+                            field="depends_on",
+                            message="La compensación no declara dependencia del paso que protege.",
+                            expected=f"depends_on incluye {target_id}",
+                            received=", ".join(step.depends_on) or "sin dependencias",
+                            action_required="Agrega target_step a depends_on.",
+                        )
+                    )
+            if not capability_ref and not action_id:
+                issues.append(
+                    PlanIssue(
+                        code="compensation.action_required",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.capability",
+                        message=f"«{step.goal}» no declara la acción de compensación.",
+                        expected="params.capability o params.action_id",
+                        received="sin acción",
+                        action_required="Define capability o action_id.",
+                    )
+                )
+            elif capability_ref:
+                descriptor = (capabilities.get("capability_index") or {}).get(capability_ref)
+                if descriptor is None:
+                    issues.append(
+                        PlanIssue(
+                            code="missing.capability",
+                            severity="error",
+                            step_id=step.id,
+                            message=requirement_message("capability", capability_ref),
+                            requirement=f"capability:{capability_ref}",
+                        )
+                    )
+                elif not (descriptor.get("availability") or {}).get("executable", False):
+                    issues.append(
+                        PlanIssue(
+                            code="capability.unavailable",
+                            severity="error",
+                            step_id=step.id,
+                            message=f"La compensación {capability_ref} no está ejecutable.",
+                            requirement=f"capability:{capability_ref}",
+                        )
+                    )
+            elif action_id and action_id not in actions:
+                issues.append(
+                    PlanIssue(
+                        code="missing.integration",
+                        severity="error",
+                        step_id=step.id,
+                        message=requirement_message("integration", action_id),
+                        requirement=f"integration:{action_id}",
+                    )
+                )
+            elif action_id:
+                meta = action_meta.get(action_id) or {}
+                if meta.get("executable", True) is False:
+                    issues.append(
+                        PlanIssue(
+                            code="capability.unavailable",
+                            severity="error",
+                            step_id=step.id,
+                            message=f"La compensación {action_id} no está ejecutable.",
+                            requirement=f"integration:{action_id}",
+                        )
+                    )
+                if permissions is not None and "external_actions:execute" not in permissions:
+                    issues.append(
+                        PlanIssue(
+                            code="permission.integration",
+                            severity="warning",
+                            step_id=step.id,
+                            message="Tu rol no puede ejecutar la compensación externa.",
+                        )
+                    )
+            # La rama de compensación debe terminar en fallo controlado o resultado.
+            descendants: set[str] = {step.id}
+            changed = True
+            while changed:
+                changed = False
+                for other in plan.steps:
+                    if other.id in descendants:
+                        continue
+                    if any(dep in descendants for dep in other.depends_on):
+                        descendants.add(other.id)
+                        changed = True
+            if not any(
+                item.type == "stop"
+                and str(item.params.get("status") or "success") == "failed"
+                for item in plan.steps
+                if item.id in descendants
+            ) and not any(
+                item.type == "business_result" for item in plan.steps if item.id in descendants
+            ):
+                issues.append(
+                    PlanIssue(
+                        code="compensation.terminal_required",
+                        severity="warning",
+                        step_id=step.id,
+                        message=(
+                            f"«{step.goal}» compensa un fallo pero no declara cierre fallido "
+                            "ni resultado de negocio."
+                        ),
+                        expected="stop(status=failed) o business_result en la rama",
+                        received="sin cierre",
+                        action_required="Agrega un stop fallido para no dejar el run ambiguo.",
+                    )
+                )
+        elif step.type == "trigger_conversation":
+            event_type = str(step.params.get("event_type") or "conversation.message")
+            if not event_type.startswith(("conversation.", "custom.")):
+                issues.append(
+                    PlanIssue(
+                        code="trigger.conversation_event",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.event_type",
+                        message="El inicio conversacional debe usar un evento conversation.*.",
+                        expected="conversation.message|custom.*",
+                        received=event_type,
+                        action_required="Corrige el evento del disparador.",
+                    )
+                )
         elif step.type == "notify":
             channel = str(step.params.get("channel") or "in_app").lower()
             if channel in ("slack", "teams", "whatsapp"):
@@ -480,6 +703,53 @@ def validate_semantic_plan(
                         )
                     )
             event_type = str(step.params.get("event_type") or "").strip()
+            correlation = step.params.get("correlation")
+            if preset in ("webhook", "payment", "signal") and not correlation:
+                issues.append(
+                    PlanIssue(
+                        code="wait.correlation_recommended",
+                        severity="warning",
+                        step_id=step.id,
+                        field="params.correlation",
+                        message=(
+                            f"«{step.goal}» espera {preset} sin correlación explícita; "
+                            "puede despertar una instancia equivocada."
+                        ),
+                        expected="correlation con conversación/transacción",
+                        received="sin correlación",
+                        action_required=(
+                            "Agrega correlation con una referencia de otro paso "
+                            "(conversation_id, order_id, payment_id)."
+                        ),
+                    )
+                )
+            if preset in ("payment", "webhook") and not step.params.get("timeout_seconds"):
+                issues.append(
+                    PlanIssue(
+                        code="wait.timeout_recommended",
+                        severity="warning",
+                        step_id=step.id,
+                        field="params.timeout_seconds",
+                        message=f"«{step.goal}» no declara timeout para una espera externa.",
+                        expected="timeout_seconds > 0",
+                        received="sin timeout",
+                        action_required="Define timeout y una política on_timeout.",
+                    )
+                )
+            expected_schema = step.params.get("expected_payload_schema")
+            if expected_schema is not None and not isinstance(expected_schema, dict):
+                issues.append(
+                    PlanIssue(
+                        code="wait.payload_schema_invalid",
+                        severity="error",
+                        step_id=step.id,
+                        field="params.expected_payload_schema",
+                        message="El schema esperado debe ser un objeto JSON Schema.",
+                        expected="object",
+                        received=type(expected_schema).__name__,
+                        action_required="Corrige expected_payload_schema.",
+                    )
+                )
             known_events = {str(item) for item in (capabilities.get("events") or [])}
             if event_type and known_events and event_type not in known_events and not event_type.startswith(
                 ("custom.", "webhook.", "signal.", "watcher.")
@@ -605,6 +875,35 @@ def validate_semantic_plan(
                         action_required="Acota las repeticiones.",
                     )
                 )
+            exit_condition = step.params.get("exit_condition")
+            if isinstance(exit_condition, dict) and exit_condition.get("step"):
+                exit_step = by_id.get(str(exit_condition.get("step")))
+                if exit_step is None:
+                    issues.append(
+                        PlanIssue(
+                            code="loop.exit_condition_unknown",
+                            severity="error",
+                            step_id=step.id,
+                            field="params.exit_condition.step",
+                            message="La condición de salida apunta a un paso inexistente.",
+                            expected="paso del plan",
+                            received=str(exit_condition.get("step")),
+                            action_required="Corrige exit_condition o elimina la referencia.",
+                        )
+                    )
+                elif exit_step.type not in ("decision", "wait"):
+                    issues.append(
+                        PlanIssue(
+                            code="loop.exit_condition_not_branch",
+                            severity="error",
+                            step_id=step.id,
+                            field="params.exit_condition.step",
+                            message="La salida del loop debe evaluarse en una decisión o espera.",
+                            expected="decision|wait",
+                            received=exit_step.type,
+                            action_required="Agrega la decisión que corta el loop.",
+                        )
+                    )
         elif step.type == "for_each":
             issues.append(
                 PlanIssue(
@@ -618,6 +917,114 @@ def validate_semantic_plan(
                     ),
                 )
             )
+
+    # Aprobación humana para acciones críticas/financieras (actividad G).
+    by_id_all = {step.id: step for step in plan.steps}
+    ancestors: dict[str, set[str]] = {}
+    for step in plan.steps:
+        found: set[str] = set()
+        stack = list(step.depends_on)
+        if step.when is not None:
+            stack.append(step.when.step)
+        while stack:
+            current = stack.pop()
+            if current in found:
+                continue
+            found.add(current)
+            parent = by_id_all.get(current)
+            if parent is not None:
+                stack.extend(parent.depends_on)
+                if parent.when is not None:
+                    stack.append(parent.when.step)
+        ancestors[step.id] = found
+    approvals = {step.id for step in plan.steps if step.type == "human_approval"}
+    for step in plan.steps:
+        if step.type not in ("capability_call", "integration_action"):
+            continue
+        ref = (
+            str(step.params.get("capability") or "").strip()
+            if step.type == "capability_call"
+            else str(step.params.get("action_id") or "").strip()
+        )
+        descriptor = (capabilities.get("capability_index") or {}).get(ref) or {}
+        action_meta = action_meta.get(ref) or {}
+        critical = (
+            descriptor.get("risk_level") == "critical"
+            or "financial" in (descriptor.get("side_effects") or [])
+            or bool(action_meta.get("requires_approval"))
+            or bool((descriptor.get("metadata") or {}).get("requires_approval"))
+        )
+        if critical and not (ancestors.get(step.id, set()) & approvals):
+            issues.append(
+                PlanIssue(
+                    code="approval.critical_action",
+                    severity="error",
+                    step_id=step.id,
+                    field="depends_on",
+                    message=(
+                        f"«{step.goal}» ejecuta una acción crítica/financiera sin "
+                        "aprobación humana previa."
+                    ),
+                    expected="human_approval ancestro",
+                    received="sin aprobación",
+                    alternatives=["agregar human_approval antes del paso"],
+                    action_required="Inserta una aprobación humana antes de la acción.",
+                    requirement="approval:human",
+                )
+            )
+
+    # Idempotencia y cuerpo de LOOP: acciones financieras con identidad estable.
+    order_index = {step.id: index for index, step in enumerate(plan.steps)}
+    for loop_step in (step for step in plan.steps if step.type == "loop"):
+        target = str(loop_step.params.get("target") or "")
+        if target not in by_id_all:
+            continue
+        body_ids = {
+            step.id
+            for step in plan.steps
+            if order_index.get(step.id, 0) >= order_index.get(target, 0)
+            and order_index.get(step.id, 0) < order_index.get(loop_step.id, 0)
+        }
+        for body_step in (step for step in plan.steps if step.id in body_ids):
+            if body_step.type not in ("capability_call", "integration_action"):
+                continue
+            ref = (
+                str(body_step.params.get("capability") or "").strip()
+                if body_step.type == "capability_call"
+                else str(body_step.params.get("action_id") or "").strip()
+            )
+            descriptor = (capabilities.get("capability_index") or {}).get(ref) or {}
+            if (
+                "financial" in (descriptor.get("side_effects") or [])
+                or descriptor.get("risk_level") == "critical"
+            ) and body_step.idempotency != "required":
+                issues.append(
+                    PlanIssue(
+                        code="loop.idempotency",
+                        severity="warning",
+                        step_id=body_step.id,
+                        field="idempotency",
+                        message=(
+                            f"«{body_step.goal}» puede reejecutarse dentro de un loop; "
+                            "declara idempotencia requerida."
+                        ),
+                        expected="idempotency=required",
+                        received=body_step.idempotency,
+                        action_required="Marca la operación como idempotente.",
+                    )
+                )
+
+    if len(plan.steps) > 40:
+        issues.append(
+            PlanIssue(
+                code="plan.large_complexity",
+                severity="warning",
+                message=(
+                    f"El plan tiene {len(plan.steps)} pasos; revisa costo/latencia antes "
+                    "de publicar (límite semántico 80, guard del runtime 10 000)."
+                ),
+            )
+        )
 
     for assumption in plan.assumptions:
         if assumption.requires_question:

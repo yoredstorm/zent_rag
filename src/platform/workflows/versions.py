@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -289,7 +290,10 @@ async def restore_version(
 
 
 async def _architect_publication_problems(
-    organization_id: UUID, workflow_id: UUID
+    organization_id: UUID,
+    workflow_id: UUID,
+    *,
+    permissions: frozenset[str] | None = None,
 ) -> list[str]:
     """Re-valida un workflow nacido del Architect antes de publicarlo.
 
@@ -367,15 +371,11 @@ async def _architect_publication_problems(
             if not ref:
                 continue
             descriptor = index.get(ref)
-            if descriptor is None:
-                problems.append(f"la capacidad {ref} ya no existe")
-            elif not descriptor.availability.executable:
-                reasons = "; ".join(descriptor.availability.reasons[:2])
-                problems.append(
-                    f"la capacidad {ref} no está ejecutable ({descriptor.availability.status}"
-                    + (f": {reasons}" if reasons else "")
-                    + ")"
+            problems.extend(
+                _capability_publication_problems(
+                    ref, config, descriptor, permissions
                 )
+            )
     except Exception as exc:  # noqa: BLE001 — sin snapshot, el readiness base sigue
         logger.warning("architect publish capability check failed", error=str(exc)[:160])
 
@@ -386,6 +386,46 @@ async def _architect_publication_problems(
     return problems
 
 
+def _capability_publication_problems(
+    ref: str,
+    config: dict[str, Any],
+    descriptor: Any,
+    permissions: frozenset[str] | None,
+) -> list[str]:
+    """Chequeo puro de contrato/permisos de una capacidad al publicar."""
+    if descriptor is None:
+        return [f"la capacidad {ref} ya no existe"]
+    if not descriptor.availability.executable:
+        reasons = "; ".join(descriptor.availability.reasons[:2])
+        return [
+            f"la capacidad {ref} no está ejecutable ({descriptor.availability.status}"
+            + (f": {reasons}" if reasons else "")
+            + ")"
+        ]
+    problems: list[str] = []
+    contract_version = config.get("contract_version")
+    if contract_version is not None and int(contract_version) != int(descriptor.version):
+        problems.append(
+            f"la capacidad {ref} cambió de contrato "
+            f"(v{contract_version} → v{descriptor.version}); recompila el flujo"
+        )
+    contract_hash = str(config.get("contract_hash") or "")
+    if contract_hash and descriptor.contract_hash and contract_hash != descriptor.contract_hash:
+        problems.append(f"el contrato de {ref} cambió desde que se compiló el flujo")
+    if permissions is not None:
+        missing = [
+            permission
+            for permission in (descriptor.required_permissions or [])
+            if permission not in permissions and "admin:*" not in permissions
+        ]
+        if missing:
+            problems.append(
+                f"el rol que publica no puede ejecutar {ref}: "
+                + ", ".join(missing[:3])
+            )
+    return problems
+
+
 async def publish_workflow(
     organization_id: UUID,
     workflow_id: UUID,
@@ -393,6 +433,7 @@ async def publish_workflow(
     notes: str | None = None,
     created_by: UUID | None = None,
     confirm_architect_draft: bool = False,
+    permissions: frozenset[str] | None = None,
 ) -> dict | None:
     """Publicar = snapshot en production + workflow activo (webhook/schedule).
 
@@ -428,7 +469,9 @@ async def publish_workflow(
                 f"el borrador quedó en {state}; revísalo y confirma la publicación "
                 "con confirm_architect_draft=true"
             )
-        problems = await _architect_publication_problems(organization_id, workflow_id)
+        problems = await _architect_publication_problems(
+            organization_id, workflow_id, permissions=permissions
+        )
         if problems:
             raise ValueError("requisitos sin resolver: " + "; ".join(problems[:5]))
 

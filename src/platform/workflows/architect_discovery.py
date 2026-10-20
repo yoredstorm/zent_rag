@@ -106,8 +106,31 @@ def capabilities_from_snapshot(snapshot: CapabilitySnapshot) -> dict[str, Any]:
                     "executable": descriptor.availability.executable,
                     "status": descriptor.availability.status,
                 }
+            capability_index[descriptor.capability_ref] = {
+                **compact,
+                "input_schema": descriptor.input_schema,
+                "output_schema": descriptor.output_schema,
+                "contract_hash": descriptor.contract_hash,
+                "side_effects": list(descriptor.side_effects),
+                "risk_level": descriptor.risk_level,
+                "source": descriptor.source,
+                "metadata": dict(descriptor.metadata),
+                "idempotency_policy": dict(descriptor.idempotency_policy),
+                "timeout_policy": dict(descriptor.timeout_policy),
+            }
         elif descriptor.source in ("commerce", "binding"):
-            capability_index[descriptor.capability_ref] = compact
+            capability_index[descriptor.capability_ref] = {
+                **compact,
+                "input_schema": descriptor.input_schema,
+                "output_schema": descriptor.output_schema,
+                "contract_hash": descriptor.contract_hash,
+                "side_effects": list(descriptor.side_effects),
+                "risk_level": descriptor.risk_level,
+                "source": descriptor.source,
+                "metadata": dict(descriptor.metadata),
+                "idempotency_policy": dict(descriptor.idempotency_policy),
+                "timeout_policy": dict(descriptor.timeout_policy),
+            }
         elif descriptor.source == "tool":
             tools.append(
                 {

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 MODEL_CONFIG = ConfigDict(extra="forbid")
 
 PLAN_STEP_TYPES = (
+    "trigger_conversation",
     "trigger_event",
     "trigger_schedule",
     "trigger_manual",
@@ -29,13 +30,22 @@ PLAN_STEP_TYPES = (
     "wait",
     "state",
     "loop",
+    "compensation",
     "notify",
     "integration_action",
     "business_result",
     "stop",
 )
 
-TRIGGER_STEP_TYPES = ("trigger_event", "trigger_schedule", "trigger_manual")
+TRIGGER_STEP_TYPES = (
+    "trigger_conversation",
+    "trigger_event",
+    "trigger_schedule",
+    "trigger_manual",
+)
+
+SEMANTIC_PLAN_VERSION = "2.0"
+MAX_SEMANTIC_STEPS = 80
 
 KNOWLEDGE_OPERATIONS = (
     "search",
@@ -101,6 +111,10 @@ class PlanStep(BaseModel):
     retries: int = Field(default=0, ge=0, le=5)
     timeout_seconds: int = Field(default=60, ge=1, le=3600)
     on_error: Literal["fail", "continue", "stop"] = "fail"
+    #: Contrato de la capacidad/acción usada (Prompt 04).
+    contract_version: int | None = Field(default=None, ge=1, le=1_000_000)
+    outputs_expected: list[str] = Field(default_factory=list, max_length=20)
+    idempotency: Literal["required", "best_effort", "none"] = "best_effort"
 
 
 class ArchitectIntent(BaseModel):
@@ -132,11 +146,22 @@ class SemanticPlan(BaseModel):
 
     model_config = MODEL_CONFIG
 
+    #: 1.0 = planes persistidos antes de Prompt 04; 2.0 = contratos tipados.
+    schema_version: Literal["1.0", "2.0"] = "1.0"
     goal: str = Field(min_length=1, max_length=600)
-    steps: list[PlanStep] = Field(min_length=1, max_length=40)
+    steps: list[PlanStep] = Field(min_length=1, max_length=MAX_SEMANTIC_STEPS)
     assumptions: list[PlanAssumption] = Field(default_factory=list, max_length=10)
     uncertainties: list[str] = Field(default_factory=list, max_length=10)
     notes: list[str] = Field(default_factory=list, max_length=10)
+
+
+def normalize_semantic_plan(plan: SemanticPlan) -> SemanticPlan:
+    """Adapter explícito v1 -> v2 sin mutar el plan persistido."""
+    if plan.schema_version == SEMANTIC_PLAN_VERSION:
+        return plan
+    data = plan.model_dump(mode="python")
+    data["schema_version"] = SEMANTIC_PLAN_VERSION
+    return SemanticPlan.model_validate(data)
 
 
 class PlanIssue(BaseModel):
@@ -166,8 +191,10 @@ class PlanIssue(BaseModel):
 __all__ = [
     "ArchitectIntent",
     "KNOWLEDGE_OPERATIONS",
+    "MAX_SEMANTIC_STEPS",
     "MODEL_CONFIG",
     "PLAN_STEP_TYPES",
+    "SEMANTIC_PLAN_VERSION",
     "PlanAssumption",
     "PlanInputRef",
     "PlanIssue",
@@ -175,4 +202,5 @@ __all__ = [
     "SemanticPlan",
     "TRIGGER_STEP_TYPES",
     "WhenClause",
+    "normalize_semantic_plan",
 ]

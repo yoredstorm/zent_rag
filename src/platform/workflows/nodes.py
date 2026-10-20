@@ -2977,6 +2977,9 @@ async def _exec_wait_event(rctx: NodeContext) -> NodeOutcome:
         "on_timeout": on_timeout,
         "port": "out",
     }
+    expected_schema = cfg.get("expected_payload_schema")
+    if isinstance(expected_schema, dict) and expected_schema:
+        spec["expected_payload_schema"] = expected_schema
     return NodeOutcome(
         output={
             "waiting": True,

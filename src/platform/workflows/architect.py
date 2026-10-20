@@ -82,15 +82,19 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
 - Responde SOLO con un objeto JSON, sin markdown. Sin ids de nodo, sin posiciones, sin {{...}}.
 - Shape:
 {
+  "schema_version": "2.0",
   "goal": str,
   "steps": [{
-    "id": "t1", "type": "trigger_event"|"trigger_schedule"|"trigger_manual"|"business_query"|
+    "id": "t1", "type": "trigger_conversation"|"trigger_event"|"trigger_schedule"|"trigger_manual"|"business_query"|
             "knowledge_query"|"capability_call"|"agent_analysis"|"decision"|"filter"|"join"|"merge"|
-            "human_approval"|"wait"|"state"|"loop"|"notify"|"integration_action"|"business_result"|"stop",
+            "human_approval"|"wait"|"state"|"loop"|"compensation"|"notify"|"integration_action"|
+            "business_result"|"stop",
     "goal": str, "depends_on": [str], "when": {"step": str, "outcome": true}|null,
     "inputs": [{"step": str, "field": str, "label": str|null, "to": str|null}],
     "params": {}, "reason_summary": str, "optional": false,
-    "retries": 0, "timeout_seconds": 60, "on_error": "fail"|"continue"|"stop"
+    "retries": 0, "timeout_seconds": 60, "on_error": "fail"|"continue"|"stop",
+    "contract_version": int|null, "outputs_expected": [str],
+    "idempotency": "required"|"best_effort"|"none"
   }],
   "assumptions": [{"statement": str, "impact": "low"|"high", "needs_confirmation": bool}],
   "uncertainties": [str], "notes": [str]
@@ -102,10 +106,19 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   params.inputs lleva valores literales. Para usar la salida de otro paso, agrega
   en "inputs" {"step": "<paso>", "field": "<campo de salida>", "to": "<campo de entrada>"}.
   Si la capacidad está NEEDS_CONFIGURATION, no la uses como si estuviera activa.
-- loop: params.target = id de un paso anterior, params.max_iterations entre 1 y 100. El flujo
-  debe ejecutarse como proceso durable; no lo uses para reemplazar una decisión.
-- wait: declara params.preset, timeout_seconds y on_timeout; si on_timeout="branch",
-  agrega un paso con when {"step": "<wait>", "outcome": false} para el timeout.
+- loop: params.target = id de un paso anterior, params.max_iterations entre 1 y 100,
+  params.exit_condition y params.state_dependencies cuando apliquen. El flujo debe
+  ejecutarse como proceso durable; no lo uses para reemplazar una decisión.
+- wait: declara params.preset, params.event_type, params.correlation (por ejemplo
+  {"order_id": {"step": "crear", "field": "order_id"}}), timeout_seconds,
+  on_timeout y expected_payload_schema. Si on_timeout="branch", agrega un paso con
+  when {"step": "<wait>", "outcome": false} para el timeout. No bloquees un worker.
+- state: params.op, params.path, params.value_type y, si viene de otro paso,
+  params.source_reference {"step": str, "field": str}.
+- compensation: params.target_step apunta a la capacidad/acción anterior;
+  declara params.capability o params.action_id, inputs e idempotency="required".
+  La rama de compensación debe terminar en stop(status="failed") o business_result.
+- trigger_conversation inicia con conversation.message; no inventes otro evento.
 - Usa un agente SOLO cuando haga falta criterio; si una regla simple alcanza, no lo pongas.
 - knowledge_query: params.operation ∈ search|answer|find_evidence|extract_facts|compare|check_conflicts|investigate.
 - decision: referencia al paso que decide en "inputs" (p. ej. agente → field "risk" o "requires_review").
@@ -338,6 +351,7 @@ def heuristic_semantic_plan(prompt: str) -> SemanticPlan:
 
 
 _PREVIEW_KIND_BY_TYPE: dict[str, str] = {
+    "trigger_conversation": "when",
     "trigger_event": "when",
     "trigger_schedule": "when",
     "trigger_manual": "when",
@@ -353,6 +367,7 @@ _PREVIEW_KIND_BY_TYPE: dict[str, str] = {
     "human_approval": "then",
     "state": "then",
     "loop": "then",
+    "compensation": "then",
     "notify": "after",
     "integration_action": "then",
     "business_result": "after",
@@ -366,7 +381,9 @@ def semantic_preview(plan: SemanticPlan) -> list[dict[str, str]]:
     for step in plan.steps:
         kind = _PREVIEW_KIND_BY_TYPE.get(step.type, "then")
         text = step.goal
-        if step.type == "trigger_event":
+        if step.type == "trigger_conversation":
+            text = "Cuando el cliente inicie o responda una conversación."
+        elif step.type == "trigger_event":
             event_type = str(step.params.get("event_type") or "un evento")
             text = f"Cuando ocurra «{event_type}»."
         elif step.type == "trigger_schedule":
@@ -386,6 +403,11 @@ def semantic_preview(plan: SemanticPlan) -> list[dict[str, str]]:
             text = f"Ejecutar {step.params.get('capability') or 'una capacidad'}: {step.goal}"
         elif step.type == "loop":
             text = f"Volver a un paso anterior (máx. {step.params.get('max_iterations') or 20} veces)."
+        elif step.type == "compensation":
+            text = (
+                f"Si falla {step.params.get('target_step') or 'la acción'}, "
+                f"compensar con {step.params.get('capability') or step.params.get('action_id') or 'una acción'}."
+            )
         elif step.type == "notify":
             text = f"Avisar por {step.params.get('channel') or 'Zent'}: {step.goal}"
         elif step.type == "human_approval":
@@ -447,6 +469,8 @@ def _apply_preferred_agent(
 
 def _trigger_config_for_cost(plan: SemanticPlan) -> dict[str, Any]:
     for step in plan.steps:
+        if step.type == "trigger_conversation":
+            return {"event_type": str(step.params.get("event_type") or "conversation.message")}
         if step.type == "trigger_event":
             return {"event_type": str(step.params.get("event_type") or "")}
         if step.type == "trigger_schedule":
@@ -762,7 +786,9 @@ def simulation_plan(plan: SemanticPlan) -> list[dict[str, str]]:
     """Vista previa de ejecución sin efectos (brief §23)."""
     entries: list[dict[str, str]] = []
     for step in plan.steps:
-        if step.type == "trigger_event":
+        if step.type == "trigger_conversation":
+            expectation = "Recibiría el mensaje del cliente en la conversación."
+        elif step.type == "trigger_event":
             expectation = (
                 f"Recibiría un ejemplo del evento «{step.params.get('event_type') or 'evento'}»."
             )
@@ -780,6 +806,8 @@ def simulation_plan(plan: SemanticPlan) -> list[dict[str, str]]:
             expectation = f"Ejecutaría {capability} (sin efectos en la vista previa)."
         elif step.type == "loop":
             expectation = "Volvería al paso indicado, dentro del límite configurado."
+        elif step.type == "compensation":
+            expectation = "Si la acción protegida falla, ejecutaría la compensación configurada."
         elif step.type == "agent_analysis":
             agent_name = str(step.params.get("agent_name") or "el agente")
             expectation = f"{agent_name} respondería una conclusión (sin efecto real)."

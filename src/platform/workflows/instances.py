@@ -1159,6 +1159,14 @@ async def signal_workflow_instance(
         port = "timeout" if et == _TIMEOUT_EVENT else "out"
         out = await _claim_and_resume(inst, signal_row={"id": signal_id, "payload": payload or {}}, port=port)
         resumed.append({"instance_id": inst["id"], **out})
+        if out.get("status") == "payload_invalid":
+            return {
+                "status": "payload_invalid",
+                "signal_id": signal_id,
+                "resumed": False,
+                "errors": out.get("errors") or [],
+                "results": resumed,
+            }
         if out.get("claimed"):
             break
     _emit_signal_metric("resumed" if any(r.get("claimed") for r in resumed) else "duplicate")
@@ -1320,10 +1328,69 @@ def _targets_for_port(graph: dict[str, Any] | None, wait_node: str | None, port:
     ]
 
 
+def _payload_schema_errors(
+    schema: dict[str, Any], payload: Any, *, path: str = ""
+) -> list[str]:
+    """Validador acotado de JSON Schema para señales (sin dependencia extra)."""
+    errors: list[str] = []
+    expected_type = schema.get("type")
+    type_map = {
+        "object": dict,
+        "array": list,
+        "string": str,
+        "number": (int, float),
+        "integer": int,
+        "boolean": bool,
+        "null": type(None),
+    }
+    if isinstance(expected_type, str) and expected_type in type_map:
+        expected = type_map[expected_type]
+        if not isinstance(payload, expected) or (
+            expected_type in ("number", "integer") and isinstance(payload, bool)
+        ):
+            errors.append(f"{path or '$'}: se esperaba {expected_type}")
+            return errors
+    if isinstance(payload, dict):
+        for required in schema.get("required") or []:
+            if required not in payload:
+                errors.append(f"{path or '$'}: falta {required}")
+        properties = schema.get("properties") or {}
+        if isinstance(properties, dict):
+            for key, child in properties.items():
+                if key in payload and isinstance(child, dict):
+                    errors.extend(
+                        _payload_schema_errors(
+                            child, payload[key], path=f"{path}.{key}" if path else key
+                        )
+                    )
+    elif isinstance(payload, list) and isinstance(schema.get("items"), dict):
+        for index, item in enumerate(payload[:20]):
+            errors.extend(
+                _payload_schema_errors(
+                    schema["items"], item, path=f"{path}[{index}]"
+                )
+            )
+    return errors
+
+
 async def _claim_and_resume(
     instance: dict[str, Any], *, signal_row: dict[str, Any] | None, port: str
 ) -> dict:
     """Claim atómico + segmento nuevo. Un solo ganador; el resto queda pending."""
+    if signal_row is not None:
+        expected_schema = (instance.get("waiting_for") or {}).get(
+            "expected_payload_schema"
+        )
+        if isinstance(expected_schema, dict) and expected_schema:
+            errors = _payload_schema_errors(
+                expected_schema, dict(signal_row.get("payload") or {})
+            )
+            if errors:
+                return {
+                    "claimed": False,
+                    "status": "payload_invalid",
+                    "errors": [error[:200] for error in errors[:5]],
+                }
     org = UUID(str(instance["organization_id"]))
     iid = UUID(str(instance["id"]))
     claimed = await _claim_instance(org, iid)
@@ -1380,6 +1447,13 @@ async def _claim_and_resume(
     # El puerto real del wait queda persistido: si mañana hay otro segmento, la
     # re-derivación de edges conoce qué rama se tomó históricamente.
     await _record_wait_port(org, _uid(claimed.get("last_run_id")), wait_node, effective_port)
+    await _record_wait_payload(
+        org,
+        _uid(claimed.get("last_run_id")),
+        wait_node,
+        dict((signal_row or {}).get("payload") or {}),
+        effective_port,
+    )
 
     payload = dict((signal_row or {}).get("payload") or {})
     result = await _run_instance_segment(
@@ -1397,6 +1471,41 @@ async def _claim_and_resume(
         "status": (fresh or {}).get("status") if fresh else None,
         "run": result,
     }
+
+
+async def _record_wait_payload(
+    org: UUID,
+    run_id: UUID | None,
+    wait_node: str | None,
+    payload: dict[str, Any],
+    port: str,
+) -> None:
+    """Expone el payload del signal como salida del nodo WAIT reanudado.
+
+    Sin esto, los pasos posteriores solo verían `{"waiting": true}` y no la
+    respuesta del cliente/pago. El preload del segmento nuevo lee este output.
+    """
+    if run_id is None or not wait_node:
+        return
+    patch = {**payload, "port": port, "signal_received": True}
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "UPDATE workflow_run_steps SET output = COALESCE(output, '{}'::jsonb) "
+                "|| CAST(:patch AS jsonb) WHERE run_id = :rid AND node_id = :nid"
+            ),
+            {
+                "patch": json.dumps(patch, ensure_ascii=False, default=str),
+                "rid": str(run_id),
+                "nid": wait_node,
+            },
+        )
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 — la reanudación no depende de esto
+        logger.warning("wait payload record failed", error=str(exc)[:200])
+    finally:
+        await session.close()
 
 
 async def _record_wait_port(org: UUID, run_id: UUID | None, wait_node: str | None, port: str) -> None:

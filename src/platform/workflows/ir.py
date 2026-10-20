@@ -90,7 +90,7 @@ class WorkflowNode:
     output_ports: list[OutPort] = field(default_factory=lambda: [OutPort()])
     retry_policy: dict[str, Any] = field(default_factory=dict)
     timeout_ms: int = 60_000
-    error_policy: str = "fail"  # fail | continue | stop
+    error_policy: str = "fail"  # fail | continue | stop | branch (compensación)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

@@ -21,6 +21,7 @@ from src.infrastructure.observability.logging_config import get_logger
 from src.platform.workflows.architect_models import (
     PlanIssue,
     SemanticPlan,
+    normalize_semantic_plan,
 )
 from src.platform.workflows.architect_observability import (
     PLANNER_VERSION,
@@ -582,7 +583,7 @@ class WorkflowPlanningSession:
                 plan_payload = action.get("plan")
                 plan_received = time.monotonic()
                 try:
-                    plan = SemanticPlan.model_validate(plan_payload)
+                    plan = normalize_semantic_plan(SemanticPlan.model_validate(plan_payload))
                     raw_matches = action.get("matches") or []
                     if not isinstance(raw_matches, list) or len(raw_matches) > 40:
                         raise ValueError("matches debe ser una lista de hasta 40 filas")
@@ -936,20 +937,33 @@ class WorkflowPlanningSession:
                     )
                 )
         for step in plan.steps:
-            if step.type not in ("capability_call", "integration_action"):
+            if step.type not in ("capability_call", "integration_action", "compensation"):
                 continue
-            ref = (
-                str(step.params.get("capability") or "").strip()
-                if step.type == "capability_call"
-                else str(step.params.get("action_id") or "").strip()
-            )
+            if step.type == "capability_call":
+                ref = str(step.params.get("capability") or "").strip()
+            elif step.type == "integration_action":
+                ref = str(step.params.get("action_id") or "").strip()
+            else:
+                ref = str(
+                    step.params.get("capability")
+                    or step.params.get("action_id")
+                    or ""
+                ).strip()
             if ref and ref not in self._inspected_refs:
                 issues.append(
                     PlanIssue(
                         code="planner.capability_not_inspected",
                         severity="error",
                         step_id=step.id,
-                        field="params.capability" if step.type == "capability_call" else "params.action_id",
+                        field=(
+                            "params.capability"
+                            if step.type == "capability_call"
+                            or (
+                                step.type == "compensation"
+                                and step.params.get("capability")
+                            )
+                            else "params.action_id"
+                        ),
                         message=(
                             f"«{step.goal}» usa {ref} sin haber inspeccionado su contrato."
                         ),

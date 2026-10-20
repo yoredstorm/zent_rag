@@ -77,6 +77,12 @@ def _step_capability_ref(step: PlanStep) -> str | None:
     if step.type == "agent_analysis":
         agent_id = str(step.params.get("agent_id") or "").strip()
         return f"agent.{agent_id}" if agent_id else None
+    if step.type == "compensation":
+        return str(
+            step.params.get("capability")
+            or step.params.get("action_id")
+            or ""
+        ).strip() or None
     return None
 
 

@@ -1243,6 +1243,7 @@ async def tenant_workflow_publish(
             notes=body.notes if body else None,
             created_by=ctx.user_id,
             confirm_architect_draft=bool(body.confirm_architect_draft) if body else False,
+            permissions=ctx.permissions,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

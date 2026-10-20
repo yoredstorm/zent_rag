@@ -1,5 +1,9 @@
 # Prompt 03 — Agentic Workflow Planner con tool calling
 
+> **Actualización Prompt 04:** el plan que produce el planner usa
+> `SemanticPlan` v2, con contratos tipados, WAIT/LOOP/estado/compensación y
+> validación de tipos. Ver [`12-semantic-compiler-v2.md`](12-semantic-compiler-v2.md).
+
 > **Fase:** planificación agéntica. **Fecha:** 2026-10-19.
 > **Base:** commits `53b4abd` (auditoría), `d2fb77a` (Architect canónico), `e926050`
 > (Capability Registry). **Alcance:** capa de planificación, no runtime.

@@ -259,6 +259,7 @@ async def execute_graph(
     total_cost = 0.0
     run_status = "succeeded"
     run_error: str | None = None
+    branch_failed_nodes: set[str] = set()
     wait_node_id: str | None = None
     wait_port: str = "out"
     loop_node_id: str | None = None
@@ -559,6 +560,11 @@ async def execute_graph(
 
         if exec_.status == "failed":
             policy = node.error_policy or "fail"
+            if policy == "branch":
+                # El fallo activa el puerto `error`; la rama de compensación
+                # decide el cierre. No se marca el run fallido todavía.
+                branch_failed_nodes.add(node_id)
+                return
             if policy in ("continue", "continue_on_error"):
                 return  # sigue el flujo (edges propagados como ejecutados)
             run_status = "failed"
@@ -620,7 +626,15 @@ async def execute_graph(
         exec_ = executions.get(node_id)
         if exec_ is None:
             return
-        if node.type == "condition":
+        if node.error_policy == "branch":
+            failed = exec_.status in ("failed", "denied")
+            taken = "error" if failed else "out"
+            for edge in outgoing.get(node_id, []):
+                if edge.from_port == taken:
+                    executed_edges.add(edge.id)
+                else:
+                    skipped_edges.add(edge.id)
+        elif node.type == "condition":
             result = bool((exec_.output or {}).get("result"))
             taken = "then" if result else "else"
             for edge in outgoing.get(node_id, []):
@@ -787,6 +801,13 @@ async def execute_graph(
             run_status = "failed"
             run_error = "ejecución excedió iteraciones (¿grafo con ciclos?)"
             break
+
+    if branch_failed_nodes and run_status == "succeeded":
+        run_status = "failed"
+        run_error = (
+            "falló una acción con compensación y la rama no declaró un cierre exitoso: "
+            + ", ".join(sorted(branch_failed_nodes)[:3])
+        )
 
     # Nodos del subgrafo for_each y no ejecutados → skipped de cierre.
     for node_id, _node in node_map.items():
