@@ -199,7 +199,7 @@ class Settings(BaseSettings):
     #: checkout, WAIT, inventario y error) no cabe en 8 pasos ni en 20k tokens.
     WORKFLOW_PLANNER_MAX_TOKENS: int = Field(default=120_000, ge=1_000, le=200_000)
     WORKFLOW_PLANNER_MAX_COST_USD: float = Field(default=0.50, ge=0.0, le=100.0)
-    WORKFLOW_PLANNER_MAX_DURATION_SECONDS: float = Field(default=240.0, ge=1.0, le=600.0)
+    WORKFLOW_PLANNER_MAX_DURATION_SECONDS: float = Field(default=600.0, ge=1.0, le=600.0)
     WORKFLOW_PLANNER_MAX_REPAIRS: int = Field(default=2, ge=0, le=3)
     WORKFLOW_PLANNER_MAX_CANDIDATES: int = Field(default=5, ge=1, le=10)
     WORKFLOW_PLANNER_MAX_STEPS: int = Field(default=20, ge=2, le=20)

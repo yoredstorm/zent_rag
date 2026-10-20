@@ -29,6 +29,7 @@ from src.platform.workflows.planner_session import (
     PlanningCancelled,
     WorkflowPlanningSession,
     WorkflowSpecification,
+    _parse_dsml_tool_call,
     _parse_json_object,
 )
 from src.platform.workflows.planner_tools import (
@@ -283,6 +284,20 @@ def test_parser_ignores_dsml_tool_markup_after_valid_json() -> None:
     assert parsed is not None
     assert parsed["action"] == "tool"
     assert parsed["arguments"]["query"] == "catalogo"
+
+
+def test_parser_accepts_dsml_only_tool_call() -> None:
+    content = (
+        '<|DSML| calls><|DSML| invoke name="capability.search">'
+        '<|DSML| parameter name="arguments" string="false">'
+        '{"query":"orden","limit":5}</|DSML| parameter>'
+        "</|DSML| invoke></|DSML| calls>"
+    )
+    parsed = _parse_dsml_tool_call(content)
+    assert parsed is not None
+    assert parsed["action"] == "tool"
+    assert parsed["tool"] == "capability.search"
+    assert parsed["arguments"] == {"query": "orden", "limit": 5}
 
 
 async def test_01_exact_capability_is_discovered_inspected_and_planned() -> None:

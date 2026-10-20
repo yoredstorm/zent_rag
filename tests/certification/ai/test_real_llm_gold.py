@@ -39,6 +39,7 @@ duplicados, reconexiones y reinicios del servidor.
 """.strip()
 
 
+@pytest.mark.timeout(900)
 @pytest.mark.asyncio
 async def test_real_llm_generates_gold_workflow_without_installing_template(
     async_client: AsyncClient,

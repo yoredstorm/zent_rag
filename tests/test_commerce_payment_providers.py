@@ -8,14 +8,19 @@ import hmac
 import json
 import time
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 
-from src.platform.commerce.payments.base import SignatureVerificationError
+from src.platform.commerce.payments.base import (
+    PaymentProviderError,
+    SignatureVerificationError,
+)
 from src.platform.commerce.payments.providers import (
     IzipayPaymentAdapter,
     StripePaymentAdapter,
 )
+from src.platform.commerce.payments.service import configure_provider, ensure_provider
 
 STRIPE_SECRET = "whsec_test_adapter"
 IZIPAY_SECRET = "izipay_hash_key"
@@ -180,3 +185,22 @@ def test_izipay_rejects_invalid_hash() -> None:
     body, headers = _izipay_event(secret="wrong")
     with pytest.raises(SignatureVerificationError):
         _izipay().verify_webhook(body, headers)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_is_forbidden_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "ENVIRONMENT", "production")
+    with pytest.raises(PaymentProviderError) as exc:
+        await configure_provider(
+            uuid4(),
+            provider="sandbox",
+            secrets={"webhook_secret": "x"},
+            mode="test",
+        )
+    assert exc.value.code == "SANDBOX_DISABLED"
+
+    with pytest.raises(PaymentProviderError) as exc:
+        await ensure_provider(uuid4())
+    assert exc.value.code == "SANDBOX_DISABLED"

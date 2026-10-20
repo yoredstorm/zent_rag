@@ -44,6 +44,20 @@ _CIRCUIT_FAILURE_THRESHOLD = 5
 _CIRCUIT_COOLDOWN_SECONDS = 60
 
 
+def _sandbox_allowed() -> bool:
+    from src.core.config import get_settings
+
+    return get_settings().ENVIRONMENT != "production"
+
+
+def _reject_sandbox_in_production(provider: str) -> None:
+    if str(provider).strip().lower() == "sandbox" and not _sandbox_allowed():
+        raise PaymentProviderError(
+            "SANDBOX_DISABLED",
+            "el proveedor sandbox está prohibido en producción; configura Stripe/IZIPAY",
+        )
+
+
 def credential_connector_id(organization_id: Any, provider: str) -> UUID:
     """UUID determinista del secreto en el SecretStore (nunca en el manifest)."""
     return uuid5(_CRED_NAMESPACE, f"{organization_id}:{provider}")
@@ -70,6 +84,7 @@ async def configure_provider(
     key = str(provider or "").strip().lower()
     if key not in C.PAYMENT_PROVIDERS:
         raise PaymentProviderError("PROVIDER_UNKNOWN", f"proveedor no soportado: {provider}")
+    _reject_sandbox_in_production(key)
     connector_id = credential_connector_id(organization_id, key)
     if secrets:
         from src.infrastructure.secrets.secret_store_resolver import get_secret_store
@@ -137,6 +152,7 @@ async def ensure_provider(
         credential_ref = credential_ref or (binding or {}).get("credential_ref")
     if not chosen:
         chosen = C.DEFAULT_PAYMENT_PROVIDER
+    _reject_sandbox_in_production(chosen)
     record = await store.get_payment_provider(organization_id, chosen)
     if record is None and chosen != C.DEFAULT_PAYMENT_PROVIDER:
         raise PaymentProviderError(
@@ -573,6 +589,7 @@ async def ingest_provider_webhook(
     key = str(provider or "").strip().lower()
     if key not in C.PAYMENT_PROVIDERS:
         raise PaymentProviderError("PROVIDER_UNKNOWN", f"proveedor desconocido: {provider}")
+    _reject_sandbox_in_production(key)
     # El adapter necesita las credenciales del tenant para verificar la firma.
     # Se prueban los tenants que tienen ese proveedor configurado; la firma
     # falla cerrada si ninguno valida.
