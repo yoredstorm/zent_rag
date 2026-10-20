@@ -32,6 +32,7 @@ con los comandos que la acompañan.
 | `delivery.md` | Branch protection, nightly, canary y rollback, migraciones |
 | `remaining-risks.md` | Riesgos P0–P3, aceptados y pendientes |
 | `final-report.md` | **Entregable**: SHA, scorecard y GO/NO-GO |
+| `workflow-ai-go-no-go.md` | Prompt 08: certificación del AI Workflow Studio, P0 de pagos, reinicio real y NO-GO de IA |
 
 ## Cómo se genera la evidencia
 
