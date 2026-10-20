@@ -1,7 +1,7 @@
 # Workflow AI Production Certification — Go/No-Go (Prompt 08)
 
 **Fecha:** 2026-10-20  
-**SHA de código auditado:** `32434c9`  
+**SHA de código auditado:** `a826d8c`  
 **Entorno de evidencia:** Windows local, PostgreSQL/Redis/Qdrant reales vía Docker Compose,
 LLM real autorizado del gateway configurado, tenant aislado de certificación.  
 **Alcance:** AI Workflow Studio, ejecución durable, pagos, seguridad, reinicio real,
@@ -76,24 +76,35 @@ completo con `json.JSONDecoder.raw_decode`.
 
 ### P0-7 — Presupuesto y contratos del planner demasiado estrechos
 
-El Gold real truncaba `UNDERSTAND` con `max_tokens=1200` (luego 2600) y fallaba por
-`missing_information` con más de 10 ítems. Se elevó el contrato a 30 faltantes, el budget a
-120k tokens / 20 pasos / 12 llamadas / 240s, y se añadió una instrucción de cierre de
-descubrimiento después de 5 herramientas. El Gold real sigue fallando por salida vacía del
-modelo; esto no se declara resuelto.
+El Gold real truncaba `UNDERSTAND` con `max_tokens=1200` (luego 2600), fallaba por
+`goal` de más de 800 caracteres y por `missing_information` con más de 10 ítems. Se añadió
+normalización de la especificación, contrato de 30 faltantes, budget de 120k tokens / 20 pasos
+/ 12 llamadas / 600s y cierre de descubrimiento tras 5 herramientas. También se aceptan
+acciones JSON con markup DSML posterior y llamadas DSML puras. El Gold real sigue fallando
+por salida vacía/inválida del modelo; esto no se declara resuelto.
+
+### P0-8 — Sandbox de pagos disponible en producción
+
+`ensure_provider` caía a `sandbox` cuando el tenant no tenía proveedor. En producción eso
+permitía checkouts y webhooks de prueba como si fueran dinero real. Ahora `configure_provider`,
+`ensure_provider` e `ingest_provider_webhook` rechazan `sandbox` con `SANDBOX_DISABLED` cuando
+`ENVIRONMENT=production`. Stripe/IZIPAY deben estar configurados y autorizados.
 
 ## 3. Evidencia de pruebas
 
 | Comando / suite | Resultado |
 |---|---|
-| `pytest tests/test_commerce_payment_providers.py` | **18 passed** |
+| `pytest tests/test_commerce_payment_providers.py` | **19 passed** |
 | `pytest tests/test_invoices.py::test_payment_webhook_marks_paid_and_dedupes` | 1 passed |
 | `pytest tests/certification/workflows/test_signals.py::test_incomplete_provider_event_is_recovered...` | 1 passed |
 | `pytest tests/certification/workflows/test_tenant_isolation.py::test_signed_webhook_from_other_tenant...` | 1 passed |
 | `pytest tests/certification/workflows/test_payment_failures.py -k 'wrong_amount or unknown_payment'` | 2 passed |
 | `pytest tests/certification/restart` con `RAG_CERT_REAL_RESTART=1` | **1 passed** |
 | `pytest tests/test_workflow_planner_agentic.py tests/test_workflow_architect_eval.py tests/test_workflow_architect.py` | **38 passed** |
-| `pytest tests/test_workflow_planner_agentic.py::test_parser_ignores_dsml...` | 1 passed |
+| `pytest tests/test_workflow_planner_agentic.py::test_parser_ignores_dsml...` | 2 parser tests passed |
+| Gate combinado pagos + planner + architect patch | **59 passed** |
+| `npm run typecheck` + `ArchitectAskZent.test.tsx` | typecheck OK; 9 passed |
+| `ruff src tests` | OK |
 | Suite completa `tests/certification/workflows` | 19 escenarios pasaron; luego timeout ambiental en `test_payment_failures` y se ejecutaron escenarios críticos por separado. No se cuenta como suite verde completa. |
 | `pytest tests/certification/ai/test_real_llm_gold.py` con LLM real | **FAILED**: `planner.invalid_llm_output`; no hay workflow generado |
 
