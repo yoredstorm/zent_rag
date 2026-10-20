@@ -22,6 +22,7 @@
 | 11 | [`11-agentic-planner.md`](11-agentic-planner.md) | Prompt 03: planner agéntico, tool calling read-only, presupuesto, MATCH/VERIFY/REPAIR y matriz de 23 pruebas |
 | 12 | [`12-semantic-compiler-v2.md`](12-semantic-compiler-v2.md) | Prompt 04: SemanticPlan v2, contratos tipados, WAIT/LOOP/estado, compensación, tipos y publicación |
 | 13 | [`13-business-resources.md`](13-business-resources.md) | Prompt 05: resolución de recursos, autoridad, Mapping Studio, bindings, agentes y configuración guiada |
+| 14 | [`14-workflow-simulation.md`](14-workflow-simulation.md) | Prompt 06: validación estática, simulación ejecutable aislada, escenarios, reparación y readiness |
 
 ## Alcance
 

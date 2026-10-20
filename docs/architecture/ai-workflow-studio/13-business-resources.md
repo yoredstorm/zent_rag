@@ -1,5 +1,9 @@
 # Prompt 05 — Business Resource Resolution y Capability Binding
 
+> **Actualización Prompt 06:** la simulación ejecutable consume estos recursos y
+> bindings para certificar el flujo antes de publicar. Ver
+> [`14-workflow-simulation.md`](14-workflow-simulation.md).
+
 > **Fase:** resolución de recursos reales del tenant. **Fecha:** 2026-10-19.
 > **Base:** `7af5020` (Semantic Compiler v2).
 > **Alcance:** descubrimiento read-only, autoridad, campos, bindings,

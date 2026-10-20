@@ -2932,11 +2932,56 @@ async def _exec_wait_event(rctx: NodeContext) -> NodeOutcome:
     pago, timer, aprobación). Nunca hay un proceso esperando."""
     if rctx.simulate:
         cfg = rctx.node.config or {}
-        event_type = str(cfg.get("event_type") or cfg.get("preset") or "signal")
+        preset = str(cfg.get("preset") or "signal")
+        event_type = str(cfg.get("event_type") or "")
+        if not event_type:
+            from src.platform.workflows.instances import WAIT_PRESET_EVENTS
+
+            event_type = str(
+                cfg.get("signal_name") or WAIT_PRESET_EVENTS.get(preset, "signal")
+            )
+            if preset == "webhook" and event_type == "webhook":
+                event_type = f"webhook.{rctx.node_id}"
+        raw_correlation = cfg.get("correlation")
+        if isinstance(raw_correlation, dict) and raw_correlation:
+            resolved = _resolve_ref(raw_correlation, rctx)
+            correlation = resolved if isinstance(resolved, dict) else raw_correlation
+        else:
+            correlation = {}
+        timeout_seconds = cfg.get("timeout_seconds")
+        if timeout_seconds is None and cfg.get("timeout"):
+            timeout_seconds = _parse_iso_duration(cfg.get("timeout"))
+        try:
+            timeout_seconds = int(timeout_seconds) if timeout_seconds else None
+        except (TypeError, ValueError):
+            timeout_seconds = None
+        on_timeout = str(
+            cfg.get("on_timeout") or ("continue" if preset == "timer" else "")
+        ).strip() or None
+        spec = {
+            "preset": preset,
+            "event_type": event_type,
+            "correlation": correlation,
+            "timeout_seconds": timeout_seconds,
+            "on_timeout": on_timeout,
+            "port": "out",
+            "simulated": True,
+        }
+        expected_schema = cfg.get("expected_payload_schema")
+        if isinstance(expected_schema, dict) and expected_schema:
+            spec["expected_payload_schema"] = expected_schema
         return NodeOutcome(
             simulated=True,
             planned={"kind": "wait", "event_type": event_type},
-            output={"waiting": True, "event_type": event_type},
+            output={
+                "waiting": True,
+                "event_type": event_type,
+                "correlation": correlation,
+                "timeout_seconds": timeout_seconds,
+                "simulated": True,
+            },
+            control="wait_event",
+            waiting=spec,
         )
     if rctx.instance is None:
         return NodeOutcome(
@@ -3013,10 +3058,33 @@ async def _exec_loop(rctx: NodeContext) -> NodeOutcome:
     except (TypeError, ValueError):
         max_iterations = 20
     if rctx.simulate:
+        loops = rctx.execution.simulation_loops
+        key = re.sub(r"[^a-zA-Z0-9_]", "_", target)[:60]
+        iteration = int((loops or {}).get(key, 0)) + 1
+        if iteration > max_iterations:
+            return NodeOutcome(
+                error=f"límite de repeticiones alcanzado ({max_iterations}) en {target}"
+            )
+        if loops is not None:
+            loops[key] = iteration
+        spec = {
+            "loop": True,
+            "target": target,
+            "iteration": iteration,
+            "max_iterations": max_iterations,
+            "simulated": True,
+        }
         return NodeOutcome(
             simulated=True,
-            planned={"kind": "loop", "target": target, "max_iterations": max_iterations},
-            output={"looping": True, "target": target, "simulated": True},
+            planned={
+                "kind": "loop",
+                "target": target,
+                "max_iterations": max_iterations,
+                "iteration": iteration,
+            },
+            output={"looping": True, "target": target, "iteration": iteration},
+            control="loop_back",
+            looping=spec,
         )
     if rctx.instance is None:
         return NodeOutcome(error="loop requiere una instancia durable (inicia el flujo como proceso)")
@@ -3060,10 +3128,52 @@ async def _exec_state_op(rctx: NodeContext, op: str) -> NodeOutcome:
     """Business state durable de la instancia (el LLM propone; el nodo aplica)."""
     if rctx.simulate:
         cfg = rctx.node.config or {}
+        path = str(cfg.get("path") or "").strip()
+        state = rctx.execution.simulation_state
+        if state is None:
+            state = {}
+            rctx.execution.simulation_state = state
+        value = _resolve_ref(cfg.get("value"), rctx) if "value" in cfg else None
+        parts = [part for part in path.split(".") if part]
+        current: Any = state
+        for part in parts[:-1]:
+            if not isinstance(current, dict):
+                break
+            current = current.setdefault(part, {})
+        key = parts[-1] if parts else ""
+        try:
+            if op == "get":
+                value = current.get(key) if isinstance(current, dict) and key else current
+            elif op == "set":
+                if isinstance(current, dict) and key:
+                    current[key] = value
+            elif op == "merge":
+                if isinstance(current, dict) and key:
+                    existing = current.get(key)
+                    if not isinstance(existing, dict):
+                        existing = {}
+                    if isinstance(value, dict):
+                        existing.update(value)
+                    current[key] = existing
+            elif op == "append":
+                if isinstance(current, dict) and key:
+                    existing = current.get(key)
+                    if not isinstance(existing, list):
+                        existing = []
+                    existing.append(value)
+                    current[key] = existing
+            elif op == "remove":
+                if isinstance(current, dict) and key:
+                    current.pop(key, None)
+        except Exception as exc:  # noqa: BLE001
+            return NodeOutcome(error=f"simulación state.{op} inválida: {str(exc)[:160]}")
         return NodeOutcome(
             simulated=True,
-            planned={"kind": "state", "op": op, "path": str(cfg.get("path") or "")},
-            output={"state": {"op": op, "path": str(cfg.get("path") or "")}},
+            planned={"kind": "state", "op": op, "path": path},
+            output={
+                "state": {op: True, "path": path, "value": value},
+                "simulated": True,
+            },
         )
     if rctx.instance is None:
         return NodeOutcome(error=f"state.{op} requiere una instancia durable")
@@ -3173,6 +3283,20 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
     expires_minutes = int(cfg.get("expires_minutes", 1440) or 1440)
     requested_by = rctx.execution.actor_id
     snapshot = _approval_context_snapshot(rctx)
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "approval", "action": action, "summary": summary},
+            output={
+                "approval_id": f"sim-approval-{rctx.node_id}",
+                "simulated": True,
+                "status": "pending",
+                "action": action,
+                "summary": summary,
+                "context": snapshot,
+            },
+            control="wait_approval",
+        )
     approval_id = await _create_approval(
         rctx.execution,
         rctx.node_id,
@@ -3182,12 +3306,6 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
         expires_minutes,
         context=snapshot,
     )
-    if rctx.simulate:
-        return NodeOutcome(
-            simulated=True,
-            planned={"kind": "approval", "action": action, "summary": summary},
-            output={"approval_id": str(approval_id), "simulated": True, "status": "pending"},
-        )
     return NodeOutcome(
         output={
             "approval_id": str(approval_id),

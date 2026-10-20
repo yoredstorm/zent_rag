@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -333,6 +333,83 @@ async def tenant_workflow_architect_resources_resolve(
         limit=body.limit,
     )
     return report.model_dump(mode="json")
+
+
+@router.post(
+    "/architect/simulate",
+    summary="Workflow Architect: validación estática y simulación ejecutable de escenarios",
+)
+async def tenant_workflow_architect_simulate(
+    body: ArchitectSimulateIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect_discovery import discover_capabilities
+    from src.platform.workflows.workflow_simulation import (
+        SimulationScenario,
+        simulate_semantic_plan,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    capabilities = await discover_capabilities(
+        ctx.organization_id,
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+    )
+    try:
+        scenarios = [
+            SimulationScenario.model_validate(item) for item in body.scenarios
+        ]
+        report = await simulate_semantic_plan(
+            body.plan,
+            capabilities,
+            scenarios,
+            organization_id=ctx.organization_id,
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, f"simulación inválida: {exc}") from exc
+    return report.model_dump(mode="json")
+
+
+@router.post(
+    "/architect/simulate/repair",
+    summary="Workflow Architect: reparación semántica acotada tras simulación",
+)
+async def tenant_workflow_architect_simulate_repair(
+    body: ArchitectSimulateRepairIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect_discovery import discover_capabilities
+    from src.platform.workflows.workflow_simulation import (
+        SimulationScenario,
+        simulate_with_repair,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    capabilities = await discover_capabilities(
+        ctx.organization_id,
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+    )
+    try:
+        scenarios = [
+            SimulationScenario.model_validate(item) for item in body.scenarios
+        ]
+        result = await simulate_with_repair(
+            body.plan,
+            capabilities,
+            scenarios,
+            organization_id=ctx.organization_id,
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+            model=body.model,
+            max_repairs=body.max_repairs,
+            session_id=body.session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, f"reparación inválida: {exc}") from exc
+    return result
 
 
 @router.post(
@@ -1375,6 +1452,17 @@ class ArchitectResourceResolveIn(BaseModel):
     kinds: list[str] = Field(default_factory=list, max_length=10)
     capability_refs: list[str] = Field(default_factory=list, max_length=10)
     limit: int = Field(default=10, ge=1, le=20)
+
+
+class ArchitectSimulateIn(BaseModel):
+    plan: dict
+    scenarios: list[Any] = Field(min_length=1, max_length=20)
+
+
+class ArchitectSimulateRepairIn(ArchitectSimulateIn):
+    model: str | None = Field(default=None, max_length=120)
+    session_id: str | None = Field(default=None, max_length=80)
+    max_repairs: int = Field(default=2, ge=0, le=3)
 
 
 class ArchitectPatchIn(BaseModel):

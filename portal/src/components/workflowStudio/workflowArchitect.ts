@@ -213,6 +213,7 @@ export type ArchitectProposal = {
   requirements: ArchitectRequirement[];
   readiness: ArchitectReadiness | null;
   simulation: { step_id: string; goal: string; expectation: string; effects: string }[] | null;
+  simulation_preview?: { step_id: string; goal: string; expectation: string; effects: string }[] | null;
   capability_snapshot?: CapabilitySnapshotSummary | null;
   specification?: Record<string, unknown> | null;
   matches?: ArchitectMatch[];

@@ -44,6 +44,10 @@ class ExecutionContext:
     #: Segmento de una WorkflowInstance (workflows durables). None en runs
     #: standalone: el comportamiento existente no cambia.
     instance_id: UUID | None = None
+    #: Estado durable en memoria exclusivo de simulación (no persiste).
+    simulation_state: dict[str, Any] | None = None
+    #: Contadores de LOOP exclusivos de simulación.
+    simulation_loops: dict[str, int] | None = None
 
 
 @dataclass
@@ -210,6 +214,8 @@ async def execute_graph(
     entry_override: list[str] | None = None,
     preloaded: dict[str, tuple[str, dict, str | None, int]] | None = None,
     pinned: dict[str, dict] | None = None,
+    pinned_failures: dict[str, str] | None = None,
+    persist_execution: bool = True,
     context: WorkflowContext | None = None,
     resolve_preload_edges: bool = False,
     preload_ports: dict[str, str] | None = None,
@@ -340,6 +346,8 @@ async def execute_graph(
 
     async def persist(node_id: str, node_type: str, config: dict, exec_: NodeExecution, virtual: bool) -> None:
         nonlocal step_index, planned_effects, total_cost
+        if not persist_execution:
+            return
         if virtual:
             return
         total_cost += exec_.cost_ms
@@ -405,6 +413,26 @@ async def execute_graph(
             return
 
         # Datos fijados para pruebas: solo en simulate (nunca en producción).
+        pinned_error = (pinned_failures or {}).get(node_id) if ctx.simulate else None
+        if pinned_error:
+            exec_ = NodeExecution(
+                status="failed",
+                output={},
+                error=str(pinned_error)[:300],
+                simulated=True,
+                planned={"pinned_failure": True},
+            )
+            await persist(node_id, node.type, node.config, exec_, False)
+            node_outcome(node_id, "failed", exec_.output, exec_.error, exec_)
+            policy = node.error_policy or "fail"
+            if policy == "branch":
+                branch_failed_nodes.add(node_id)
+                return
+            if policy in ("continue", "continue_on_error"):
+                return
+            run_status = "failed"
+            run_error = exec_.error
+            return
         pinned_output = (pinned or {}).get(node_id) if ctx.simulate else None
         if pinned_output is not None:
             exec_ = NodeExecution(
@@ -524,7 +552,7 @@ async def execute_graph(
                 allowed_sections=getattr(node_def, "context_writes", None),
             )
             exec_.contribution = report.to_dict()
-            if report.rejected:
+            if report.rejected and persist_execution:
                 try:
                     from src.platform.workflows.context_store import append_run_event
 
@@ -537,7 +565,7 @@ async def execute_graph(
                     )
                 except Exception as exc:  # noqa: BLE001 — el timeline no rompe el run
                     logger.warning("run event persist failed", node_id=node_id, error=str(exc)[:200])
-            if exec_.contribution.get("applied"):
+            if exec_.contribution.get("applied") and persist_execution:
                 try:
                     from src.platform.workflows.context_store import save_contribution
 
@@ -903,4 +931,3 @@ async def _run_node_once(ctx: ExecutionContext, node_def, rctx, started: datetim
         control=outcome.control,
         cost_ms=float(outcome.cost_ms or 0.0),
     )
-
