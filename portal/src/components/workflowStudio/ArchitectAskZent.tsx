@@ -334,6 +334,62 @@ export function ArchitectAskZent({
             </div>
           )}
 
+          {proposal.resource_resolution && (
+            <div
+              className="rounded-md border border-border-soft bg-surface px-3 py-2.5"
+              data-testid="ask-resources"
+            >
+              <h3 className="text-h3 mb-2">Recursos reales</h3>
+              {proposal.resource_resolution.selected ? (
+                <p className="text-[12px] text-text">
+                  Fuente resuelta:{" "}
+                  <span className="mono text-[11px] text-accent">
+                    {proposal.resource_resolution.selected.display_name ||
+                      proposal.resource_resolution.selected.resource_ref}
+                  </span>
+                </p>
+              ) : (
+                <p className="text-[12px] text-muted">
+                  No hay una fuente única resuelta todavía.
+                </p>
+              )}
+              {proposal.resource_resolution.unresolved &&
+                proposal.resource_resolution.unresolved.length > 0 && (
+                  <ul className="mt-1 list-disc space-y-1 pl-4 text-[12px] text-muted">
+                    {proposal.resource_resolution.unresolved.slice(0, 4).map((item, index) => (
+                      <li key={`${item.code}-${index}`}>
+                        {item.message || item.code}
+                        {item.fields?.length ? ` (${item.fields.join(", ")})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              {proposal.resource_resolution.bindings &&
+                proposal.resource_resolution.bindings.length > 0 && (
+                  <p className="mt-1 text-[11px] text-faint">
+                    Bindings:{" "}
+                    {proposal.resource_resolution.bindings
+                      .slice(0, 4)
+                      .map(
+                        (item) =>
+                          `${item.capability_ref} (${item.provider_kind || "sin proveedor"})`,
+                      )
+                      .join(" · ")}
+                  </p>
+                )}
+              {proposal.resource_resolution.guided_configuration &&
+                proposal.resource_resolution.guided_configuration.length > 0 && (
+                  <p className="mt-1 text-[11px] text-warn">
+                    Configuración pendiente:{" "}
+                    {proposal.resource_resolution.guided_configuration
+                      .slice(0, 3)
+                      .map((item) => item.title || item.code)
+                      .join(" · ")}
+                  </p>
+                )}
+            </div>
+          )}
+
           {proposal.requires_durable_instance && (
             <p
               className="rounded-md border border-border-soft bg-surface px-3 py-2 text-[12px] text-muted"

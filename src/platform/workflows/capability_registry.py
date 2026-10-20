@@ -47,6 +47,9 @@ AvailabilityStatus = Literal[
     "NEEDS_CONFIGURATION",
     "DISABLED",
     "PERMISSION_DENIED",
+    "PENDING_APPROVAL",
+    "DEGRADED",
+    "INCOMPATIBLE",
     "DEPRECATED",
     "UNAVAILABLE",
     "UNKNOWN",
@@ -1661,6 +1664,11 @@ def _agent_descriptors(
                 "tools": tools,
                 "knowledge_base_ids": kb_ids,
                 "status": str(row.status),
+                "budget": config.get("budget")
+                or config.get("monthly_budget")
+                or config.get("limits"),
+                "version": config.get("version") or 1,
+                "input_schema": input_schema,
             },
         }
         descriptor_payload["contract_hash"] = _contract_hash(descriptor_payload)

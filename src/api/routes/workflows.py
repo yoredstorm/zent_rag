@@ -308,6 +308,34 @@ async def tenant_workflow_architect_agentic_plan(
 
 
 @router.post(
+    "/architect/resources/resolve",
+    summary="Workflow Architect: resuelve recursos, autoridad, campos y bindings del tenant",
+)
+async def tenant_workflow_architect_resources_resolve(
+    body: ArchitectResourceResolveIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.business_resources import BusinessResourceResolver
+
+    ctx = require_permission(request, "workflows:read")
+    resolver = BusinessResourceResolver(
+        ctx.organization_id,
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+    )
+    report = await resolver.resolve_need(
+        body.need.strip(),
+        required_fields=body.required_fields,
+        concepts=body.concepts,
+        domain=body.domain,
+        kinds=body.kinds,
+        capability_refs=body.capability_refs,
+        limit=body.limit,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post(
     "/architect/patch",
     summary="Workflow Architect: cambio conversacional sobre el plan",
 )
@@ -1337,6 +1365,16 @@ class ArchitectAgenticPlanIn(BaseModel):
     clarification_history: list[Annotated[str, Field(max_length=2000)]] = Field(
         default_factory=list, max_length=8
     )
+
+
+class ArchitectResourceResolveIn(BaseModel):
+    need: str = Field(min_length=3, max_length=500)
+    required_fields: list[str | dict] = Field(default_factory=list, max_length=30)
+    concepts: list[str] = Field(default_factory=list, max_length=10)
+    domain: str = Field(default="general", max_length=80)
+    kinds: list[str] = Field(default_factory=list, max_length=10)
+    capability_refs: list[str] = Field(default_factory=list, max_length=10)
+    limit: int = Field(default=10, ge=1, le=20)
 
 
 class ArchitectPatchIn(BaseModel):

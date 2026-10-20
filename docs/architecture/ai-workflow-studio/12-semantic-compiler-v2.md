@@ -1,5 +1,9 @@
 # Prompt 04 — Semantic Compiler Enterprise
 
+> **Actualización Prompt 05:** la resolución de fuentes, autoridad y bindings se
+> implementa en [`13-business-resources.md`](13-business-resources.md); el plan
+> sigue usando referencias lógicas y no IDs físicos.
+
 > **Fase:** evolución del lenguaje semántico y su compilador. **Fecha:** 2026-10-19.
 > **Base:** `047c345` (Agentic Planner). **Alcance:** `SemanticPlan`,
 > `architect_compiler`, `architect_validator`, IR v2 y runtime existente.

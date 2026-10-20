@@ -21,6 +21,7 @@
 | 10 | [`10-capability-registry.md`](10-capability-registry.md) | Prompt 02: inventario, contrato `zent.capability/v1`, búsqueda, disponibilidad, composición, snapshots y métricas |
 | 11 | [`11-agentic-planner.md`](11-agentic-planner.md) | Prompt 03: planner agéntico, tool calling read-only, presupuesto, MATCH/VERIFY/REPAIR y matriz de 23 pruebas |
 | 12 | [`12-semantic-compiler-v2.md`](12-semantic-compiler-v2.md) | Prompt 04: SemanticPlan v2, contratos tipados, WAIT/LOOP/estado, compensación, tipos y publicación |
+| 13 | [`13-business-resources.md`](13-business-resources.md) | Prompt 05: resolución de recursos, autoridad, Mapping Studio, bindings, agentes y configuración guiada |
 
 ## Alcance
 

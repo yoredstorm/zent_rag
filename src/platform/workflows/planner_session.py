@@ -259,6 +259,10 @@ def _planner_system_prompt() -> str:
         " unresolved/requirements.\n"
         "- Si no puedes resolver una capacidad, responde clarify o un plan con"
         " requisitos explícitos; nunca simules que está resuelta.\n"
+        "- Para catálogo, stock, precios, tablas o campos usa resource.resolve y"
+        " resource.inspect_schema; no uses knowledge_query para datos transaccionales.\n"
+        "- Si resource.resolve devuelve ambigüedad o autoridad faltante, no elijas"
+        " una fuente: usa clarify o deja el requisito explícito.\n"
         f"Herramientas disponibles:\n{tools}\n"
         "Límite de candidatos por búsqueda: respeta el limit indicado.\n"
     )
@@ -342,6 +346,7 @@ class WorkflowPlanningSession:
         self._attempted_plans: set[str] = set()
         self._search_seen: dict[str, list[str]] = {}
         self._inspected_refs: set[str] = set()
+        self._resource_resolution: dict[str, Any] | None = None
 
     # -- budget / control -------------------------------------------------
     def _check_control(self) -> None:
@@ -552,6 +557,10 @@ class WorkflowPlanningSession:
                                 )
                             if ref:
                                 self._inspected_refs.add(ref)
+                        elif tool_name == "resource.resolve":
+                            data = observation.get("observation", {}).get("data", {})
+                            if isinstance(data, dict):
+                                self._resource_resolution = data
                     except PlannerToolError as exc:
                         observation = {
                             "untrusted_data": True,
@@ -800,6 +809,7 @@ class WorkflowPlanningSession:
             "readiness": readiness,
             "simulation": simulation_plan(plan) if graph is not None else None,
             "capability_snapshot": self.snapshot.summary() if self.snapshot else None,
+            "resource_resolution": self._resource_resolution,
             "requires_durable_instance": verification.requires_durable_instance,
             "publishable": state == STATE_DRAFT_READY,
             "trace": trace,
@@ -1056,6 +1066,7 @@ class WorkflowPlanningSession:
             "readiness": None,
             "simulation": None,
             "capability_snapshot": self.snapshot.summary() if self.snapshot else None,
+            "resource_resolution": self._resource_resolution,
             "requires_durable_instance": False,
             "publishable": False,
             "trace": {
@@ -1124,6 +1135,7 @@ class WorkflowPlanningSession:
             "readiness": None,
             "simulation": None,
             "capability_snapshot": self.snapshot.summary() if self.snapshot else None,
+            "resource_resolution": self._resource_resolution,
             "requires_durable_instance": False,
             "publishable": False,
             "trace": {

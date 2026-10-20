@@ -17,6 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.infrastructure.observability.logging_config import get_logger
+from src.platform.workflows.business_resources import BusinessResourceResolver
 from src.platform.workflows.capability_registry import (
     CapabilitySnapshot,
     canonical_hash,
@@ -75,6 +76,23 @@ class ToolResourceArgs(BaseModel):
 class ToolResourceRefArgs(BaseModel):
     model_config = MODEL_CONFIG
     resource_ref: str = Field(min_length=1, max_length=200)
+
+
+class ToolResourceResolveArgs(BaseModel):
+    model_config = MODEL_CONFIG
+    need: str = Field(min_length=3, max_length=400)
+    required_fields: list[str | dict[str, Any]] = Field(default_factory=list, max_length=30)
+    concepts: list[str] = Field(default_factory=list, max_length=10)
+    domain: str = Field(default="general", max_length=80)
+    kinds: list[str] = Field(default_factory=list, max_length=10)
+    capability_refs: list[str] = Field(default_factory=list, max_length=10)
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class ToolAgentSearchArgs(BaseModel):
+    model_config = MODEL_CONFIG
+    query: str = Field(min_length=1, max_length=300)
+    limit: int = Field(default=5, ge=1, le=10)
 
 
 class ToolEventArgs(BaseModel):
@@ -241,6 +259,58 @@ async def _resource_inspect(
     return result
 
 
+async def _resource_resolve(
+    ctx: PlannerToolContext, args: ToolResourceResolveArgs
+) -> dict[str, Any]:
+    required_fields = [
+        {"name": item} if isinstance(item, str) else dict(item)
+        for item in args.required_fields
+    ]
+    resolver = BusinessResourceResolver(
+        ctx.organization_id,
+        workspace_id=ctx.workspace_id,
+        permissions=ctx.permissions,
+        snapshot=ctx.snapshot,
+    )
+    report = await resolver.resolve_need(
+        args.need,
+        required_fields=required_fields,
+        concepts=args.concepts,
+        domain=args.domain,
+        kinds=args.kinds,
+        capability_refs=args.capability_refs,
+        limit=args.limit,
+    )
+    return report.model_dump(mode="json")
+
+
+async def _agent_search(
+    ctx: PlannerToolContext, args: ToolAgentSearchArgs
+) -> dict[str, Any]:
+    scored, total = search_descriptors(
+        ctx.snapshot.capabilities,
+        args.query,
+        limit=args.limit,
+        source="agent",
+    )
+    return {
+        "query": args.query,
+        "total_matches": total,
+        "results": [
+            {
+                **descriptor.compact(),
+                "agent_id": descriptor.metadata.get("agent_id"),
+                "purpose": descriptor.metadata.get("purpose"),
+                "tools": descriptor.metadata.get("tools") or [],
+                "knowledge_base_ids": descriptor.metadata.get("knowledge_base_ids") or [],
+                "budget": descriptor.metadata.get("budget"),
+                "score": round(score, 2),
+            }
+            for descriptor, score in scored
+        ],
+    }
+
+
 async def _event(ctx: PlannerToolContext, args: ToolEventArgs) -> dict[str, Any]:
     result = inspect_event(ctx.snapshot, args.event_type)
     if result is None:
@@ -309,6 +379,18 @@ TOOL_SPECS: tuple[PlannerToolSpec, ...] = (
         _resource_inspect,
     ),
     PlannerToolSpec(
+        "resource.resolve",
+        "Resuelve recursos reales, autoridad, campos, compatibilidad y bindings del tenant.",
+        ToolResourceResolveArgs,
+        _resource_resolve,
+    ),
+    PlannerToolSpec(
+        "agent.search",
+        "Busca agentes desplegados por propósito, herramientas y conocimiento.",
+        ToolAgentSearchArgs,
+        _agent_search,
+    ),
+    PlannerToolSpec(
         "event.inspect",
         "Inspecciona un evento y sus campos.",
         ToolEventArgs,
@@ -361,7 +443,7 @@ def _brief_args(args: BaseModel) -> dict[str, Any]:
     data = args.model_dump(exclude_none=True)
     out: dict[str, Any] = {}
     for key, value in data.items():
-        if key in {"query", "message", "text", "prompt"}:
+        if key in {"query", "need", "message", "text", "prompt"}:
             out[key] = f"<{len(str(value))} chars>"
         elif isinstance(value, (int, float, bool)):
             out[key] = value

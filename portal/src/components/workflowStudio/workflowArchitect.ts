@@ -101,6 +101,32 @@ export type ArchitectUsage = {
   cancelled: boolean;
 };
 
+export type ArchitectResourceResolution = {
+  schema_id?: string;
+  need?: string;
+  resolved?: boolean;
+  selected?: {
+    resource_ref?: string;
+    display_name?: string;
+    kind?: string;
+    resource_class?: string;
+  } | null;
+  unresolved?: { code?: string; message?: string; fields?: string[] }[];
+  bindings?: {
+    capability_ref?: string;
+    availability?: string;
+    binding_found?: boolean;
+    provider_kind?: string | null;
+  }[];
+  guided_configuration?: {
+    code?: string;
+    title?: string;
+    reason?: string;
+    module?: string;
+  }[];
+  trace?: Record<string, unknown>;
+};
+
 export type ArchitectPhase = { name: string; duration_ms: number };
 
 export type ArchitectFallback = {
@@ -192,6 +218,7 @@ export type ArchitectProposal = {
   matches?: ArchitectMatch[];
   trace?: ArchitectTrace;
   usage?: ArchitectUsage;
+  resource_resolution?: ArchitectResourceResolution | null;
   requires_durable_instance?: boolean;
   notes: string[];
   patch?: {
