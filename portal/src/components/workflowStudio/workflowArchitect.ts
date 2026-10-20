@@ -159,7 +159,14 @@ export type ArchitectReadiness = {
   warnings: number;
   errors: number;
   total: number;
-  checks?: { key: string; label: string; status: string; message: string }[];
+  checks?: {
+    key: string;
+    label: string;
+    status: string;
+    message: string;
+    hint?: string | null;
+    node_id?: string | null;
+  }[];
 };
 
 export type ArchitectCost = {
@@ -221,11 +228,80 @@ export type ArchitectProposal = {
   usage?: ArchitectUsage;
   resource_resolution?: ArchitectResourceResolution | null;
   requires_durable_instance?: boolean;
+  simulation_certification?: {
+    certification_id?: string;
+    state?: string;
+    partial?: boolean;
+    publishable?: boolean;
+    scenarios?: {
+      scenario_id: string;
+      result: string;
+      failed_nodes?: unknown[];
+      unverified_nodes?: string[];
+    }[];
+    repair_suggestions?: { code?: string; message?: string; step_id?: string | null }[];
+  } | null;
   notes: string[];
   patch?: {
     summary?: string;
     operations?: { kind: string; reason?: string }[];
   };
+  diff?: {
+    added?: { step_id: string; type?: string; goal?: string }[];
+    removed?: { step_id: string; type?: string; goal?: string }[];
+    modified?: { step_id: string; fields?: Record<string, unknown> }[];
+    summary?: string;
+  } | null;
+};
+
+export type ArchitectDesignMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  user_id?: string | null;
+  revision: number;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+};
+
+export type ArchitectDesignRevision = {
+  revision: number;
+  kind: string;
+  instruction?: string | null;
+  summary?: string | null;
+  diff?: Record<string, unknown>;
+  plan_hash?: string | null;
+  validation?: Record<string, unknown>;
+  simulation?: Record<string, unknown>;
+  user_id?: string | null;
+  created_at?: string | null;
+};
+
+export type ArchitectDesignSession = {
+  id: string;
+  organization_id: string;
+  workspace_id?: string | null;
+  user_id?: string | null;
+  title: string;
+  original_prompt: string;
+  status: string;
+  revision: number;
+  plan?: Record<string, unknown> | null;
+  graph?: ArchitectGraph | null;
+  plan_hash?: string | null;
+  capability_snapshot_hash?: string | null;
+  workflow_id?: string | null;
+  state: Record<string, unknown>;
+  messages?: ArchitectDesignMessage[];
+  revisions?: ArchitectDesignRevision[];
+  created_at?: string | null;
+  updated_at?: string | null;
+  closed_at?: string | null;
+};
+
+export type ArchitectDesignSessionResponse = {
+  design_session: ArchitectDesignSession;
+  proposal: ArchitectProposal;
 };
 
 export type ArchitectConfig = {
@@ -298,6 +374,218 @@ export async function patchArchitectPlan(
       plan_hash: input.planHash,
     }),
   });
+}
+
+/** Abre una sesión de diseño persistente y ejecuta el primer plan. */
+export async function createArchitectDesignSession(
+  session: Session,
+  input: { prompt: string; title?: string; agentId?: string; model?: string },
+): Promise<ArchitectDesignSessionResponse> {
+  return api<ArchitectDesignSessionResponse>("/api/v1/workflows/architect/sessions", {
+    method: "POST",
+    ...auth(session),
+    body: JSON.stringify({
+      prompt: input.prompt,
+      title: input.title,
+      agent_id: input.agentId || undefined,
+      model: input.model,
+    }),
+  });
+}
+
+/** Envía una corrección o aclaración a la sesión y aplica un patch semántico. */
+export async function sendArchitectDesignMessage(
+  session: Session,
+  input: {
+    designSessionId: string;
+    message: string;
+    expectedRevision: number;
+    agentId?: string;
+    model?: string;
+  },
+): Promise<ArchitectDesignSessionResponse> {
+  return api<ArchitectDesignSessionResponse>(
+    `/api/v1/workflows/architect/sessions/${input.designSessionId}/messages`,
+    {
+      method: "POST",
+      ...auth(session),
+      body: JSON.stringify({
+        message: input.message,
+        expected_revision: input.expectedRevision,
+        agent_id: input.agentId || undefined,
+        model: input.model,
+      }),
+    },
+  );
+}
+
+export async function getArchitectDesignSession(
+  session: Session,
+  designSessionId: string,
+): Promise<ArchitectDesignSession> {
+  return api<ArchitectDesignSession>(
+    `/api/v1/workflows/architect/sessions/${designSessionId}`,
+    auth(session),
+  );
+}
+
+export async function listArchitectDesignSessions(
+  session: Session,
+): Promise<{ sessions: ArchitectDesignSession[] }> {
+  return api<{ sessions: ArchitectDesignSession[] }>(
+    "/api/v1/workflows/architect/sessions",
+    auth(session),
+  );
+}
+
+export type ArchitectPatchPreview = {
+  confirmation_required: boolean;
+  revision: number;
+  proposal: ArchitectProposal;
+  patch: Record<string, unknown>;
+  diff: ArchitectProposal["diff"];
+};
+
+export async function previewArchitectDesignPatch(
+  session: Session,
+  input: { designSessionId: string; message: string; expectedRevision: number },
+): Promise<ArchitectPatchPreview> {
+  return api<ArchitectPatchPreview>(
+    `/api/v1/workflows/architect/sessions/${input.designSessionId}/patch-preview`,
+    {
+      method: "POST",
+      ...auth(session),
+      body: JSON.stringify({
+        message: input.message,
+        expected_revision: input.expectedRevision,
+      }),
+    },
+  );
+}
+
+export async function applyArchitectDesignPatch(
+  session: Session,
+  input: {
+    designSessionId: string;
+    message: string;
+    expectedRevision: number;
+    patch: Record<string, unknown>;
+    source?: "llm" | "heuristics";
+  },
+): Promise<ArchitectDesignSessionResponse> {
+  return api<ArchitectDesignSessionResponse>(
+    `/api/v1/workflows/architect/sessions/${input.designSessionId}/patch-apply`,
+    {
+      method: "POST",
+      ...auth(session),
+      body: JSON.stringify({
+        message: input.message,
+        expected_revision: input.expectedRevision,
+        patch: input.patch,
+        source: input.source,
+      }),
+    },
+  );
+}
+
+export async function simulateArchitectDesignSession(
+  session: Session,
+  input: {
+    designSessionId: string;
+    expectedRevision: number;
+    scenarios: Record<string, unknown>[];
+  },
+): Promise<{
+  design_session: ArchitectDesignSession;
+  certification: NonNullable<ArchitectProposal["simulation_certification"]>;
+}> {
+  return api<{
+    design_session: ArchitectDesignSession;
+    certification: NonNullable<ArchitectProposal["simulation_certification"]>;
+  }>(`/api/v1/workflows/architect/sessions/${input.designSessionId}/simulate`, {
+    method: "POST",
+    ...auth(session),
+    body: JSON.stringify({
+      scenarios: input.scenarios,
+      expected_revision: input.expectedRevision,
+    }),
+  });
+}
+
+export async function closeArchitectDesignSession(
+  session: Session,
+  input: { designSessionId: string; expectedRevision: number },
+): Promise<ArchitectDesignSession> {
+  return api<ArchitectDesignSession>(
+    `/api/v1/workflows/architect/sessions/${input.designSessionId}/close`,
+    {
+      method: "POST",
+      ...auth(session),
+      body: JSON.stringify({ expected_revision: input.expectedRevision }),
+    },
+  );
+}
+
+export async function reopenArchitectDesignSession(
+  session: Session,
+  input: { designSessionId: string; expectedRevision: number },
+): Promise<ArchitectDesignSession> {
+  return api<ArchitectDesignSession>(
+    `/api/v1/workflows/architect/sessions/${input.designSessionId}/reopen`,
+    {
+      method: "POST",
+      ...auth(session),
+      body: JSON.stringify({ expected_revision: input.expectedRevision }),
+    },
+  );
+}
+
+export async function restoreArchitectDesignRevision(
+  session: Session,
+  input: {
+    designSessionId: string;
+    revision: number;
+    expectedRevision: number;
+    instruction?: string;
+  },
+): Promise<ArchitectDesignSession> {
+  return api<ArchitectDesignSession>(
+    `/api/v1/workflows/architect/sessions/${input.designSessionId}/restore`,
+    {
+      method: "POST",
+      ...auth(session),
+      body: JSON.stringify({
+        revision: input.revision,
+        expected_revision: input.expectedRevision,
+        instruction: input.instruction,
+      }),
+    },
+  );
+}
+
+export async function saveArchitectDesignDraft(
+  session: Session,
+  input: {
+    designSessionId: string;
+    expectedRevision: number;
+    name: string;
+    description: string;
+    configLevel: "simple" | "guided" | "advanced";
+  },
+): Promise<{ design_session: ArchitectDesignSession; workflow: DraftSaveResult }> {
+  return api<{ design_session: ArchitectDesignSession; workflow: DraftSaveResult }>(
+    `/api/v1/workflows/architect/sessions/${input.designSessionId}/draft`,
+    {
+      method: "POST",
+      ...auth(session),
+      body: JSON.stringify({
+        expected_revision: input.expectedRevision,
+        name: input.name,
+        description: input.description,
+        config_level: input.configLevel,
+      }),
+    },
+  );
 }
 
 export async function saveArchitectDraft(

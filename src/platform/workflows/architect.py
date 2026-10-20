@@ -495,11 +495,20 @@ async def patch_workflow_plan(
     session_id: str | None = None,
     plan_hash_value: str | None = None,
     actor_id: UUID | None = None,
+    proposed_patch: dict[str, Any] | None = None,
+    proposed_source: str = "llm",
+    preview_only: bool = False,
 ) -> dict[str, Any]:
-    """Patch conversacional: aplica sobre el plan, re-valida y recompila."""
+    """Patch conversacional: aplica sobre el plan, re-valida y recompila.
+
+    `proposed_patch` permite aplicar un diff ya previsualizado y confirmado sin
+    volver a llamar al modelo ni confiar en el grafo del cliente.
+    """
     from src.platform.workflows.architect_patch import (
+        SemanticPlanPatch,
         apply_semantic_patch,
         propose_plan_patch,
+        semantic_plan_diff,
     )
 
     session = normalize_session_id(session_id)
@@ -524,40 +533,49 @@ async def patch_workflow_plan(
     patch = None
     fallback: dict[str, Any] | None = None
     phase_started = time.monotonic()
-    try:
-        resolved = _resolve_provider(provider)
-        patch = await propose_plan_patch(
-            semantic_plan, instruction, provider=resolved, model=model
-        )
-    except Exception as exc:  # noqa: BLE001 — fallback determinístico
-        logger.info(
-            "architect patch: fallback",
-            error_type=type(exc).__name__,
-            session_id=session,
-        )
-        patch = heuristic_plan_patch(instruction, semantic_plan)
-        source = "heuristics"
-        if patch is None:
-            not_found_reason = (
-                "No pude interpretar el cambio; prueba «cambia el umbral a 50000», "
-                "«quita la aprobación» o «solo lunes a viernes»."
+    if proposed_patch is not None:
+        try:
+            patch = SemanticPlanPatch.model_validate(proposed_patch)
+            notes.append("Cambio confirmado desde la previsualización.")
+            source = "heuristics" if proposed_source == "heuristics" else "llm"
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"patch confirmado inválido: {str(exc)[:200]}") from exc
+    else:
+        try:
+            resolved = _resolve_provider(provider)
+            patch = await propose_plan_patch(
+                semantic_plan, instruction, provider=resolved, model=model
             )
-        else:
-            fallback = {
-                "used": True,
-                "reason_code": _fallback_reason(exc),
-                "limitations": [
-                    "El cambio se interpretó con reglas determinísticas; revisa el resultado.",
-                ],
-                "requires_review": True,
-                "publishable": False,
-                "preserved_requirement": instruction[:600],
-            }
+        except Exception as exc:  # noqa: BLE001 — fallback determinístico
+            logger.info(
+                "architect patch: fallback",
+                error_type=type(exc).__name__,
+                session_id=session,
+            )
+            patch = heuristic_plan_patch(instruction, semantic_plan)
+            source = "heuristics"
+            if patch is None:
+                not_found_reason = (
+                    "No pude interpretar el cambio; prueba «cambia el umbral a 50000», "
+                    "«quita la aprobación» o «solo lunes a viernes»."
+                )
+            else:
+                fallback = {
+                    "used": True,
+                    "reason_code": _fallback_reason(exc),
+                    "limitations": [
+                        "El cambio se interpretó con reglas determinísticas; revisa el resultado.",
+                    ],
+                    "requires_review": True,
+                    "publishable": False,
+                    "preserved_requirement": instruction[:600],
+                }
     if not_found_reason is not None:
         raise ValueError(not_found_reason)
     phases.append({"name": "patching", "duration_ms": elapsed_ms(phase_started)})
 
     updated, notes = apply_semantic_patch(semantic_plan, patch)
+    semantic_diff = semantic_plan_diff(semantic_plan, updated)
     phase_started = time.monotonic()
     issues = validate_semantic_plan(updated, capabilities, permissions=permissions)
     phases.append({"name": "validation", "duration_ms": elapsed_ms(phase_started)})
@@ -580,12 +598,13 @@ async def patch_workflow_plan(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("architect patch cost failed", error=str(exc)[:150])
 
-    try:
-        from src.platform.workflows.architect_metrics import record_revision
+    if not preview_only:
+        try:
+            from src.platform.workflows.architect_metrics import record_revision
 
-        record_revision()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("architect revision metric failed", error=str(exc)[:150])
+            record_revision()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("architect revision metric failed", error=str(exc)[:150])
 
     clarifications = build_clarifications(updated, issues)
     requirements = build_requirements(issues)
@@ -630,6 +649,8 @@ async def patch_workflow_plan(
         "source": source,
         "plan": updated.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
+        "diff": semantic_diff,
+        "patch_confirmed": proposed_patch is not None,
         "issues": [issue.model_dump(mode="json") for issue in issues],
         "preview": semantic_preview(updated),
         "graph": graph,

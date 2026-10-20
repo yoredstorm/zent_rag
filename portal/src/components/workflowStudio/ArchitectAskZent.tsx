@@ -8,9 +8,12 @@
 import {
   ArrowRight,
   ArrowsClockwise,
+  ChatCircleDots,
   Checks,
+  ClockCounterClockwise,
   Code,
   FloppyDisk,
+  FolderOpen,
   ListChecks,
   MagicWand,
   PencilSimple,
@@ -25,9 +28,19 @@ import { Badge, Button, ErrorInline, Textarea } from "../ui";
 import {
   PREVIEW_LABEL,
   STATE_LABEL,
-  patchArchitectPlan,
-  planWithArchitect,
-  saveArchitectDraft,
+  applyArchitectDesignPatch,
+  closeArchitectDesignSession,
+  createArchitectDesignSession,
+  getArchitectDesignSession,
+  listArchitectDesignSessions,
+  previewArchitectDesignPatch,
+  reopenArchitectDesignSession,
+  restoreArchitectDesignRevision,
+  saveArchitectDesignDraft,
+  sendArchitectDesignMessage,
+  simulateArchitectDesignSession,
+  type ArchitectDesignSession,
+  type ArchitectPatchPreview,
   type ArchitectProposal,
   type DesignState,
 } from "./workflowArchitect";
@@ -58,6 +71,14 @@ const STATE_TONE: Record<DesignState, "neutral" | "accent" | "ok" | "warn" | "da
   BLOCKED: "danger",
 };
 
+type StudioMode = "simple" | "guided" | "advanced";
+
+const STUDIO_MODES: { id: StudioMode; label: string; hint: string }[] = [
+  { id: "simple", label: "Simple", hint: "Conversación y resultado" },
+  { id: "guided", label: "Guiado", hint: "Pasos, fuentes y permisos" },
+  { id: "advanced", label: "Avanzado", hint: "Contratos, plan y Canvas" },
+];
+
 function draftName(proposal: ArchitectProposal): string {
   const intentGoal = proposal.intent?.goal;
   const planGoal = proposal.plan?.goal;
@@ -81,75 +102,308 @@ export function ArchitectAskZent({
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState(initialPrompt);
   const [proposal, setProposal] = useState<ArchitectProposal | null>(null);
-  const [busy, setBusy] = useState<"" | "plan" | "patch" | "save">("");
+  const [designSession, setDesignSession] = useState<ArchitectDesignSession | null>(null);
+  const [mode, setMode] = useState<StudioMode>("simple");
+  const [busy, setBusy] = useState<
+    "" | "plan" | "patch" | "save" | "restore" | "simulate"
+  >("");
   const [error, setError] = useState("");
-  const [sessionId, setSessionId] = useState<string | undefined>();
   const [clarify, setClarify] = useState("");
   const [patchOpen, setPatchOpen] = useState(false);
   const [patchText, setPatchText] = useState("");
+  const [patchPreview, setPatchPreview] = useState<ArchitectPatchPreview | null>(null);
+  const [pendingPatchMessage, setPendingPatchMessage] = useState("");
   const [showPlan, setShowPlan] = useState(false);
   const [showFlow, setShowFlow] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [sessionsBusy, setSessionsBusy] = useState(false);
+  const [savedSessions, setSavedSessions] = useState<ArchitectDesignSession[]>([]);
+  const [simulationOpen, setSimulationOpen] = useState(false);
+  const [scenarioText, setScenarioText] = useState(
+    '[{"scenario_id":"camino_feliz","initial_inputs":{}}]',
+  );
 
-  async function interpret(extra?: string) {
-    if (!session || prompt.trim().length < 8) return;
-    setBusy("plan");
+  function applySessionResult(
+    next: ArchitectDesignSession,
+    nextProposal?: ArchitectProposal | null,
+  ) {
+    setDesignSession(next);
+    if (nextProposal) {
+      setProposal(nextProposal);
+      return;
+    }
+    const stored = next.state?.proposal;
+    if (stored && typeof stored === "object") {
+      setProposal(stored as ArchitectProposal);
+    }
+  }
+
+  async function sendConversation(text: string, kind: "plan" | "patch" = "patch") {
+    if (!session || text.trim().length < 2) return;
+    if (designSession?.status === "closed") {
+      setError("La sesión está cerrada; reábrela para seguir editando.");
+      return;
+    }
+    setBusy(kind);
     setError("");
-    setProposal(null);
-    setPatchOpen(false);
-    setShowFlow(false);
     try {
-      const base = prompt.trim();
-      const text = extra?.trim()
-        ? `${base}\n\nDatos confirmados por el usuario: ${extra.trim()}`
-        : base;
-      const result = await planWithArchitect(session, text, sessionId, agentId);
-      setProposal(result);
-      setSessionId(result.session_id);
+      if (!designSession) {
+        const created = await createArchitectDesignSession(session, {
+          prompt: text.trim(),
+          title: prompt.trim().slice(0, 120),
+          agentId,
+        });
+        applySessionResult(created.design_session, created.proposal);
+      } else {
+        const changed = await sendArchitectDesignMessage(session, {
+          designSessionId: designSession.id,
+          message: text.trim(),
+          expectedRevision: designSession.revision,
+          agentId,
+        });
+        applySessionResult(changed.design_session, changed.proposal);
+        setPatchText("");
+        setClarify("");
+        setPatchOpen(false);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No pude interpretar el pedido.");
+      if (e instanceof ApiError && e.status === 409 && designSession) {
+        try {
+          const fresh = await getArchitectDesignSession(session, designSession.id);
+          applySessionResult(fresh, (fresh.state?.proposal as ArchitectProposal) ?? null);
+          setError(
+            "Esta sesión cambió en otra pestaña. Cargué la revisión más reciente; revisa antes de volver a editar.",
+          );
+        } catch {
+          setError("Esta sesión cambió y no pude recargarla. Vuelve a abrirla.");
+        }
+      } else if (e instanceof ApiError && e.status === 422) {
+        setError("El cambio no pasó la validación; no se guardó ninguna modificación.");
+      } else {
+        setError(e instanceof Error ? e.message : "No pude continuar el diseño.");
+      }
     } finally {
       setBusy("");
     }
+  }
+
+  async function interpret(extra?: string) {
+    if (!session || (!designSession && prompt.trim().length < 8)) return;
+    const base = prompt.trim();
+    const text = extra?.trim()
+      ? designSession
+        ? `Datos confirmados por el usuario: ${extra.trim()}`
+        : `${base}\n\nDatos confirmados por el usuario: ${extra.trim()}`
+      : base;
+    setPatchOpen(false);
+    setShowFlow(false);
+    await sendConversation(text, "plan");
   }
 
   async function applyPatch() {
-    if (!session || !proposal || !proposal.plan || !proposal.plan_hash || patchText.trim().length < 3) return;
+    if (!session || !designSession || patchText.trim().length < 3) return;
+    if (designSession.status === "closed") {
+      setError("La sesión está cerrada; reábrela para corregir el diseño.");
+      return;
+    }
     setBusy("patch");
     setError("");
     try {
-      const next = await patchArchitectPlan(session, {
-        plan: proposal.plan,
-        instruction: patchText.trim(),
-        sessionId: proposal.session_id,
-        planHash: proposal.plan_hash,
+      const preview = await previewArchitectDesignPatch(session, {
+        designSessionId: designSession.id,
+        message: patchText.trim(),
+        expectedRevision: designSession.revision,
       });
-      setProposal(next);
-      setPatchText("");
-      setPatchOpen(false);
+      setPatchPreview(preview);
+      setPendingPatchMessage(patchText.trim());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No pude aplicar el cambio.");
+      if (e instanceof ApiError && e.status === 422) {
+        setError("El cambio no pasó la validación; no se guardó ninguna modificación.");
+      } else if (e instanceof ApiError && e.status === 409) {
+        setError("La sesión cambió en otra pestaña. Recarga antes de aplicar el cambio.");
+      } else {
+        setError(e instanceof Error ? e.message : "No pude preparar el cambio.");
+      }
     } finally {
       setBusy("");
     }
   }
 
-  async function save(level: "simple" | "advanced") {
-    if (!session || !proposal || !proposal.graph) return;
+  async function confirmPatch() {
+    if (!session || !designSession || !patchPreview) return;
+    setBusy("patch");
+    setError("");
+    try {
+      const changed = await applyArchitectDesignPatch(session, {
+        designSessionId: designSession.id,
+        message: pendingPatchMessage,
+        expectedRevision: designSession.revision,
+        patch: patchPreview.patch,
+        source: patchPreview.proposal.source,
+      });
+      applySessionResult(changed.design_session, changed.proposal);
+      setPatchPreview(null);
+      setPendingPatchMessage("");
+      setPatchText("");
+      setPatchOpen(false);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        setError("La sesión cambió en otra pestaña. Recarga antes de aplicar el cambio.");
+      } else if (e instanceof ApiError && e.status === 422) {
+        setError("El cambio confirmado no pasó la validación; no se guardó.");
+      } else {
+        setError(e instanceof Error ? e.message : "No pude aplicar el cambio.");
+      }
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restoreRevision(revision: number) {
+    if (!session || !designSession) return;
+    setBusy("restore");
+    setError("");
+    try {
+      const restored = await restoreArchitectDesignRevision(session, {
+        designSessionId: designSession.id,
+        revision,
+        expectedRevision: designSession.revision,
+        instruction: `Restaurar revisión ${revision}`,
+      });
+      applySessionResult(restored);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No pude restaurar la revisión.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function runSimulation() {
+    if (!session || !designSession || !proposal?.plan) return;
+    if (designSession.status === "closed") {
+      setError("La sesión está cerrada; reábrela antes de simular.");
+      return;
+    }
+    let scenarios: Record<string, unknown>[];
+    try {
+      const parsed = JSON.parse(scenarioText);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("Debes enviar al menos un escenario.");
+      }
+      scenarios = parsed as Record<string, unknown>[];
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Los escenarios no son un JSON válido.");
+      return;
+    }
+    setBusy("simulate");
+    setError("");
+    try {
+      const result = await simulateArchitectDesignSession(session, {
+        designSessionId: designSession.id,
+        expectedRevision: designSession.revision,
+        scenarios,
+      });
+      applySessionResult(result.design_session);
+      setSimulationOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No pude simular el diseño.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function toggleSavedSessions() {
+    if (sessionsOpen) {
+      setSessionsOpen(false);
+      return;
+    }
+    if (!session) return;
+    setSessionsBusy(true);
+    setError("");
+    try {
+      const result = await listArchitectDesignSessions(session);
+      setSavedSessions(result.sessions ?? []);
+      setSessionsOpen(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No pude cargar tus diseños guardados.");
+    } finally {
+      setSessionsBusy(false);
+    }
+  }
+
+  async function openSavedSession(designSessionId: string) {
+    if (!session) return;
+    setBusy("plan");
+    setError("");
+    try {
+      const loaded = await getArchitectDesignSession(session, designSessionId);
+      applySessionResult(loaded);
+      setPrompt(loaded.original_prompt);
+      setSessionsOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No pude abrir el diseño.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function closeCurrentSession() {
+    if (!session || !designSession) return;
     setBusy("save");
     setError("");
     try {
-      const out = await saveArchitectDraft(session, {
-        proposal,
+      await closeArchitectDesignSession(session, {
+        designSessionId: designSession.id,
+        expectedRevision: designSession.revision,
+      });
+      applySessionResult(await getArchitectDesignSession(session, designSession.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No pude cerrar la sesión.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function reopenCurrentSession() {
+    if (!session || !designSession) return;
+    setBusy("save");
+    setError("");
+    try {
+      await reopenArchitectDesignSession(session, {
+        designSessionId: designSession.id,
+        expectedRevision: designSession.revision,
+      });
+      applySessionResult(await getArchitectDesignSession(session, designSession.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No pude reabrir la sesión.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function save(level: "simple" | "guided" | "advanced") {
+    if (!session || !proposal || !proposal.graph || !designSession) return;
+    setBusy("save");
+    setError("");
+    try {
+      const out = await saveArchitectDesignDraft(session, {
+        designSessionId: designSession.id,
+        expectedRevision: designSession.revision,
         name: draftName(proposal),
-        description: prompt.trim(),
+        description: designSession.original_prompt || prompt.trim(),
         configLevel: level,
       });
-      navigate(`/workflows/${out.workflow_id}${level === "advanced" ? "?panel=advanced" : ""}`, {
-        state: { hookSecret: out.hook_secret },
-      });
+      setDesignSession(out.design_session);
+      navigate(
+        `/workflows/${out.workflow.workflow_id}${level === "advanced" ? "?panel=advanced" : ""}`,
+        { state: { hookSecret: out.workflow.hook_secret } },
+      );
     } catch (e) {
       if (e instanceof ApiError && e.status === 422) {
         setError("El diseño tiene dependencias sin resolver; revisa los bloqueos antes de guardar.");
+      } else if (e instanceof ApiError && e.status === 409) {
+        setError("La sesión cambió en otra pestaña. Recarga antes de guardar el borrador.");
       } else {
         setError(e instanceof Error ? e.message : "No pude guardar el borrador.");
       }
@@ -159,7 +413,11 @@ export function ArchitectAskZent({
   }
 
   const state = proposal?.state;
-  const canSave = Boolean(proposal?.graph) && state !== "BLOCKED";
+  const sessionClosed = designSession?.status === "closed";
+  const canSave =
+    Boolean(proposal?.graph) && state !== "BLOCKED" && Boolean(designSession) && !sessionClosed;
+  const conversation = designSession?.messages ?? [];
+  const revisions = designSession?.revisions ?? [];
   const hasClarifications = Boolean(proposal?.clarifications.length);
   const hasRequirements = Boolean(proposal?.requirements.length);
   const sourceLabel =
@@ -186,44 +444,166 @@ export function ArchitectAskZent({
         )}
       </div>
 
-      <Textarea
-        className="min-h-28 resize-y"
-        rows={4}
-        placeholder="Cuando tengamos una venta mayor a S/ 20,000, avisa al gerente comercial y haz que el agente revise si el cliente es nuevo."
-        value={prompt}
-        data-testid="ask-prompt"
-        onChange={(e) => setPrompt(e.target.value)}
-        aria-label="Qué quieres automatizar"
-      />
-
-      <div className="flex flex-wrap gap-1.5">
-        {EXAMPLES.map((example) => (
+      <div
+        className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border-soft bg-surface p-1"
+        role="tablist"
+        aria-label="Modo del estudio de diseño"
+        data-testid="ask-modes"
+      >
+        {STUDIO_MODES.map((item) => (
           <button
-            key={example}
+            key={item.id}
             type="button"
-            className="chip max-w-full cursor-pointer truncate transition-colors duration-150 hover:bg-raised hover:text-text"
-            onClick={() => setPrompt(example)}
+            role="tab"
+            aria-selected={mode === item.id}
+            data-testid={`ask-mode-${item.id}`}
+            className={`rounded-md px-2.5 py-1.5 text-left transition-colors duration-150 ${
+              mode === item.id
+                ? "bg-accent-soft text-text"
+                : "text-muted hover:bg-raised hover:text-text"
+            }`}
+            onClick={() => {
+              setMode(item.id);
+              if (item.id === "advanced") setShowPlan(true);
+            }}
           >
-            {example}
+            <span className="block text-[12px] font-medium">{item.label}</span>
+            <span className="block text-[10px] text-faint">{item.hint}</span>
           </button>
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Button
-          variant="primary"
-          leadingIcon={Sparkle}
-          loading={busy === "plan"}
-          disabled={prompt.trim().length < 8 || busy === "plan"}
-          data-testid="ask-submit"
-          onClick={() => void interpret()}
+          variant="ghost"
+          size="sm"
+          leadingIcon={FolderOpen}
+          loading={sessionsBusy}
+          disabled={sessionsBusy}
+          data-testid="ask-saved-sessions"
+          aria-expanded={sessionsOpen}
+          onClick={() => void toggleSavedSessions()}
         >
-          {busy === "plan" ? "Entendiendo…" : "Continuar"}
+          Mis diseños
         </Button>
-        <span className="text-[12px] text-faint">
-          Todavía no se crea nada: primero revisas lo que Zent entendió.
-        </span>
+        {designSession && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!!busy}
+            data-testid="ask-close-session"
+            onClick={() =>
+              void (designSession.status === "closed"
+                ? reopenCurrentSession()
+                : closeCurrentSession())
+            }
+          >
+            {designSession.status === "closed" ? "Reabrir sesión" : "Cerrar sesión"}
+          </Button>
+        )}
       </div>
+
+      {sessionsOpen && (
+        <div
+          className="rounded-md border border-border-soft bg-surface px-3 py-2"
+          data-testid="ask-session-list"
+        >
+          {savedSessions.length === 0 ? (
+            <p className="text-[12px] text-muted">Todavía no tienes diseños guardados.</p>
+          ) : (
+            <ul className="space-y-1">
+              {savedSessions.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className="w-full rounded px-2 py-1.5 text-left text-[12px] text-text hover:bg-raised"
+                    data-testid={`ask-open-session-${item.id}`}
+                    onClick={() => void openSavedSession(item.id)}
+                  >
+                    <span className="font-medium">{item.title}</span>
+                    <span className="ml-2 text-[10px] text-faint">
+                      {item.status} · r{item.revision} ·{" "}
+                      {item.updated_at ? new Date(item.updated_at).toLocaleString() : ""}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {designSession && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border-soft bg-surface px-3 py-2 text-[11px] text-muted"
+          data-testid="ask-session-bar"
+        >
+          <span>
+            <span className="text-text">{designSession.title}</span> · revisión{" "}
+            <span className="tabular-nums text-text">{designSession.revision}</span> ·{" "}
+            {designSession.status}
+          </span>
+          <span className="text-faint">
+            {sessionClosed
+              ? "Sesión cerrada · reábrela para editar"
+              : designSession.workflow_id
+                ? "Borrador guardado"
+                : "Solo diseño, sin ejecutar"}
+          </span>
+        </div>
+      )}
+
+      {!designSession && (
+        <>
+          <Textarea
+            className="min-h-28 resize-y"
+            rows={4}
+            placeholder="Cuando tengamos una venta mayor a S/ 20,000, avisa al gerente comercial y haz que el agente revise si el cliente es nuevo."
+            value={prompt}
+            data-testid="ask-prompt"
+            onChange={(e) => setPrompt(e.target.value)}
+            aria-label="Qué quieres automatizar"
+          />
+
+          <div className="flex flex-wrap gap-1.5">
+            {EXAMPLES.map((example) => (
+              <button
+                key={example}
+                type="button"
+                className="chip max-w-full cursor-pointer truncate transition-colors duration-150 hover:bg-raised hover:text-text"
+                onClick={() => setPrompt(example)}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="primary"
+              leadingIcon={Sparkle}
+              loading={busy === "plan"}
+              disabled={prompt.trim().length < 8 || busy === "plan"}
+              data-testid="ask-submit"
+              onClick={() => void interpret()}
+            >
+              {busy === "plan" ? "Entendiendo…" : "Continuar"}
+            </Button>
+            <span className="text-[12px] text-faint">
+              Todavía no se crea nada: primero revisas lo que Zent entendió.
+            </span>
+          </div>
+        </>
+      )}
+
+      {designSession && (
+        <p
+          className="rounded-md border border-border-soft bg-surface px-3 py-2 text-[12px] leading-relaxed text-muted"
+          data-testid="ask-original"
+        >
+          Pedido original: <span className="text-text">{designSession.original_prompt}</span>
+        </p>
+      )}
 
       {busy === "plan" && (
         <div
@@ -237,6 +617,40 @@ export function ArchitectAskZent({
       )}
 
       <ErrorInline message={error} className="mb-0" />
+
+      {conversation.length > 0 && (
+        <div
+          className="rounded-lg border border-border-soft bg-surface p-3"
+          data-testid="ask-conversation"
+        >
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="flex items-center gap-1.5 text-[13px] font-medium text-text">
+              <ChatCircleDots size={14} className="text-accent" aria-hidden /> Conversación de
+              diseño
+            </h3>
+            <span className="text-[10px] text-faint">
+              Se guarda con el tenant y sobrevive al cerrar la pestaña
+            </span>
+          </div>
+          <ol className="max-h-56 space-y-2 overflow-auto pr-1">
+            {conversation.map((item) => (
+              <li
+                key={item.id}
+                className={`rounded-md px-2.5 py-2 text-[12px] leading-relaxed ${
+                  item.role === "user"
+                    ? "ml-5 bg-accent-soft/60 text-text"
+                    : "mr-5 border border-border-soft bg-control text-muted"
+                }`}
+              >
+                <p className="mb-0.5 text-[10px] uppercase tracking-wide text-faint">
+                  {item.role === "user" ? "Tú" : "Zent"} · revisión {item.revision}
+                </p>
+                <p className="whitespace-pre-wrap">{item.content}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       {proposal && (
         <div className="space-y-3.5 rounded-lg border border-accent-line bg-accent-soft/40 p-4">
@@ -254,7 +668,8 @@ export function ArchitectAskZent({
           </div>
 
           <p className="text-[11px] text-faint" data-testid="ask-session">
-            {proposal.planner.version} · sesión {proposal.session_id}
+            {proposal.planner.version} · sesión de diseño {designSession?.id ?? proposal.session_id}
+            {designSession ? ` · revisión ${designSession.revision}` : ""}
           </p>
 
           {proposal.phases.length > 0 && (
@@ -455,7 +870,7 @@ export function ArchitectAskZent({
                 size="sm"
                 leadingIcon={ArrowsClockwise}
                 loading={busy === "plan"}
-                disabled={clarify.trim().length < 2 || busy === "plan"}
+                disabled={clarify.trim().length < 2 || busy === "plan" || sessionClosed}
                 data-testid="ask-clarify-submit"
                 onClick={() => void interpret(clarify)}
               >
@@ -537,10 +952,158 @@ export function ArchitectAskZent({
             </div>
           </dl>
 
+          {proposal.readiness?.checks && proposal.readiness.checks.length > 0 && (
+            <details
+              className="rounded-md border border-border-soft bg-surface px-3 py-2"
+              open={mode !== "simple"}
+              data-testid="ask-readiness-checks"
+            >
+              <summary className="cursor-pointer text-[12px] font-medium text-text">
+                Readiness por paso ({proposal.readiness.passed}/{proposal.readiness.total})
+              </summary>
+              <ul className="mt-2 space-y-1.5">
+                {proposal.readiness.checks.map((check) => (
+                  <li
+                    key={`${check.key}-${check.node_id ?? ""}`}
+                    className="flex flex-wrap items-start justify-between gap-2 border-b border-border-soft pb-1.5 last:border-0 last:pb-0"
+                  >
+                    <span className="text-[12px] text-text">
+                      {check.label}
+                      {check.node_id ? (
+                        <span className="mono ml-1 text-[10px] text-faint">
+                          nodo {check.node_id}
+                        </span>
+                      ) : null}
+                      <span className="block text-[11px] text-muted">{check.message}</span>
+                      {check.hint ? (
+                        <span className="block text-[11px] text-faint">{check.hint}</span>
+                      ) : null}
+                    </span>
+                    <Badge
+                      tone={
+                        check.status === "ok"
+                          ? "ok"
+                          : check.status === "error"
+                            ? "danger"
+                            : "warn"
+                      }
+                    >
+                      {check.status === "ok"
+                        ? "validado"
+                        : check.status === "error"
+                          ? "bloqueado"
+                          : "revisar"}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+              {proposal.requirements.length > 0 && (
+                <Link
+                  to="/integrations"
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
+                >
+                  Resolver integración o binding <ArrowRight size={11} aria-hidden />
+                </Link>
+              )}
+            </details>
+          )}
+
+          {proposal.simulation_certification && (
+            <div
+              className="rounded-md border border-border-soft bg-surface px-3 py-2.5"
+              data-testid="ask-certification"
+            >
+              <h3 className="text-h3 mb-1">Certificación de simulación</h3>
+              <p className="text-[12px] text-muted">
+                Estado:{" "}
+                <span className="mono text-[11px] text-text">
+                  {proposal.simulation_certification.state || "DRAFT"}
+                </span>
+                {proposal.simulation_certification.partial ? " · parcial" : ""}
+                {proposal.simulation_certification.publishable ? " · publicable" : " · no publicable"}
+              </p>
+              {proposal.simulation_certification.scenarios &&
+                proposal.simulation_certification.scenarios.length > 0 && (
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-muted">
+                    {proposal.simulation_certification.scenarios.map((scenario) => (
+                      <li key={scenario.scenario_id}>
+                        {scenario.scenario_id}:{" "}
+                        <span
+                          className={
+                            scenario.result === "PASSED" ? "text-ok" : "text-danger"
+                          }
+                        >
+                          {scenario.result}
+                        </span>
+                        {scenario.unverified_nodes?.length
+                          ? ` · sin verificar: ${scenario.unverified_nodes.join(", ")}`
+                          : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              {proposal.simulation_certification.repair_suggestions &&
+                proposal.simulation_certification.repair_suggestions.length > 0 && (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-warn">
+                    {proposal.simulation_certification.repair_suggestions
+                      .slice(0, 3)
+                      .map((item, index) => (
+                        <li key={`${item.code || "repair"}-${index}`}>
+                          {item.step_id ? `${item.step_id}: ` : ""}
+                          {item.message || item.code}
+                        </li>
+                      ))}
+                  </ul>
+                )}
+            </div>
+          )}
+
           {proposal.patch?.summary && (
             <p className="rounded-md border border-border-soft bg-surface px-3 py-2 text-[12px] text-muted" data-testid="ask-patch-note">
               Cambio aplicado: {proposal.patch.summary}. Los pasos no afectados se conservaron.
+              {proposal.diff ? (
+                <span className="mt-0.5 block text-[11px] text-faint">
+                  Diff semántico: {proposal.diff.added?.length ?? 0} agregado(s),{" "}
+                  {proposal.diff.removed?.length ?? 0} quitado(s),{" "}
+                  {proposal.diff.modified?.length ?? 0} modificado(s).
+                </span>
+              ) : null}
             </p>
+          )}
+
+          {revisions.length > 0 && (
+            <details
+              className="rounded-md border border-border-soft bg-surface px-3 py-2"
+              data-testid="ask-revisions"
+            >
+              <summary className="flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-text">
+                <ClockCounterClockwise size={13} aria-hidden /> Historial de revisiones (
+                {revisions.length})
+              </summary>
+              <ul className="mt-2 space-y-1.5">
+                {revisions.slice(0, 8).map((item) => (
+                  <li
+                    key={item.revision}
+                    className="flex flex-wrap items-center justify-between gap-2 border-b border-border-soft pb-1.5 last:border-0 last:pb-0"
+                  >
+                    <span className="text-[11px] text-muted">
+                      <span className="mono text-[10px] text-accent">r{item.revision}</span>{" "}
+                      {item.summary || item.instruction || item.kind}
+                      {item.created_at ? ` · ${new Date(item.created_at).toLocaleString()}` : ""}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!!busy || !designSession || item.revision === designSession.revision}
+                      data-testid={`ask-restore-${item.revision}`}
+                      onClick={() => void restoreRevision(item.revision)}
+                    >
+                      {item.revision === designSession?.revision ? "Actual" : "Restaurar"}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
 
           <div className="flex flex-wrap gap-2">
@@ -583,7 +1146,7 @@ export function ArchitectAskZent({
             <Button
               variant="secondary"
               leadingIcon={PencilSimple}
-              disabled={!!busy}
+              disabled={!!busy || sessionClosed}
               data-testid="ask-change"
               aria-expanded={patchOpen}
               onClick={() => {
@@ -591,7 +1154,7 @@ export function ArchitectAskZent({
                 setShowPlan(false);
               }}
             >
-              Cambiar algo
+              Corregir por conversación
             </Button>
             <Button
               variant="ghost"
@@ -602,6 +1165,19 @@ export function ArchitectAskZent({
             >
               Ver plan
             </Button>
+            {designSession && proposal.plan && !sessionClosed && (
+              <Button
+                variant="ghost"
+                leadingIcon={Checks}
+                loading={busy === "simulate"}
+                disabled={!!busy}
+                data-testid="ask-simulate"
+                aria-expanded={simulationOpen}
+                onClick={() => setSimulationOpen((value) => !value)}
+              >
+                Probar simulación
+              </Button>
+            )}
             <Button
               variant="ghost"
               leadingIcon={ArrowRight}
@@ -624,6 +1200,37 @@ export function ArchitectAskZent({
             )}
           </div>
 
+          {simulationOpen && (
+            <div
+              className="space-y-2 rounded-md border border-border bg-surface px-3 py-2.5"
+              data-testid="ask-simulation"
+            >
+              <p className="text-[12px] text-muted">
+                La simulación corre en el backend con nodos externos fijados. No escribe en base
+                de datos ni ejecuta acciones reales; los nodos sin respuesta quedan sin verificar.
+              </p>
+              <Textarea
+                rows={4}
+                className="min-h-24 font-mono text-[11px]"
+                value={scenarioText}
+                data-testid="ask-scenarios"
+                onChange={(e) => setScenarioText(e.target.value)}
+                aria-label="Escenarios de simulación"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                leadingIcon={Checks}
+                loading={busy === "simulate"}
+                disabled={busy === "simulate" || !scenarioText.trim()}
+                data-testid="ask-simulate-submit"
+                onClick={() => void runSimulation()}
+              >
+                Ejecutar simulación
+              </Button>
+            </div>
+          )}
+
           {patchOpen && (
             <div className="space-y-2 rounded-md border border-border bg-surface px-3 py-2.5" data-testid="ask-patch">
               <p className="text-[12px] text-muted">
@@ -635,7 +1242,10 @@ export function ArchitectAskZent({
                 placeholder="Ej.: cambia el umbral a 50000, quita la aprobación o avisa por correo."
                 value={patchText}
                 data-testid="ask-patch-text"
-                onChange={(e) => setPatchText(e.target.value)}
+                onChange={(e) => {
+                  setPatchText(e.target.value);
+                  setPatchPreview(null);
+                }}
                 aria-label="Cambio pedido"
               />
               <Button
@@ -643,12 +1253,65 @@ export function ArchitectAskZent({
                 size="sm"
                 leadingIcon={PencilSimple}
                 loading={busy === "patch"}
-                disabled={patchText.trim().length < 3 || busy === "patch"}
+                disabled={patchText.trim().length < 3 || busy === "patch" || sessionClosed}
                 data-testid="ask-patch-submit"
                 onClick={() => void applyPatch()}
               >
-                Aplicar cambio
+                Previsualizar cambio
               </Button>
+              {patchPreview && (
+                <div
+                  className="space-y-2 rounded-md border border-accent-line bg-accent-soft/40 px-3 py-2"
+                  data-testid="ask-patch-preview"
+                >
+                  <p className="text-[12px] font-medium text-text">
+                    Diff semántico antes de aplicar
+                  </p>
+                  <p className="text-[11px] text-muted">
+                    {patchPreview.diff?.summary ||
+                      patchPreview.proposal.patch?.summary ||
+                      "Cambio preparado"}
+                    . Se conservan los pasos no afectados.
+                  </p>
+                  {patchPreview.diff ? (
+                    <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted">
+                      {(patchPreview.diff.added ?? []).map((item) => (
+                        <li key={`add-${item.step_id}`}>Agregar: {item.goal || item.step_id}</li>
+                      ))}
+                      {(patchPreview.diff.removed ?? []).map((item) => (
+                        <li key={`remove-${item.step_id}`}>Quitar: {item.goal || item.step_id}</li>
+                      ))}
+                      {(patchPreview.diff.modified ?? []).map((item) => (
+                        <li key={`mod-${item.step_id}`}>
+                          Modificar: {item.step_id} ({Object.keys(item.fields ?? {}).join(", ")})
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      leadingIcon={Checks}
+                      loading={busy === "patch"}
+                      disabled={busy === "patch"}
+                      data-testid="ask-patch-confirm"
+                      onClick={() => void confirmPatch()}
+                    >
+                      Confirmar y aplicar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy === "patch"}
+                      data-testid="ask-patch-cancel"
+                      onClick={() => setPatchPreview(null)}
+                    >
+                      Descartar
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

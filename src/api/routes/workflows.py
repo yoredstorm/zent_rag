@@ -413,6 +413,710 @@ async def tenant_workflow_architect_simulate_repair(
 
 
 @router.post(
+    "/architect/sessions",
+    summary="Workflow Architect: abre una sesión persistente de diseño",
+)
+async def tenant_workflow_architect_session_create(
+    body: DesignSessionCreateIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.design_sessions import (
+        append_design_message,
+        create_design_session,
+        get_design_session,
+        save_design_result,
+    )
+    from src.platform.workflows.planner_session import (
+        PlannerBudget,
+        PlannerBudgetExceeded,
+        PlanningCancelled,
+        WorkflowPlanningSession,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    ws_id = await _workspace_id(request)
+    design = await create_design_session(
+        ctx.organization_id,
+        user_id=ctx.user_id,
+        workspace_id=ws_id,
+        prompt=body.prompt.strip(),
+        title=body.title,
+    )
+    planner = WorkflowPlanningSession(
+        ctx.organization_id,
+        workspace_id=ws_id,
+        permissions=ctx.permissions,
+        model=body.model,
+        budget=PlannerBudget.from_settings(),
+        session_id=design["id"],
+    )
+    try:
+        proposal = await planner.run(body.prompt.strip())
+    except PlannerBudgetExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error_code": "PLANNER_BUDGET_EXCEEDED",
+                "reason": exc.reason,
+                "message": str(exc),
+                "design_session_id": design["id"],
+                "usage": exc.usage.as_dict(),
+            },
+        )
+    except PlanningCancelled as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "PLANNER_CANCELLED", "message": str(exc)},
+        )
+    saved = await save_design_result(
+        ctx.organization_id,
+        UUID(design["id"]),
+        proposal,
+        expected_revision=0,
+        user_id=ctx.user_id,
+        kind="initial",
+        instruction=body.prompt.strip(),
+        diff={"summary": "Plan inicial"},
+    )
+    await append_design_message(
+        ctx.organization_id,
+        UUID(design["id"]),
+        role="assistant",
+        content=_design_assistant_summary(proposal),
+        user_id=None,
+        revision=saved["revision"],
+        metadata={"state": proposal.get("state")},
+    )
+    saved = await get_design_session(
+        ctx.organization_id,
+        UUID(design["id"]),
+        user_id=ctx.user_id,
+        include_revisions=True,
+    ) or saved
+    response_proposal = (saved.get("state") or {}).get("proposal") or proposal
+    return {"design_session": saved, "proposal": response_proposal}
+
+
+@router.get(
+    "/architect/sessions",
+    summary="Workflow Architect: sesiones de diseño del usuario",
+)
+async def tenant_workflow_architect_sessions_list(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.design_sessions import list_design_sessions
+
+    ctx = require_permission(request, "workflows:read")
+    return await list_design_sessions(
+        ctx.organization_id,
+        workspace_id=await _workspace_id(request),
+        user_id=ctx.user_id,
+    )
+
+
+@router.get(
+    "/architect/sessions/{design_session_id}",
+    summary="Workflow Architect: detalle y revisiones de una sesión de diseño",
+)
+async def tenant_workflow_architect_session_get(
+    design_session_id: str, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.design_sessions import get_design_session
+
+    ctx = require_permission(request, "workflows:read")
+    try:
+        session_id = UUID(design_session_id)
+    except ValueError as exc:
+        raise HTTPException(400, "sesión inválida") from exc
+    design = await get_design_session(
+        ctx.organization_id,
+        session_id,
+        user_id=ctx.user_id,
+        include_revisions=True,
+    )
+    if design is None:
+        raise HTTPException(404, "Sesión de diseño no encontrada")
+    return design
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/messages",
+    summary="Workflow Architect: conversación y patch semántico persistente",
+)
+async def tenant_workflow_architect_session_message(
+    design_session_id: str, body: DesignSessionMessageIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect import patch_workflow_plan
+    from src.platform.workflows.design_sessions import (
+        append_design_message,
+        get_design_session,
+        save_design_result,
+    )
+    from src.platform.workflows.planner_session import (
+        PlannerBudget,
+        PlannerBudgetExceeded,
+        PlanningCancelled,
+        WorkflowPlanningSession,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        session_id = UUID(design_session_id)
+    except ValueError as exc:
+        raise HTTPException(400, "sesión inválida") from exc
+    current = await get_design_session(
+        ctx.organization_id, session_id, user_id=ctx.user_id, include_revisions=False
+    )
+    if current is None:
+        raise HTTPException(404, "Sesión de diseño no encontrada")
+    if current.get("status") == "closed":
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CLOSED",
+                "message": "La sesión está cerrada; reábrela antes de continuar.",
+            },
+        )
+    if current["revision"] != body.expected_revision:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CONFLICT",
+                "message": "La sesión cambió desde que la cargaste.",
+                "current_revision": current["revision"],
+                "expected_revision": body.expected_revision,
+            },
+        )
+    await append_design_message(
+        ctx.organization_id,
+        session_id,
+        role="user",
+        content=body.message.strip(),
+        user_id=ctx.user_id,
+        revision=current["revision"],
+    )
+    ws_id = await _workspace_id(request)
+    try:
+        if current.get("plan"):
+            proposal = await patch_workflow_plan(
+                ctx.organization_id,
+                current["plan"],
+                body.message.strip(),
+                workspace_id=ws_id,
+                permissions=ctx.permissions,
+                model=body.model,
+                session_id=design_session_id,
+                plan_hash_value=current.get("plan_hash"),
+                actor_id=ctx.user_id,
+            )
+            kind = "patch"
+            diff = proposal.get("diff") or proposal.get("patch") or {
+                "summary": body.message.strip()[:400]
+            }
+            if isinstance(diff, dict):
+                diff = {
+                    **diff,
+                    "summary": (proposal.get("patch") or {}).get("summary")
+                    or diff.get("summary")
+                    or body.message.strip()[:400],
+                }
+        else:
+            history = [
+                item["content"]
+                for item in current.get("messages") or []
+                if item.get("role") == "user"
+            ]
+            planner = WorkflowPlanningSession(
+                ctx.organization_id,
+                workspace_id=ws_id,
+                permissions=ctx.permissions,
+                model=body.model,
+                budget=PlannerBudget.from_settings(),
+                session_id=design_session_id,
+                clarification_history=history,
+            )
+            proposal = await planner.run(body.message.strip())
+            kind = "plan"
+            diff = {"summary": "Nuevo plan desde conversación"}
+    except PlannerBudgetExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error_code": "PLANNER_BUDGET_EXCEEDED",
+                "reason": exc.reason,
+                "message": str(exc),
+                "design_session_id": design_session_id,
+                "usage": exc.usage.as_dict(),
+            },
+        )
+    except PlanningCancelled as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "PLANNER_CANCELLED", "message": str(exc)},
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"error_code": "DESIGN_PATCH_INVALID", "message": str(exc)[:400]},
+        )
+    saved = await save_design_result(
+        ctx.organization_id,
+        session_id,
+        proposal,
+        expected_revision=current["revision"],
+        user_id=ctx.user_id,
+        kind=kind,
+        instruction=body.message.strip(),
+        diff=diff,
+    )
+    await append_design_message(
+        ctx.organization_id,
+        session_id,
+        role="assistant",
+        content=_design_assistant_summary(proposal),
+        user_id=None,
+        revision=saved["revision"],
+        metadata={"state": proposal.get("state"), "kind": kind},
+    )
+    saved = await get_design_session(
+        ctx.organization_id, session_id, user_id=ctx.user_id, include_revisions=True
+    ) or saved
+    response_proposal = (saved.get("state") or {}).get("proposal") or proposal
+    return {"design_session": saved, "proposal": response_proposal}
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/patch-preview",
+    summary="Workflow Architect: diff semántico antes de aplicar",
+)
+async def tenant_workflow_architect_session_patch_preview(
+    design_session_id: str, body: DesignSessionPatchPreviewIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect import patch_workflow_plan
+    from src.platform.workflows.design_sessions import get_design_session
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        session_id = UUID(design_session_id)
+    except ValueError as exc:
+        raise HTTPException(400, "sesión inválida") from exc
+    current = await get_design_session(
+        ctx.organization_id, session_id, user_id=ctx.user_id, include_revisions=False
+    )
+    if current is None:
+        raise HTTPException(404, "Sesión de diseño no encontrada")
+    if current.get("status") == "closed":
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "DESIGN_SESSION_CLOSED", "message": "La sesión está cerrada."},
+        )
+    if current["revision"] != body.expected_revision:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CONFLICT",
+                "current_revision": current["revision"],
+                "expected_revision": body.expected_revision,
+            },
+        )
+    if not current.get("plan"):
+        raise HTTPException(422, "La sesión no tiene un plan para modificar")
+    try:
+        proposal = await patch_workflow_plan(
+            ctx.organization_id,
+            current["plan"],
+            body.message.strip(),
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+            model=body.model,
+            session_id=design_session_id,
+            plan_hash_value=current.get("plan_hash"),
+            actor_id=ctx.user_id,
+            preview_only=True,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"error_code": "DESIGN_PATCH_INVALID", "message": str(exc)[:400]},
+        )
+    return {
+        "confirmation_required": True,
+        "revision": current["revision"],
+        "proposal": proposal,
+        "patch": proposal.get("patch"),
+        "diff": proposal.get("diff"),
+    }
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/patch-apply",
+    summary="Workflow Architect: aplica un diff semántico confirmado",
+)
+async def tenant_workflow_architect_session_patch_apply(
+    design_session_id: str, body: DesignSessionPatchApplyIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect import patch_workflow_plan
+    from src.platform.workflows.design_sessions import (
+        append_design_message,
+        get_design_session,
+        save_design_result,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        session_id = UUID(design_session_id)
+    except ValueError as exc:
+        raise HTTPException(400, "sesión inválida") from exc
+    current = await get_design_session(
+        ctx.organization_id, session_id, user_id=ctx.user_id, include_revisions=False
+    )
+    if current is None:
+        raise HTTPException(404, "Sesión de diseño no encontrada")
+    if current.get("status") == "closed":
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "DESIGN_SESSION_CLOSED", "message": "La sesión está cerrada."},
+        )
+    if current["revision"] != body.expected_revision:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CONFLICT",
+                "current_revision": current["revision"],
+                "expected_revision": body.expected_revision,
+            },
+        )
+    if not current.get("plan"):
+        raise HTTPException(422, "La sesión no tiene un plan para modificar")
+    await append_design_message(
+        ctx.organization_id,
+        session_id,
+        role="user",
+        content=body.message.strip(),
+        user_id=ctx.user_id,
+        revision=current["revision"],
+    )
+    try:
+        proposal = await patch_workflow_plan(
+            ctx.organization_id,
+            current["plan"],
+            body.message.strip(),
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+            session_id=design_session_id,
+            plan_hash_value=current.get("plan_hash"),
+            actor_id=ctx.user_id,
+            proposed_patch=body.patch,
+            proposed_source=body.source,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"error_code": "DESIGN_PATCH_INVALID", "message": str(exc)[:400]},
+        )
+    diff = proposal.get("diff") or proposal.get("patch") or {}
+    if isinstance(diff, dict):
+        diff = {
+            **diff,
+            "summary": (proposal.get("patch") or {}).get("summary")
+            or diff.get("summary")
+            or body.message.strip()[:400],
+        }
+    saved = await save_design_result(
+        ctx.organization_id,
+        session_id,
+        proposal,
+        expected_revision=current["revision"],
+        user_id=ctx.user_id,
+        kind="patch",
+        instruction=body.message.strip(),
+        diff=diff,
+    )
+    await append_design_message(
+        ctx.organization_id,
+        session_id,
+        role="assistant",
+        content=_design_assistant_summary(proposal),
+        user_id=None,
+        revision=saved["revision"],
+        metadata={"state": proposal.get("state"), "kind": "patch"},
+    )
+    saved = await get_design_session(
+        ctx.organization_id, session_id, user_id=ctx.user_id, include_revisions=True
+    ) or saved
+    response_proposal = (saved.get("state") or {}).get("proposal") or proposal
+    return {"design_session": saved, "proposal": response_proposal}
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/restore",
+    summary="Workflow Architect: restaura una revisión anterior",
+)
+async def tenant_workflow_architect_session_restore(
+    design_session_id: str, body: DesignSessionRevisionIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.design_sessions import (
+        DesignSessionConflict,
+        DesignSessionNotFound,
+        restore_design_revision,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        session_id = UUID(design_session_id)
+    except ValueError as exc:
+        raise HTTPException(400, "sesión inválida") from exc
+    try:
+        design = await restore_design_revision(
+            ctx.organization_id,
+            session_id,
+            body.revision,
+            expected_revision=body.expected_revision,
+            user_id=ctx.user_id,
+            instruction=body.instruction,
+        )
+    except DesignSessionConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CONFLICT",
+                "message": str(exc),
+                "current_revision": exc.current_revision,
+            },
+        )
+    except DesignSessionNotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return design
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/close",
+    summary="Workflow Architect: cierra una sesión de diseño",
+)
+async def tenant_workflow_architect_session_close(
+    design_session_id: str, body: DesignSessionCloseIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.design_sessions import (
+        DesignSessionConflict,
+        close_design_session,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        design = await close_design_session(
+            ctx.organization_id,
+            UUID(design_session_id),
+            expected_revision=body.expected_revision,
+            user_id=ctx.user_id,
+        )
+    except DesignSessionConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "DESIGN_SESSION_CONFLICT", "current_revision": exc.current_revision},
+        )
+    return design
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/reopen",
+    summary="Workflow Architect: reabre una sesión de diseño",
+)
+async def tenant_workflow_architect_session_reopen(
+    design_session_id: str, body: DesignSessionCloseIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.design_sessions import (
+        DesignSessionConflict,
+        reopen_design_session,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        design = await reopen_design_session(
+            ctx.organization_id,
+            UUID(design_session_id),
+            expected_revision=body.expected_revision,
+            user_id=ctx.user_id,
+        )
+    except DesignSessionConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "DESIGN_SESSION_CONFLICT", "current_revision": exc.current_revision},
+        )
+    return design
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/simulate",
+    summary="Workflow Architect: certifica la sesión con escenarios",
+)
+async def tenant_workflow_architect_session_simulate(
+    design_session_id: str, body: DesignSessionSimulateIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect_discovery import discover_capabilities
+    from src.platform.workflows.design_sessions import (
+        DesignSessionConflict,
+        DesignSessionNotFound,
+        get_design_session,
+        save_design_simulation,
+    )
+    from src.platform.workflows.workflow_simulation import (
+        SimulationScenario,
+        simulate_semantic_plan,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        session_id = UUID(design_session_id)
+    except ValueError as exc:
+        raise HTTPException(400, "sesión inválida") from exc
+    current = await get_design_session(ctx.organization_id, session_id, user_id=ctx.user_id)
+    if current is None:
+        raise HTTPException(404, "Sesión de diseño no encontrada")
+    if current.get("status") == "closed":
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CLOSED",
+                "message": "La sesión está cerrada; reábrela antes de simular.",
+            },
+        )
+    if current["revision"] != body.expected_revision:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CONFLICT",
+                "current_revision": current["revision"],
+                "expected_revision": body.expected_revision,
+            },
+        )
+    if not current.get("plan"):
+        raise HTTPException(422, "La sesión no tiene un plan para simular")
+    try:
+        scenarios = [
+            SimulationScenario.model_validate(item) for item in body.scenarios
+        ]
+        capabilities = await discover_capabilities(
+            ctx.organization_id,
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+        )
+        certification = await simulate_semantic_plan(
+            current["plan"],
+            capabilities,
+            scenarios,
+            organization_id=ctx.organization_id,
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+        )
+        saved = await save_design_simulation(
+            ctx.organization_id,
+            session_id,
+            certification.model_dump(mode="json"),
+            expected_revision=current["revision"],
+            user_id=ctx.user_id,
+            instruction="Certificación de simulación",
+        )
+    except (DesignSessionConflict, DesignSessionNotFound) as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error_code": "DESIGN_SESSION_CONFLICT", "message": str(exc)},
+        )
+    except ValueError as exc:
+        raise HTTPException(422, f"simulación inválida: {exc}") from exc
+    return {"design_session": saved, "certification": certification}
+
+
+@router.post(
+    "/architect/sessions/{design_session_id}/draft",
+    summary="Workflow Architect: guarda un borrador desde la sesión",
+)
+async def tenant_workflow_architect_session_draft(
+    design_session_id: str, body: DesignSessionDraftIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect import save_architect_draft
+    from src.platform.workflows.design_sessions import (
+        attach_workflow,
+        get_design_session,
+    )
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        session_id = UUID(design_session_id)
+    except ValueError as exc:
+        raise HTTPException(400, "sesión inválida") from exc
+    current = await get_design_session(ctx.organization_id, session_id, user_id=ctx.user_id)
+    if current is None:
+        raise HTTPException(404, "Sesión de diseño no encontrada")
+    if current.get("status") == "closed":
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CLOSED",
+                "message": "La sesión está cerrada; reábrela antes de guardar.",
+            },
+        )
+    if current["revision"] != body.expected_revision:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "DESIGN_SESSION_CONFLICT",
+                "current_revision": current["revision"],
+                "expected_revision": body.expected_revision,
+            },
+        )
+    if not current.get("plan"):
+        raise HTTPException(422, "La sesión no tiene un plan para guardar")
+    source = str((current.get("state") or {}).get("proposal", {}).get("planner", {}).get("source") or "llm")
+    result = await save_architect_draft(
+        ctx.organization_id,
+        current["plan"],
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+        name=body.name,
+        description=body.description,
+        editor_state={"mode": "canvas", "config_level": body.config_level},
+        session_id=design_session_id,
+        plan_hash_value=current.get("plan_hash"),
+        capability_snapshot_hash=current.get("capability_snapshot_hash"),
+        source=source,
+        actor_id=ctx.user_id,
+    )
+    await attach_workflow(
+        ctx.organization_id, session_id, UUID(result["workflow_id"]), user_id=ctx.user_id
+    )
+    return {"design_session": await get_design_session(
+        ctx.organization_id, session_id, user_id=ctx.user_id, include_revisions=True
+    ), "workflow": result}
+
+
+def _design_assistant_summary(proposal: dict[str, Any]) -> str:
+    state = str(proposal.get("state") or "BLOCKED")
+    if state == "DRAFT_READY":
+        return "Entendí el proceso y el plan está listo para revisar."
+    clarifications = proposal.get("clarifications") or []
+    if clarifications:
+        return "Necesito confirmar: " + "; ".join(
+            str(item.get("question") or "")[:200]
+            for item in clarifications[:3]
+        )
+    requirements = proposal.get("requirements") or []
+    if requirements:
+        return "Faltan dependencias: " + "; ".join(
+            str(item.get("message") or item.get("requirement") or "")[:200]
+            for item in requirements[:3]
+        )
+    return f"El diseño quedó en estado {state}. Revisa los detalles antes de continuar."
+
+
+@router.post(
     "/architect/patch",
     summary="Workflow Architect: cambio conversacional sobre el plan",
 )
@@ -1463,6 +2167,53 @@ class ArchitectSimulateRepairIn(ArchitectSimulateIn):
     model: str | None = Field(default=None, max_length=120)
     session_id: str | None = Field(default=None, max_length=80)
     max_repairs: int = Field(default=2, ge=0, le=3)
+
+
+class DesignSessionCreateIn(BaseModel):
+    prompt: str = Field(min_length=8, max_length=12000)
+    title: str | None = Field(default=None, max_length=200)
+    model: str | None = Field(default=None, max_length=120)
+    agent_id: str | None = Field(default=None, max_length=64)
+
+
+class DesignSessionMessageIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    expected_revision: int = Field(ge=0)
+    model: str | None = Field(default=None, max_length=120)
+    agent_id: str | None = Field(default=None, max_length=64)
+
+
+class DesignSessionPatchPreviewIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    expected_revision: int = Field(ge=0)
+    model: str | None = Field(default=None, max_length=120)
+
+
+class DesignSessionPatchApplyIn(DesignSessionPatchPreviewIn):
+    patch: dict[str, Any]
+    source: str = Field(default="llm", pattern="^(llm|heuristics)$")
+
+
+class DesignSessionRevisionIn(BaseModel):
+    revision: int = Field(ge=1)
+    expected_revision: int = Field(ge=0)
+    instruction: str | None = Field(default=None, max_length=500)
+
+
+class DesignSessionCloseIn(BaseModel):
+    expected_revision: int = Field(ge=0)
+
+
+class DesignSessionSimulateIn(BaseModel):
+    scenarios: list[Any] = Field(min_length=1, max_length=20)
+    expected_revision: int = Field(ge=0)
+
+
+class DesignSessionDraftIn(BaseModel):
+    expected_revision: int = Field(ge=0)
+    name: str | None = Field(default=None, max_length=150)
+    description: str | None = Field(default=None, max_length=2000)
+    config_level: str = Field(default="simple", pattern="^(simple|guided|advanced)$")
 
 
 class ArchitectPatchIn(BaseModel):

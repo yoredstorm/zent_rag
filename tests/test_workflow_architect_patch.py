@@ -16,7 +16,12 @@ from src.platform.workflows.architect import (
 )
 from src.platform.workflows.architect_metrics import reset_metrics, snapshot
 from src.platform.workflows.architect_models import SemanticPlan
-from src.platform.workflows.architect_patch import apply_semantic_patch
+from src.platform.workflows.architect_patch import (
+    SemanticPlanPatch,
+    SensitivePatchError,
+    apply_semantic_patch,
+    semantic_plan_diff,
+)
 from tests.test_workflow_architect import _SALE_PLAN, _caps, _setup_capabilities
 from tests.test_workflows import _create_org, _headers, _owner_session
 
@@ -73,6 +78,152 @@ def test_heuristic_patch_weekdays_schedule() -> None:
     updated, _ = apply_semantic_patch(plan, patch)
     weekly = _step(updated, "t").params.get("weekly")
     assert weekly and weekly.get("days") == [0, 1, 2, 3, 4]
+
+
+def test_semantic_patch_changes_condition_policy_outputs_and_capability() -> None:
+    plan = SemanticPlan.model_validate(
+        {
+            "goal": "Cobrar con proveedor",
+            "steps": [
+                {"id": "t", "type": "trigger_manual", "goal": "Inicio"},
+                {
+                    "id": "c",
+                    "type": "capability_call",
+                    "goal": "Cobrar",
+                    "depends_on": ["t"],
+                    "params": {"capability": "payments.charge", "inputs": {"amount": 10}},
+                },
+                {
+                    "id": "d",
+                    "type": "decision",
+                    "goal": "¿Pago aprobado?",
+                    "depends_on": ["c"],
+                },
+                {
+                    "id": "n",
+                    "type": "notify",
+                    "goal": "Avisar",
+                    "depends_on": ["d"],
+                    "when": {"step": "d", "outcome": True},
+                },
+            ],
+        }
+    )
+    patch = SemanticPlanPatch.model_validate(
+        {
+            "summary": "Ajustar cobro",
+            "operations": [
+                {
+                    "kind": "replace_capability",
+                    "step_id": "c",
+                    "value": "payments.charge.v2",
+                    "params": {"inputs": {"currency": "PEN"}},
+                },
+                {
+                    "kind": "set_condition",
+                    "step_id": "n",
+                    "value": {"step": "d", "outcome": False},
+                },
+                {
+                    "kind": "set_policy",
+                    "step_id": "c",
+                    "params": {"retries": 2, "timeout_seconds": 30, "on_error": "continue"},
+                },
+                {"kind": "set_outputs", "step_id": "c", "value": ["charge_id", "status"]},
+            ],
+        }
+    )
+    updated, notes = apply_semantic_patch(plan, patch)
+    capability = _step(updated, "c")
+    assert capability.params["capability"] == "payments.charge.v2"
+    assert capability.params["inputs"] == {"amount": 10, "currency": "PEN"}
+    assert capability.retries == 2
+    assert capability.timeout_seconds == 30
+    assert capability.outputs_expected == ["charge_id", "status"]
+    assert _step(updated, "n").when is not None
+    assert _step(updated, "n").when.outcome is False
+    assert len(notes) == 4
+
+    diff = semantic_plan_diff(plan, updated)
+    modified = {item["step_id"]: set(item["fields"]) for item in diff["modified"]}
+    assert {"params", "retries", "timeout_seconds", "on_error", "outputs_expected"} <= modified["c"]
+    assert "when" in modified["n"]
+    assert diff["summary"] == "0 agregado(s), 0 quitado(s), 2 modificado(s)"
+    json.dumps(diff)
+
+
+def test_semantic_patch_adds_wait_and_loop_steps() -> None:
+    plan = _sale_plan()
+    patch = SemanticPlanPatch.model_validate(
+        {
+            "summary": "Agregar espera y reintento",
+            "operations": [
+                {
+                    "kind": "add_step",
+                    "step": {
+                        "id": "w",
+                        "type": "wait",
+                        "goal": "Esperar confirmación de pago",
+                        "depends_on": ["n"],
+                        "params": {"event_type": "payment.confirmed"},
+                    },
+                },
+                {
+                    "kind": "add_step",
+                    "step": {
+                        "id": "l",
+                        "type": "loop",
+                        "goal": "Reintentar conciliación",
+                        "depends_on": ["w"],
+                        "params": {"max_iterations": 3, "exit_condition": "conciliado"},
+                    },
+                },
+            ],
+        }
+    )
+    updated, notes = apply_semantic_patch(plan, patch)
+    assert _step(updated, "w").type == "wait"
+    assert _step(updated, "l").type == "loop"
+    assert _step(updated, "l").params["max_iterations"] == 3
+    assert any("Agregué" in note for note in notes)
+
+
+def test_semantic_patch_rejects_credentials_and_permissions() -> None:
+    plan = _sale_plan()
+    patch = SemanticPlanPatch.model_validate(
+        {
+            "summary": "Cambiar credencial",
+            "operations": [
+                {
+                    "kind": "set_param",
+                    "step_id": "n",
+                    "key": "credential_ref",
+                    "value": "secret://prod",
+                }
+            ],
+        }
+    )
+    with pytest.raises(SensitivePatchError):
+        apply_semantic_patch(plan, patch)
+
+    permission_patch = SemanticPlanPatch.model_validate(
+        {
+            "summary": "Agregar permiso",
+            "operations": [
+                {
+                    "kind": "add_step",
+                    "step": {
+                        "id": "x",
+                        "type": "integration_action",
+                        "goal": "Acción",
+                        "params": {"permissions": ["admin"]},
+                    },
+                }
+            ],
+        }
+    )
+    with pytest.raises(SensitivePatchError):
+        apply_semantic_patch(plan, permission_patch)
 
 
 @pytest.mark.asyncio

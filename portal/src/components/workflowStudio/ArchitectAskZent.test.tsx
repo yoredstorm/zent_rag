@@ -115,27 +115,165 @@ const BASE: ArchitectProposal = {
   notes: [],
 };
 
+const SESSION_ID = "11111111-1111-1111-1111-111111111111";
+
+function designSession(
+  proposal: ArchitectProposal,
+  prompt: string,
+  revision = 1,
+  messages: unknown[] = [],
+) {
+  return {
+    id: SESSION_ID,
+    organization_id: "org-1",
+    workspace_id: null,
+    user_id: null,
+    title: "Aviso de stock",
+    original_prompt: prompt,
+    status: "active",
+    revision,
+    plan: proposal.plan,
+    graph: proposal.graph,
+    plan_hash: proposal.plan_hash,
+    capability_snapshot_hash: proposal.capability_snapshot?.snapshot_hash,
+    workflow_id: null,
+    state: { proposal },
+    messages,
+    revisions: [
+      {
+        revision,
+        kind: revision === 1 ? "initial" : "patch",
+        summary: revision === 1 ? "Plan inicial" : "Umbral actualizado",
+        created_at: "2026-10-19T00:00:00Z",
+      },
+    ],
+  };
+}
+
 function stubApi(overrides: Partial<ArchitectProposal> = {}, draft = true) {
-  const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+  const proposal = { ...BASE, ...overrides };
+  let prompt = "Cuando el stock sea menor a 10 avisa a compras";
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
     if (url.includes("/architect/config")) {
       return Promise.resolve(
         json({ enabled: true, planner_version: "architect/1.2.0", states: [] }),
       );
     }
-    if (url.includes("/architect/agentic-plan")) return Promise.resolve(json({ ...BASE, ...overrides }));
-    if (url.includes("/architect/patch")) {
+    if (url.endsWith("/architect/sessions") && init?.method === "POST") {
+      prompt = String(body.prompt ?? prompt);
+      const messages = [
+        { id: "m1", role: "user", content: prompt, revision: 0, created_at: "2026-10-19T00:00:00Z" },
+        {
+          id: "m2",
+          role: "assistant",
+          content: "Entendí el proceso.",
+          revision: 1,
+          created_at: "2026-10-19T00:00:01Z",
+        },
+      ];
+      return Promise.resolve(
+        json({ design_session: designSession(proposal, prompt, 1, messages), proposal }),
+      );
+    }
+    if (url.includes("/architect/sessions/") && url.endsWith("/patch-preview")) {
+      const changed = {
+        ...proposal,
+        plan_hash: "b".repeat(64),
+        patch: { summary: "Umbral actualizado", operations: [{ kind: "set_param" }] },
+        diff: {
+          added: [],
+          removed: [],
+          modified: [{ step_id: "d", fields: { params: "cambiado" } }],
+          summary: "1 modificado",
+        },
+      };
       return Promise.resolve(
         json({
-          ...BASE,
-          ...overrides,
-          plan_hash: "b".repeat(64),
-          patch: { summary: "Umbral actualizado", operations: [{ kind: "set_param" }] },
+          confirmation_required: true,
+          revision: 1,
+          proposal: changed,
+          patch: changed.patch,
+          diff: changed.diff,
         }),
       );
     }
-    if (url.includes("/architect/draft") && draft) {
-      return Promise.resolve(json({ workflow_id: "wf-1", state: "DRAFT_READY", session_id: "ds_test" }));
+    if (url.includes("/architect/sessions/") && url.endsWith("/patch-apply")) {
+      const changed = {
+        ...proposal,
+        plan_hash: "b".repeat(64),
+        patch: { summary: "Umbral actualizado", operations: [{ kind: "set_param" }] },
+      };
+      const messages = [
+        { id: "m1", role: "user", content: prompt, revision: 0 },
+        { id: "m2", role: "assistant", content: "Entendí el proceso.", revision: 1 },
+        {
+          id: "m3",
+          role: "user",
+          content: String(body.message ?? ""),
+          revision: 1,
+        },
+        { id: "m4", role: "assistant", content: "Cambio aplicado.", revision: 2 },
+      ];
+      return Promise.resolve(
+        json({ design_session: designSession(changed, prompt, 2, messages), proposal: changed }),
+      );
+    }
+    if (url.includes("/architect/sessions/") && url.endsWith("/messages")) {
+      const changed = {
+        ...proposal,
+        plan_hash: "b".repeat(64),
+        patch: { summary: "Umbral actualizado", operations: [{ kind: "set_param" }] },
+      };
+      const messages = [
+        { id: "m1", role: "user", content: prompt, revision: 0 },
+        { id: "m2", role: "assistant", content: "Entendí el proceso.", revision: 1 },
+        {
+          id: "m3",
+          role: "user",
+          content: String(body.message ?? ""),
+          revision: 1,
+        },
+        { id: "m4", role: "assistant", content: "Cambio aplicado.", revision: 2 },
+      ];
+      return Promise.resolve(
+        json({ design_session: designSession(changed, prompt, 2, messages), proposal: changed }),
+      );
+    }
+    if (url.includes("/architect/sessions/") && url.endsWith("/simulate")) {
+      const certification = {
+        certification_id: "cert-1",
+        state: "SIMULATION_PASSED",
+        partial: false,
+        publishable: true,
+        scenarios: [{ scenario_id: "camino_feliz", result: "PASSED" }],
+      };
+      const changed = { ...proposal, simulation_certification: certification };
+      return Promise.resolve(
+        json({
+          design_session: designSession(changed, prompt, 2),
+          certification,
+        }),
+      );
+    }
+    if (url.includes("/architect/sessions/") && url.endsWith("/draft") && draft) {
+      return Promise.resolve(
+        json({
+          workflow: {
+            workflow_id: "wf-1",
+            name: "Aviso de stock",
+            state: "DRAFT_READY",
+            session_id: SESSION_ID,
+            plan_hash: "b".repeat(64),
+          },
+          design_session: {
+            ...designSession(proposal, prompt, 2),
+            workflow_id: "wf-1",
+            status: "draft_saved",
+          },
+        }),
+      );
     }
     return Promise.resolve(json({}));
   });
@@ -184,12 +322,14 @@ describe("ArchitectAskZent", () => {
     await user.click(screen.getByTestId("ask-create"));
     await waitFor(() => expect(NAVIGATE).toHaveBeenCalledWith("/workflows/wf-1", expect.anything()));
 
-    const saveCall = fetchMock.mock.calls.find((call) => String(call[0]).includes("/architect/draft"));
+    const saveCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).includes("/architect/sessions/") && String(call[0]).endsWith("/draft"),
+    );
     expect(saveCall).toBeTruthy();
     const body = JSON.parse(String((saveCall?.[1] as RequestInit)?.body ?? "{}"));
-    expect(body.plan).toBeTruthy();
-    expect(body.plan_hash).toBe("a".repeat(64));
-    expect(body.capability_snapshot_hash).toBe("c".repeat(64));
+    expect(body.expected_revision).toBe(1);
+    expect(body.config_level).toBe("simple");
+    expect(body.plan).toBeUndefined();
     expect(body.graph).toBeUndefined();
   });
 
@@ -220,10 +360,13 @@ describe("ArchitectAskZent", () => {
     await user.type(screen.getByTestId("ask-clarify-answer"), "compras@zent.test");
     await user.click(screen.getByTestId("ask-clarify-submit"));
     await waitFor(() => {
-      const calls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("/architect/agentic-plan"));
+      const calls = fetchMock.mock.calls.filter((call) =>
+        String(call[0]).includes("/architect/sessions"),
+      );
       expect(calls.length).toBe(2);
       const body = JSON.parse(String((calls[1][1] as RequestInit)?.body ?? "{}"));
-      expect(body.prompt).toContain("Datos confirmados por el usuario: compras@zent.test");
+      expect(body.message).toContain("Datos confirmados por el usuario: compras@zent.test");
+      expect(body.expected_revision).toBe(1);
     });
   });
 
@@ -286,12 +429,36 @@ describe("ArchitectAskZent", () => {
     await user.click(screen.getByTestId("ask-change"));
     await user.type(screen.getByTestId("ask-patch-text"), "cambia el umbral a 50000");
     await user.click(screen.getByTestId("ask-patch-submit"));
+    await waitFor(() => expect(screen.getByTestId("ask-patch-preview")).toBeInTheDocument());
+    await user.click(screen.getByTestId("ask-patch-confirm"));
     await waitFor(() => expect(screen.getByTestId("ask-patch-note")).toBeInTheDocument());
-    const patchCall = fetchMock.mock.calls.find((call) => String(call[0]).includes("/architect/patch"));
+    const patchCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).includes("/architect/sessions/") && String(call[0]).endsWith("/patch-apply"),
+    );
+    expect(patchCall).toBeTruthy();
     const body = JSON.parse(String((patchCall?.[1] as RequestInit)?.body ?? "{}"));
-    expect(body.plan_hash).toBe("a".repeat(64));
-    expect(body.session_id).toBe("ds_test");
-    expect(body.instruction).toBe("cambia el umbral a 50000");
+    expect(body.expected_revision).toBe(1);
+    expect(body.message).toBe("cambia el umbral a 50000");
+    expect(body.patch).toBeTruthy();
+    expect(body.plan).toBeUndefined();
+    expect(body.plan_hash).toBeUndefined();
+  });
+
+  it("muestra la certificación real de simulación y no la inventa en React", async () => {
+    const fetchMock = stubApi();
+    const user = await typeAndSubmit();
+    await waitFor(() => expect(screen.getByTestId("ask-simulate")).toBeInTheDocument());
+    await user.click(screen.getByTestId("ask-simulate"));
+    await user.click(screen.getByTestId("ask-simulate-submit"));
+    await waitFor(() => expect(screen.getByTestId("ask-certification")).toBeInTheDocument());
+    expect(screen.getByTestId("ask-certification")).toHaveTextContent("SIMULATION_PASSED");
+    expect(screen.getByTestId("ask-certification")).toHaveTextContent("camino_feliz: PASSED");
+    const simulated = fetchMock.mock.calls.find((call) =>
+      String(call[0]).endsWith("/simulate"),
+    );
+    const body = JSON.parse(String((simulated?.[1] as RequestInit)?.body ?? "{}"));
+    expect(body.expected_revision).toBe(1);
+    expect(body.scenarios).toHaveLength(1);
   });
 
   it("bloquea el guardado y ofrece reintentar cuando el diseño está BLOCKED", async () => {
