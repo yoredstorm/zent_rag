@@ -2260,6 +2260,186 @@ async def _exec_condition(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output={"condition": f"{field} {operator} {value}", "result": result})
 
 
+def _conversation_guard_scope(rctx: NodeContext, cfg: dict[str, Any]) -> tuple[str, str]:
+    """Resuelve una clave estable sin guardar PII en claro."""
+    configured = _resolve_ref(cfg.get("scope_value"), rctx) if cfg.get("scope_value") else None
+    if configured is not None and str(configured).strip():
+        return "fixed", str(configured).strip()[:300]
+    requested = str(cfg.get("scope") or "participant").strip().lower()
+    trigger = rctx.trigger or {}
+    if requested == "conversation":
+        value = (
+            trigger.get("conversation_id")
+            or trigger.get("thread_id")
+            or rctx.execution.instance_id
+            or rctx.execution.run_id
+        )
+        return "conversation", str(value)
+    for key in ("participant_id", "customer_id", "user_id", "phone", "whatsapp", "conversation_id"):
+        value = trigger.get(key)
+        if value is not None and str(value).strip():
+            return "participant" if key != "conversation_id" else "conversation", str(value).strip()
+    return "conversation", str(rctx.execution.instance_id or rctx.execution.run_id)
+
+
+def _guard_message(result: dict[str, Any]) -> str:
+    if result.get("bypass"):
+        return ""
+    if result.get("blocked"):
+        if result.get("cooldown_until"):
+            return (
+                "Hicimos varios intentos sin entender. La atención automática quedó "
+                "pausada temporalmente. Escribe «humano» si necesitas soporte."
+            )
+        return "No puedo seguir con esta conversación automática. Escribe «humano» para soporte."
+    if result.get("warning"):
+        return (
+            "No entendí tu mensaje. "
+            f"Te quedan {int(result.get('remaining') or 0)} intentos antes de pausar "
+            "la atención automática."
+        )
+    return ""
+
+
+async def _exec_conversation_guard(rctx: NodeContext) -> NodeOutcome:
+    """Gate durable de intención, sin LLM y sin efectos externos.
+
+    `mode=check` consulta el cooldown y el contador.
+    `mode=failure` registra un fallback de intención.
+    `mode=success` reinicia el contador.
+    Los errores técnicos nunca deben pasar por `failure`.
+    """
+    from src.platform.workflows.conversation_guard import (
+        check_guard,
+        record_failure,
+        record_success,
+        scope_digest,
+    )
+
+    cfg = dict(rctx.node.config or {})
+    mode = str(cfg.get("mode") or "check").strip().lower()
+    if mode not in ("check", "failure", "success"):
+        mode = "check"
+    try:
+        max_failures = max(1, min(int(cfg.get("max_failures") or 5), 50))
+        warning_at = max(1, min(int(cfg.get("warning_at") or 3), max_failures))
+        cooldown_minutes = max(1, min(int(cfg.get("cooldown_minutes") or 20), 1440))
+    except (TypeError, ValueError):
+        max_failures, warning_at, cooldown_minutes = 5, 3, 20
+    scope_type, scope_value = _conversation_guard_scope(rctx, cfg)
+    scope_key = scope_digest(
+        scope_type, f"{rctx.workspace_id or ''}:{scope_value}"
+    )
+    raw_keywords = cfg.get("bypass_keywords") or ["humano", "reclamo", "pedido"]
+    if isinstance(raw_keywords, str):
+        keywords = [item.strip().lower() for item in raw_keywords.split(",") if item.strip()]
+    elif isinstance(raw_keywords, list):
+        keywords = [str(item).strip().lower() for item in raw_keywords if str(item).strip()]
+    else:
+        keywords = []
+    trigger = rctx.trigger or {}
+    text = " ".join(
+        str(trigger.get(key) or "") for key in ("message", "text", "query", "prompt")
+    ).lower()
+    bypass = bool(keywords and any(keyword in text for keyword in keywords))
+
+    if bypass:
+        result = {
+            "allowed": True,
+            "blocked": False,
+            "warning": False,
+            "bypass": True,
+            "failures": 0,
+            "remaining": max_failures,
+            "cooldown_until": None,
+            "message": "",
+            "route": "bypass",
+        }
+        return NodeOutcome(
+            output={**result, "scope_type": scope_type, "simulated": rctx.simulate},
+            simulated=rctx.simulate,
+            planned={"kind": "conversation_guard", "mode": mode, "bypass": True}
+            if rctx.simulate
+            else {},
+        )
+
+    if rctx.simulate:
+        state = rctx.execution.simulation_state
+        if state is None:
+            state = {}
+            rctx.execution.simulation_state = state
+        guard_states = state.setdefault("conversation_guard", {})
+        local = dict(guard_states.get(scope_key) or {"failures": 0, "warning_sent": False, "blocked": False})
+        if mode == "failure":
+            if not local["blocked"]:
+                local["failures"] = int(local.get("failures") or 0) + 1
+                local["warning_sent"] = bool(
+                    local.get("warning_sent") or local["failures"] >= warning_at
+                )
+                local["blocked"] = local["failures"] >= max_failures
+            guard_states[scope_key] = local
+        elif mode == "success":
+            local = {"failures": 0, "warning_sent": False, "blocked": False}
+            guard_states[scope_key] = local
+        failures = int(local.get("failures") or 0)
+        result = {
+            "allowed": not local["blocked"],
+            "blocked": bool(local["blocked"]),
+            "warning": bool(local.get("warning_sent") and not local["blocked"]),
+            "bypass": False,
+            "failures": failures,
+            "remaining": max(0, max_failures - failures),
+            "cooldown_until": None,
+            "simulated": True,
+            "scope_type": scope_type,
+        }
+    elif mode == "failure":
+        result = await record_failure(
+            rctx.organization_id,
+            scope_type=scope_type,
+            scope_key=scope_key,
+            max_failures=max_failures,
+            warning_at=warning_at,
+            cooldown_minutes=cooldown_minutes,
+            workspace_id=rctx.workspace_id,
+        )
+    elif mode == "success":
+        result = await record_success(
+            rctx.organization_id,
+            scope_type=scope_type,
+            scope_key=scope_key,
+        )
+    else:
+        result = await check_guard(
+            rctx.organization_id,
+            scope_type=scope_type,
+            scope_key=scope_key,
+            max_failures=max_failures,
+            warning_at=warning_at,
+            cooldown_minutes=cooldown_minutes,
+            workspace_id=rctx.workspace_id,
+        )
+    result = dict(result)
+    result["route"] = (
+        "blocked"
+        if result.get("blocked")
+        else "warning"
+        if result.get("warning")
+        else "allow"
+    )
+    result["message"] = _guard_message(result)
+    result["scope_type"] = scope_type
+    return NodeOutcome(
+        output=result,
+        simulated=rctx.simulate,
+        planned=(
+            {"kind": "conversation_guard", "mode": mode, "scope_type": scope_type}
+            if rctx.simulate
+            else {}
+        ),
+    )
+
+
 def _ai_decision_context(rctx: NodeContext, config: Any) -> dict[str, Any]:
     """Estado explícito para JEV: pedido, pregunta y salida de nodos previos.
 
@@ -3958,6 +4138,18 @@ def _register_defaults() -> None:
         outputs={"out": {"type": "json"}},
         execute=_exec_set_variable,
         **semantic_metadata("set_variable"),
+    )
+    registry.register(
+        "conversation_guard",
+        version=1,
+        label="Guardia de conversación",
+        category="logic",
+        risk_level="info",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_conversation_guard,
+        **semantic_metadata("conversation_guard"),
     )
 
     # OUTPUT

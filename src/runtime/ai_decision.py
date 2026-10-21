@@ -45,6 +45,7 @@ class AiDecisionConfig:
     confidence_min: float
     on_low_confidence: str
     score_threshold: float
+    fallback_option: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,9 @@ def parse_config(
         score_threshold = float(raw.get("score_threshold") or 0.5)
     except (TypeError, ValueError):
         score_threshold = 0.5
+    allowed_options = {key for key, _ in options}
+    fallback_raw = _slug(str(raw.get("fallback_option") or ""))
+    fallback_option = fallback_raw if fallback_raw in allowed_options else None
     return AiDecisionConfig(
         kind=kind,
         question=question or "Determinar la siguiente acción.",
@@ -107,6 +111,7 @@ def parse_config(
         confidence_min=confidence_min,
         on_low_confidence=on_low,
         score_threshold=min(1.0, max(0.0, score_threshold)),
+        fallback_option=fallback_option,
     )
 
 
@@ -261,10 +266,11 @@ def apply_low_confidence(outcome: AiDecisionOutcome, config: AiDecisionConfig) -
     first = config.options[0][0] if config.options else "approve"
     if action == LOW_FALLBACK:
         if config.kind == KIND_ROUTE:
+            fallback = config.fallback_option or first
             return AiDecisionOutcome(
-                result=True,
-                choice=first,
-                route=first,
+                result=fallback == first,
+                choice=fallback,
+                route=fallback,
                 score=outcome.score,
                 confidence=outcome.confidence,
                 provider=outcome.provider,

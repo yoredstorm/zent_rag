@@ -54,6 +54,7 @@ NODE_NEXT_STEPS: dict[str, tuple[str, ...]] = {
     "join": ("llm", "condition", "notify"),
     "merge": ("llm", "condition", "notify"),
     "set_variable": ("condition", "llm"),
+    "conversation_guard": ("condition", "ai_decision", "notify", "wait_event"),
     "state_get": ("condition", "llm"),
     "state_set": ("condition", "llm", "wait_event"),
     "state_merge": ("condition", "llm", "wait_event"),
@@ -459,6 +460,38 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         context_reads=("trigger", "variables", "data", "knowledge"),
         context_writes=("variables",),
         supports_simulation=False,
+    ),
+    "conversation_guard": _meta(
+        "Guardia de conversación",
+        "Cuenta intentos no entendidos y pausa la atención automática.",
+        long_description=(
+            "Estado durable por participante o conversación. No llama LLM ni JEV. "
+            "En modo check bloquea durante el cooldown; en failure incrementa el "
+            "contador; en success lo reinicia. Los errores técnicos no se cuentan."
+        ),
+        when_to_use=(
+            "un router de intención puede no entender mensajes repetidos",
+            "quieres responder un fallback y evitar bucles de costo",
+        ),
+        when_not_to_use=("el flujo no es conversacional o no tiene reintentos",),
+        examples=(
+            {
+                "title": "Revisar intentos al inicio",
+                "config": {
+                    "mode": "check",
+                    "max_failures": 5,
+                    "warning_at": 3,
+                    "cooldown_minutes": 20,
+                },
+            },
+            {
+                "title": "Registrar fallback",
+                "config": {"mode": "failure", "scope": "participant"},
+            },
+        ),
+        context_reads=("trigger", "variables"),
+        context_writes=(),
+        supports_simulation=True,
     ),
     "wait_event": _meta(
         "Esperar evento",

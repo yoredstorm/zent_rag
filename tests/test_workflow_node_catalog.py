@@ -97,6 +97,7 @@ def test_simulation_supported_flags() -> None:
         "business_node",
         "business_result",
         "capability_call",
+        "conversation_guard",
         "human_approval",
         "loop",
         "marketplace_action",

@@ -108,6 +108,31 @@ def test_ai_decision_route_and_low_confidence_human() -> None:
     assert "Choice" not in cfg.question
 
 
+def test_ai_decision_route_fallback_uses_explicit_option() -> None:
+    cfg = parse_config(
+        {
+            "decision_kind": "route",
+            "question": "¿Qué quiere el cliente?",
+            "options": [
+                {"id": "compra", "label": "Compra"},
+                {"id": "reclamo", "label": "Reclamo"},
+                {"id": "otro", "label": "Otro"},
+            ],
+            "fallback_option": "otro",
+            "confidence_min": 0.65,
+            "on_low_confidence": "fallback",
+        }
+    )
+    outcome = interpret(
+        cfg,
+        {"answers": {"route": {"choice": "compra", "confidence": 0.2}}},
+    )
+    fallback = apply_low_confidence(outcome, cfg)
+    assert fallback.choice == "otro"
+    assert fallback.route == "otro"
+    assert fallback.low_confidence is True
+
+
 def test_ai_decision_yes_no_and_score() -> None:
     yes = parse_config({"decision_kind": "yes_no", "question": "El stock es crítico"})
     yes_out = interpret(yes, {"answers": {"yes": {"noul": 0.9}}})

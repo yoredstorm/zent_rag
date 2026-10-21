@@ -192,6 +192,13 @@ def _ai_decision_schema() -> NodeBusinessSchema:
                     ]
                 },
             ),
+            _p(
+                "fallback_option",
+                "Ruta de respaldo",
+                "text",
+                min_level="advanced",
+                help="Opción a la que irá una ruta con confianza baja, por ejemplo 'otro'.",
+            ),
             _p("score_threshold", "Umbral de puntuación", "number", min_level="advanced", default=0.5),
         ],
         outputs=[
@@ -200,6 +207,7 @@ def _ai_decision_schema() -> NodeBusinessSchema:
             _out("route", "Ruta", "text"),
             _out("confidence", "Confianza", "number"),
             _out("low_confidence", "Confianza baja", "boolean"),
+            _out("judge_error", "Error de JEV", "text"),
         ],
     )
 
@@ -617,6 +625,55 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         _condition_schema(),
         _llm_schema(),
         _ai_decision_schema(),
+        _logic_schema(
+            "conversation_guard",
+            "Guardia de conversación",
+            "Cuenta intentos no entendidos, avisa y pausa la atención automática.",
+            [
+                _p(
+                    "mode",
+                    "Acción",
+                    "enum",
+                    required=True,
+                    default="check",
+                    validation={
+                        "options": [
+                            {"value": "check", "label": "Revisar intentos"},
+                            {"value": "failure", "label": "Registrar no entendido"},
+                            {"value": "success", "label": "Reiniciar contador"},
+                        ]
+                    },
+                ),
+                _p(
+                    "scope",
+                    "Ámbito",
+                    "enum",
+                    min_level="guided",
+                    default="participant",
+                    validation={
+                        "options": [
+                            {"value": "participant", "label": "Cliente / participante"},
+                            {"value": "conversation", "label": "Conversación"},
+                        ]
+                    },
+                ),
+                _p("scope_value", "Identificador", "text", min_level="advanced", data_source="any"),
+                _p("max_failures", "Máximo de fallos", "number", min_level="guided", default=5),
+                _p("warning_at", "Avisar al intento", "number", min_level="guided", default=3),
+                _p("cooldown_minutes", "Pausa en minutos", "number", min_level="guided", default=20),
+                _p("bypass_keywords", "Permitir siempre", "text", min_level="advanced"),
+            ],
+            [
+                _out("allowed", "Permitido", "boolean"),
+                _out("blocked", "Bloqueado", "boolean"),
+                _out("warning", "Aviso", "boolean"),
+                _out("bypass", "Excepción", "boolean"),
+                _out("failures", "Fallos", "number"),
+                _out("remaining", "Intentos restantes", "number"),
+                _out("cooldown_until", "Pausa hasta", "text"),
+                _out("message", "Mensaje", "text"),
+            ],
+        ),
         _query_business_data_schema(),
         _kb_query_schema(),
         _api_call_schema(),
