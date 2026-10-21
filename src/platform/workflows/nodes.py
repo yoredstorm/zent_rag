@@ -2260,6 +2260,83 @@ async def _exec_condition(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output={"condition": f"{field} {operator} {value}", "result": result})
 
 
+def _ai_decision_context(rctx: NodeContext, config: Any) -> dict[str, Any]:
+    """Estado explícito para JEV: pedido, pregunta y salida de nodos previos.
+
+    El nodo tiene un puerto `in`; antes se ignoraba y JEV juzgaba a ciegas.
+    """
+    trigger = rctx.trigger or {}
+    user_request = ""
+    for key in ("message", "text", "query", "prompt"):
+        value = trigger.get(key)
+        if value is not None and str(value).strip():
+            user_request = str(value)
+            break
+    if not user_request:
+        user_request = config.question
+
+    upstream: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_output(node_id: str, output: Any, status: str = "") -> None:
+        if node_id in seen or not isinstance(output, dict):
+            return
+        seen.add(node_id)
+        text = ""
+        for key in ("text", "answer", "content", "message", "result"):
+            value = output.get(key)
+            if value is not None and str(value).strip():
+                text = str(value)
+                break
+        if not text:
+            try:
+                import json as _json
+
+                text = _json.dumps(output, ensure_ascii=False, default=str)
+            except Exception:  # noqa: BLE001
+                text = str(output)
+        upstream.append(
+            {
+                "node_id": node_id,
+                "label": (rctx.node_labels or {}).get(node_id) or node_id,
+                "node_type": (rctx.node_types or {}).get(node_id) or "",
+                "status": status or str(output.get("status") or ""),
+                "text": text[:6000],
+            }
+        )
+
+    for by_node in (rctx.inputs or {}).values():
+        for node_id, execution in by_node.items():
+            add_output(
+                node_id,
+                getattr(execution, "output", None),
+                getattr(execution, "status", ""),
+            )
+    if not upstream:
+        for node_id, value in list((rctx.node_outputs or {}).items())[-6:]:
+            add_output(
+                node_id,
+                value.get("output") if isinstance(value, dict) else value,
+            )
+
+    variables = {
+        str(key): str(value)[:500]
+        for key, value in list((rctx.variables or {}).items())[:20]
+    }
+    evidence = [item["text"][:3000] for item in upstream[-6:]]
+    return {
+        "user_request": user_request[:4000],
+        "decision_question": config.question,
+        "trigger": {
+            str(k): str(v)[:300]
+            for k, v in list(trigger.items())[:12]
+        },
+        "upstream_outputs": upstream[-6:],
+        "variables": variables,
+        "evidence_preview": evidence,
+    }
+
+
 async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
     from src.runtime.ai_decision import (
         LOW_HUMAN,
@@ -2276,25 +2353,13 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
     config = parse_config(
         rctx.node.config, default_confidence_min=default_confidence_min(risk="medium")
     )
-    if rctx.simulate:
-        outcome = interpret(config, None)
-        return NodeOutcome(
-            simulated=True,
-            planned={"kind": config.kind, "question": config.question},
-            output={**to_output(outcome), "simulated": True},
-            contribution=_ai_decision_contribution(rctx, outcome),
-        )
     payload = None
     try:
         from src.decision.judgment import PHASE_WORKFLOW_DECISION, JudgmentContext
         from src.decision.service import get_decision_engine
 
         engine = get_decision_engine()
-        state = {
-            "user_request": config.question,
-            "trigger": {k: str(v)[:120] for k, v in list((rctx.trigger or {}).items())[:8]},
-            "evidence_preview": [],
-        }
+        state = _ai_decision_context(rctx, config)
         execution = rctx.execution
         payload = await engine.judge(
             state=state,
@@ -2319,8 +2384,16 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
         noul_yes=settings.DECISION_NOUL_YES,
         noul_no=settings.DECISION_NOUL_NO,
     )
+    if payload is None:
+        # Sin respuesta de JEV no existe juicio. No convertir la ausencia de
+        # evidencia en un "no" seguro; se aplica la política de baja confianza.
+        from dataclasses import replace as _replace
+
+        outcome = _replace(outcome, low_confidence=True, confidence=0.0)
     outcome = apply_low_confidence(outcome, config)
     output = to_output(outcome)
+    if rctx.simulate:
+        output["simulated"] = True
     if outcome.low_confidence and outcome.on_low_confidence == LOW_STOP:
         return NodeOutcome(
             output=output,
@@ -2347,7 +2420,16 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
         )
     if outcome.low_confidence and outcome.on_low_confidence == LOW_LLM:
         output["needs_llm"] = True
-    return NodeOutcome(output=output, contribution=_ai_decision_contribution(rctx, outcome))
+    return NodeOutcome(
+        output=output,
+        simulated=rctx.simulate,
+        planned=(
+            {"kind": config.kind, "question": config.question, "judge": "live_readonly"}
+            if rctx.simulate
+            else {}
+        ),
+        contribution=_ai_decision_contribution(rctx, outcome),
+    )
 
 
 def _ai_decision_contribution(rctx: NodeContext, outcome) -> NodeContribution:

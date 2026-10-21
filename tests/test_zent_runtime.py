@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -116,6 +117,104 @@ def test_ai_decision_yes_no_and_score() -> None:
     score_out = interpret(score, {"answers": {"score": {"score": 0.2, "confidence": 0.9}}})
     assert score_out.result is False
     assert score_out.route == "else"
+
+
+def _decision_rctx(*, simulate: bool = False) -> SimpleNamespace:
+    execution = SimpleNamespace(
+        organization_id=uuid4(),
+        run_id=uuid4(),
+        workflow_id=uuid4(),
+        correlation_id=None,
+    )
+    upstream = SimpleNamespace(
+        status="succeeded",
+        output={
+            "text": "En el libro el zorro no tiene nombre; es el amigo del principito.",
+            "model": "fake",
+        },
+    )
+    return SimpleNamespace(
+        execution=execution,
+        node=SimpleNamespace(
+            config={
+                "decision_kind": "yes_no",
+                "question": "¿La respuesta del agente trata sobre el zorro?",
+                "confidence_min": 0.65,
+                "on_low_confidence": "stop",
+            },
+            label="Decisión de IA",
+        ),
+        node_id="decision",
+        simulate=simulate,
+        inputs={"in": {"llm": upstream}},
+        trigger={"message": "¿Tiene nombre el zorro del principito?"},
+        variables={"tema": "zorro"},
+        node_outputs={},
+        node_labels={"llm": "Preguntar al agente"},
+        node_types={"llm": "llm"},
+        workspace_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_decision_uses_upstream_output_and_jev(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.platform.workflows.nodes import _exec_ai_decision
+
+    captured: dict = {}
+
+    class _Engine:
+        async def judge(self, *, state, questions, context):  # noqa: ANN001, ANN003
+            captured["state"] = state
+            captured["phase"] = context.phase
+            return {"answers": {"yes": {"noul": 0.95}}}
+
+    monkeypatch.setattr(
+        "src.decision.service.get_decision_engine", lambda: _Engine()
+    )
+    outcome = await _exec_ai_decision(_decision_rctx())
+    assert outcome.output["choice"] == "yes"
+    assert outcome.output["provider"] == "jev"
+    assert captured["phase"] == "workflow_decision"
+    assert "zorro" in captured["state"]["upstream_outputs"][0]["text"]
+    assert captured["state"]["user_request"] == "¿Tiene nombre el zorro del principito?"
+
+
+@pytest.mark.asyncio
+async def test_ai_decision_simulation_uses_jev_instead_of_fake_no(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.platform.workflows.nodes import _exec_ai_decision
+
+    class _Engine:
+        async def judge(self, *, state, questions, context):  # noqa: ANN001, ANN003
+            return {"answers": {"yes": {"noul": 0.93}}}
+
+    monkeypatch.setattr(
+        "src.decision.service.get_decision_engine", lambda: _Engine()
+    )
+    outcome = await _exec_ai_decision(_decision_rctx(simulate=True))
+    assert outcome.output["choice"] == "yes"
+    assert outcome.output["provider"] == "jev"
+    assert outcome.output["simulated"] is True
+
+
+@pytest.mark.asyncio
+async def test_ai_decision_without_jev_does_not_invent_no(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.platform.workflows.nodes import _exec_ai_decision
+
+    class _Engine:
+        async def judge(self, *, state, questions, context):  # noqa: ANN001, ANN003
+            return None
+
+    monkeypatch.setattr(
+        "src.decision.service.get_decision_engine", lambda: _Engine()
+    )
+    outcome = await _exec_ai_decision(_decision_rctx())
+    assert outcome.output["low_confidence"] is True
+    assert outcome.control == "stop_fail"
+    assert outcome.output["provider"] == "fallback"
 
 
 # ---------------------------------------------------------------------------
