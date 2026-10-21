@@ -2375,6 +2375,7 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
     except Exception as exc:  # noqa: BLE001
         logger.warning("ai_decision judge failed", error=str(exc)[:200])
         payload = None
+    judge_failed = payload is None
     from src.core.config import get_settings
 
     settings = get_settings()
@@ -2392,11 +2393,19 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
         outcome = _replace(outcome, low_confidence=True, confidence=0.0)
     outcome = apply_low_confidence(outcome, config)
     output = to_output(outcome)
+    if judge_failed:
+        output["judge_error"] = "JEV_UNAVAILABLE"
     if rctx.simulate:
         output["simulated"] = True
     if outcome.low_confidence and outcome.on_low_confidence == LOW_STOP:
         return NodeOutcome(
             output=output,
+            error=(
+                "JEV no devolvió un juicio válido; la decisión no se ejecutó "
+                "(on_low_confidence=stop)."
+                if judge_failed
+                else f"Decisión IA sin confianza suficiente: {outcome.choice}."
+            ),
             control="stop_fail",
             contribution=_ai_decision_contribution(rctx, outcome),
         )

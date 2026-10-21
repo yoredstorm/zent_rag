@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -12,7 +13,10 @@ from src.decision.judgment import JudgmentContext
 from src.decision.metrics import record_judge, record_trace_written
 from src.decision.policy import authorize_decision
 from src.decision.settings import DecisionEngineSettings
+from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.tracing import trace_span
+
+logger = get_logger(__name__)
 
 
 class DecisionEngine:
@@ -95,16 +99,34 @@ class DecisionEngine:
         phase = ctx.phase or "unknown"
         started = time.perf_counter()
         async with trace_span("decision.judge", phase=phase):
-            try:
-                payload = await self._jev.judge(state=state, questions=questions)
-            except Exception:  # noqa: BLE001 — el juicio nunca rompe el request
-                record_judge(
-                    None,
-                    error=True,
-                    phase=phase,
-                    latency_ms=(time.perf_counter() - started) * 1000,
-                )
-                return None
+            payload = None
+            for attempt in range(2):
+                try:
+                    payload = await self._jev.judge(state=state, questions=questions)
+                    break
+                except Exception as exc:  # noqa: BLE001 - el juicio nunca rompe el request
+                    if attempt == 0:
+                        logger.warning(
+                            "decision judge retry",
+                            phase=phase,
+                            error_type=type(exc).__name__,
+                            error=str(exc)[:200],
+                        )
+                        await asyncio.sleep(0.2)
+                        continue
+                    logger.warning(
+                        "decision judge failed",
+                        phase=phase,
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
+                    record_judge(
+                        None,
+                        error=True,
+                        phase=phase,
+                        latency_ms=(time.perf_counter() - started) * 1000,
+                    )
+                    return None
         latency_ms = (time.perf_counter() - started) * 1000
         if not isinstance(payload, dict):
             record_judge(None, error=True, phase=phase, latency_ms=latency_ms)

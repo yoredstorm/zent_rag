@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -13,6 +14,7 @@ from src.decision.capabilities import InMemoryCapabilityRegistry
 from src.decision.composite import CompositeDecisionProvider
 from src.decision.engine import DecisionEngine
 from src.decision.hook import retrieval_hint
+from src.decision.judgment import PHASE_WORKFLOW_DECISION, JudgmentContext
 from src.decision.policy import authorize_decision
 from src.decision.providers.jev import JevDecisionProvider, JevTransportError
 from src.decision.providers.llm import LLMDecisionProvider
@@ -83,6 +85,38 @@ class FakeJev:
             "answers": self.answers,
             "usage": {"input_tokens": 12, "output_tokens": 6},
         }
+
+
+@pytest.mark.asyncio
+async def test_judge_retries_transient_jev_failure() -> None:
+    class _FlakyJudge:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def judge(self, *, state, questions):  # noqa: ANN001
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient JEV")
+            return {"answers": {"yes": {"type": "noul", "noul": 0.9}}, "provider": "jev"}
+
+    judge = _FlakyJudge()
+    engine = DecisionEngine(
+        provider=SimpleNamespace(name="fake"),
+        settings=_settings(),
+        jev=judge,
+    )
+    payload = await engine.judge(
+        state={"user_request": "zorro", "evidence_preview": ["es un zorro"]},
+        questions={"yes": {"type": "noul"}},
+        context=JudgmentContext(
+            phase=PHASE_WORKFLOW_DECISION,
+            organization_id=uuid4(),
+            request_id=uuid4(),
+        ),
+    )
+    assert judge.calls == 2
+    assert payload is not None
+    assert payload["answers"]["yes"]["noul"] == 0.9
 
 
 class FakeLLM:

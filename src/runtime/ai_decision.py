@@ -81,7 +81,9 @@ def parse_config(
         kind = KIND_SCORE
     if kind not in KINDS:
         kind = KIND_ROUTE
-    question = str(raw.get("question") or raw.get("prompt") or "").strip()[:500]
+    question = str(raw.get("question") or raw.get("prompt") or "").strip()
+    # El editor a veces conserva comillas de cierre al pegar la pregunta.
+    question = question.strip('"').strip()[:500]
     options = _parse_options(raw.get("options"))
     fallback_min = (
         0.65 if default_confidence_min is None else float(default_confidence_min)
