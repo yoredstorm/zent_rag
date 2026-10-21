@@ -2398,14 +2398,20 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
     if rctx.simulate:
         output["simulated"] = True
     if outcome.low_confidence and outcome.on_low_confidence == LOW_STOP:
+        reason = (
+            "JEV no devolvió un juicio válido; la decisión no se ejecutó "
+            f"(pregunta: {config.question!r}, on_low_confidence=stop)."
+            if judge_failed
+            else (
+                f"Decisión IA sin confianza suficiente para {config.question!r}: "
+                f"choice={outcome.choice}, confidence={outcome.confidence:.2f}, "
+                f"provider={outcome.provider}. No se ejecutó ninguna rama."
+            )
+        )
+        output["message"] = reason
+        output["stop_reason"] = "low_confidence"
         return NodeOutcome(
             output=output,
-            error=(
-                "JEV no devolvió un juicio válido; la decisión no se ejecutó "
-                "(on_low_confidence=stop)."
-                if judge_failed
-                else f"Decisión IA sin confianza suficiente: {outcome.choice}."
-            ),
             control="stop_fail",
             contribution=_ai_decision_contribution(rctx, outcome),
         )

@@ -215,6 +215,30 @@ async def test_ai_decision_without_jev_does_not_invent_no(
     assert outcome.output["low_confidence"] is True
     assert outcome.control == "stop_fail"
     assert outcome.output["provider"] == "fallback"
+    assert outcome.output["judge_error"] == "JEV_UNAVAILABLE"
+    assert "JEV no devolvió" in outcome.output["message"]
+
+
+@pytest.mark.asyncio
+async def test_ai_decision_low_confidence_no_preserves_output_and_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.platform.workflows.nodes import _exec_ai_decision
+
+    class _Engine:
+        async def judge(self, *, state, questions, context):  # noqa: ANN001, ANN003
+            return {"answers": {"yes": {"noul": 0.42}}, "provider": "jev"}
+
+    monkeypatch.setattr(
+        "src.decision.service.get_decision_engine", lambda: _Engine()
+    )
+    outcome = await _exec_ai_decision(_decision_rctx())
+    assert outcome.output["choice"] == "no"
+    assert outcome.output["low_confidence"] is True
+    assert outcome.output["provider"] == "jev"
+    assert outcome.control == "stop_fail"
+    assert "sin confianza suficiente" in outcome.output["message"]
+    assert "zorro" in outcome.output["message"]
 
 
 # ---------------------------------------------------------------------------
