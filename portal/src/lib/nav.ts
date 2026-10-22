@@ -93,8 +93,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Operar",
     items: [
-      { to: "/operations", label: "Operación", icon: Pulse },
       { to: "/assistants", label: "Asistentes", icon: Pulse },
+      { to: "/operations", label: "Operación", icon: Pulse },
       { to: "/watchers", label: "Vigilancia de datos", icon: Eye },
       { to: "/deployments", label: "Despliegues", icon: RocketLaunch },
       { to: "/environments", label: "Entornos", icon: StackSimple },

@@ -109,6 +109,7 @@ export const CATEGORY_META: Record<NodeCategory, { label: string; color: string 
 export type PurposeGroup = { id: string; label: string; types: string[] };
 
 export const PURPOSE_GROUPS: PurposeGroup[] = [
+  { id: "start", label: "Iniciar", types: ["trigger_webhook", "trigger_schedule", "trigger_event"] },
   { id: "understand", label: "Entender", types: ["llm", "adaptive_route"] },
   {
     id: "consult",
