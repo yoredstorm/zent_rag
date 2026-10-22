@@ -106,6 +106,45 @@ describe("WorkflowTestPanel (dock de prueba)", () => {
     );
   });
 
+  it("un efecto sin doble queda UNVERIFIED y el ejemplo de rol no pide JSON", async () => {
+    stubApi(
+      [{ step_index: 0, step_type: "capability_call", node_id: "pay", node_type: "capability_call", status: "simulated", output: {} }],
+      "succeeded",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/runs") && (init?.method ?? "GET") === "GET") {
+          return Promise.resolve(json({ runs: [] }));
+        }
+        if (url.endsWith("/run")) {
+          return Promise.resolve(
+            json({
+              run_id: "r1",
+              status: "succeeded",
+              planned_effects: [{ node_id: "pay", node_type: "capability_call", planned: { kind: "payment" } }],
+            }),
+          );
+        }
+        if (url.includes("/workflows/runs/r1")) {
+          return Promise.resolve(json({ id: "r1", status: "succeeded", steps: [] }));
+        }
+        return Promise.resolve(json({}));
+      }),
+    );
+    const user = userEvent.setup();
+    renderDock();
+    expect(screen.getByTestId("wf-level-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-level-provider")).toBeInTheDocument();
+    await user.click(screen.getByTestId("wf-role-bienestar"));
+    expect(screen.getByTestId("wf-test-payload")).toHaveValue("Dime qué enfermedad tengo");
+    await user.click(screen.getByTestId("wf-test"));
+    await waitFor(() =>
+      expect(screen.getByText(/UNVERIFIED/)).toBeInTheDocument(),
+    );
+  });
+
   it("los avisos del grafo llevan al nodo culpable", async () => {
     stubApi([]);
     const onSelectNode = vi.fn();

@@ -196,6 +196,7 @@ _STOCK_MUTATE_INPUT: dict[str, Any] = {
 
 _ORDER_CREATE_INPUT: dict[str, Any] = {
     "type": "object",
+    "required": ["items"],
     "properties": {
         "items": {"type": "array"},
         "customer": {"type": "object"},
@@ -216,11 +217,14 @@ _ORDER_REF_INPUT: dict[str, Any] = {
         "payment_reference": {"type": "string"},
         "provider": {"type": "string"},
         "amount": {"type": "number"},
+        "currency": {"type": "string"},
+        "payment_status": {"type": "string"},
     },
 }
 
 _CHECKOUT_CREATE_INPUT: dict[str, Any] = {
     "type": "object",
+    "required": ["order_id"],
     "properties": {
         "order_id": {"type": "string"},
         "order_number": {"type": "string"},
@@ -238,11 +242,42 @@ _CHECKOUT_OUTPUT: dict[str, Any] = {
     "type": "object",
     "properties": {
         "checkout_id": {"type": "string"},
+        "order_id": {"type": "string"},
+        "order_number": {"type": "string"},
         "provider": {"type": "string"},
         "status": {"type": "string"},
         "amount": {"type": "number"},
         "currency": {"type": "string"},
         "reference": {"type": "string"},
+        "qr_payload": {"type": "string"},
+        "checkout_url": {"type": "string"},
+    },
+}
+
+_ORDER_OUTPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "order_number": {"type": "string"},
+        "status": {"type": "string"},
+        "subtotal": {"type": "number"},
+        "total": {"type": "number"},
+        "currency": {"type": "string"},
+        "items": {"type": "array"},
+        "customer": {"type": "object"},
+        "cart": {"type": "object"},
+    },
+}
+
+_STOCK_OUTPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "reservation_id": {"type": "string"},
+        "reserved": {"type": "number"},
+        "released": {"type": "number"},
+        "committed": {"type": "number"},
+        "available": {"type": "number"},
     },
 }
 
@@ -292,13 +327,14 @@ CAPABILITY_CONTRACTS: dict[str, dict[str, Any]] = {
         },
         "read_only": True,
     },
-    CAP_STOCK_RESERVE: {"input": _STOCK_MUTATE_INPUT, "output": {"type": "object"}, "read_only": False},
-    CAP_STOCK_RELEASE: {"input": _STOCK_MUTATE_INPUT, "output": {"type": "object"}, "read_only": False},
-    CAP_STOCK_COMMIT: {"input": _STOCK_MUTATE_INPUT, "output": {"type": "object"}, "read_only": False},
-    CAP_ORDER_CREATE: {"input": _ORDER_CREATE_INPUT, "output": {"type": "object"}, "read_only": False},
+    CAP_STOCK_RESERVE: {"input": _STOCK_MUTATE_INPUT, "output": _STOCK_OUTPUT, "read_only": False},
+    CAP_STOCK_RELEASE: {"input": _STOCK_MUTATE_INPUT, "output": _STOCK_OUTPUT, "read_only": False},
+    CAP_STOCK_COMMIT: {"input": _STOCK_MUTATE_INPUT, "output": _STOCK_OUTPUT, "read_only": False},
+    CAP_ORDER_CREATE: {"input": _ORDER_CREATE_INPUT, "output": _ORDER_OUTPUT, "read_only": False},
     CAP_CART_QUOTE: {
         "input": {
             "type": "object",
+            "required": ["items"],
             "properties": {"items": {"type": "array"}, "currency": {"type": "string"}},
         },
         "output": {
@@ -313,11 +349,11 @@ CAPABILITY_CONTRACTS: dict[str, dict[str, Any]] = {
         },
         "read_only": True,
     },
-    CAP_ORDER_GET: {"input": _ORDER_REF_INPUT, "output": {"type": "object"}, "read_only": True},
-    CAP_ORDER_CONFIRM: {"input": _ORDER_REF_INPUT, "output": {"type": "object"}, "read_only": False},
-    CAP_ORDER_MARK_PAID: {"input": _ORDER_REF_INPUT, "output": {"type": "object"}, "read_only": False},
-    CAP_ORDER_FULFILL: {"input": _ORDER_REF_INPUT, "output": {"type": "object"}, "read_only": False},
-    CAP_ORDER_CANCEL: {"input": _ORDER_REF_INPUT, "output": {"type": "object"}, "read_only": False},
+    CAP_ORDER_GET: {"input": _ORDER_REF_INPUT, "output": _ORDER_OUTPUT, "read_only": True},
+    CAP_ORDER_CONFIRM: {"input": _ORDER_REF_INPUT, "output": _ORDER_OUTPUT, "read_only": False},
+    CAP_ORDER_MARK_PAID: {"input": _ORDER_REF_INPUT, "output": _ORDER_OUTPUT, "read_only": False},
+    CAP_ORDER_FULFILL: {"input": _ORDER_REF_INPUT, "output": _ORDER_OUTPUT, "read_only": False},
+    CAP_ORDER_CANCEL: {"input": _ORDER_REF_INPUT, "output": _ORDER_OUTPUT, "read_only": False},
     CAP_PAYMENT_CHECKOUT_CREATE: {
         "input": _CHECKOUT_CREATE_INPUT,
         "output": _CHECKOUT_OUTPUT,

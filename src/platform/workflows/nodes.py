@@ -1998,6 +1998,14 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         agent = await get_agent_repo().get_agent(rctx.organization_id, agent_id)
         if agent is None:
             raise LookupError()
+        # A role NEVER grants permissions: it can only narrow the agent tools
+        # that the runtime is already allowed to use. The execution still uses
+        # the same Agent entity and the same workflow engine.
+        from src.platform.studio.roles import apply_role_to_agent, get_agent_role
+
+        agent_role = await get_agent_role(rctx.organization_id, agent_id)
+        if agent_role is not None:
+            agent = apply_role_to_agent(agent, agent_role)
         org_config = await _org_config_json(rctx.organization_id)
         context_payload, context_truncated, context_summary, requested_reads = (
             await _agent_context_payload(rctx)
@@ -2294,9 +2302,8 @@ def _guard_message(result: dict[str, Any]) -> str:
         return "No puedo seguir con esta conversación automática. Escribe «humano» para soporte."
     if result.get("warning"):
         return (
-            "No entendí tu mensaje. "
-            f"Te quedan {int(result.get('remaining') or 0)} intentos antes de pausar "
-            "la atención automática."
+            "Para seguir necesito un dato concreto. "
+            f"Quedan {int(result.get('remaining') or 0)} intentos antes de pasar con una persona."
         )
     return ""
 
@@ -3980,6 +3987,336 @@ async def _exec_business_result(rctx: NodeContext) -> NodeOutcome:
     )
 
 
+def _adaptive_state(rctx: NodeContext) -> dict[str, Any]:
+    state: dict[str, Any] = {}
+    if rctx.instance is not None and isinstance(rctx.instance.state, dict):
+        state.update(rctx.instance.state)
+    if isinstance(rctx.trigger, dict):
+        for key, value in rctx.trigger.items():
+            state.setdefault(key, value)
+    return state
+
+
+def _adaptive_proposal(rctx: NodeContext) -> dict[str, Any] | None:
+    cfg = rctx.node.config or {}
+    raw = cfg.get("proposal")
+    if raw is not None:
+        resolved = _resolve_ref(raw, rctx)
+        if isinstance(resolved, dict):
+            return resolved
+        if isinstance(raw, dict):
+            return raw
+    for by_port in (rctx.inputs or {}).values():
+        if not isinstance(by_port, dict):
+            continue
+        for execution in by_port.values():
+            output = getattr(execution, "output", None)
+            if not isinstance(output, dict):
+                continue
+            nested = output.get("proposal")
+            if isinstance(nested, dict):
+                return nested
+            if "confidence" in output and "route" in output:
+                return output
+    return None
+
+
+async def _adaptive_guard(rctx: NodeContext, cfg: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(cfg.get("guard"), dict):
+        return dict(cfg["guard"])
+    if not cfg.get("use_guard") or rctx.simulate:
+        return {}
+    from src.platform.workflows.conversation_guard import check_guard, scope_digest
+
+    scope_type, scope_value = _conversation_guard_scope(rctx, cfg)
+    scope_key = scope_digest(scope_type, f"{rctx.workspace_id or ''}:{scope_value}")
+    try:
+        return await check_guard(
+            rctx.organization_id,
+            scope_type=scope_type,
+            scope_key=scope_key,
+            max_failures=int(cfg.get("max_failures") or 5),
+            warning_at=int(cfg.get("warning_at") or 3),
+        )
+    except Exception as exc:  # noqa: BLE001 — sin guard el router sigue en modo seguro
+        logger.warning("adaptive guard check failed", error=str(exc)[:200])
+        return {}
+
+
+async def _exec_adaptive_route(rctx: NodeContext) -> NodeOutcome:
+    """Decisión policy-driven. No ejecuta capacidades ni llama al LLM."""
+    from src.platform.workflows.composition import causal_record, decide_adaptive
+
+    cfg = dict(rctx.node.config or {})
+    try:
+        confidence_min = float(cfg.get("confidence_min") or 0.6)
+    except (TypeError, ValueError):
+        confidence_min = 0.6
+    denied = cfg.get("denied_refs") if isinstance(cfg.get("denied_refs"), list) else []
+    decision = decide_adaptive(
+        None if cfg.get("failure_mode") else _adaptive_proposal(rctx),
+        allowlist=cfg.get("allowlist") if isinstance(cfg.get("allowlist"), list) else [],
+        registry_refs=cfg.get("registry_refs") if isinstance(cfg.get("registry_refs"), list) else [],
+        guard=await _adaptive_guard(rctx, cfg),
+        failure_mode=str(cfg.get("failure_mode") or "") or None,
+        confidence_min=confidence_min,
+        on_unauthorized=str(cfg.get("on_unauthorized") or "handoff"),
+        on_contract_mismatch=str(cfg.get("on_contract_mismatch") or "halt"),
+        permissions=rctx.permissions,
+        denied_refs={str(item) for item in denied},
+        handoff=cfg.get("handoff") if isinstance(cfg.get("handoff"), dict) else None,
+        state=_adaptive_state(rctx),
+    )
+    message_id = None
+    if isinstance(rctx.trigger, dict):
+        message_id = rctx.trigger.get("message_id") or rctx.trigger.get("id")
+    decision["causal"] = causal_record(
+        message_id=str(message_id) if message_id else None,
+        decision_id=rctx.node_id,
+        action_id=decision.get("capability_ref"),
+        instance_id=str(rctx.instance.id) if rctx.instance is not None else None,
+    )
+    if not rctx.simulate:
+        try:
+            from src.platform.workflows.context_store import append_run_event
+
+            await append_run_event(
+                rctx.organization_id,
+                rctx.execution.run_id,
+                "causal_link",
+                node_id=rctx.node_id,
+                payload=decision["causal"],
+                instance_id=rctx.instance.id if rctx.instance is not None else None,
+            )
+        except Exception as exc:  # noqa: BLE001 — la traza no tumba la decisión
+            logger.warning("causal link persist failed", error=str(exc)[:200])
+    contribution = NodeContribution(
+        writes=(
+            ContextWrite(
+                section="decisions",
+                key=rctx.node_id,
+                value={
+                    "decision": decision["decision"],
+                    "route": decision["route"],
+                    "confidence": decision["confidence"],
+                    "failure_mode": decision["failure_mode"],
+                },
+                value_type="decision",
+                label=str(rctx.node.label or "Router adaptativo"),
+                provenance=node_provenance(
+                    rctx.node_id,
+                    "adaptive_route",
+                    origin_kind="node",
+                    workspace_id=rctx.workspace_id,
+                ),
+            ),
+        )
+    )
+    control = decision.get("control")
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={
+                "kind": "adaptive_route",
+                "port": decision["port"],
+                "decision": decision["decision"],
+            },
+            output=decision,
+            control=control,
+            contribution=contribution,
+        )
+    return NodeOutcome(output=decision, control=control, contribution=contribution)
+
+
+async def _persist_effect(rctx: NodeContext, key: str, status: str, output: Any) -> None:
+    from src.platform.workflows.composition import effect_state_path
+    from src.platform.workflows.instances import mutate_instance_state
+
+    result = await mutate_instance_state(
+        rctx.organization_id,
+        rctx.instance.id,
+        op="set",
+        path=effect_state_path(key),
+        value={"status": status, "output": output, "key": key},
+    )
+    rctx.instance.state = dict(result.get("state") or {})
+
+
+async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
+    """subworkflow.call/v1 sobre el snapshot congelado, misma instancia."""
+    import asyncio
+
+    from src.platform.workflows.composition import (
+        CompositionError,
+        child_public_output,
+        claim_effect,
+        composition_frame,
+        execute_frozen_subworkflow,
+        prepare_subworkflow_call,
+        read_effect,
+        schema_errors,
+    )
+
+    cfg = dict(rctx.node.config or {})
+    stack, depth = composition_frame(rctx.payload if isinstance(rctx.payload, dict) else {})
+    try:
+        node_attempts = int((rctx.node.retry_policy or {}).get("max_attempts") or cfg.get("max_retries") or 1)
+    except (TypeError, ValueError):
+        node_attempts = 1
+    if node_attempts > 5:
+        return NodeOutcome(
+            error="reintentos fuera de rango",
+            output={"failure_mode": "contract_mismatch", "execute_capability": False},
+        )
+    try:
+        spec = prepare_subworkflow_call(
+            cfg,
+            parent_permissions=rctx.permissions,
+            stack=stack,
+            depth=depth,
+        )
+    except CompositionError as exc:
+        return NodeOutcome(
+            error=exc.message,
+            output={"failure_mode": exc.code, "execute_capability": False},
+        )
+    output_base = {
+        "contract": spec["contract"],
+        "workflow_ref": spec["workflow_ref"],
+        "workflow_version": spec["version"],
+        "snapshot_hash": spec["snapshot_hash"],
+        "dropped_permissions": spec["dropped_permissions"],
+        "effective_permissions": spec["effective_permissions"],
+    }
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={
+                "kind": "subworkflow",
+                "snapshot_hash": spec["snapshot_hash"],
+                "version": spec["version"],
+            },
+            output=output_base,
+        )
+    if rctx.instance is None:
+        return NodeOutcome(
+            error="subworkflow.call requiere una instancia durable",
+            output={**output_base, "failure_mode": "contract_mismatch"},
+        )
+    if str(rctx.instance.status or "").upper() in {"CANCELLED", "FAILED"}:
+        return NodeOutcome(
+            error="instancia cerrada",
+            output={**output_base, "failure_mode": "user_cancelled"},
+        )
+    ledger: dict[str, Any] = {}
+    existing = read_effect(rctx.instance.state, spec["idempotency_key"])
+    if existing:
+        ledger[spec["idempotency_key"]] = existing
+    claim = claim_effect(ledger, spec["idempotency_key"])
+    if claim["action"] == "replay":
+        replayed = dict(claim.get("output") or {})
+        replayed["replayed"] = True
+        replayed["snapshot_hash"] = spec["snapshot_hash"]
+        return NodeOutcome(output=replayed)
+    if claim["action"] == "blocked":
+        return NodeOutcome(
+            error="efecto incompleto; no se reejecuta",
+            output={**output_base, "failure_mode": "contract_mismatch", "replayed": False},
+        )
+    try:
+        await _persist_effect(rctx, spec["idempotency_key"], "started", None)
+    except Exception as exc:  # noqa: BLE001
+        return NodeOutcome(
+            error=str(exc)[:200],
+            output={**output_base, "failure_mode": "provider_unavailable"},
+        )
+    try:
+        result = await asyncio.wait_for(
+            execute_frozen_subworkflow(
+                spec,
+                organization_id=rctx.organization_id,
+                workflow_id=rctx.execution.workflow_id,
+                run_id=rctx.execution.run_id,
+                actor_type=rctx.execution.actor_type,
+                permissions=frozenset(spec["effective_permissions"]),
+                correlation_id=rctx.execution.correlation_id,
+                workspace_id=rctx.workspace_id,
+                actor_id=rctx.execution.actor_id,
+                instance_id=rctx.instance.id,
+            ),
+            timeout=spec["timeout_seconds"],
+        )
+    except TimeoutError:
+        try:
+            await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
+        except Exception:  # noqa: BLE001
+            logger.warning("effect incomplete mark failed", node_id=rctx.node_id)
+        return NodeOutcome(
+            error="timeout de subworkflow",
+            output={**output_base, "failure_mode": "timeout"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        try:
+            await _persist_effect(rctx, spec["idempotency_key"], "failed", None)
+        except Exception:  # noqa: BLE001
+            logger.warning("effect failure mark failed", node_id=rctx.node_id)
+        return NodeOutcome(
+            error=str(exc)[:300],
+            output={**output_base, "failure_mode": "provider_unavailable"},
+        )
+    status = str(getattr(result, "status", "") or "")
+    if status == "waiting":
+        try:
+            await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
+        except Exception:  # noqa: BLE001
+            logger.warning("effect waiting mark failed", node_id=rctx.node_id)
+        return NodeOutcome(
+            error="WAIT anidado rechazado",
+            output={**output_base, "failure_mode": "contract_mismatch"},
+        )
+    if status not in {"succeeded", "simulated", "stopped"}:
+        try:
+            await _persist_effect(rctx, spec["idempotency_key"], "failed", None)
+        except Exception:  # noqa: BLE001
+            logger.warning("effect failure mark failed", node_id=rctx.node_id)
+        return NodeOutcome(
+            error=str(getattr(result, "error", None) or status or "subworkflow falló")[:300],
+            output={**output_base, "failure_mode": "provider_unavailable"},
+        )
+    public = child_public_output(result)
+    public.update(output_base)
+    if schema_errors(public, spec["output_schema"]):
+        try:
+            await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
+        except Exception:  # noqa: BLE001
+            logger.warning("effect mismatch mark failed", node_id=rctx.node_id)
+        return NodeOutcome(
+            error="salida de subworkflow no cumple el contrato",
+            output={**output_base, "failure_mode": "contract_mismatch"},
+        )
+    usage = public.get("usage") if isinstance(public.get("usage"), dict) else {}
+    max_tokens = spec["budget"].get("max_tokens")
+    if max_tokens is not None:
+        try:
+            if int(usage.get("tokens") or 0) > int(max_tokens):
+                await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
+                return NodeOutcome(
+                    error="presupuesto de tokens excedido",
+                    output={**output_base, "failure_mode": "contract_mismatch"},
+                )
+        except (TypeError, ValueError):
+            pass
+    try:
+        await _persist_effect(rctx, spec["idempotency_key"], "applied", public)
+    except Exception as exc:  # noqa: BLE001
+        return NodeOutcome(
+            error=str(exc)[:200],
+            output={**public, "failure_mode": "provider_unavailable"},
+        )
+    public["replayed"] = False
+    return NodeOutcome(output=public)
+
+
 def _register_defaults() -> None:
     already = registry.get("llm")
     if already is not None:
@@ -4280,6 +4617,37 @@ def _register_defaults() -> None:
         outputs={"out": {"type": "json"}},
         execute=_exec_loop,
         **semantic_metadata("loop"),
+    )
+    registry.register(
+        "subworkflow_call",
+        version=1,
+        label="Subflujo congelado",
+        category="control",
+        risk_level="normal",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_subworkflow_call,
+        **semantic_metadata("subworkflow_call"),
+    )
+    registry.register(
+        "adaptive_route",
+        version=1,
+        label="Router adaptativo",
+        category="logic",
+        risk_level="normal",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={
+            "transition": {"type": "json"},
+            "clarify": {"type": "json"},
+            "wait": {"type": "json"},
+            "intervene": {"type": "json"},
+            "compensate": {"type": "json"},
+            "halt": {"type": "json"},
+        },
+        execute=_exec_adaptive_route,
+        **semantic_metadata("adaptive_route"),
     )
     _state_ops = {
         "get": _exec_state_get,

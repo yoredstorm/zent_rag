@@ -151,7 +151,7 @@ def test_thinking_kwargs_con_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_settings(monkeypatch, LLM_DISABLE_THINKING=True)
 
     assert provider_module._thinking_kwargs() == {
-        "extra_body": {"chat_template_kwargs": {"thinking": False}}
+        "extra_body": {"thinking": {"type": "disabled"}}
     }
 
 
@@ -168,7 +168,7 @@ async def test_stream_pasa_thinking_apagado_al_proveedor(monkeypatch: pytest.Mon
 
     _ = [event async for event in provider_module.LiteLLMProvider().generate_stream(prompt="hola")]
 
-    assert seen["extra_body"] == {"chat_template_kwargs": {"thinking": False}}
+    assert seen["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
 def test_answer_extractor_decodifica_json_por_partes() -> None:

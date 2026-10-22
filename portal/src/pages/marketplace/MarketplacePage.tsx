@@ -8,7 +8,8 @@ import {
   Storefront,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { safeReturnTo } from "../../lib/marketplaceReturn";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -44,7 +45,9 @@ type Tab = "discover" | "all" | "categories" | "installed" | "updates" | "purcha
 
 export default function MarketplacePage() {
   const { session } = useAuth();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const backToDesign = safeReturnTo(searchParams.get("return_to"));
   // Deep links (p. ej. el checklist del embudo) abren el catálogo ya filtrado.
   const initialQuery = searchParams.get("q") ?? "";
   const initialSurface = searchParams.get("applies_to") ?? "";
@@ -116,6 +119,7 @@ export default function MarketplacePage() {
         body: JSON.stringify({ answers: {} }),
       });
       await load();
+      if (backToDesign) navigate(backToDesign);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos instalar el producto");
     } finally {

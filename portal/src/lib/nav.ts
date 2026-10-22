@@ -32,6 +32,7 @@ import {
   Storefront,
   Swap,
   Target,
+  UserCircle,
   UsersThree,
   WarningOctagon,
   WebhooksLogo,
@@ -83,6 +84,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/chat", label: "Playground", icon: ChatCircleDots },
       { to: "/agents", label: "Agentes", icon: Robot },
+      { to: "/roles", label: "Roles", icon: UserCircle },
       { to: "/workflows", label: "Workflows", icon: FlowArrow },
       { to: "/prompts", label: "Instrucciones", icon: NotePencil, key: "prompts" },
       { to: "/copilot", label: "Copilot", icon: Sparkle },
@@ -91,6 +93,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Operar",
     items: [
+      { to: "/operations", label: "Operación", icon: Pulse },
       { to: "/assistants", label: "Asistentes", icon: Pulse },
       { to: "/watchers", label: "Vigilancia de datos", icon: Eye },
       { to: "/deployments", label: "Despliegues", icon: RocketLaunch },

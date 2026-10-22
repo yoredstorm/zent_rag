@@ -109,17 +109,25 @@ export const CATEGORY_META: Record<NodeCategory, { label: string; color: string 
 export type PurposeGroup = { id: string; label: string; types: string[] };
 
 export const PURPOSE_GROUPS: PurposeGroup[] = [
-  { id: "start", label: "Empezar", types: ["trigger_event", "trigger_schedule", "trigger_webhook"] },
+  { id: "understand", label: "Entender", types: ["llm", "adaptive_route"] },
   {
-    id: "get",
-    label: "Obtener información",
-    types: ["query_business_data", "kb_query", "api_call", "marketplace_action"],
+    id: "consult",
+    label: "Consultar",
+    types: ["kb_query", "query_business_data", "api_call", "capability_call", "state_get"],
   },
-  { id: "think", label: "Pensar", types: ["llm"] },
-  { id: "decide", label: "Decidir", types: ["ai_decision", "condition", "filter", "for_each"] },
-  { id: "coordinate", label: "Coordinar", types: ["join", "merge", "set_variable", "conversation_guard"] },
-  { id: "act", label: "Actuar", types: ["notify", "business_node", "business_result"] },
-  { id: "control", label: "Controlar", types: ["human_approval", "stop", "end"] },
+  { id: "decide", label: "Decidir", types: ["ai_decision", "condition", "filter"] },
+  { id: "wait", label: "Esperar", types: ["wait_event", "human_approval", "loop"] },
+  {
+    id: "act",
+    label: "Actuar",
+    types: ["notify", "marketplace_action", "business_node", "state_set", "state_merge", "state_append"],
+  },
+  {
+    id: "control",
+    label: "Controlar",
+    types: ["conversation_guard", "join", "merge", "set_variable", "for_each", "subworkflow_call", "stop"],
+  },
+  { id: "finish", label: "Finalizar", types: ["end", "business_result"] },
 ];
 
 /** Explicación de negocio de una conexión (brief §21). */

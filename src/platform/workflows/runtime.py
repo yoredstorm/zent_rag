@@ -472,6 +472,23 @@ async def execute_graph(
             instance=instance_ref,
         )
 
+        from src.platform.workflows.composition import upstream_route_block
+
+        blocked_route = upstream_route_block(
+            inputs, rctx.node_types, node.type, node.config or {}
+        )
+        if blocked_route:
+            exec_ = NodeExecution(
+                status="failed",
+                error="capacidad no autorizada por el router",
+                output={"failure_mode": blocked_route, "execute_capability": False},
+            )
+            _emit_node_metric(node.type, "failed", 0)
+            await persist(node_id, node.type, node.config, exec_, False)
+            node_outcome(node_id, "failed", exec_.output, exec_.error, exec_)
+            run_status, run_error = "failed", exec_.error
+            return
+
         # Permisos por capability.
         denied_perm = None
         for cap in node_def.capabilities:
@@ -692,6 +709,17 @@ async def execute_graph(
                     skipped_edges.add(edge.id)
         elif node.type == "wait_event":
             taken = port_override or "out"
+            for edge in outgoing.get(node_id, []):
+                if edge.from_port == taken:
+                    executed_edges.add(edge.id)
+                else:
+                    skipped_edges.add(edge.id)
+        elif node.type in {"adaptive_route", "subworkflow_call"}:
+            output = exec_.output or {}
+            if node.type == "subworkflow_call" and not output.get("decision"):
+                taken = port_override or "out"
+            else:
+                taken = port_override or str(output.get("port") or "halt")
             for edge in outgoing.get(node_id, []):
                 if edge.from_port == taken:
                     executed_edges.add(edge.id)

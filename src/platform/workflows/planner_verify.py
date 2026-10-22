@@ -97,6 +97,23 @@ def _source_outputs(step: PlanStep, snapshot: CapabilitySnapshot) -> list[str] |
         if not properties:
             return None
         return sorted(str(key) for key in properties.keys())
+    if step.type == "wait":
+        # El evento reanuda la instancia con payload dinámico; estos campos son
+        # los que el runtime expone de forma estable.
+        return [
+            "message",
+            "payload",
+            "event_type",
+            "correlation",
+            "waiting",
+            "port",
+            "status",
+            "payment_reference",
+        ]
+    if step.type == "trigger_conversation":
+        return ["message", "conversation_id", "payload", "event_type"]
+    if step.type == "state":
+        return ["value", "ok", "removed", "merged", "appended"]
     mapping = {
         "business_query": "query_business_data",
         "knowledge_query": "kb_query",

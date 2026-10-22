@@ -322,6 +322,11 @@ def _render_capability(descriptor: CapabilityDescriptor) -> list[str]:
     )
     if descriptor.availability.reasons:
         lines.append("  bloqueo: " + _short("; ".join(descriptor.availability.reasons), 180))
+    if descriptor.capability_ref in ("catalog.product.price", "inventory.stock.get"):
+        lines.append(
+            "  uso: requiere product_id/sku escalar; no conectes products[] "
+            "(catalog.products.search ya devuelve price/stock por producto)."
+        )
     return lines
 
 
@@ -392,7 +397,15 @@ def capability_digest(
         node
         for node in nodes
         if node.get("node_type")
-        not in ("loop", "for_each", "ai_decision", "api_call", "set_variable", "business_node", "end")
+        not in (
+            "for_each",
+            "ai_decision",
+            "api_call",
+            "set_variable",
+            "business_node",
+            "end",
+            "conversation_guard",
+        )
     ]
     if supported_nodes:
         lines.append(
@@ -439,11 +452,24 @@ def capability_digest(
             str(event.get("id")): str(event.get("business_name") or "")
             for event in capabilities.get("event_schemas") or []
         }
+        priority = [
+            "conversation.message",
+            "payment.succeeded",
+            "payment.failed",
+            "payment.pending",
+            "payment.expired",
+            "document.uploaded",
+            "document.processed",
+        ]
+        ordered_events = [
+            *[event for event in priority if event in events],
+            *[event for event in events if event not in priority],
+        ]
         lines.append(
             "Eventos: "
             + ", ".join(
                 f"{event} ({event_labels[event]})" if event_labels.get(event) else event
-                for event in events[:max_items]
+                for event in ordered_events[: max(max_items, len(priority))]
             )
         )
     lines.append(

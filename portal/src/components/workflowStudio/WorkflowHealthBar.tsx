@@ -69,8 +69,14 @@ export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
   if (!summary && !readiness) return null;
   const problems = readiness?.checks.filter((c) => c.status !== "ok") ?? [];
   const problemCount = (readiness?.errors ?? 0) + (readiness?.warnings ?? 0);
-  const totalChecks = readiness?.checks.length ?? 0;
-  const readinessScore = totalChecks > 0 ? Math.round((100 * (totalChecks - problemCount)) / totalChecks) : 100;
+  const blocked = (readiness?.errors ?? 0) > 0;
+  const readinessLabel = blocked
+    ? "Requiere configuración"
+    : (readiness?.warnings ?? 0) > 0
+      ? "Revisión requerida"
+      : readiness?.ready
+        ? "Listo para publicar"
+        : "Borrador incompleto";
   const needsMarketplace = problems.some((p) => (p.hint || "").includes("Marketplace"));
 
   return (
@@ -82,13 +88,12 @@ export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
         <p className="min-w-[14rem] flex-1 text-[12px] leading-relaxed text-muted" data-testid="wf-summary-text">
           {summary?.text}
         </p>
-        {totalChecks > 0 && (
+        {readiness && (
           <span
-            className="text-[11px] tabular-nums text-muted"
+            className={`text-[11px] ${blocked ? "font-medium text-danger" : "text-muted"}`}
             data-testid="wf-readiness-score"
-            title={`${totalChecks - problemCount}/${totalChecks} requisitos resueltos`}
           >
-            Readiness {readinessScore}%
+            {readinessLabel}
           </span>
         )}
         <div className="flex flex-wrap items-center gap-1.5" data-testid="wf-readiness-chips">

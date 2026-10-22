@@ -73,8 +73,8 @@ export default function WorkflowNewPage() {
     <div>
       <PageHeader
         breadcrumbs={[{ label: "Workflows", to: "/workflows" }, { label: "Nuevo workflow" }]}
-        title="¿Cómo quieres crear tu automatización?"
-        subtitle="Contar qué necesitas es el camino recomendado; el lienzo avanzado y las plantillas siguen disponibles."
+        title="¿Qué quieres que ZENT haga?"
+        subtitle="Los tres caminos abren el mismo lienzo. Simple, Guiado y Avanzado son el nivel de detalle, no otra aplicación."
       />
       <ErrorInline message={error} />
 
@@ -82,16 +82,16 @@ export default function WorkflowNewPage() {
       <Panel className="border-accent/35 p-4 sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <p className="eyebrow mb-2">Camino recomendado</p>
+            <p className="eyebrow mb-2">Describir con IA</p>
             <div className="flex items-center gap-2.5">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-accent-line bg-accent-soft text-accent">
                 <MagicWand size={18} weight="regular" aria-hidden />
               </span>
-              <h2 className="text-h2">Crear con IA</h2>
+              <h2 className="text-h2">Describir con IA</h2>
             </div>
             <p className="prose-measure mt-3 text-[13px] leading-relaxed text-muted">
-              Describe qué quieres automatizar con tus palabras. Zent lo traduce a un flujo y te lo
-              muestra primero en lenguaje de negocio.
+              Cuentas la misión. ZENT propone el flujo y, al confirmar, lo abre en el mismo lienzo
+              que el diseño manual.
             </p>
             <ol className="mt-4 flex flex-col gap-2.5">
               <li className="flex items-start gap-2.5 text-[13px] text-muted">
@@ -127,7 +127,7 @@ export default function WorkflowNewPage() {
               Empezar a describir
             </ButtonLink>
             <p className="text-xs leading-relaxed text-faint">
-              Sin nodos ni configuración técnica. Puedes volver al lienzo después.
+              El borrador confirmado queda en el lienzo. Ahí eliges Simple, Guiado o Avanzado.
             </p>
           </div>
         </div>
@@ -137,8 +137,8 @@ export default function WorkflowNewPage() {
         {/* Alternativa manual */}
         <Panel className="flex flex-col">
           <PanelHeader
-            title="Diseñar manualmente"
-            description="Lienzo avanzado: nodos, puertos, condiciones, reintentos y control total del grafo."
+            title="Crear manualmente"
+            description="El mismo lienzo. Empiezas con el disparo y la ficha de misión."
           />
           <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
             <div className="flex items-center gap-2.5">
@@ -173,6 +173,13 @@ export default function WorkflowNewPage() {
               >
                 Abrir el lienzo
               </ButtonLink>
+              <ButtonLink
+                to="/workflows/new/manual?plantilla=mentor"
+                variant="ghost"
+                data-testid="wf-mode-mentor"
+              >
+                Crear un mentor
+              </ButtonLink>
             </div>
           </div>
         </Panel>
@@ -180,8 +187,8 @@ export default function WorkflowNewPage() {
         {/* Plantillas */}
         <Panel className="flex flex-col" data-testid="wf-mode-templates">
           <PanelHeader
-            title="Usar una plantilla"
-            description="Recetas listas para configurar y adaptar."
+            title="Partir de una solución"
+            description="La plantilla se instala en el mismo lienzo. Luego la editas como cualquier flujo."
             actions={
               <ButtonLink to="/workflows/new/ask" variant="ghost" size="sm" leadingIcon={MagicWand}>
                 Prefiero describirlo

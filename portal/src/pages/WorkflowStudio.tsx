@@ -1,7 +1,8 @@
 import { ArrowLeft, ChatCircleDots, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { isApiError } from "../lib/errors";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
 import {
@@ -29,6 +30,7 @@ import { WorkflowApiPanel } from "../components/workflowStudio/WorkflowApiPanel"
 import { WorkflowHealthBar } from "../components/workflowStudio/WorkflowHealthBar";
 import { SalesFunnelChecklist } from "../components/commerce/SalesFunnelChecklist";
 import { SalesFunnelKpis } from "../components/commerce/SalesFunnelKpis";
+import { MissionCard, missionFromGraph, type MissionFields } from "../components/workflowStudio/MissionCard";
 import { WorkflowPatchPanel } from "../components/workflowStudio/WorkflowPatchPanel";
 import { WorkflowTestPanel } from "../components/workflowStudio/WorkflowTestPanel";
 import { WorkflowVersionsPanel } from "../components/workflowStudio/WorkflowVersionsPanel";
@@ -82,6 +84,48 @@ function starterGraph(): WorkflowGraph {
   return g;
 }
 
+function mentorGraph(): WorkflowGraph {
+  const graph = starterGraph();
+  const trigger = graph.nodes[0];
+  graph.nodes.splice(1, 0, {
+    id: "mentor",
+    type: "llm",
+    version: 1,
+    label: "Acompañar",
+    position: { x: 180, y: 90 },
+    config: { purpose: "Siguiente ejercicio con el progreso autorizado" },
+    input_ports: [{ name: "in", type: "json" }],
+    output_ports: [{ name: "out", type: "json" }],
+    retry_policy: { max_attempts: 1 },
+    timeout_ms: 60_000,
+    error_policy: "fail",
+    metadata: {},
+  });
+  graph.edges = [
+    { id: "e1", from_node: trigger.id, from_port: "out", to_node: "mentor", to_port: "in" },
+    { id: "e2", from_node: "mentor", from_port: "out", to_node: "end", to_port: "in" },
+  ];
+  graph.metadata = {
+    ...graph.metadata,
+    mission: {
+      role: "Mentor",
+      audience: "Persona que aprende",
+      goal: "Acompañar el siguiente ejercicio con el progreso autorizado",
+      limits: "No inventa evaluación ni diagnóstico",
+      capabilities: "Consultar progreso, proponer ejercicio",
+      sources: "Conocimiento del curso",
+      memory: "Solo con consentimiento",
+      actions: "Registrar progreso, pedir aclaración",
+      outcomes: "Siguiente ejercicio y avance registrado",
+    },
+  };
+  return graph;
+}
+
+function draftKey(workflowId: string): string {
+  return `wf-draft-${workflowId}`;
+}
+
 export default function WorkflowStudioPage() {
   const { id } = useParams<{ id: string }>();
   const isNew = !id || id === "new";
@@ -123,6 +167,9 @@ export default function WorkflowStudioPage() {
   const [saveFlash, setSaveFlash] = useState<"idle" | "saved">("idle");
   const [saveError, setSaveError] = useState("");
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [recovery, setRecovery] = useState<{ name: string; description: string; graph: WorkflowGraph } | null>(null);
+  const saveRef = useRef<() => Promise<boolean>>(async () => false);
 
   const status = detail?.status ?? "draft";
 
@@ -226,6 +273,25 @@ export default function WorkflowStudioPage() {
         organizationId: session.organizationId,
       });
       applyDetail(d);
+      const raw = sessionStorage.getItem(draftKey(id));
+      if (raw) {
+        try {
+          const draft = JSON.parse(raw) as { name?: string; description?: string; graph?: WorkflowGraph };
+          const server = JSON.stringify(prepareGraphForSave(d.graph ?? starterGraph()));
+          const local = draft.graph ? JSON.stringify(prepareGraphForSave(draft.graph)) : "";
+          if (draft.graph && local && local !== server) {
+            setRecovery({
+              name: draft.name || d.name,
+              description: draft.description || "",
+              graph: draft.graph,
+            });
+          } else {
+            sessionStorage.removeItem(draftKey(id));
+          }
+        } catch {
+          sessionStorage.removeItem(draftKey(id));
+        }
+      }
       try {
         const pinned = await api<{ nodes: { node_id: string }[] }>(
           `/api/v1/workflows/${id}/pinned-data`,
@@ -276,7 +342,7 @@ export default function WorkflowStudioPage() {
           trigger_config: {},
           steps: [],
           editor_state: { mode: "canvas", config_level: configLevel },
-          graph: starterGraph(),
+          graph: searchParams.get("plantilla") === "mentor" ? mentorGraph() : starterGraph(),
           workflow_version: 2,
         }),
       });
@@ -331,16 +397,76 @@ export default function WorkflowStudioPage() {
         }).catch(() => undefined);
       }
       setSaveFlash("saved");
+      if (id) sessionStorage.removeItem(draftKey(id));
+      setRecovery(null);
+      setConflict(false);
       await load(true);
       return true;
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Error";
+      const offline = e instanceof TypeError || (isApiError(e) && (e.status === 0 || e.retryable));
+      const clash = isApiError(e) && e.status === 409;
+      if (clash) setConflict(true);
+      const message = clash
+        ? "Otra pestaña guardó este flujo. Tus cambios siguen en esta pestaña."
+        : offline
+          ? "Sin conexión. Tus cambios siguen en esta pestaña."
+          : e instanceof Error
+            ? e.message
+            : "Error";
       setError(message);
       setSaveError(message);
       return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  saveRef.current = save;
+
+  const mentorNamed = useRef(false);
+  useEffect(() => {
+    if (mentorNamed.current || !isNew || searchParams.get("plantilla") !== "mentor") return;
+    mentorNamed.current = true;
+    setName((current) => current || "Mentor");
+  }, [isNew, searchParams]);
+
+  useEffect(() => {
+    if (!id || isNew || !dirty || !graph) return;
+    sessionStorage.setItem(draftKey(id), JSON.stringify({ name, description, graph }));
+  }, [id, isNew, dirty, name, description, graph]);
+
+  useEffect(() => {
+    if (!dirty || conflict || isNew || saving) return;
+    const timer = window.setTimeout(() => {
+      void saveRef.current();
+    }, 1600);
+    return () => window.clearTimeout(timer);
+  }, [dirty, conflict, isNew, saving, signature]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (!isNew) void saveRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isNew]);
+
+  function updateMission(next: MissionFields) {
+    setGraph((current) =>
+      current ? { ...current, metadata: { ...current.metadata, mission: next } } : current,
+    );
+  }
+
+  function applyRecovery() {
+    if (!recovery) return;
+    setName(recovery.name);
+    setDescription(recovery.description);
+    setGraph(recovery.graph);
+    setRecovery(null);
+    setConflict(false);
   }
 
   async function toggleStatus(activate: boolean) {
@@ -578,6 +704,52 @@ export default function WorkflowStudioPage() {
 
       {msg && <InlineFlash className="shrink-0">{msg}</InlineFlash>}
       {error && <ErrorInline message={error} className="mb-0 shrink-0" />}
+      {conflict && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[13px]" role="status" data-testid="wf-conflict">
+          <span className="min-w-0 flex-1">Otra pestaña guardó este flujo. Tus cambios no se borraron.</span>
+          <Button size="sm" variant="secondary" data-testid="wf-conflict-keep" onClick={() => setConflict(false)}>
+            Seguir con mis cambios
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="wf-conflict-reload"
+            onClick={() => {
+              setConflict(false);
+              void load(true);
+            }}
+          >
+            Cargar la versión del servidor
+          </Button>
+        </div>
+      )}
+      {recovery && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-soft px-3 py-2 text-[13px]" role="status" data-testid="wf-recovery">
+          <span className="min-w-0 flex-1">Hay cambios locales de un guardado que no llegó al servidor.</span>
+          <Button size="sm" variant="secondary" data-testid="wf-recovery-apply" onClick={applyRecovery}>
+            Recuperar mis cambios
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              if (id) sessionStorage.removeItem(draftKey(id));
+              setRecovery(null);
+            }}
+          >
+            Descartar
+          </Button>
+        </div>
+      )}
+
+      {graph && (
+        <details className="shrink-0" data-testid="wf-mission-disclosure">
+          <summary className="cursor-pointer text-[13px] font-medium text-text">Ficha de misión</summary>
+          <div className="mt-2">
+            <MissionCard value={missionFromGraph(graph.metadata)} onChange={updateMission} />
+          </div>
+        </details>
+      )}
 
       {id && <WorkflowHealthBar workflowId={id} refreshKey={detail?.updated_at ?? ""} />}
 

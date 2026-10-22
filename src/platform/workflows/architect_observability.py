@@ -242,7 +242,10 @@ def fallback_payload(reason_code: str, prompt: str) -> dict[str, Any]:
         "limitations": limitations,
         "requires_review": True,
         "publishable": False,
-        "preserved_requirement": str(prompt or "")[:600],
+        # El fallback no puede resumir ni recortar la intención original: el
+        # revisor humano necesita el pedido completo para decidir.
+        "preserved_requirement": str(prompt or "")[:4000],
+        "preserved_chars": len(str(prompt or "")),
     }
 
 

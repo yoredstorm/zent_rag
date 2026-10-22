@@ -44,7 +44,9 @@ duplicados, reconexiones y reinicios del servidor.
 async def test_real_llm_generates_gold_workflow_without_installing_template(
     async_client: AsyncClient,
 ) -> None:
-    org = await ready_tenant(async_client, "Cert AI Gold", catalog=CATALOG)
+    org = await ready_tenant(
+        async_client, "Cert AI Gold", catalog=CATALOG, with_agent=True
+    )
     response = await async_client.post(
         "/api/v1/workflows/architect/sessions",
         headers={

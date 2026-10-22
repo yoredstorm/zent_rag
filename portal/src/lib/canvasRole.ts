@@ -93,7 +93,7 @@ function roleFromNode(node: CanvasRoleNode): CanvasRole {
     return String(config.preset ?? "") === "payment" ? "payment" : "wait";
   }
   if (WAIT_TYPES.has(type)) return "wait";
-  if (type === "condition") return "decision";
+  if (type === "condition" || type === "adaptive_route") return "decision";
   if (END_TYPES.has(type)) return "end";
   if (type === "business_result") return "business_result";
   if (CAPABILITY_TYPES.has(type)) {

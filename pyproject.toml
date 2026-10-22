@@ -139,6 +139,7 @@ ignore = [
   "src/platform/workflows/instances.py" = ["S608"]  # columnas/filtros con lista estática
   "src/platform/commerce/store.py" = ["S608"]  # WHERE dinámico con lista estática de cláusulas
   "src/platform/workflows/bindings.py" = ["S608"]  # idem (ON CONFLICT sobre índices parciales)
+  "src/platform/workflows/data_mapper.py" = ["S608"]  # identificadores validados por _ident; valores por bind params
   "src/platform/billing/invoices.py" = ["S608"]  # idem
   "src/platform/tracing/traces.py" = ["S608"]  # idem
   "src/platform/notifyv2/notifications.py" = ["S608"]  # idem

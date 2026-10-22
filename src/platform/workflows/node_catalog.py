@@ -61,6 +61,8 @@ NODE_NEXT_STEPS: dict[str, tuple[str, ...]] = {
     "state_append": ("condition", "llm", "wait_event"),
     "state_remove": ("condition", "llm", "wait_event"),
     "capability_call": ("condition", "llm", "notify", "business_result"),
+    "adaptive_route": ("capability_call", "kb_query", "wait_event", "human_approval", "subworkflow_call"),
+    "subworkflow_call": ("condition", "notify", "business_result", "end"),
     "wait_event": (
         "state_set", "state_merge", "notify", "wait_event", "marketplace_action",
         "business_result", "stop", "end",
@@ -746,6 +748,75 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         context_reads=("trigger", "variables", "data"),
         context_writes=("data", "evidence", "entities"),
         requires=("installed_integrations",),
+        supports_simulation=True,
+    ),
+    "adaptive_route": _meta(
+        "Router adaptativo",
+        "Elige una transición ya autorizada. No ejecuta la capacidad.",
+        long_description=(
+            "El modelo propone route, confidence, rationale_summary, "
+            "missing_information, recommended_next_action y allowed_transition_id. "
+            "El runtime acepta solo una entrada de la allowlist congelada que "
+            "también esté en el registry. Si no, aclara, espera, deriva o detiene."
+        ),
+        when_to_use=(
+            "el siguiente paso depende de la intención y solo hay acciones ya registradas",
+        ),
+        when_not_to_use=(
+            "el paso es determinista: usa condition o capability_call directo",
+            "quieres que el modelo ejecute una herramienta por su cuenta",
+        ),
+        examples=(
+            {
+                "title": "Elegir entre conocimiento y aclaración",
+                "config": {
+                    "stage": "decision",
+                    "confidence_min": 0.6,
+                    "registry_refs": ["node.kb_query"],
+                    "allowlist": [
+                        {
+                            "id": "consultar_conocimiento",
+                            "capability_ref": "node.kb_query",
+                            "stage": "capability_execution",
+                        }
+                    ],
+                },
+            },
+        ),
+        context_reads=("trigger", "variables"),
+        context_writes=("decisions",),
+        supports_simulation=True,
+    ),
+    "subworkflow_call": _meta(
+        "Subflujo congelado",
+        "Ejecuta un subflujo con la versión y el snapshot ya congelados.",
+        long_description=(
+            "Contrato subworkflow.call/v1. Misma instancia y misma correlación. "
+            "Permisos heredados, nunca ampliados. Profundidad, presupuesto, "
+            "timeout, reintentos e idempotencia. Un resume no carga la versión viva. "
+            "WAIT, LOOP y aprobación no se anidan: viven en el proceso padre."
+        ),
+        when_to_use=(
+            "un tramo reutilizable debe correr con entradas y salidas tipadas",
+        ),
+        when_not_to_use=(
+            "el tramo espera un mensaje, un pago o una aprobación",
+            "hace falta la definición viva del workflow",
+        ),
+        examples=(
+            {
+                "title": "Cobrar con snapshot congelado",
+                "config": {
+                    "workflow_ref": "cobrar_pedido",
+                    "version": 1,
+                    "idempotency_key": "order-1",
+                    "registry_refs": ["payments.checkout.create"],
+                    "max_depth": 3,
+                    "max_retries": 1,
+                },
+            },
+        ),
+        context_reads=("trigger", "variables"),
         supports_simulation=True,
     ),
     # ------------------------------------------------------------------

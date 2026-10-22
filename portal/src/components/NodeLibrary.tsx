@@ -1,8 +1,7 @@
 import { MagnifyingGlass, Plus, Sparkle, WarningCircle } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
+import { marketplaceHref } from "../lib/marketplaceReturn";
 import { CATEGORY_META, NODE_LIBRARY, PURPOSE_GROUPS, type NodeCategory, type NodeMeta } from "../lib/workflowGraph";
-import { priceLabel } from "./marketplace/model";
-
 export type MxInstall = {
   install_id: string;
   integration: { slug: string; name: string };
@@ -57,6 +56,9 @@ type Props = {
   onAddMarketplaceAction?: (installId: string, action: MxInstall["actions"][number]) => void;
   onAddRecommendation?: (rec: MxRecommendation) => void;
   onInstall?: (slug: string) => void;
+  /** Ruta interna a la que vuelve el Marketplace global. */
+  returnTo?: string | null;
+  nodeId?: string | null;
   /** Alto del rail; el estudio lo estira al viewport. */
   className?: string;
 };
@@ -71,12 +73,12 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   purpose_required: { text: "requiere propósito", cls: "badge-warning" },
   budget_exceeded: { text: "presupuesto superado", cls: "badge-danger" },
   provider_degraded: { text: "proveedor degradado", cls: "badge-warning" },
-  deprecated: { text: "deprecated", cls: "badge-danger" },
+  deprecated: { text: "obsoleta", cls: "badge-danger" },
   version_update: { text: "actualización disponible", cls: "badge-info" },
   disabled: { text: "deshabilitada", cls: "badge-muted" },
 };
 
-export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, businessMode = false, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
+export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, businessMode = false, marketplace, onAddMarketplaceAction, onAddRecommendation, returnTo, nodeId, className = "h-[560px]" }: Props) {
   const [q, setQ] = useState("");
   const items = useMemo(
     () => Object.values(nodes ?? NODE_LIBRARY).filter((m) => !m.type.startsWith("trigger_") || usedTypes.length === 0),
@@ -177,9 +179,10 @@ export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, businessM
           <MarketplaceSection
             context={marketplace}
             q={ql}
+            returnTo={returnTo}
+            nodeId={nodeId}
             onAddMarketplaceAction={onAddMarketplaceAction}
             onAddRecommendation={onAddRecommendation}
-            onInstall={onInstall}
           />
         )}
         {filtered.length === 0 && !mktVisible && <p className="px-1 text-[10px] text-faint">Sin nodos para “{q}”</p>}
@@ -188,18 +191,26 @@ export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, businessM
   );
 }
 
+const SETUP_STATUS = new Set(["credentials_missing", "purpose_required", "disabled", "budget_exceeded"]);
+
+function needsSetup(status: string[]): boolean {
+  return status.some((item) => SETUP_STATUS.has(item));
+}
+
 function MarketplaceSection({
   context,
   q,
+  returnTo,
+  nodeId,
   onAddMarketplaceAction,
   onAddRecommendation,
-  onInstall,
 }: {
   context: MarketplaceContext;
   q: string;
+  returnTo?: string | null;
+  nodeId?: string | null;
   onAddMarketplaceAction?: Props["onAddMarketplaceAction"];
   onAddRecommendation?: Props["onAddRecommendation"];
-  onInstall?: Props["onInstall"];
 }) {
   const installed = (context.installed ?? []).filter(
     (i) =>
@@ -216,10 +227,19 @@ function MarketplaceSection({
       a.actions.some((x) => x.action_id.toLowerCase().includes(q) || x.display_name.toLowerCase().includes(q))
   );
   const recommendations = (context.recommendations ?? []).filter((r) => !q || r.action_id.includes(q));
+  const ready = installed.filter((item) => !needsSetup(item.status));
+  const setup = installed.filter((item) => needsSetup(item.status));
+
+  function resolveHref(slug: string, capabilityRef?: string) {
+    return marketplaceHref({ slug, capabilityRef, returnTo, nodeId });
+  }
 
   return (
-    <div data-testid="wf-mkt-section" className="space-y-2">
-      <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-fuchsia-400">Agregar desde Marketplace</p>
+    <div data-testid="wf-capabilities" className="space-y-2">
+      <p className="px-1 text-[11px] font-medium text-text">Capacidades</p>
+      <p className="px-1 text-[10px] leading-relaxed text-faint">
+        Catálogo único. Si falta una, se resuelve en el Marketplace global.
+      </p>
 
       {recommendations.length > 0 && (
         <div className="space-y-1" data-testid="wf-mkt-recommend">
@@ -229,23 +249,32 @@ function MarketplaceSection({
                 <Sparkle size={10} className="text-accent" aria-hidden /> Recomendado
               </p>
               <p className="mt-0.5 text-[10px] text-muted">{r.reason}</p>
-              <button
-                type="button"
-                data-testid={`wf-mkt-add-${r.action_id}`}
-                className="mt-1 inline-flex items-center gap-1 rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-accent hover:border-accent/50"
-                onClick={() => onAddRecommendation?.(r)}
-              >
-                <Plus size={10} aria-hidden /> Add to workflow
-              </button>
+              {installed.some((item) => item.integration.slug === r.integration_slug) ? (
+                <button
+                  type="button"
+                  data-testid={`wf-mkt-add-${r.action_id}`}
+                  className="mt-1 inline-flex min-h-8 items-center gap-1 rounded border border-border bg-bg px-1.5 text-[11px] text-accent hover:border-accent/50"
+                  onClick={() => onAddRecommendation?.(r)}
+                >
+                  <Plus size={10} aria-hidden /> Añadir al flujo
+                </button>
+              ) : (
+                <a
+                  className="mt-1 inline-flex min-h-8 items-center text-[11px] text-accent underline-offset-2 hover:underline"
+                  href={resolveHref(r.integration_slug, r.action_id)}
+                >
+                  Resolver en Marketplace global
+                </a>
+              )}
             </div>
           ))}
         </div>
       )}
 
       <div className="space-y-1" data-testid="wf-mkt-installed">
-        <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-faint">Installed</p>
-        {installed.length === 0 && <p className="px-1 text-[10px] text-faint">Nada instalado aún.</p>}
-        {installed.map((i) => (
+        <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-faint">Disponibles</p>
+        {ready.length === 0 && <p className="px-1 text-[10px] text-faint">Ninguna lista para usar.</p>}
+        {ready.map((i) => (
           <div key={i.install_id} className="rounded-md border border-border bg-soft/60 px-2 py-1.5">
             <div className="flex items-center justify-between gap-1">
               <p className="text-[10px] font-medium text-text">{i.integration.name}</p>
@@ -276,26 +305,39 @@ function MarketplaceSection({
         ))}
       </div>
 
+      {setup.length > 0 && (
+        <div className="space-y-1" data-testid="wf-capabilities-setup">
+          <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-faint">Por configurar</p>
+          {setup.map((item) => (
+            <div key={item.install_id} className="rounded-md border border-border bg-soft/60 px-2 py-1.5">
+              <p className="text-[10px] font-medium text-text">{item.integration.name}</p>
+              <p className="mt-0.5 text-[10px] text-warn">Falta configuración antes de usarla en el flujo.</p>
+              <a
+                className="mt-1 inline-flex min-h-8 items-center text-[11px] text-accent underline-offset-2 hover:underline"
+                href={resolveHref(item.integration.slug)}
+              >
+                Resolver en Marketplace global
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+
       {available.length > 0 && (
         <div className="space-y-1" data-testid="wf-mkt-available">
-          <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-faint">Available</p>
+          <p className="px-1 text-[9px] font-semibold tracking-wider uppercase text-faint">No instaladas</p>
           {available.map((a) => (
             <div key={a.slug} className="rounded-md border border-border bg-soft/60 px-2 py-1.5">
               <p className="text-[10px] font-medium text-text">{a.name}</p>
               <p className="mt-0.5 line-clamp-2 text-[9px] text-faint">{a.description || a.slug}</p>
-              {a.product && (
-                <p className="mt-0.5 text-[9px] font-medium text-accent">
-                  {priceLabel(a.product.pricing)}
-                </p>
-              )}
-              <button
-                type="button"
+              <p className="mt-0.5 text-[10px] text-warn">Requisito: no está instalada en este espacio.</p>
+              <a
+                className="mt-1 inline-flex min-h-8 items-center text-[11px] text-accent underline-offset-2 hover:underline"
                 data-testid={`wf-mkt-install-${a.slug}`}
-                className="mt-1 inline-flex items-center gap-1 rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-accent hover:border-accent/50"
-                onClick={() => onInstall?.(a.slug)}
+                href={resolveHref(a.slug, a.actions[0]?.action_id)}
               >
-                <Plus size={10} aria-hidden /> Add
-              </button>
+                Resolver en Marketplace global
+              </a>
             </div>
           ))}
         </div>

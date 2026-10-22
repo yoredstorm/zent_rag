@@ -89,6 +89,7 @@ from src.api.routes.share import router as share_router
 from src.api.routes.soc import router as soc_router
 from src.api.routes.sources import router as sources_router
 from src.api.routes.sso import router as sso_router
+from src.api.routes.studio import router as studio_router
 from src.api.routes.training import router as training_router
 from src.api.routes.workflows import public_router as workflows_public_router
 from src.api.routes.workflows import router as workflows_router
@@ -669,6 +670,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(risk_center_router)
     new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
+    new_app.include_router(studio_router)
     new_app.include_router(workflows_public_router)
     new_app.include_router(capabilities_router)
     from src.api.routes.commerce import public_router as commerce_public_router

@@ -68,8 +68,10 @@ describe("NodeLibrary", () => {
     const { rerender } = render(
       <NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} businessMode />
     );
-    expect(screen.getByText("Pensar")).toBeInTheDocument();
-    expect(screen.getByText("Obtener información")).toBeInTheDocument();
+    expect(screen.getByText("Entender")).toBeInTheDocument();
+    expect(screen.getByText("Consultar")).toBeInTheDocument();
+    expect(screen.getByText("Esperar")).toBeInTheDocument();
+    expect(screen.getByText("Finalizar")).toBeInTheDocument();
     expect(screen.queryByText("Empezar")).toBeNull();
 
     rerender(<NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} />);
@@ -80,7 +82,7 @@ describe("NodeLibrary", () => {
 describe("NodeLibrary marketplace", () => {
   it("muestra Installed con estado, costo y versión disponible", () => {
     render(<NodeLibrary onAdd={() => undefined} usedTypes={[]} marketplace={MKT} />);
-    expect(screen.getByTestId("wf-mkt-section")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-capabilities")).toBeInTheDocument();
     expect(screen.getByText("SUNAT")).toBeInTheDocument();
     expect(screen.getByText("conectado")).toBeInTheDocument();
     expect(screen.getByText(/v1 · v2 disponible/)).toBeInTheDocument();
@@ -94,12 +96,23 @@ describe("NodeLibrary marketplace", () => {
     expect(onAdd).toHaveBeenCalledWith("i1", expect.objectContaining({ action_id: "peru.taxpayer.lookup" }));
   });
 
-  it("abre el drawer para una capacidad disponible", async () => {
-    const onInstall = vi.fn();
-    render(<NodeLibrary onAdd={() => undefined} usedTypes={[]} marketplace={MKT} onInstall={onInstall} />);
-    expect(screen.getByTestId("wf-mkt-available")).toBeInTheDocument();
-    await userEvent.click(screen.getByTestId("wf-mkt-install-reniec-verification"));
-    expect(onInstall).toHaveBeenCalledWith("reniec-verification");
+  it("una capacidad no instalada abre el Marketplace global", () => {
+    render(
+      <NodeLibrary
+        onAdd={() => undefined}
+        usedTypes={[]}
+        marketplace={MKT}
+        returnTo="/workflows/wf-1"
+        nodeId="nodo-1"
+      />
+    );
+    const link = screen.getByTestId("wf-mkt-install-reniec-verification");
+    expect(link).toHaveTextContent("Resolver en Marketplace global");
+    expect(link).toHaveAttribute("href", expect.stringContaining("/marketplace?"));
+    expect(link.getAttribute("href")).toContain("return_to");
+    expect(link.getAttribute("href")).not.toContain("http");
+    expect(screen.queryByText("Agregar desde Marketplace")).toBeNull();
+    expect(screen.getByText("Capacidades")).toBeInTheDocument();
   });
 
   it("muestra la recomendación del grafo", () => {
@@ -115,7 +128,7 @@ describe("NodeLibrary marketplace", () => {
     expect(screen.getByTestId("wf-add-business_node")).toBeInTheDocument();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Buscar nodo"), "taxpayer");
-    expect(screen.getByTestId("wf-mkt-section")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-capabilities")).toBeInTheDocument();
     await user.click(screen.getByTestId("wf-mkt-action-peru.taxpayer.lookup"));
     expect(onAddMx).toHaveBeenCalled();
   });

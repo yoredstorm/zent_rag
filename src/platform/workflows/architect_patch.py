@@ -382,14 +382,9 @@ def semantic_plan_diff(before: SemanticPlan, after: SemanticPlan) -> dict[str, A
 
 
 def _parse_json_object(text: str) -> dict[str, Any] | None:
-    match = JSON_OBJECT_RE.search(text or "")
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    from src.platform.workflows.json_output import parse_json_object
+
+    return parse_json_object(text)
 
 
 async def propose_plan_patch(

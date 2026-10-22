@@ -77,6 +77,12 @@ def _emit_instance_metric(status: str) -> None:
             counter.labels(status=str(status)[:30]).inc()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from src.platform.workflows.operations import record_transition
+
+        record_transition(status)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _emit_signal_metric(status: str) -> None:

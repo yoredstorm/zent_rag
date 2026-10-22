@@ -1,10 +1,9 @@
-import { ChartLineUp, Plus, WarningOctagon, X } from "@phosphor-icons/react";
+import { ChartLineUp, Plus, WarningOctagon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel } from "../lib/businessSchema";
 import type { DataCatalogPayload, NodeSamples } from "../lib/dataPicker";
-import type { MarketRec, ShopInstall } from "../lib/marketplaceCanvas";
 import type { GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
 import { fetchNodeCatalog, libraryWithCatalog, catalogCategoryLabels } from "../lib/workflowCatalog";
@@ -75,9 +74,6 @@ export function WorkflowCanvasEditor({
   const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
   const [mxActions, setMxActions] = useState<Record<string, { action_id: string; display_name: string }[]>>({});
   const [mkt, setMkt] = useState<MarketplaceContext | null>(null);
-  const [shop, setShop] = useState<ShopInstall | null>(null);
-  const [shopBusy, setShopBusy] = useState(false);
-  const [shopPurpose, setShopPurpose] = useState("");
   const [cost, setCost] = useState<{
     per_run: number;
     monthly: number;
@@ -343,57 +339,11 @@ export function WorkflowCanvasEditor({
     });
   }
 
-  async function addRecommendation(rec: MxRecommendation) {
-    // Instala si falta; luego añade el nodo con la acción recomendada.
-    if (!session) return;
-    const available = mkt?.available.find((a) => a.slug === rec.integration_slug);
-    const want = available?.actions.find((a) => a.action_id === rec.action_id);
-    if (want && available) {
-      const installed = mkt?.installed.find((i) => i.integration.slug === rec.integration_slug);
-      if (!installed) {
-        setShop({
-          slug: available.slug,
-          name: available.name,
-          description: available.description ?? "",
-          requires_credentials: Boolean(available.requires_credentials),
-          requires_purpose: Boolean(available.requires_purpose),
-          actions: [want],
-        });
-        return;
-      }
-      addMarketplaceAction(installed.install_id, want);
-      return;
-    }
-    insertNode("marketplace_action", { install_id: "", action_id: rec.action_id, inputs: {} });
-  }
-
-  async function installFromDrawer(slug: string, productSlug?: string | null) {
-    if (!session) return;
-    setShopBusy(true);
-    setError("");
-    try {
-      const body = productSlug
-        ? { product_slug: productSlug, purpose: shopPurpose.trim() || null }
-        : { integration_slug: slug, purpose: shopPurpose.trim() || null };
-      const r = await api<MarketRec>(`/api/v1/workflows/marketplace/install`, {
-        method: "POST",
-        token: session.token,
-        organizationId: session.organizationId,
-        body: JSON.stringify(body),
-      });
-      const fresh = await api<MarketplaceContext>("/api/v1/workflows/marketplace/context", {
-        token: session.token,
-        organizationId: session.organizationId,
-      });
-      setMkt(fresh);
-      setError(`Integración instalada ✓ — ${r.integration.name} ya está en el canvas.`);
-      setShop(null);
-      setShopPurpose("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
-    } finally {
-      setShopBusy(false);
-    }
+  function addRecommendation(rec: MxRecommendation) {
+    const installed = mkt?.installed.find((item) => item.integration.slug === rec.integration_slug);
+    const action = installed?.actions.find((item) => item.action_id === rec.action_id);
+    if (!installed || !action) return;
+    addMarketplaceAction(installed.install_id, action);
   }
 
   function patch(updater: (g: WorkflowGraph) => WorkflowGraph) {
@@ -518,13 +468,9 @@ export function WorkflowCanvasEditor({
         onAdd={(meta) => insertNode(meta.type)}
         marketplace={mkt}
         onAddMarketplaceAction={addMarketplaceAction}
-        onAddRecommendation={(r) => void addRecommendation(r)}
-        onInstall={(slug) => {
-          const a = mkt?.available.find((x) => x.slug === slug);
-          if (a) {
-            setShop({ slug: a.slug, name: a.name, description: a.description ?? "", requires_credentials: a.requires_credentials, requires_purpose: a.requires_purpose, actions: a.actions, product_slug: a.product?.product_slug ?? null });
-          }
-        }}
+        onAddRecommendation={addRecommendation}
+        returnTo={workflowId ? `/workflows/${workflowId}` : "/workflows/new/manual"}
+        nodeId={selectedNodeId}
       />
 
       <div className="relative min-w-0 flex-1">
@@ -636,6 +582,42 @@ export function WorkflowCanvasEditor({
               sources={dataCatalog?.sources}
               contributions={run?.contributions}
               nodes={catalogNodes}
+              used={(run?.contributions ?? []).slice(0, 12).map((item) => ({
+                plane: item.section,
+                source: item.node_id || item.section,
+                label: item.payload?.label ? String(item.payload.label) : item.section,
+                scope: item.node_type,
+              }))}
+              mapping={
+                local?.metadata?.data_mapping && typeof local.metadata.data_mapping === "object"
+                  ? (local.metadata.data_mapping as {
+                      mappings?: { source_id: string; field: string; target: string }[];
+                      memory?: { enabled?: boolean };
+                    })
+                  : null
+              }
+              onMemoryEnabledChange={(enabled) => {
+                if (!local) return;
+                const current =
+                  local.metadata?.data_mapping && typeof local.metadata.data_mapping === "object"
+                    ? (local.metadata.data_mapping as Record<string, unknown>)
+                    : {};
+                const memory =
+                  current.memory && typeof current.memory === "object"
+                    ? { ...(current.memory as Record<string, unknown>), enabled }
+                    : { enabled };
+                onChangeGraph(
+                  {
+                    ...local,
+                    metadata: {
+                      ...local.metadata,
+                      data_mapping: { ...current, memory },
+                    },
+                  },
+                  triggerTypeOf(local),
+                  triggerConfigOf(local),
+                );
+              }}
               onClose={() => setShowContext(false)}
             />
           </div>
@@ -677,87 +659,6 @@ export function WorkflowCanvasEditor({
         )}
       </div>
 
-      {shop && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6" data-testid="wf-mkt-drawer">
-          <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-lg border border-border bg-surface p-5 sm:rounded-lg">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <MarketBadge slug={shop.slug} />
-                <div>
-                  <p className="text-sm font-semibold text-text">{shop.name}</p>
-                  <p className="text-[11px] text-faint">{shop.slug}</p>
-                </div>
-              </div>
-              <button type="button" className="btn btn-ghost min-h-8 min-w-8 rounded-md" aria-label="Cerrar instalación" onClick={() => setShop(null)}>
-                <X size={15} aria-hidden />
-              </button>
-            </div>
-            {shop.description && <p className="mt-2 text-xs text-muted">{shop.description}</p>}
-
-            <dl className="mt-4 space-y-2 text-xs">
-              <div className="flex justify-between gap-3">
-                <dt className="text-faint">Provider</dt>
-                <dd className="text-text capitalize">{shop.requires_credentials ? "Requiere credenciales" : "Zent managed"}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-faint">Pricing</dt>
-                <dd className="text-right text-text">{shop.actions.map((a) => `${a.display_name}${a.cost.price > 0 ? ` S/ ${a.cost.price}` : " (gratis)"}`).join(" · ")}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-faint">Data</dt>
-                <dd className="text-right text-text">{shop.requires_credentials ? "Secrets en SecretStore" : "Sin datos sensibles"}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-faint">Setup</dt>
-                <dd className="text-text">{shop.requires_credentials ? "Credenciales en SecretStore tras instalar" : "Sin setup"}</dd>
-              </div>
-            </dl>
-
-            <label className="mt-3 block text-[11px] text-muted">
-              {shop.requires_purpose ? (
-                <span className="font-medium text-text">
-                  Propósito de uso <span className="text-danger">*</span> — maneja datos personales
-                </span>
-              ) : (
-                "Propósito de uso (opcional)"
-              )}
-              <input
-                className="mt-1 w-full rounded-md border border-border bg-soft px-2 py-2 text-xs"
-                placeholder="Verificación de clientes…"
-                value={shopPurpose}
-                onChange={(e) => setShopPurpose(e.target.value)}
-                data-testid="wf-mkt-purpose"
-              />
-            </label>
-            {shop.requires_purpose && !shopPurpose.trim() && (
-              <p className="mt-1 text-[10px] text-danger" data-testid="wf-mkt-purpose-hint">
-                Indica el propósito para habilitar la instalación.
-              </p>
-            )}
-
-            <button
-              type="button"
-              className="btn btn-primary mt-5 w-full gap-1.5 text-sm"
-              disabled={shopBusy || (Boolean(shop.requires_purpose) && !shopPurpose.trim())}
-              data-testid="wf-mkt-install-confirm"
-              onClick={() => void installFromDrawer(shop.slug, shop.product_slug ?? null)}
-            >
-              <Plus size={15} aria-hidden />
-              {shopBusy ? "Instalando…" : "Instalar"}
-            </button>
-            <p className="mt-2 text-center text-[10px] text-faint">No abandonas el workflow: la capacidad queda disponible al instante.</p>
-          </div>
-        </div>
-      )}
     </div>
-  );
-}
-
-function MarketBadge({ slug }: { slug: string }) {
-  const letter = slug.slice(0, 1).toUpperCase();
-  return (
-    <span className="flex h-9 w-9 items-center justify-center rounded-md bg-fuchsia-500/15 text-sm font-semibold text-fuchsia-400" aria-hidden>
-      {letter}
-    </span>
   );
 }

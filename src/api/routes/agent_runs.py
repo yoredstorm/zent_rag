@@ -45,6 +45,14 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
+async def _apply_role_constraints(agent, organization_id: UUID):
+    """A linked role can only narrow the tools the Agent already has."""
+    from src.platform.studio.roles import apply_role_to_agent, get_agent_role
+
+    role = await get_agent_role(organization_id, agent.id)
+    return apply_role_to_agent(agent, role) if role is not None else agent
+
+
 def _runtime_context(agent) -> dict:
     """Contexto real del run para no inventar procedencia (§9, §12)."""
     config = agent.config_json if isinstance(agent.config_json, dict) else {}
@@ -142,6 +150,7 @@ async def run_agent(
 
     require_permission(request, "agents:execute")
     agent, organization_id = await _load_agent(request, agent_repo, agent_id)
+    agent = await _apply_role_constraints(agent, organization_id)
     user_id = await resolve_user_id(request, x_user_id)
     ctx = _tenant_context(request)
     org_config = await _org_config(request, organization_id)
@@ -238,6 +247,7 @@ async def run_agent_stream(
 
     require_permission(request, "agents:execute")
     agent, organization_id = await _load_agent(request, agent_repo, agent_id)
+    agent = await _apply_role_constraints(agent, organization_id)
     user_id = await resolve_user_id(request, x_user_id)
     ctx = _tenant_context(request)
     org_config = await _org_config(request, organization_id)

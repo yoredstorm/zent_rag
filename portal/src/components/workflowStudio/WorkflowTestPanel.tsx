@@ -39,6 +39,24 @@ type RunOut = {
   result?: unknown;
 };
 
+const TEST_LEVELS = [
+  { id: "preview", label: "Preview teórico" },
+  { id: "simulation", label: "Simulación determinista" },
+  { id: "sandbox", label: "Prueba sandbox" },
+  { id: "provider", label: "Certificación con proveedor" },
+] as const;
+
+type TestLevel = (typeof TEST_LEVELS)[number]["id"];
+
+const ROLE_EXAMPLES: { id: string; label: string; message: string }[] = [
+  { id: "ventas", label: "Ventas", message: "Quiero un kilo de arroz" },
+  { id: "mentor", label: "Mentor", message: "Ahora quiero restas" },
+  { id: "tutor", label: "Tutor", message: "Creo que 2+2 es 5" },
+  { id: "auditor", label: "Auditor", message: "Las dos fuentes no coinciden" },
+  { id: "soporte", label: "Soporte", message: "La base no responde mi caso" },
+  { id: "bienestar", label: "Bienestar", message: "Dime qué enfermedad tengo" },
+];
+
 type Message =
   | { role: "user"; text: string }
   | { role: "agent"; text: string; echo: boolean; node_id: string | null }
@@ -59,6 +77,7 @@ export function WorkflowTestPanel({
 }: Props) {
   const { session } = useAuth();
   const [raw, setRaw] = useState("");
+  const [level, setLevel] = useState<TestLevel>("simulation");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -160,6 +179,20 @@ export function WorkflowTestPanel({
         body: JSON.stringify({ payload: normalized.payload, simulate }),
       });
       setPlanned(simulate ? out.planned_effects : undefined);
+      const unverified = simulate && (out.planned_effects?.length ?? 0) > 0;
+      if (level === "preview") {
+        push({
+          role: "system",
+          text: "Preview teórico. No ejecuta efectos y no es un pase.",
+          tone: "info",
+        });
+      } else if (unverified) {
+        push({
+          role: "system",
+          text: "UNVERIFIED: hay un efecto externo sin doble. No es PASSED.",
+          tone: "danger",
+        });
+      }
       const detail = await api<RunDetail>(`/api/v1/workflows/runs/${out.run_id}`, {
         token: session.token,
         organizationId: session.organizationId,
@@ -343,6 +376,34 @@ export function WorkflowTestPanel({
       </div>
 
       <footer className="space-y-2 border-t border-border p-3">
+        <fieldset className="flex flex-wrap gap-1" data-testid="wf-test-levels">
+          <legend className="sr-only">Nivel de prueba</legend>
+          {TEST_LEVELS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={level === item.id}
+              className="min-h-8 rounded-md border border-border px-2 text-[11px] text-muted aria-pressed:border-accent aria-pressed:text-text"
+              data-testid={`wf-level-${item.id}`}
+              onClick={() => setLevel(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </fieldset>
+        <div className="flex flex-wrap gap-1" data-testid="wf-role-examples">
+          {ROLE_EXAMPLES.map((role) => (
+            <button
+              key={role.id}
+              type="button"
+              className="min-h-8 rounded-md bg-soft px-2 text-[11px] text-muted hover:text-text"
+              data-testid={`wf-role-${role.id}`}
+              onClick={() => setRaw(role.message)}
+            >
+              {role.label}
+            </button>
+          ))}
+        </div>
         <ErrorInline message={error} className="mb-0" />
         <div className="flex flex-wrap items-center gap-1.5">
           <Button

@@ -839,6 +839,9 @@ async def create_workflow(
         validate_graph(parsed)
         graph_json = parsed.to_dict()
         graph_json["workflow_version"] = max(2, int(workflow_version or 2))
+        from src.platform.workflows.data_mapper import assert_graph_mapping
+
+        assert_graph_mapping(graph_json)
         graph_source = "graph"
         stored_version = graph_json["workflow_version"]
     else:
@@ -1013,6 +1016,9 @@ async def update_workflow(
 
             parsed = WorkflowGraph.from_dict(dict(graph))
             validate_graph(parsed)
+            from src.platform.workflows.data_mapper import assert_graph_mapping
+
+            assert_graph_mapping(parsed.to_dict())
             sets.append("graph = CAST(:graph AS jsonb)")
             sets.append("graph_source = 'graph'")
             sets.append("workflow_version = :gver")

@@ -96,6 +96,7 @@ def test_simulation_supported_flags() -> None:
         "api_call",
         "business_node",
         "business_result",
+        "adaptive_route",
         "capability_call",
         "conversation_guard",
         "human_approval",
@@ -107,6 +108,7 @@ def test_simulation_supported_flags() -> None:
         "state_merge",
         "state_remove",
         "state_set",
+        "subworkflow_call",
         "wait_event",
     }
     for node_def in registry.all():

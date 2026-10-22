@@ -237,13 +237,29 @@ def validate_semantic_plan(
             else:
                 descriptor = (capabilities.get("capability_index") or {}).get(capability_ref)
                 if descriptor is None:
+                    refs = list((capabilities.get("capability_index") or {}).keys())
+                    parts = {part for part in capability_ref.split(".") if part}
+                    alternatives = [
+                        ref
+                        for ref in refs
+                        if ref != capability_ref
+                        and len(parts & {part for part in ref.split(".") if part}) >= 1
+                    ][:8]
                     issues.append(
                         PlanIssue(
                             code="missing.capability",
                             severity="error",
                             step_id=step.id,
+                            field="params.capability",
                             message=requirement_message("capability", capability_ref),
                             requirement=f"capability:{capability_ref}",
+                            expected="una ref exacta del catálogo",
+                            received=capability_ref,
+                            alternatives=alternatives,
+                            action_required=(
+                                "Reemplaza la ref inventada por una de las alternativas "
+                                "reales o pide configuración; no la dejes como si existiera."
+                            ),
                         )
                     )
                 else:

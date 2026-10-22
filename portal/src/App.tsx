@@ -144,6 +144,7 @@ const ReleasesPage = lazy(() => import("./pages/Releases"));
 const CopilotPage = lazy(() => import("./pages/Copilot"));
 const AdminCopilotPage = lazy(() => import("./pages/admin/Copilot"));
 const WorkflowsPage = lazy(() => import("./pages/Workflows"));
+const OperationsPage = lazy(() => import("./pages/Operations"));
 const WatchersPage = lazy(() => import("./pages/Watchers"));
 const DemoCenterPage = lazy(() => import("./pages/DemoCenter"));
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage"));
@@ -153,6 +154,7 @@ const AssistantDetailPage = lazy(() => import("./pages/AssistantDetailPage"));
 const WorkflowNewPage = lazy(() => import("./pages/WorkflowNew"));
 const AskZentPage = lazy(() => import("./pages/AskZentPage"));
 const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudio"));
+const RoleStudioPage = lazy(() => import("./pages/RoleStudio"));
 const MigrationsPage = lazy(() => import("./pages/Migrations"));
 const OnboardingPage = lazy(() => import("./pages/Onboarding"));
 const EvaluationDatasetsPage = lazy(() => import("./pages/evaluation/Datasets"));
@@ -634,7 +636,9 @@ export default function App() {
         <Route path="/migrations" element={<Suspense fallback={<PageFallback />}><MigrationsPage /></Suspense>} />
         <Route path="/releases" element={<Suspense fallback={<PageFallback />}><ReleasesPage /></Suspense>} />
         <Route path="/copilot" element={<Suspense fallback={<PageFallback />}><CopilotPage /></Suspense>} />
+        <Route path="/roles" element={<Suspense fallback={<PageFallback />}><RoleStudioPage /></Suspense>} />
         <Route path="/workflows" element={<Suspense fallback={<PageFallback />}><WorkflowsPage /></Suspense>} />
+        <Route path="/operations" element={<Suspense fallback={<PageFallback />}><OperationsPage /></Suspense>} />
         <Route path="/watchers" element={<Suspense fallback={<PageFallback />}><WatchersPage /></Suspense>} />
         <Route path="/demos" element={<Suspense fallback={<PageFallback />}><DemoCenterPage /></Suspense>} />
         <Route path="/integrations" element={<Suspense fallback={<PageFallback />}><IntegrationsPage /></Suspense>} />

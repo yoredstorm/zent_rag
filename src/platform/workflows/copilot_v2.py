@@ -8,7 +8,6 @@
 # =============================================================================
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -101,14 +100,9 @@ def _resolve_llm_provider(provider: Any = None) -> Any:
 
 
 def _parse_json_object(text: str) -> dict[str, Any] | None:
-    match = _JSON_OBJECT_RE.search(text or "")
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    from src.platform.workflows.json_output import parse_json_object
+
+    return parse_json_object(text)
 
 
 def _capability_hints(capabilities: dict[str, Any] | None) -> str:

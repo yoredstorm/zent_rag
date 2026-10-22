@@ -1,0 +1,71 @@
+{
+  "schema": "zent.solution/v1",
+  "solution_id": "mentoria_y_auditoria",
+  "version": "1.0.0",
+  "status": "draft",
+  "name": "Mentoría con auditoría de evidencia",
+  "description": "Composición reusable de un mentor, un auditor, dos workflows y sus requisitos de instalación.",
+  "roles": [
+    {"role_ref": "mentor_practica", "version": "1.0.0", "required": true},
+    {"role_ref": "auditor_control", "version": "1.0.0", "required": true}
+  ],
+  "agents": [
+    {
+      "agent_ref": "mentor_agent",
+      "role_ref": "mentor_practica",
+      "name": "Mentor",
+      "workflow_refs": ["mentor_cycle", "evidence_review"],
+      "capability_refs": ["knowledge_query"]
+    },
+    {
+      "agent_ref": "auditor_agent",
+      "role_ref": "auditor_control",
+      "name": "Auditor",
+      "workflow_refs": ["evidence_review"],
+      "capability_refs": ["knowledge_query", "query_business_data"]
+    }
+  ],
+  "workflows": [
+    {
+      "workflow_ref": "mentor_cycle",
+      "name": "Ciclo de mentoría",
+      "role_refs": ["mentor_practica"],
+      "agent_refs": ["mentor_agent"],
+      "capability_refs": ["knowledge_query"],
+      "trigger": {"type": "conversation"},
+      "requirements": ["knowledge_base"]
+    },
+    {
+      "workflow_ref": "evidence_review",
+      "name": "Revisión de evidencia",
+      "role_refs": ["mentor_practica", "auditor_control"],
+      "agent_refs": ["mentor_agent", "auditor_agent"],
+      "capability_refs": ["knowledge_query", "query_business_data"],
+      "trigger": {"type": "manual"},
+      "requirements": ["knowledge_base", "human_review"]
+    }
+  ],
+  "capabilities": [
+    {"capability_ref": "knowledge_query", "required": true, "purpose": "Fundamentar respuestas"},
+    {"capability_ref": "query_business_data", "required": true, "purpose": "Comparar evidencia"}
+  ],
+  "knowledge": [
+    {"kind": "knowledge_base", "logical_ref": "programa_mentoria", "required": true, "purpose": "Contenido del programa"}
+  ],
+  "channels": ["web"],
+  "requirements": ["knowledge_base", "human_review", "audit_trail"],
+  "installation": [
+    {"order": 1, "action": "review_roles", "module": "studio", "description": "Revisar y aprobar ambos roles", "required": true},
+    {"order": 2, "action": "install_capabilities", "module": "marketplace", "description": "Resolver capacidades lógicas contra el catálogo del tenant", "required": true},
+    {"order": 3, "action": "bind_knowledge", "module": "knowledge", "description": "Vincular la base lógica del programa", "required": true},
+    {"order": 4, "action": "create_agents", "module": "agents", "description": "Crear o vincular los agentes existentes", "required": true},
+    {"order": 5, "action": "create_workflows", "module": "workflows", "description": "Crear los workflows y probarlos", "required": true}
+  ],
+  "expected_outcomes": [
+    {"name": "plan de mentoría", "metric": "planes_activos", "target": "1", "window": "mes"},
+    {"name": "hallazgos documentados", "metric": "diferencias_con_evidencia", "target": "100%", "window": "auditoría"}
+  ],
+  "risk_class": "high",
+  "compliance_tags": ["mentoring", "audit"],
+  "locales": ["es-PE"]
+}

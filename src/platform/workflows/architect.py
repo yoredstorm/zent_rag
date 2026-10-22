@@ -100,6 +100,22 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   "uncertainties": [str], "notes": [str]
 }
 - Un solo disparador. Cada paso declara de quién depende (depends_on).
+- Máximo 15 pasos. No dupliques pasos de conversación, validación o confirmación:
+  cada uno debe tener una responsabilidad distinta y un `id` estable.
+- Patrones de negocio (úsalos como guía, no como texto a copiar):
+  venta: trigger_conversation → agent_analysis → catalog.products.search
+  (incluye price/stock de cada alternativa) → state(set cart_lines) →
+  wait(message) → sales.cart.quote → human_approval → sales.order.create →
+  payments.checkout.create → wait(payment) → sales.order.mark_paid →
+  inventory.commit → notify.
+  mentoría: trigger_manual/schedule → agent_analysis (nivel) → knowledge_query →
+  business_result → state(progress) → wait/schedule.
+  auditoría: trigger_event(document.uploaded) → knowledge_query/query_business_data →
+  decision(differences) → human_approval → business_result.
+  soporte: trigger_conversation → knowledge_query → agent_analysis →
+  decision(resolved) → notify o human_approval (escalar).
+  bienestar: trigger_conversation → agent_analysis (contención) → knowledge_query
+  (recursos) → decision(crisis) → human_approval/derivación → conversation.send.
 - No uses "for_each": el plan semántico no expresa cuerpos de iteración; divide el flujo en pasos.
 - capability_call: params.capability debe ser una ref EXACTA de una capacidad que
   exista en el catálogo del tenant. Si no la has inspeccionado, búscala primero.
@@ -126,18 +142,29 @@ Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas
   params.timeout_seconds; params.on_timeout ∈ branch|expire|fail|continue). El flujo corre como proceso vivo.
 - state: estado durable del proceso (params.op ∈ get|set|merge|append|remove, params.path, params.value).
 - notify/integration_action solo con canales/acciones disponibles en el contexto.
+- Toda capacidad financiera o crítica (payments.*, sales.order.mark_paid,
+  refunds, acciones con risk_level=critical) DEBE tener un paso human_approval
+  ancestro antes de ejecutarse. Si falta, el plan se rechaza.
+- Cada capability_call, integration_action y agent_analysis debe tener su fila
+  en matches con la ref exacta y la razón. Sin match, el plan se rechaza.
+- `when` solo puede apuntar a un paso `decision` o `wait` con dos resultados.
+  No ramifiques directamente desde `agent_analysis`; agrega un `decision`.
+- El plan debe terminar en `notify`, `business_result` o `stop`.
+- No declares supuestos `impact=high` si la capacidad ya está AVAILABLE en la
+  digest; usa `low` o pide clarificación.
+- No conectes un array a un input escalar. Si `catalog.products.search` ya
+  devuelve productos con precio, usa ese resultado; no llames
+  `catalog.product.price` por cada ítem ni inventes un bucle.
+- Campos de salida: `decision` expone `result` (no `outcome`); `wait` expone
+  `message`, `status`, `port`, `payload`; `state` expone `value`. Usa esos
+  nombres exactos en `inputs.field`.
 """
 
 
 def _parse_json_object(text: str) -> dict[str, Any] | None:
-    match = _JSON_OBJECT_RE.search(text or "")
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    from src.platform.workflows.json_output import parse_json_object
+
+    return parse_json_object(text)
 
 
 def _resolve_provider(provider: Any = None) -> Any:
@@ -346,6 +373,7 @@ def heuristic_semantic_plan(prompt: str) -> SemanticPlan:
         goal=draft.name,
         steps=steps,
         assumptions=assumptions,
+        uncertainties=[str(item)[:400] for item in (draft.questions or [])][:10],
         notes=["Plan generado con reglas (sin LLM); revísalo antes de publicar."],
     )
 

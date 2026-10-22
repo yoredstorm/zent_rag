@@ -177,6 +177,11 @@ async def embed_chat(
     agent = await repo.get_agent(row.organization_id, row.agent_id)
     if agent is None or not agent.is_active:
         raise HTTPException(status_code=404, detail="Agent not found")
+    from src.platform.studio.roles import apply_role_to_agent, get_agent_role
+
+    role = await get_agent_role(row.organization_id, agent.id)
+    if role is not None:
+        agent = apply_role_to_agent(agent, role)
     message = _last_user_message(body)
     # Conversation Router: la conversación del widget con un proceso durable
     # vivo esperando mensaje reanuda la instancia (continuidad multi-turno).

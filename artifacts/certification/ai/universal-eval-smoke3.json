@@ -1,0 +1,162 @@
+{
+  "schema": "zent.universal.eval/v1",
+  "provider": "openai/deepseek/deepseek-v4.1-flash",
+  "cases_path": "tests\\certification\\ai\\universal_cases.json",
+  "limit": 3,
+  "budget": {
+    "max_llm_calls": 5,
+    "max_tool_calls": 3,
+    "max_tokens": 30000,
+    "max_cost_usd": 0.5,
+    "max_duration_seconds": 120.0,
+    "max_repair_attempts": 0,
+    "max_candidates": 5,
+    "max_steps": 12,
+    "cost_per_1k_input": 0.0,
+    "cost_per_1k_output": 0.0
+  },
+  "summary": {
+    "cases": 3,
+    "errors": 0,
+    "intent_valid_rate": 1.0,
+    "graph_valid_rate": 0.0,
+    "contract_clean_rate": 1.0,
+    "simulation_executed_rate": 0.0,
+    "durable_match_rate": 0.0,
+    "approval_match_rate": 0.0,
+    "exception_coverage_rate": 0.0,
+    "mean_latency_ms": 26709,
+    "p95_latency_ms": 26536,
+    "total_tokens": 63633,
+    "mean_tokens": 21211,
+    "total_cost_usd": 0.0
+  },
+  "rows": [
+    {
+      "id": "sales_01",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CLARIFICATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 25320,
+      "tokens": 17422,
+      "llm_calls": 3,
+      "tool_calls": 1,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_02",
+      "domain": "sales",
+      "error": null,
+      "state": "BLOCKED",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 26536,
+      "tokens": 18834,
+      "llm_calls": 3,
+      "tool_calls": 1,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_03",
+      "domain": "sales",
+      "error": null,
+      "state": "BLOCKED",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 28271,
+      "tokens": 27377,
+      "llm_calls": 4,
+      "tool_calls": 2,
+      "cost_usd": 0.0
+    }
+  ]
+}

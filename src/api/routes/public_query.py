@@ -208,6 +208,11 @@ async def deployment_query(
             return await _respond(500, error="Canary version not found", deployment_id=deployment.id)
 
     resolved = resolve_agent(agent, version.config_snapshot)
+    from src.platform.studio.roles import apply_role_to_agent, get_agent_role
+
+    role = await get_agent_role(organization_id, agent.id)
+    if role is not None:
+        resolved = apply_role_to_agent(resolved, role)
 
     # Trust & Safety: moderación del INPUT (block → 422).
     mod = None

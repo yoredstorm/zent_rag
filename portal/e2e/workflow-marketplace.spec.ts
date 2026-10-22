@@ -16,34 +16,18 @@ test.describe("Marketplace-native workflow canvas", () => {
     await expect(page.getByTestId("workflow-canvas-editor")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("wf-node-library")).toBeVisible();
 
-    // Sección Marketplace presente (disponible: demo-echo del seed).
-    await expect(page.getByTestId("wf-mkt-section")).toBeVisible({ timeout: 20_000 });
-    const installBtn = page.getByTestId("wf-mkt-install-demo-echo");
-    if (await installBtn.count()) {
-      await installBtn.click();
-      await expect(page.getByTestId("wf-mkt-drawer")).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByTestId("wf-mkt-install-confirm")).toBeVisible();
-      await page.getByTestId("wf-mkt-install-confirm").click();
-      // Tras instalar, la acción queda disponible sin recargar el canvas.
-      await expect(page.getByTestId("wf-mkt-action-demo.echo")).toBeVisible({ timeout: 15_000 });
-      await page.getByTestId("wf-mkt-action-demo.echo").click();
-      await expect(async () => {
-        const n = await page.getByTestId("wf-canvas-node").count();
-        expect(n).toBeGreaterThanOrEqual(2);
-      }).toPass({ timeout: 10_000 });
-    }
-
-    // RENIEC (datos personales): el drawer exige propósito antes de instalar.
-    const reniec = page.getByTestId("wf-mkt-install-reniec-verification");
-    if (await reniec.count()) {
-      await reniec.click();
-      await expect(page.getByTestId("wf-mkt-drawer")).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByTestId("wf-mkt-install-confirm")).toBeDisabled();
-      await expect(page.getByTestId("wf-mkt-purpose-hint")).toBeVisible();
-      await page.getByTestId("wf-mkt-purpose").fill("Verificación de clientes (e2e)");
-      await expect(page.getByTestId("wf-mkt-install-confirm")).toBeEnabled();
-      await page.getByTestId("wf-mkt-install-confirm").click();
-      await expect(page.getByTestId("wf-mkt-action-peru.identity.verify")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("wf-capabilities")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Agregar desde Marketplace")).toHaveCount(0);
+    await expect(page.getByTestId("wf-mkt-drawer")).toHaveCount(0);
+    const resolve = page.getByRole("link", { name: "Resolver en Marketplace global" });
+    if (await resolve.count()) {
+      const href = await resolve.first().getAttribute("href");
+      expect(href ?? "").toContain("/marketplace");
+      expect(href ?? "").not.toMatch(/^https?:/);
+      await resolve.first().click();
+      await expect(page).toHaveURL(/\/marketplace/, { timeout: 15_000 });
+      await expect(page.getByText("Un solo catálogo")).toBeVisible();
+      return;
     }
 
     // Sugerencia de automatización para canvas vacío.

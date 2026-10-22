@@ -251,7 +251,11 @@ async def _execute_run(
     auto_rollback: bool,
 ) -> None:
     from src.agents.runtime.agent_runtime import AgentRunRequest
+    from src.platform.studio.roles import apply_role_to_agent, get_agent_role
 
+    role = await get_agent_role(agent.organization_id, agent.id)
+    if role is not None:
+        agent = apply_role_to_agent(agent, role)
     settings = get_settings()
     latencies: list[float] = []
     total_cost = 0.0

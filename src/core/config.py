@@ -186,18 +186,26 @@ class Settings(BaseSettings):
     LITELLM_MAX_RPM: int = Field(default=0, ge=0, le=6000)
     #: Modelos de razonamiento (Novita/DeepSeek) emiten `reasoning_content`
     #: oculto que consume `max_tokens`: con el flag encendido se apaga el
-    #: thinking en el gateway (`chat_template_kwargs.thinking=false`) para que
-    #: el tope sea texto visible y no se corte la respuesta a mitad de frase.
+    #: thinking en el gateway (`thinking: {"type": "disabled"}`) para que el
+    #: tope sea texto visible y no se corte la respuesta a mitad de frase.
     LLM_DISABLE_THINKING: bool = Field(default=False)
+    #: Modelo específico del planner (opcional). Vacío = modelo LLM por defecto.
+    #: Permite usar un modelo más fuerte para JSON estructurado sin cambiar el
+    #: modelo de los agentes.
+    WORKFLOW_PLANNER_MODEL: str = Field(default="", max_length=120)
     #: Camino canónico de creación con IA (Workflow Architect). `false` es el
     #: rollback: el portal vuelve al Copilot legacy sin cambiar los endpoints.
     WORKFLOW_ARCHITECT_ENABLED: bool = Field(default=True)
+    #: Release Gold horizontal. Default apagado: no activa a producción un flujo
+    #: con ficha de misión aunque el certificado diga listo. El rollback es dejarlo
+    #: en false. No cambia instancias vivas ni workflows legacy sin esa ficha.
+    ZENT_GOLD_RELEASE_ENABLED: bool = Field(default=False)
     #: Presupuesto del Agentic Planner (tool calling). Se aplica por sesión.
-    WORKFLOW_PLANNER_MAX_LLM_CALLS: int = Field(default=12, ge=1, le=20)
+    WORKFLOW_PLANNER_MAX_LLM_CALLS: int = Field(default=16, ge=1, le=24)
     WORKFLOW_PLANNER_MAX_TOOL_CALLS: int = Field(default=24, ge=1, le=40)
     #: Un proceso comercial completo (catálogo, carrito, confirmación, orden,
     #: checkout, WAIT, inventario y error) no cabe en 8 pasos ni en 20k tokens.
-    WORKFLOW_PLANNER_MAX_TOKENS: int = Field(default=120_000, ge=1_000, le=200_000)
+    WORKFLOW_PLANNER_MAX_TOKENS: int = Field(default=160_000, ge=1_000, le=200_000)
     WORKFLOW_PLANNER_MAX_COST_USD: float = Field(default=0.50, ge=0.0, le=100.0)
     WORKFLOW_PLANNER_MAX_DURATION_SECONDS: float = Field(default=600.0, ge=1.0, le=600.0)
     WORKFLOW_PLANNER_MAX_REPAIRS: int = Field(default=2, ge=0, le=3)

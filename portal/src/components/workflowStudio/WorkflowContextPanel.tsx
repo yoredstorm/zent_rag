@@ -1,9 +1,23 @@
 import { X } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { DataCatalogSource } from "../../lib/dataPicker";
 import type { NodeMeta } from "../../lib/workflowGraph";
 import type { RunContribution } from "../WorkflowRunInspector";
 import { IconButton } from "../ui";
+
+export type UsedContextPiece = {
+  plane: string;
+  source: string;
+  label?: string;
+  timestamp?: string;
+  scope?: string;
+  quality?: string;
+};
+
+export type DataMappingView = {
+  mappings?: { source_id: string; field: string; target: string }[];
+  memory?: { enabled?: boolean };
+};
 
 type Props = {
   /** Fuentes del Data Catalog backend (`GET /workflows/{id}/data-catalog`). */
@@ -12,6 +26,10 @@ type Props = {
   contributions?: RunContribution[] | null;
   /** Catálogo backend: `contextWrites` por tipo de nodo. */
   nodes?: Record<string, NodeMeta> | null;
+  /** Piezas que el run realmente usó, con procedencia. */
+  used?: UsedContextPiece[] | null;
+  mapping?: DataMappingView | null;
+  onMemoryEnabledChange?: (enabled: boolean) => void;
   onClose?: () => void;
 };
 
@@ -29,9 +47,21 @@ function Section({ title, testId, children }: { title: string; testId: string; c
  * aporta cada nodo al contexto compartido y qué se registró en el último run.
  * Solo lectura; combina data-catalog + catálogo de nodos + inspector.
  */
-export function WorkflowContextPanel({ sources, contributions, nodes, onClose }: Props) {
+export function WorkflowContextPanel({
+  sources,
+  contributions,
+  nodes,
+  used,
+  mapping,
+  onMemoryEnabledChange,
+  onClose,
+}: Props) {
+  const [tab, setTab] = useState<"available" | "used">("available");
   const available = sources ?? [];
   const runContributions = contributions ?? [];
+  const usedPieces = used ?? [];
+  const mappings = mapping?.mappings ?? [];
+  const memoryOn = Boolean(mapping?.memory?.enabled);
   const writes = Object.values(nodes ?? {}).filter((meta) => (meta.contextWrites ?? []).length > 0);
   const sections = new Map<string, number>();
   for (const item of runContributions) {
@@ -53,7 +83,41 @@ export function WorkflowContextPanel({ sources, contributions, nodes, onClose }:
         )}
       </header>
 
+      <div className="flex gap-1 border-b border-border px-3" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "available"}
+          className="min-h-8 px-2 text-[12px] text-muted data-[on=true]:text-text"
+          data-on={tab === "available"}
+          data-testid="wf-context-tab-available"
+          onClick={() => setTab("available")}
+        >
+          Disponible
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "used"}
+          className="min-h-8 px-2 text-[12px] text-muted data-[on=true]:text-text"
+          data-on={tab === "used"}
+          data-testid="wf-context-tab-used"
+          onClick={() => setTab("used")}
+        >
+          Contexto usado
+        </button>
+      </div>
+
       <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
+        {tab === "used" ? (
+          <UsedTab
+            pieces={usedPieces}
+            mappings={mappings}
+            memoryOn={memoryOn}
+            onMemoryEnabledChange={onMemoryEnabledChange}
+          />
+        ) : (
+          <>
         <Section title="Disponibles ahora" testId="wf-context-available">
           {available.length === 0 && (
             <p className="text-[12px] leading-relaxed text-faint">
@@ -117,7 +181,74 @@ export function WorkflowContextPanel({ sources, contributions, nodes, onClose }:
             </p>
           ))}
         </Section>
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+function UsedTab({
+  pieces,
+  mappings,
+  memoryOn,
+  onMemoryEnabledChange,
+}: {
+  pieces: UsedContextPiece[];
+  mappings: { source_id: string; field: string; target: string }[];
+  memoryOn: boolean;
+  onMemoryEnabledChange?: (enabled: boolean) => void;
+}) {
+  return (
+    <>
+      <Section title="Contexto usado" testId="wf-context-used">
+        {pieces.length === 0 && (
+          <p className="text-[12px] leading-relaxed text-faint">
+            Sin respaldo todavía. Hay que preguntar o citar una fuente. No se declara progreso ni un dato del cliente.
+          </p>
+        )}
+        {pieces.map((piece, index) => (
+          <p
+            key={`${piece.plane}-${piece.source}-${index}`}
+            className="text-[12px] leading-relaxed text-muted"
+            data-testid={`wf-context-used-${piece.source}`}
+          >
+            <span className="text-text">{piece.label || piece.source}</span>
+            <span className="mt-0.5 block font-mono text-[10px] text-faint">
+              {piece.plane}
+              {piece.scope ? ` · ${piece.scope}` : ""}
+              {piece.timestamp ? ` · ${piece.timestamp}` : ""}
+              {piece.quality ? ` · ${piece.quality}` : ""}
+            </span>
+          </p>
+        ))}
+      </Section>
+      <Section title="Mapeo" testId="wf-context-mapping">
+        {mappings.length === 0 && (
+          <p className="text-[12px] leading-relaxed text-faint">Ningún campo mapeado en este flujo.</p>
+        )}
+        {mappings.map((item) => (
+          <p key={`${item.source_id}-${item.field}`} className="font-mono text-[11px] text-muted">
+            {item.source_id}.{item.field} = {item.target}
+          </p>
+        ))}
+      </Section>
+      <Section title="Memoria autorizada" testId="wf-context-memory">
+        <button
+          type="button"
+          className="btn btn-ghost min-h-8 px-2 text-[12px]"
+          data-testid="wf-context-memory-toggle"
+          aria-pressed={memoryOn}
+          onClick={() => onMemoryEnabledChange?.(!memoryOn)}
+        >
+          {memoryOn ? "Desactivar uso de memoria" : "Activar uso de memoria"}
+        </button>
+        <p className="text-[12px] leading-relaxed text-faint">
+          {memoryOn
+            ? "La memoria opt-in de este flujo puede usarse."
+            : "La memoria de largo plazo no entra al contexto."}
+        </p>
+      </Section>
+    </>
   );
 }

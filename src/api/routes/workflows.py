@@ -597,8 +597,16 @@ async def tenant_workflow_architect_session_message(
         revision=current["revision"],
     )
     ws_id = await _workspace_id(request)
+    current_state = str((current.get("state") or {}).get("state") or "")
+    # Un plan sin grafo (BLOCKED/NEEDS_CLARIFICATION/NEEDS_CONFIGURATION) no es
+    # una base segura para un patch: se vuelve a planificar con la aclaración
+    # del usuario. El patch solo aplica sobre un diseño ya compilado.
+    can_patch = bool(current.get("plan") and current.get("graph")) and current_state in (
+        "DRAFT_READY",
+        "NEEDS_CONFIGURATION",
+    )
     try:
-        if current.get("plan"):
+        if can_patch:
             proposal = await patch_workflow_plan(
                 ctx.organization_id,
                 current["plan"],
@@ -1488,7 +1496,9 @@ async def tenant_workflow_instances_list(
     from src.platform.workflows.instances import list_instances
 
     ctx = require_permission(request, "workflow_runs:read")
-    return await list_instances(
+    from src.platform.workflows.operations import operational_status
+
+    result = await list_instances(
         ctx.organization_id,
         workflow_id=UUID(workflow_id) if workflow_id else None,
         conversation_id=UUID(conversation_id) if conversation_id else None,
@@ -1497,6 +1507,9 @@ async def tenant_workflow_instances_list(
         limit=limit,
         offset=offset,
     )
+    for item in result.get("instances") or []:
+        item["view_status"] = operational_status(item)
+    return result
 
 
 @router.get("/instances/{instance_id}", summary="Detalle de la instancia durable")
@@ -1522,7 +1535,14 @@ async def tenant_workflow_instance_timeline(instance_id: str, request: Request):
     if instance is None:
         raise HTTPException(404, "Instance not found")
     timeline = await instance_timeline(ctx.organization_id, UUID(instance_id))
-    return {"instance": instance, **timeline}
+    from src.platform.workflows.operations import operational_status, project_business_timeline
+
+    instance["view_status"] = operational_status(instance)
+    return {
+        "instance": instance,
+        **timeline,
+        "business_timeline": project_business_timeline(timeline),
+    }
 
 
 @router.post("/instances/{instance_id}/signal", summary="Enviar señal a la instancia")
@@ -1733,6 +1753,11 @@ async def tenant_workflow_activate(workflow_id: str, request: Request):
     from src.platform.workflows.engine import set_workflow_status
 
     ctx = require_permission(request, "workflows:activate")
+    from src.platform.workflows.test_report import activation_blockers
+
+    blockers = await activation_blockers(ctx.organization_id, UUID(workflow_id))
+    if blockers:
+        raise HTTPException(409, blockers[0]["message"])
     result = await set_workflow_status(ctx.organization_id, UUID(workflow_id), "active")
     if result is None:
         raise HTTPException(404, "Workflow not found")

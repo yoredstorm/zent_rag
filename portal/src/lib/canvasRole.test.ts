@@ -40,6 +40,7 @@ describe("resolveCanvasRole", () => {
     expect(resolveCanvasRole({ type: "trigger_event" })).toBe("trigger");
     expect(resolveCanvasRole({ type: "llm" })).toBe("ai");
     expect(resolveCanvasRole({ type: "condition" })).toBe("decision");
+    expect(resolveCanvasRole({ type: "adaptive_route" })).toBe("decision");
     expect(resolveCanvasRole({ type: "business_result" })).toBe("business_result");
     expect(resolveCanvasRole({ type: "end" })).toBe("end");
     expect(resolveCanvasRole({ type: "state_set" })).toBe("data");

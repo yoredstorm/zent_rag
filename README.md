@@ -663,6 +663,7 @@ El plan canónico vive en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platfo
 | [`docs/architecture/semantic-rule-compiler.md`](docs/architecture/semantic-rule-compiler.md) | **Semantic Rule Compiler**: reglas documentales canónicas, verificación, provenance por propiedad y ejecución determinista |
 | [`docs/architecture/knowledge-cognitive-os.md`](docs/architecture/knowledge-cognitive-os.md) | Knowledge Operating System cognitivo (migraciones 102–108) |
 | [`docs/architecture/workflow-architect.md`](docs/architecture/workflow-architect.md) | Workflows: intención de negocio → grafo → aprobación |
+| [`docs/architecture/universal-roles/README.md`](docs/architecture/universal-roles/README.md) | **Roles universales**: RoleProfile, Solution/Blueprint, autonomía, N:M, seguridad y UX |
 | [`docs/architecture/company-intelligence.md`](docs/architecture/company-intelligence.md) | Company Graph y descubrimiento empresarial |
 | [`docs/architecture/zent-memory.md`](docs/architecture/zent-memory.md) | Memoria Zent: tipos, límites y no-objetivos |
 | [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platform/ZENT_PLATFORM_ROADMAP.md) | Roadmap canónico de plataforma (fases 00–14) |

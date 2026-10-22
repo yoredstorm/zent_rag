@@ -191,6 +191,7 @@ transiciones (publishing gate), rollout, impact, analytics, test lab, `sync`.
 | `GET/POST /api/v1/marketplace*` (ecosystem) | Congelado | Catálogo único; órdenes/payouts fase de pagos |
 | `admin/Marketplace` listings | Legacy | Marketplace Factory (productos) |
 | `marketplace_agents` / `marketplace_installs` | Legacy | `AGENT_TEMPLATE` en el catálogo |
+| Drawer de instalación del canvas (`wf-mkt-drawer`, `POST` visto como tienda local) | Retirado de la UI | Capacidades en `NodeLibrary` + `/marketplace?return_to=` validado. `POST /api/v1/workflows/marketplace/install` sigue como adaptador (`product_slug` o `integration_slug`) y no es una segunda tienda. |
 
 ## Pendiente (fuera de esta fase)
 

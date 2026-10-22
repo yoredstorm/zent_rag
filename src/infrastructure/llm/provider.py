@@ -70,13 +70,14 @@ def _thinking_kwargs() -> dict:
 
     Los modelos de razonamiento (p. ej. Novita/DeepSeek) emiten
     `reasoning_content` oculto que cuenta dentro de `max_tokens`: con presupuestos
-    chicos el tope se consume pensando y la respuesta visible queda cortada a
-    mitad de frase. `chat_template_kwargs.thinking=false` lo desactiva sin tocar
-    el resto de la generacion. Default apagado: no cambia otros despliegues.
+    chicos el tope se consume pensando y la respuesta visible queda vacia o
+    cortada. El gateway de certificacion ignora `chat_template_kwargs`; el
+    parametro que si aplica es `thinking: {"type": "disabled"}`. Default
+    apagado: no cambia otros despliegues.
     """
     if not bool(getattr(get_settings(), "LLM_DISABLE_THINKING", False)):
         return {}
-    return {"extra_body": {"chat_template_kwargs": {"thinking": False}}}
+    return {"extra_body": {"thinking": {"type": "disabled"}}}
 
 
 #: Marcadores de un fallo TRANSITORIO del proveedor. Un 429 por saturación o un
@@ -322,8 +323,17 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
 
         latency_ms = (time.perf_counter() - start) * 1000
         usage = response.usage or litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-        content = response.choices[0].message.content or "" if response.choices else ""
+        message = response.choices[0].message if response.choices else None
+        content = (getattr(message, "content", None) or "") if message else ""
         finish_reason = response.choices[0].finish_reason if response.choices else "error"
+        reasoning_content = str(getattr(message, "reasoning_content", None) or "")
+        raw_tool_calls = getattr(message, "tool_calls", None) or []
+        tool_calls: list[dict] = []
+        for call in raw_tool_calls:
+            if hasattr(call, "model_dump"):
+                tool_calls.append(call.model_dump())
+            elif isinstance(call, dict):
+                tool_calls.append(call)
 
         llm_response = LLMResponse(
             content=content,
@@ -333,6 +343,8 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
             total_tokens=usage.total_tokens or 0,
             latency_ms=round(latency_ms, 2),
             finish_reason=str(finish_reason),
+            reasoning_content=reasoning_content,
+            tool_calls=tool_calls,
         )
 
         logger.info(

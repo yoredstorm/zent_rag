@@ -126,12 +126,118 @@ async def configure_sandbox_payments(
     )
 
 
+async def seed_sales_agent(organization_id: str) -> str:
+    """Agente de ventas real del tenant, listo para el planner.
+
+    No es un mock del LLM: es una fila `agents` con propósito y tools; el
+    planner la descubre por `agent.search` y el runtime la ejecuta si el plan
+    la elige. El test real de generación necesita un tenant que pueda cumplir
+    "quiero un agente de ventas".
+    """
+    agent_id = uuid4()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, organization_id, name, status, is_active, "
+                "description, system_prompt, tools, config_json) "
+                "VALUES (:id, :oid, :name, 'ready', true, :desc, :prompt, "
+                "CAST(:tools AS jsonb), CAST(:config AS jsonb))"
+            ),
+            {
+                "id": agent_id,
+                "oid": UUID(str(organization_id)),
+                "name": "Asesor de ventas",
+                "desc": "Atiende consultas de catálogo, carrito y cierre de venta.",
+                "prompt": (
+                    "Eres un asesor de ventas. Interpreta la necesidad del cliente, "
+                    "consulta catálogo/stock y nunca inventes precios ni stock."
+                ),
+                "tools": json.dumps(["search_knowledge", "query_database"]),
+                "config": json.dumps(
+                    {
+                        "purpose": (
+                            "Interpretar pedidos de productos, detectar cambios de "
+                            "opinión y confirmar el resumen antes de cobrar."
+                        ),
+                        "output_schema": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "selection": {"type": "object"},
+                                "confirmed": {"type": "boolean"},
+                                "valid": {"type": "boolean"},
+                            },
+                        },
+                    }
+                ),
+            },
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    return str(agent_id)
+
+
+async def seed_knowledge_base(organization_id: str) -> str:
+    kb_id = uuid4()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO knowledge_bases (id, organization_id, name) "
+                "VALUES (:id, :oid, :name)"
+            ),
+            {
+                "id": kb_id,
+                "oid": UUID(str(organization_id)),
+                "name": "Base de conocimiento de certificación",
+            },
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    return str(kb_id)
+
+
+async def seed_managed_db(organization_id: str) -> None:
+    session = await get_async_session()
+    try:
+        workspace = (
+            await session.execute(
+                text(
+                    "SELECT id FROM workspaces WHERE organization_id = :oid "
+                    "ORDER BY created_at LIMIT 1"
+                ),
+                {"oid": str(organization_id)},
+            )
+        ).fetchone()
+        if workspace is None:
+            raise RuntimeError("el tenant de certificación no tiene workspace")
+        await session.execute(
+            text(
+                "INSERT INTO managed_databases (id, organization_id, workspace_id, db_name) "
+                "VALUES (gen_random_uuid(), :oid, :ws, :db)"
+            ),
+            {
+                "oid": str(organization_id),
+                "ws": workspace.id,
+                "db": f"cert_gold_{uuid4().hex[:8]}",
+            },
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+
 async def ready_tenant(
     client: AsyncClient,
     name: str,
     *,
     catalog: list[dict[str, Any]] | None = None,
     with_payments: bool = True,
+    with_agent: bool = False,
+    with_managed_db: bool = False,
 ) -> dict:
     """Tenant completo: catálogo + stock + bindings (+ pago sandbox)."""
     org = await make_tenant(client, name)
@@ -140,6 +246,10 @@ async def ready_tenant(
     await bind_conversation(org["organization_id"])
     if with_payments:
         await configure_sandbox_payments(org["organization_id"])
+    if with_agent:
+        org["agent_id"] = await seed_sales_agent(org["organization_id"])
+    if with_managed_db:
+        await seed_managed_db(org["organization_id"])
     return org
 
 

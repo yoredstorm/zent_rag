@@ -415,6 +415,11 @@ class LLMResponse:
     total_tokens: int = 0
     latency_ms: float = 0.0
     finish_reason: str = "stop"
+    #: Texto de razonamiento separado por el proveedor. Nunca se usa como
+    #: respuesta final salvo como último recurso validado por el planner.
+    reasoning_content: str = ""
+    #: Tool calls nativos del proveedor (formato OpenAI), serializados.
+    tool_calls: list[dict] = field(default_factory=list)
     #: Intentos del router de gateway (éxito incluido): provider, model, status,
     #: retry, fallback, latency_ms, error. NO suman tokens ni costo por sí
     #: solos: el ledger decide (los intentos fallidos normalmente no facturan).

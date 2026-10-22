@@ -35,8 +35,10 @@ describe("WorkflowNewPage", () => {
         <WorkflowNewPage />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId("wf-mode-ai")).toBeInTheDocument();
-    expect(screen.getByTestId("wf-mode-manual")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "¿Qué quieres que ZENT haga?" })).toBeInTheDocument();
+    expect(screen.getByTestId("wf-mode-ai")).toHaveAttribute("href", "/workflows/new/ask");
+    expect(screen.getByTestId("wf-mode-manual")).toHaveAttribute("href", "/workflows/new/manual");
+    expect(screen.getByTestId("wf-mode-mentor")).toHaveAttribute("href", "/workflows/new/manual?plantilla=mentor");
     await waitFor(() => expect(screen.getByTestId("wf-mode-templates")).toHaveTextContent("Alerta de stock bajo"));
     expect(screen.getByTestId("wf-new-install-low-stock-alert")).toBeInTheDocument();
   });

@@ -67,6 +67,11 @@ class ToolRefArgs(BaseModel):
     capability_ref: str = Field(min_length=1, max_length=200)
 
 
+class ToolRefsArgs(BaseModel):
+    model_config = MODEL_CONFIG
+    capability_refs: list[str] = Field(min_length=1, max_length=12)
+
+
 class ToolResourceArgs(BaseModel):
     model_config = MODEL_CONFIG
     kind: str | None = Field(default=None, max_length=80)
@@ -214,6 +219,24 @@ async def _inspect(ctx: PlannerToolContext, args: ToolRefArgs) -> dict[str, Any]
     return result
 
 
+async def _inspect_many(
+    ctx: PlannerToolContext, args: ToolRefsArgs
+) -> dict[str, Any]:
+    inspected: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for ref in args.capability_refs[:12]:
+        result = await inspect_capability(ctx.snapshot, ref)
+        if result is None:
+            missing.append(ref)
+        else:
+            inspected.append(result)
+    return {
+        "capabilities": inspected,
+        "missing": missing,
+        "hint": "Usa solo las refs inspeccionadas; las missing no existen en el tenant.",
+    }
+
+
 async def _dependencies(ctx: PlannerToolContext, args: ToolRefArgs) -> dict[str, Any]:
     result = await capability_dependencies(ctx.snapshot, args.capability_ref)
     if result is None:
@@ -347,6 +370,12 @@ TOOL_SPECS: tuple[PlannerToolSpec, ...] = (
         "Inspecciona el contrato completo (inputs/outputs/permisos/riesgo/errores) de una capacidad.",
         ToolRefArgs,
         _inspect,
+    ),
+    PlannerToolSpec(
+        "capability.inspect_many",
+        "Inspecciona hasta 12 contratos en una sola llamada (recomendado antes de planificar).",
+        ToolRefsArgs,
+        _inspect_many,
     ),
     PlannerToolSpec(
         "capability.list_dependencies",

@@ -1,0 +1,895 @@
+{
+  "schema": "zent.universal.eval/v1",
+  "provider": "openai/deepseek-ai/DeepSeek-V4.1-Flash",
+  "cases_path": "tests\\certification\\ai\\universal_cases.json",
+  "limit": 20,
+  "budget": {
+    "max_llm_calls": 8,
+    "max_tool_calls": 4,
+    "max_tokens": 40000,
+    "max_cost_usd": 0.5,
+    "max_duration_seconds": 120.0,
+    "max_repair_attempts": 1,
+    "max_candidates": 5,
+    "max_steps": 12,
+    "cost_per_1k_input": 0.0,
+    "cost_per_1k_output": 0.0
+  },
+  "summary": {
+    "cases": 20,
+    "errors": 13,
+    "intent_valid_rate": 0.35,
+    "graph_valid_rate": 0.2,
+    "contract_clean_rate": 1.0,
+    "simulation_executed_rate": 0.2,
+    "durable_match_rate": 0.15,
+    "approval_match_rate": 0.55,
+    "exception_coverage_rate": 0.2,
+    "mean_latency_ms": 27248.2,
+    "p95_latency_ms": 51696,
+    "total_tokens": 211014,
+    "mean_tokens": 10550.7,
+    "total_cost_usd": 0.0
+  },
+  "rows": [
+    {
+      "id": "sales_01",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CLARIFICATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 25419,
+      "tokens": 17589,
+      "llm_calls": 3,
+      "tool_calls": 1,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_02",
+      "domain": "sales",
+      "error": "budget_exceeded:tokens",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 46992,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_03",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CONFIGURATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9",
+          "catalog.products.search",
+          "catalog.products.search"
+        ],
+        "matched": [
+          "catalog.products.search"
+        ],
+        "recall": 0.1667,
+        "valid_refs": [
+          "catalog.products.search",
+          "catalog.products.search"
+        ],
+        "invalid_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9"
+        ]
+      },
+      "contract_errors": [],
+      "graph_valid": true,
+      "simulation_executed": true,
+      "simulation_state": "FAILED_VALIDATION",
+      "durable_expected": true,
+      "durable_observed": true,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [
+        "agent_analysis",
+        "business_result",
+        "capability_call",
+        "decision",
+        "notify",
+        "state",
+        "trigger_conversation"
+      ],
+      "exception_coverage": true,
+      "latency_ms": 33635,
+      "tokens": 38260,
+      "llm_calls": 5,
+      "tool_calls": 2,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_04",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CONFIGURATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9",
+          "catalog.products.search",
+          "conversation.send",
+          "conversation.send"
+        ],
+        "matched": [
+          "catalog.products.search",
+          "conversation.send"
+        ],
+        "recall": 0.3333,
+        "valid_refs": [
+          "catalog.products.search",
+          "conversation.send",
+          "conversation.send"
+        ],
+        "invalid_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9"
+        ]
+      },
+      "contract_errors": [],
+      "graph_valid": true,
+      "simulation_executed": true,
+      "simulation_state": "NEEDS_CONFIGURATION",
+      "durable_expected": true,
+      "durable_observed": true,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [
+        "agent_analysis",
+        "business_result",
+        "capability_call",
+        "decision",
+        "notify",
+        "state",
+        "trigger_conversation",
+        "wait"
+      ],
+      "exception_coverage": true,
+      "latency_ms": 38671,
+      "tokens": 31035,
+      "llm_calls": 4,
+      "tool_calls": 1,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_05",
+      "domain": "sales",
+      "error": "budget_exceeded:tokens",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 53950,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_06",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CONFIGURATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9",
+          "catalog.products.search",
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9"
+        ],
+        "matched": [
+          "catalog.products.search"
+        ],
+        "recall": 0.1667,
+        "valid_refs": [
+          "catalog.products.search"
+        ],
+        "invalid_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9",
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9"
+        ]
+      },
+      "contract_errors": [],
+      "graph_valid": true,
+      "simulation_executed": true,
+      "simulation_state": "NEEDS_CONFIGURATION",
+      "durable_expected": true,
+      "durable_observed": true,
+      "approval_expected": true,
+      "approval_observed": true,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [
+        "agent_analysis",
+        "business_result",
+        "capability_call",
+        "decision",
+        "human_approval",
+        "notify",
+        "state",
+        "trigger_conversation",
+        "wait"
+      ],
+      "exception_coverage": true,
+      "latency_ms": 51696,
+      "tokens": 39866,
+      "llm_calls": 5,
+      "tool_calls": 2,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_07",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CONFIGURATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9",
+          "catalog.products.search"
+        ],
+        "matched": [
+          "catalog.products.search"
+        ],
+        "recall": 0.1667,
+        "valid_refs": [
+          "catalog.products.search"
+        ],
+        "invalid_refs": [
+          "agent.bb97a0c7-29d6-4c30-8441-79a79c16afa9"
+        ]
+      },
+      "contract_errors": [],
+      "graph_valid": true,
+      "simulation_executed": true,
+      "simulation_state": "FAILED_VALIDATION",
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [
+        "agent_analysis",
+        "business_result",
+        "capability_call",
+        "decision",
+        "notify",
+        "trigger_conversation"
+      ],
+      "exception_coverage": true,
+      "latency_ms": 30737,
+      "tokens": 36898,
+      "llm_calls": 5,
+      "tool_calls": 2,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_08",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CLARIFICATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 8672,
+      "tokens": 14065,
+      "llm_calls": 3,
+      "tool_calls": 1,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_09",
+      "domain": "sales",
+      "error": null,
+      "state": "NEEDS_CLARIFICATION",
+      "intent_valid": true,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 15575,
+      "tokens": 33301,
+      "llm_calls": 5,
+      "tool_calls": 3,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "sales_10",
+      "domain": "sales",
+      "error": "budget_exceeded:tokens",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [
+          "catalog.products.search",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send"
+        ],
+        "plan_refs": [],
+        "matched": [],
+        "recall": 0.0,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": true,
+      "approval_observed": false,
+      "step_types_expected": [
+        "wait",
+        "human_approval",
+        "capability_call"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 39832,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_01",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 11655,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_02",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 12345,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_03",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 21205,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_04",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 22823,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_05",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 14467,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_06",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tokens",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 50084,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_07",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 23024,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_08",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 9466,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_09",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 17309,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "id": "mentoring_10",
+      "domain": "mentoring",
+      "error": "budget_exceeded:tool_calls",
+      "state": null,
+      "intent_valid": false,
+      "capability_selection": {
+        "expected_available": [],
+        "plan_refs": [],
+        "matched": [],
+        "recall": null,
+        "valid_refs": [],
+        "invalid_refs": []
+      },
+      "contract_errors": [],
+      "graph_valid": false,
+      "simulation_executed": false,
+      "simulation_state": null,
+      "durable_expected": true,
+      "durable_observed": false,
+      "approval_expected": false,
+      "approval_observed": false,
+      "step_types_expected": [
+        "agent_analysis",
+        "knowledge_query",
+        "state",
+        "wait"
+      ],
+      "step_types_observed": [],
+      "exception_coverage": false,
+      "latency_ms": 17407,
+      "tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "cost_usd": 0.0
+    }
+  ]
+}

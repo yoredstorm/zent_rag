@@ -1,0 +1,3026 @@
+{
+  "status_code": 200,
+  "initial": {
+    "design_session": {
+      "id": "d4668bba-1b03-47e8-bf31-ddba1644f9a7",
+      "organization_id": "6400d76a-194a-4103-8366-72cbdf927152",
+      "workspace_id": "02434f6a-9662-4e4a-be4b-f1c98131e887",
+      "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+      "title": "Gold AI Sales",
+      "original_prompt": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor.",
+      "status": "active",
+      "revision": 1,
+      "plan_hash": null,
+      "capability_snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+      "workflow_id": null,
+      "state": {
+        "cost": null,
+        "state": "BLOCKED",
+        "trace": {
+          "path": [
+            "NECESIDAD",
+            "BÚSQUEDA",
+            "INSPECCIÓN",
+            "SELECCIÓN",
+            "PLAN",
+            "VALIDACIÓN",
+            "REPARACIÓN"
+          ],
+          "stages": [
+            {
+              "name": "UNDERSTAND",
+              "detail": "objetivo: Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negoc…",
+              "duration_ms": 64153
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 35
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 0
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 30
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 52
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 51
+            }
+          ],
+          "tool_calls": [
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "ventas tienda catálogo productos marcas precios orden pago inventario conversación cliente"
+              },
+              "duration_ms": 35,
+              "result_hash": "a78c27792f9b886b",
+              "result_summary": "total_matches=32; results=5"
+            },
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "generar enlace o QR de pago con proveedor, confirmación de pago por webhook, reintento de pago",
+                "source": "payments"
+              },
+              "duration_ms": 0,
+              "result_hash": "3f51ff440ceb11e0",
+              "result_summary": "total_matches=0; results=0"
+            },
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "pago link QR checkout proveedor pasarela de pago confirmación webhook"
+              },
+              "duration_ms": 30,
+              "result_hash": "80f140bb911d01c9",
+              "result_summary": "total_matches=26; results=5"
+            },
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "aplicar movimiento de inventario stock descontar unidades orden confirmada",
+                "executable_only": true
+              },
+              "duration_ms": 52,
+              "result_hash": "d7c014d6d2c64127",
+              "result_summary": "total_matches=23; results=5"
+            },
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "enviar mensaje al cliente canal conversación notificar respuesta al cliente"
+              },
+              "duration_ms": 50,
+              "result_hash": "f24a10c7e9bf00a5",
+              "result_summary": "total_matches=27; results=5"
+            }
+          ],
+          "repair_attempts": 0
+        },
+        "usage": {
+          "repairs": 0,
+          "cancelled": false,
+          "llm_calls": 9,
+          "tool_calls": 5,
+          "duration_ms": 229394,
+          "total_tokens": 107807,
+          "prompt_tokens": 64924,
+          "completion_tokens": 42883,
+          "estimated_cost_usd": 0.0
+        },
+        "intent": {
+          "goal": "Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negocio; si existen varias marcas, mostrar alternativas con sus precios reales; permitir al cliente elegir una alternativa, cambiar de opinión y agregar más productos, conservando el carrito durante toda la conversación; cuando el cliente termine, presentar el resumen con el precio total y pedir confirmación; después crear una orden y generar un enlace o QR de pago con el proveedor configurado; esperar la confirmación real del proveedor de pago antes de finalizar la venta; si el pago falla, comunicarlo y permitir un reintento seguro; si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez; sopo",
+          "actors": [
+            "Cliente de la tienda que conversa con el agente de ventas"
+          ],
+          "trigger_intent": "El cliente envía un mensaje indicando que necesita un producto"
+        },
+        "issues": [
+          {
+            "code": "planner.invalid_llm_output",
+            "field": "planner",
+            "message": "El LLM no devolvió una acción JSON válida.",
+            "step_id": null,
+            "expected": "plan válido + matches",
+            "received": "planner.invalid_llm_output",
+            "severity": "error",
+            "issue_code": "planner.invalid_llm_output",
+            "requirement": null,
+            "alternatives": [],
+            "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+          }
+        ],
+        "matches": [],
+        "preview": [],
+        "blockers": [
+          {
+            "code": "planner.invalid_llm_output",
+            "kind": "issue",
+            "message": "El LLM no devolvió una acción JSON válida.",
+            "requirement": null
+          }
+        ],
+        "proposal": {
+          "cost": null,
+          "mode": "agentic",
+          "plan": null,
+          "graph": null,
+          "notes": [],
+          "state": "BLOCKED",
+          "trace": {
+            "path": [
+              "NECESIDAD",
+              "BÚSQUEDA",
+              "INSPECCIÓN",
+              "SELECCIÓN",
+              "PLAN",
+              "VALIDACIÓN",
+              "REPARACIÓN"
+            ],
+            "stages": [
+              {
+                "name": "UNDERSTAND",
+                "detail": "objetivo: Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negoc…",
+                "duration_ms": 64153
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 35
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 0
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 30
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 52
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 51
+              }
+            ],
+            "tool_calls": [
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "ventas tienda catálogo productos marcas precios orden pago inventario conversación cliente"
+                },
+                "duration_ms": 35,
+                "result_hash": "a78c27792f9b886b",
+                "result_summary": "total_matches=32; results=5"
+              },
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "generar enlace o QR de pago con proveedor, confirmación de pago por webhook, reintento de pago",
+                  "source": "payments"
+                },
+                "duration_ms": 0,
+                "result_hash": "3f51ff440ceb11e0",
+                "result_summary": "total_matches=0; results=0"
+              },
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "pago link QR checkout proveedor pasarela de pago confirmación webhook"
+                },
+                "duration_ms": 30,
+                "result_hash": "80f140bb911d01c9",
+                "result_summary": "total_matches=26; results=5"
+              },
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "aplicar movimiento de inventario stock descontar unidades orden confirmada",
+                  "executable_only": true
+                },
+                "duration_ms": 52,
+                "result_hash": "d7c014d6d2c64127",
+                "result_summary": "total_matches=23; results=5"
+              },
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "enviar mensaje al cliente canal conversación notificar respuesta al cliente"
+                },
+                "duration_ms": 50,
+                "result_hash": "f24a10c7e9bf00a5",
+                "result_summary": "total_matches=27; results=5"
+              }
+            ],
+            "repair_attempts": 0
+          },
+          "usage": {
+            "repairs": 0,
+            "cancelled": false,
+            "llm_calls": 9,
+            "tool_calls": 5,
+            "duration_ms": 229394,
+            "total_tokens": 107807,
+            "prompt_tokens": 64924,
+            "completion_tokens": 42883,
+            "estimated_cost_usd": 0.0
+          },
+          "intent": {
+            "goal": "Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negocio; si existen varias marcas, mostrar alternativas con sus precios reales; permitir al cliente elegir una alternativa, cambiar de opinión y agregar más productos, conservando el carrito durante toda la conversación; cuando el cliente termine, presentar el resumen con el precio total y pedir confirmación; después crear una orden y generar un enlace o QR de pago con el proveedor configurado; esperar la confirmación real del proveedor de pago antes de finalizar la venta; si el pago falla, comunicarlo y permitir un reintento seguro; si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez; sopo",
+            "actors": [
+              "Cliente de la tienda que conversa con el agente de ventas"
+            ],
+            "trigger_intent": "El cliente envía un mensaje indicando que necesita un producto"
+          },
+          "issues": [
+            {
+              "code": "planner.invalid_llm_output",
+              "field": "planner",
+              "message": "El LLM no devolvió una acción JSON válida.",
+              "step_id": null,
+              "expected": "plan válido + matches",
+              "received": "planner.invalid_llm_output",
+              "severity": "error",
+              "issue_code": "planner.invalid_llm_output",
+              "requirement": null,
+              "alternatives": [],
+              "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+            }
+          ],
+          "phases": [
+            {
+              "name": "UNDERSTAND",
+              "duration_ms": 64153
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 35
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 0
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 30
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 52
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 51
+            }
+          ],
+          "source": "llm",
+          "matches": [],
+          "planner": {
+            "model": null,
+            "source": "llm",
+            "version": "architect/1.2.0+agentic",
+            "provider": "LiteLLMProvider"
+          },
+          "preview": [],
+          "blockers": [
+            {
+              "code": "planner.invalid_llm_output",
+              "kind": "issue",
+              "message": "El LLM no devolvió una acción JSON válida.",
+              "requirement": null
+            }
+          ],
+          "fallback": null,
+          "plan_hash": null,
+          "questions": [],
+          "readiness": null,
+          "steps_map": {},
+          "session_id": "d4668bba-1b03-47e8-bf31-ddba1644f9a7",
+          "simulation": null,
+          "assumptions": [
+            {
+              "impact": "medium",
+              "statement": "Existe un catálogo consultable que contiene productos, marcas y precios reales",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "Existe un proveedor de pago configurado capaz de emitir una confirmación verificable del pago",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "Existe un canal de mensajería por el que el cliente conversa con el agente",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "Existe un almacén de estado persistente que permite sobrevivir reinicios y reconexiones",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "La conversación se identifica de forma unívoca por cliente o por hilo de conversación",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "El movimiento de inventario se aplica al confirmarse el pago, no al crearse la orden",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "Un mismo cliente puede mantener un solo carrito activo por conversación",
+              "needs_confirmation": false
+            }
+          ],
+          "publishable": false,
+          "requirements": [],
+          "specification": {
+            "goal": "Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negocio; si existen varias marcas, mostrar alternativas con sus precios reales; permitir al cliente elegir una alternativa, cambiar de opinión y agregar más productos, conservando el carrito durante toda la conversación; cuando el cliente termine, presentar el resumen con el precio total y pedir confirmación; después crear una orden y generar un enlace o QR de pago con el proveedor configurado; esperar la confirmación real del proveedor de pago antes de finalizar la venta; si el pago falla, comunicarlo y permitir un reintento seguro; si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez; sopo",
+            "actor": "Cliente de la tienda que conversa con el agente de ventas",
+            "inputs": [
+              "Mensaje del cliente indicando el producto que necesita (texto en lenguaje natural)",
+              "Selección de una alternativa/marca por parte del cliente",
+              "Cambios de opinión del cliente sobre la selección",
+              "Productos adicionales que el cliente agrega al carrito",
+              "Confirmación del cliente sobre el resumen y el precio total",
+              "Catálogo del negocio (productos, marcas, precios)",
+              "Configuración del proveedor de pago",
+              "Confirmación o notificación de pago emitida por el proveedor de pago",
+              "Identificador de conversación/cliente para asociar el carrito"
+            ],
+            "retries": [
+              "Reintento seguro de pago tras un pago fallido, generando una nueva solicitud de pago sin duplicar la orden ni el movimiento de inventario",
+              "Reintento de consulta o de recepción de la confirmación cuando el proveedor no responde",
+              "Reprocesamiento idempotente de mensajes duplicados sin repetir efectos de negocio",
+              "Reintento de creación de la orden verificando primero si ya fue creada"
+            ],
+            "sources": [
+              "Catálogo del negocio (formato y mecanismo de acceso no especificados)",
+              "Proveedor de pago configurado (no especificado)",
+              "Canal de mensajería por el que escribe el cliente (no especificado)",
+              "Almacén de estado duradero para conversación, carrito y órdenes (no especificado)"
+            ],
+            "timeouts": [
+              "Tiempo máximo de espera de la respuesta del cliente (no especificado)",
+              "Tiempo máximo de espera de la confirmación del proveedor de pago (no especificado)",
+              "Tiempo máximo para generar el enlace o QR de pago (no especificado)",
+              "Vigencia del enlace o QR de pago (no especificada)"
+            ],
+            "approvals": [
+              "Confirmación explícita del cliente sobre el resumen y el precio total antes de crear la orden y generar el pago",
+              "Confirmación real del proveedor de pago antes de finalizar la orden"
+            ],
+            "decisions": [
+              "Determinar si el producto solicitado existe en el catálogo",
+              "Determinar si existen varias marcas del producto y, por tanto, si deben mostrarse alternativas",
+              "Decidir qué alternativas mostrar y en qué orden cuando hay varias marcas",
+              "Interpretar si el mensaje del cliente es una elección, un cambio de opinión, una adición de producto o una finalización",
+              "Decidir si el cliente ya terminó y corresponde presentar el resumen con el total",
+              "Determinar si el mensaje recibido es duplicado y debe ignorarse",
+              "Determinar el estado real del pago a partir de la confirmación del proveedor (confirmado, fallido, pendiente)",
+              "Decidir si un reintento de pago es seguro respecto de la orden y del inventario ya aplicado"
+            ],
+            "confidence": 0.55,
+            "assumptions": [
+              "Existe un catálogo consultable que contiene productos, marcas y precios reales",
+              "Existe un proveedor de pago configurado capaz de emitir una confirmación verificable del pago",
+              "Existe un canal de mensajería por el que el cliente conversa con el agente",
+              "Existe un almacén de estado persistente que permite sobrevivir reinicios y reconexiones",
+              "La conversación se identifica de forma unívoca por cliente o por hilo de conversación",
+              "El movimiento de inventario se aplica al confirmarse el pago, no al crearse la orden",
+              "Un mismo cliente puede mantener un solo carrito activo por conversación"
+            ],
+            "wait_events": [
+              "Espera de la respuesta del cliente: elección de alternativa, cambio de opinión, adición de productos o confirmación del resumen",
+              "Espera de la confirmación real del proveedor de pago antes de finalizar la venta"
+            ],
+            "durable_state": [
+              "Identificador de conversación y de cliente",
+              "Carrito vigente: ítems, marcas, cantidades y precios",
+              "Estado de la orden (pendiente de confirmación, creada, pago pendiente, pagada, fallida)",
+              "Identificador de la transacción de pago y su estado en el proveedor",
+              "Registro de claves de idempotencia de mensajes ya procesados",
+              "Marca de 'inventario aplicado' asociada a cada orden",
+              "Enlace o QR de pago generado y su vigencia"
+            ],
+            "trigger_event": "El cliente envía un mensaje indicando que necesita un producto",
+            "expected_errors": [
+              "Producto no encontrado en el catálogo",
+              "Catálogo no disponible o con error de consulta",
+              "Pago rechazado o fallido informado por el proveedor",
+              "Pago en estado pendiente sin confirmación dentro del tiempo esperado",
+              "Mensaje duplicado recibido",
+              "Pérdida de conexión y reconexión del cliente",
+              "Reinicio del servidor durante la conversación",
+              "Fallo al crear la orden",
+              "Fallo al generar el enlace o QR de pago",
+              "Fallo al aplicar el movimiento de inventario",
+              "Confirmación de pago recibida de forma repetida para la misma orden"
+            ],
+            "external_actions": [
+              "Consultar el catálogo del negocio",
+              "Enviar mensajes al cliente por el canal de conversación",
+              "Crear la orden",
+              "Generar el enlace o QR de pago con el proveedor configurado",
+              "Recibir o consultar la confirmación del proveedor de pago",
+              "Aplicar el movimiento de inventario"
+            ],
+            "deterministic_rules": [
+              "Los precios mostrados al cliente deben ser los precios reales del catálogo, sin alteración",
+              "El precio total del resumen es la suma de los precios de los ítems del carrito según sus cantidades",
+              "El carrito debe conservarse durante toda la conversación, incluyendo cambios de opinión y adiciones",
+              "La orden sólo puede crearse después de que el cliente confirme el resumen con el precio total",
+              "El enlace o QR de pago debe generarse usando el proveedor de pago configurado",
+              "La venta sólo puede finalizar cuando exista confirmación real del proveedor de pago",
+              "El movimiento de inventario debe aplicarse exactamente una vez por orden confirmada",
+              "Los mensajes duplicados deben detectarse y no reprocesarse",
+              "El estado de la conversación, el carrito, la orden y el pago debe persistir para sobrevivir reconexiones y reinicios del servidor",
+              "Un reintento de pago no debe volver a crear la orden ni volver a aplicar el movimiento de inventario"
+            ],
+            "missing_information": [
+              "Formato, ubicación y mecanismo de acceso del catálogo del negocio",
+              "Moneda, impuestos, descuentos y costos adicionales aplicables al total",
+              "Criterio de ordenamiento y de cantidad de alternativas a mostrar cuando hay varias marcas",
+              "Disponibilidad de stock en el catálogo y política ante stock insuficiente",
+              "Proveedor de pago concreto, su API, sus webhooks y su modelo de confirmación",
+              "Canal de mensajería concreto y formato de los mensajes",
+              "Identificación del cliente y clave de conversación",
+              "Tecnología y esquema del almacén de estado duradero e idempotencia",
+              "Tiempos de espera, número de reintentos y política de expiración del carrito y del enlace de pago",
+              "Qué hacer si el pago se confirma después de haber expirado o tras un reintento",
+              "Política de abandono, cancelación de orden y liberación de inventario",
+              "Manejo de múltiples conversaciones u órdenes simultáneas del mismo cliente",
+              "Idioma y tono de la comunicación con el cliente"
+            ],
+            "cognitive_operations": [
+              "Interpretar en lenguaje natural qué producto, marca y cantidad pide el cliente",
+              "Desambiguar el producto solicitado contra las entradas del catálogo",
+              "Redactar el mensaje con las alternativas de marcas y sus precios reales",
+              "Redactar el resumen del carrito con el precio total y la solicitud de confirmación",
+              "Redactar el aviso de pago fallido y la propuesta de reintento seguro",
+              "Comprender cambios de opinión y adiciones expresados de forma libre por el cliente"
+            ],
+            "completion_conditions": [
+              "La orden queda finalizada con pago confirmado por el proveedor y el movimiento de inventario aplicado exactamente una vez",
+              "El cliente recibe la confirmación de finalización de la venta"
+            ],
+            "irreversible_operations": [
+              "Creación de la orden",
+              "Generación del enlace o QR de pago (habilita un cobro real)",
+              "Finalización de la orden",
+              "Aplicación del movimiento de inventario",
+              "Cobro efectivo en el proveedor de pago"
+            ]
+          },
+          "clarifications": [],
+          "simulation_preview": null,
+          "capability_snapshot": {
+            "counts": {
+              "events": 37,
+              "resources": 0,
+              "capabilities": 64
+            },
+            "coverage": {
+              "events": 37,
+              "schema": "zent.capability.coverage/v1",
+              "by_source": {
+                "node": 30,
+                "binding": 1,
+                "commerce": 19,
+                "marketplace": 14
+              },
+              "by_status": {
+                "AVAILABLE": 45,
+                "NEEDS_INSTALLATION": 14,
+                "NEEDS_CONFIGURATION": 5
+              },
+              "resources": 0,
+              "by_category": {
+                "ai": 2,
+                "data": 2,
+                "logic": 12,
+                "output": 2,
+                "control": 5,
+                "trigger": 3,
+                "business": 1,
+                "commerce": 14,
+                "payments": 5,
+                "integration": 3,
+                "marketplace": 14,
+                "communication": 1
+              },
+              "contract_gaps": [
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "inventory.reserve"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "inventory.release"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "inventory.commit"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.create"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.get"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.confirm"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.mark_paid"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.fulfill"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.cancel"
+                }
+              ],
+              "business_complete": 25,
+              "total_capabilities": 64,
+              "business_capabilities": 34,
+              "business_completeness": 0.7353
+            },
+            "generated_at": "2026-10-21T19:54:11.234424+00:00",
+            "snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+            "catalog_version": 1
+          },
+          "resource_resolution": null,
+          "clarification_history": [],
+          "requires_durable_instance": false
+        },
+        "decisions": [
+          {
+            "kind": "initial",
+            "revision": 1,
+            "instruction": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe pres"
+          }
+        ],
+        "questions": [],
+        "readiness": null,
+        "assumptions": [
+          {
+            "impact": "medium",
+            "statement": "Existe un catálogo consultable que contiene productos, marcas y precios reales",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "Existe un proveedor de pago configurado capaz de emitir una confirmación verificable del pago",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "Existe un canal de mensajería por el que el cliente conversa con el agente",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "Existe un almacén de estado persistente que permite sobrevivir reinicios y reconexiones",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "La conversación se identifica de forma unívoca por cliente o por hilo de conversación",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "El movimiento de inventario se aplica al confirmarse el pago, no al crearse la orden",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "Un mismo cliente puede mantener un solo carrito activo por conversación",
+            "needs_confirmation": false
+          }
+        ],
+        "publishable": false,
+        "requirements": [],
+        "specification": {
+          "goal": "Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negocio; si existen varias marcas, mostrar alternativas con sus precios reales; permitir al cliente elegir una alternativa, cambiar de opinión y agregar más productos, conservando el carrito durante toda la conversación; cuando el cliente termine, presentar el resumen con el precio total y pedir confirmación; después crear una orden y generar un enlace o QR de pago con el proveedor configurado; esperar la confirmación real del proveedor de pago antes de finalizar la venta; si el pago falla, comunicarlo y permitir un reintento seguro; si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez; sopo",
+          "actor": "Cliente de la tienda que conversa con el agente de ventas",
+          "inputs": [
+            "Mensaje del cliente indicando el producto que necesita (texto en lenguaje natural)",
+            "Selección de una alternativa/marca por parte del cliente",
+            "Cambios de opinión del cliente sobre la selección",
+            "Productos adicionales que el cliente agrega al carrito",
+            "Confirmación del cliente sobre el resumen y el precio total",
+            "Catálogo del negocio (productos, marcas, precios)",
+            "Configuración del proveedor de pago",
+            "Confirmación o notificación de pago emitida por el proveedor de pago",
+            "Identificador de conversación/cliente para asociar el carrito"
+          ],
+          "retries": [
+            "Reintento seguro de pago tras un pago fallido, generando una nueva solicitud de pago sin duplicar la orden ni el movimiento de inventario",
+            "Reintento de consulta o de recepción de la confirmación cuando el proveedor no responde",
+            "Reprocesamiento idempotente de mensajes duplicados sin repetir efectos de negocio",
+            "Reintento de creación de la orden verificando primero si ya fue creada"
+          ],
+          "sources": [
+            "Catálogo del negocio (formato y mecanismo de acceso no especificados)",
+            "Proveedor de pago configurado (no especificado)",
+            "Canal de mensajería por el que escribe el cliente (no especificado)",
+            "Almacén de estado duradero para conversación, carrito y órdenes (no especificado)"
+          ],
+          "timeouts": [
+            "Tiempo máximo de espera de la respuesta del cliente (no especificado)",
+            "Tiempo máximo de espera de la confirmación del proveedor de pago (no especificado)",
+            "Tiempo máximo para generar el enlace o QR de pago (no especificado)",
+            "Vigencia del enlace o QR de pago (no especificada)"
+          ],
+          "approvals": [
+            "Confirmación explícita del cliente sobre el resumen y el precio total antes de crear la orden y generar el pago",
+            "Confirmación real del proveedor de pago antes de finalizar la orden"
+          ],
+          "decisions": [
+            "Determinar si el producto solicitado existe en el catálogo",
+            "Determinar si existen varias marcas del producto y, por tanto, si deben mostrarse alternativas",
+            "Decidir qué alternativas mostrar y en qué orden cuando hay varias marcas",
+            "Interpretar si el mensaje del cliente es una elección, un cambio de opinión, una adición de producto o una finalización",
+            "Decidir si el cliente ya terminó y corresponde presentar el resumen con el total",
+            "Determinar si el mensaje recibido es duplicado y debe ignorarse",
+            "Determinar el estado real del pago a partir de la confirmación del proveedor (confirmado, fallido, pendiente)",
+            "Decidir si un reintento de pago es seguro respecto de la orden y del inventario ya aplicado"
+          ],
+          "confidence": 0.55,
+          "assumptions": [
+            "Existe un catálogo consultable que contiene productos, marcas y precios reales",
+            "Existe un proveedor de pago configurado capaz de emitir una confirmación verificable del pago",
+            "Existe un canal de mensajería por el que el cliente conversa con el agente",
+            "Existe un almacén de estado persistente que permite sobrevivir reinicios y reconexiones",
+            "La conversación se identifica de forma unívoca por cliente o por hilo de conversación",
+            "El movimiento de inventario se aplica al confirmarse el pago, no al crearse la orden",
+            "Un mismo cliente puede mantener un solo carrito activo por conversación"
+          ],
+          "wait_events": [
+            "Espera de la respuesta del cliente: elección de alternativa, cambio de opinión, adición de productos o confirmación del resumen",
+            "Espera de la confirmación real del proveedor de pago antes de finalizar la venta"
+          ],
+          "durable_state": [
+            "Identificador de conversación y de cliente",
+            "Carrito vigente: ítems, marcas, cantidades y precios",
+            "Estado de la orden (pendiente de confirmación, creada, pago pendiente, pagada, fallida)",
+            "Identificador de la transacción de pago y su estado en el proveedor",
+            "Registro de claves de idempotencia de mensajes ya procesados",
+            "Marca de 'inventario aplicado' asociada a cada orden",
+            "Enlace o QR de pago generado y su vigencia"
+          ],
+          "trigger_event": "El cliente envía un mensaje indicando que necesita un producto",
+          "expected_errors": [
+            "Producto no encontrado en el catálogo",
+            "Catálogo no disponible o con error de consulta",
+            "Pago rechazado o fallido informado por el proveedor",
+            "Pago en estado pendiente sin confirmación dentro del tiempo esperado",
+            "Mensaje duplicado recibido",
+            "Pérdida de conexión y reconexión del cliente",
+            "Reinicio del servidor durante la conversación",
+            "Fallo al crear la orden",
+            "Fallo al generar el enlace o QR de pago",
+            "Fallo al aplicar el movimiento de inventario",
+            "Confirmación de pago recibida de forma repetida para la misma orden"
+          ],
+          "external_actions": [
+            "Consultar el catálogo del negocio",
+            "Enviar mensajes al cliente por el canal de conversación",
+            "Crear la orden",
+            "Generar el enlace o QR de pago con el proveedor configurado",
+            "Recibir o consultar la confirmación del proveedor de pago",
+            "Aplicar el movimiento de inventario"
+          ],
+          "deterministic_rules": [
+            "Los precios mostrados al cliente deben ser los precios reales del catálogo, sin alteración",
+            "El precio total del resumen es la suma de los precios de los ítems del carrito según sus cantidades",
+            "El carrito debe conservarse durante toda la conversación, incluyendo cambios de opinión y adiciones",
+            "La orden sólo puede crearse después de que el cliente confirme el resumen con el precio total",
+            "El enlace o QR de pago debe generarse usando el proveedor de pago configurado",
+            "La venta sólo puede finalizar cuando exista confirmación real del proveedor de pago",
+            "El movimiento de inventario debe aplicarse exactamente una vez por orden confirmada",
+            "Los mensajes duplicados deben detectarse y no reprocesarse",
+            "El estado de la conversación, el carrito, la orden y el pago debe persistir para sobrevivir reconexiones y reinicios del servidor",
+            "Un reintento de pago no debe volver a crear la orden ni volver a aplicar el movimiento de inventario"
+          ],
+          "missing_information": [
+            "Formato, ubicación y mecanismo de acceso del catálogo del negocio",
+            "Moneda, impuestos, descuentos y costos adicionales aplicables al total",
+            "Criterio de ordenamiento y de cantidad de alternativas a mostrar cuando hay varias marcas",
+            "Disponibilidad de stock en el catálogo y política ante stock insuficiente",
+            "Proveedor de pago concreto, su API, sus webhooks y su modelo de confirmación",
+            "Canal de mensajería concreto y formato de los mensajes",
+            "Identificación del cliente y clave de conversación",
+            "Tecnología y esquema del almacén de estado duradero e idempotencia",
+            "Tiempos de espera, número de reintentos y política de expiración del carrito y del enlace de pago",
+            "Qué hacer si el pago se confirma después de haber expirado o tras un reintento",
+            "Política de abandono, cancelación de orden y liberación de inventario",
+            "Manejo de múltiples conversaciones u órdenes simultáneas del mismo cliente",
+            "Idioma y tono de la comunicación con el cliente"
+          ],
+          "cognitive_operations": [
+            "Interpretar en lenguaje natural qué producto, marca y cantidad pide el cliente",
+            "Desambiguar el producto solicitado contra las entradas del catálogo",
+            "Redactar el mensaje con las alternativas de marcas y sus precios reales",
+            "Redactar el resumen del carrito con el precio total y la solicitud de confirmación",
+            "Redactar el aviso de pago fallido y la propuesta de reintento seguro",
+            "Comprender cambios de opinión y adiciones expresados de forma libre por el cliente"
+          ],
+          "completion_conditions": [
+            "La orden queda finalizada con pago confirmado por el proveedor y el movimiento de inventario aplicado exactamente una vez",
+            "El cliente recibe la confirmación de finalización de la venta"
+          ],
+          "irreversible_operations": [
+            "Creación de la orden",
+            "Generación del enlace o QR de pago (habilita un cobro real)",
+            "Finalización de la orden",
+            "Aplicación del movimiento de inventario",
+            "Cobro efectivo en el proveedor de pago"
+          ]
+        },
+        "clarifications": [],
+        "capability_snapshot": {
+          "counts": {
+            "events": 37,
+            "resources": 0,
+            "capabilities": 64
+          },
+          "coverage": {
+            "events": 37,
+            "schema": "zent.capability.coverage/v1",
+            "by_source": {
+              "node": 30,
+              "binding": 1,
+              "commerce": 19,
+              "marketplace": 14
+            },
+            "by_status": {
+              "AVAILABLE": 45,
+              "NEEDS_INSTALLATION": 14,
+              "NEEDS_CONFIGURATION": 5
+            },
+            "resources": 0,
+            "by_category": {
+              "ai": 2,
+              "data": 2,
+              "logic": 12,
+              "output": 2,
+              "control": 5,
+              "trigger": 3,
+              "business": 1,
+              "commerce": 14,
+              "payments": 5,
+              "integration": 3,
+              "marketplace": 14,
+              "communication": 1
+            },
+            "contract_gaps": [
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "inventory.reserve"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "inventory.release"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "inventory.commit"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.create"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.get"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.confirm"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.mark_paid"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.fulfill"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.cancel"
+              }
+            ],
+            "business_complete": 25,
+            "total_capabilities": 64,
+            "business_capabilities": 34,
+            "business_completeness": 0.7353
+          },
+          "generated_at": "2026-10-21T19:54:11.234424+00:00",
+          "snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+          "catalog_version": 1
+        },
+        "resource_resolution": null,
+        "requires_durable_instance": false
+      },
+      "created_at": "2026-10-21T19:54:08.478434+00:00",
+      "updated_at": "2026-10-21T19:58:00.437767+00:00",
+      "closed_at": null,
+      "plan": null,
+      "graph": null,
+      "revisions": [
+        {
+          "revision": 1,
+          "kind": "initial",
+          "instruction": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor.",
+          "summary": "Plan inicial",
+          "diff": {
+            "summary": "Plan inicial"
+          },
+          "plan_hash": null,
+          "validation": {
+            "state": "BLOCKED",
+            "issues": [
+              {
+                "code": "planner.invalid_llm_output",
+                "field": "planner",
+                "message": "El LLM no devolvió una acción JSON válida.",
+                "step_id": null,
+                "expected": "plan válido + matches",
+                "received": "planner.invalid_llm_output",
+                "severity": "error",
+                "issue_code": "planner.invalid_llm_output",
+                "requirement": null,
+                "alternatives": [],
+                "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+              }
+            ],
+            "readiness": null,
+            "requirements": []
+          },
+          "simulation": {
+            "preview": null
+          },
+          "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+          "created_at": "2026-10-21T19:57:59.396473+00:00"
+        }
+      ],
+      "messages": [
+        {
+          "id": "3c498e28-7113-4eaa-9726-93f93d0f8b22",
+          "role": "user",
+          "content": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor.",
+          "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+          "revision": 0,
+          "metadata": {},
+          "created_at": "2026-10-21T19:54:08.859812+00:00"
+        },
+        {
+          "id": "6e37ad25-07cd-47d5-843b-292a68bfa68e",
+          "role": "assistant",
+          "content": "El diseño quedó en estado BLOCKED. Revisa los detalles antes de continuar.",
+          "user_id": null,
+          "revision": 1,
+          "metadata": {
+            "state": "BLOCKED"
+          },
+          "created_at": "2026-10-21T19:58:00.437767+00:00"
+        }
+      ]
+    },
+    "proposal": {
+      "cost": null,
+      "mode": "agentic",
+      "plan": null,
+      "graph": null,
+      "notes": [],
+      "state": "BLOCKED",
+      "trace": {
+        "path": [
+          "NECESIDAD",
+          "BÚSQUEDA",
+          "INSPECCIÓN",
+          "SELECCIÓN",
+          "PLAN",
+          "VALIDACIÓN",
+          "REPARACIÓN"
+        ],
+        "stages": [
+          {
+            "name": "UNDERSTAND",
+            "detail": "objetivo: Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negoc…",
+            "duration_ms": 64153
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 35
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 0
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 30
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 52
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 51
+          }
+        ],
+        "tool_calls": [
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "ventas tienda catálogo productos marcas precios orden pago inventario conversación cliente"
+            },
+            "duration_ms": 35,
+            "result_hash": "a78c27792f9b886b",
+            "result_summary": "total_matches=32; results=5"
+          },
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "generar enlace o QR de pago con proveedor, confirmación de pago por webhook, reintento de pago",
+              "source": "payments"
+            },
+            "duration_ms": 0,
+            "result_hash": "3f51ff440ceb11e0",
+            "result_summary": "total_matches=0; results=0"
+          },
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "pago link QR checkout proveedor pasarela de pago confirmación webhook"
+            },
+            "duration_ms": 30,
+            "result_hash": "80f140bb911d01c9",
+            "result_summary": "total_matches=26; results=5"
+          },
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "aplicar movimiento de inventario stock descontar unidades orden confirmada",
+              "executable_only": true
+            },
+            "duration_ms": 52,
+            "result_hash": "d7c014d6d2c64127",
+            "result_summary": "total_matches=23; results=5"
+          },
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "enviar mensaje al cliente canal conversación notificar respuesta al cliente"
+            },
+            "duration_ms": 50,
+            "result_hash": "f24a10c7e9bf00a5",
+            "result_summary": "total_matches=27; results=5"
+          }
+        ],
+        "repair_attempts": 0
+      },
+      "usage": {
+        "repairs": 0,
+        "cancelled": false,
+        "llm_calls": 9,
+        "tool_calls": 5,
+        "duration_ms": 229394,
+        "total_tokens": 107807,
+        "prompt_tokens": 64924,
+        "completion_tokens": 42883,
+        "estimated_cost_usd": 0.0
+      },
+      "intent": {
+        "goal": "Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negocio; si existen varias marcas, mostrar alternativas con sus precios reales; permitir al cliente elegir una alternativa, cambiar de opinión y agregar más productos, conservando el carrito durante toda la conversación; cuando el cliente termine, presentar el resumen con el precio total y pedir confirmación; después crear una orden y generar un enlace o QR de pago con el proveedor configurado; esperar la confirmación real del proveedor de pago antes de finalizar la venta; si el pago falla, comunicarlo y permitir un reintento seguro; si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez; sopo",
+        "actors": [
+          "Cliente de la tienda que conversa con el agente de ventas"
+        ],
+        "trigger_intent": "El cliente envía un mensaje indicando que necesita un producto"
+      },
+      "issues": [
+        {
+          "code": "planner.invalid_llm_output",
+          "field": "planner",
+          "message": "El LLM no devolvió una acción JSON válida.",
+          "step_id": null,
+          "expected": "plan válido + matches",
+          "received": "planner.invalid_llm_output",
+          "severity": "error",
+          "issue_code": "planner.invalid_llm_output",
+          "requirement": null,
+          "alternatives": [],
+          "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+        }
+      ],
+      "phases": [
+        {
+          "name": "UNDERSTAND",
+          "duration_ms": 64153
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 35
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 0
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 30
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 52
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 51
+        }
+      ],
+      "source": "llm",
+      "matches": [],
+      "planner": {
+        "model": null,
+        "source": "llm",
+        "version": "architect/1.2.0+agentic",
+        "provider": "LiteLLMProvider"
+      },
+      "preview": [],
+      "blockers": [
+        {
+          "code": "planner.invalid_llm_output",
+          "kind": "issue",
+          "message": "El LLM no devolvió una acción JSON válida.",
+          "requirement": null
+        }
+      ],
+      "fallback": null,
+      "plan_hash": null,
+      "questions": [],
+      "readiness": null,
+      "steps_map": {},
+      "session_id": "d4668bba-1b03-47e8-bf31-ddba1644f9a7",
+      "simulation": null,
+      "assumptions": [
+        {
+          "impact": "medium",
+          "statement": "Existe un catálogo consultable que contiene productos, marcas y precios reales",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "Existe un proveedor de pago configurado capaz de emitir una confirmación verificable del pago",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "Existe un canal de mensajería por el que el cliente conversa con el agente",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "Existe un almacén de estado persistente que permite sobrevivir reinicios y reconexiones",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "La conversación se identifica de forma unívoca por cliente o por hilo de conversación",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "El movimiento de inventario se aplica al confirmarse el pago, no al crearse la orden",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "Un mismo cliente puede mantener un solo carrito activo por conversación",
+          "needs_confirmation": false
+        }
+      ],
+      "publishable": false,
+      "requirements": [],
+      "specification": {
+        "goal": "Agente de ventas para una tienda que atienda al cliente por conversación: cuando el cliente escribe que necesita un producto, buscarlo en el catálogo del negocio; si existen varias marcas, mostrar alternativas con sus precios reales; permitir al cliente elegir una alternativa, cambiar de opinión y agregar más productos, conservando el carrito durante toda la conversación; cuando el cliente termine, presentar el resumen con el precio total y pedir confirmación; después crear una orden y generar un enlace o QR de pago con el proveedor configurado; esperar la confirmación real del proveedor de pago antes de finalizar la venta; si el pago falla, comunicarlo y permitir un reintento seguro; si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez; sopo",
+        "actor": "Cliente de la tienda que conversa con el agente de ventas",
+        "inputs": [
+          "Mensaje del cliente indicando el producto que necesita (texto en lenguaje natural)",
+          "Selección de una alternativa/marca por parte del cliente",
+          "Cambios de opinión del cliente sobre la selección",
+          "Productos adicionales que el cliente agrega al carrito",
+          "Confirmación del cliente sobre el resumen y el precio total",
+          "Catálogo del negocio (productos, marcas, precios)",
+          "Configuración del proveedor de pago",
+          "Confirmación o notificación de pago emitida por el proveedor de pago",
+          "Identificador de conversación/cliente para asociar el carrito"
+        ],
+        "retries": [
+          "Reintento seguro de pago tras un pago fallido, generando una nueva solicitud de pago sin duplicar la orden ni el movimiento de inventario",
+          "Reintento de consulta o de recepción de la confirmación cuando el proveedor no responde",
+          "Reprocesamiento idempotente de mensajes duplicados sin repetir efectos de negocio",
+          "Reintento de creación de la orden verificando primero si ya fue creada"
+        ],
+        "sources": [
+          "Catálogo del negocio (formato y mecanismo de acceso no especificados)",
+          "Proveedor de pago configurado (no especificado)",
+          "Canal de mensajería por el que escribe el cliente (no especificado)",
+          "Almacén de estado duradero para conversación, carrito y órdenes (no especificado)"
+        ],
+        "timeouts": [
+          "Tiempo máximo de espera de la respuesta del cliente (no especificado)",
+          "Tiempo máximo de espera de la confirmación del proveedor de pago (no especificado)",
+          "Tiempo máximo para generar el enlace o QR de pago (no especificado)",
+          "Vigencia del enlace o QR de pago (no especificada)"
+        ],
+        "approvals": [
+          "Confirmación explícita del cliente sobre el resumen y el precio total antes de crear la orden y generar el pago",
+          "Confirmación real del proveedor de pago antes de finalizar la orden"
+        ],
+        "decisions": [
+          "Determinar si el producto solicitado existe en el catálogo",
+          "Determinar si existen varias marcas del producto y, por tanto, si deben mostrarse alternativas",
+          "Decidir qué alternativas mostrar y en qué orden cuando hay varias marcas",
+          "Interpretar si el mensaje del cliente es una elección, un cambio de opinión, una adición de producto o una finalización",
+          "Decidir si el cliente ya terminó y corresponde presentar el resumen con el total",
+          "Determinar si el mensaje recibido es duplicado y debe ignorarse",
+          "Determinar el estado real del pago a partir de la confirmación del proveedor (confirmado, fallido, pendiente)",
+          "Decidir si un reintento de pago es seguro respecto de la orden y del inventario ya aplicado"
+        ],
+        "confidence": 0.55,
+        "assumptions": [
+          "Existe un catálogo consultable que contiene productos, marcas y precios reales",
+          "Existe un proveedor de pago configurado capaz de emitir una confirmación verificable del pago",
+          "Existe un canal de mensajería por el que el cliente conversa con el agente",
+          "Existe un almacén de estado persistente que permite sobrevivir reinicios y reconexiones",
+          "La conversación se identifica de forma unívoca por cliente o por hilo de conversación",
+          "El movimiento de inventario se aplica al confirmarse el pago, no al crearse la orden",
+          "Un mismo cliente puede mantener un solo carrito activo por conversación"
+        ],
+        "wait_events": [
+          "Espera de la respuesta del cliente: elección de alternativa, cambio de opinión, adición de productos o confirmación del resumen",
+          "Espera de la confirmación real del proveedor de pago antes de finalizar la venta"
+        ],
+        "durable_state": [
+          "Identificador de conversación y de cliente",
+          "Carrito vigente: ítems, marcas, cantidades y precios",
+          "Estado de la orden (pendiente de confirmación, creada, pago pendiente, pagada, fallida)",
+          "Identificador de la transacción de pago y su estado en el proveedor",
+          "Registro de claves de idempotencia de mensajes ya procesados",
+          "Marca de 'inventario aplicado' asociada a cada orden",
+          "Enlace o QR de pago generado y su vigencia"
+        ],
+        "trigger_event": "El cliente envía un mensaje indicando que necesita un producto",
+        "expected_errors": [
+          "Producto no encontrado en el catálogo",
+          "Catálogo no disponible o con error de consulta",
+          "Pago rechazado o fallido informado por el proveedor",
+          "Pago en estado pendiente sin confirmación dentro del tiempo esperado",
+          "Mensaje duplicado recibido",
+          "Pérdida de conexión y reconexión del cliente",
+          "Reinicio del servidor durante la conversación",
+          "Fallo al crear la orden",
+          "Fallo al generar el enlace o QR de pago",
+          "Fallo al aplicar el movimiento de inventario",
+          "Confirmación de pago recibida de forma repetida para la misma orden"
+        ],
+        "external_actions": [
+          "Consultar el catálogo del negocio",
+          "Enviar mensajes al cliente por el canal de conversación",
+          "Crear la orden",
+          "Generar el enlace o QR de pago con el proveedor configurado",
+          "Recibir o consultar la confirmación del proveedor de pago",
+          "Aplicar el movimiento de inventario"
+        ],
+        "deterministic_rules": [
+          "Los precios mostrados al cliente deben ser los precios reales del catálogo, sin alteración",
+          "El precio total del resumen es la suma de los precios de los ítems del carrito según sus cantidades",
+          "El carrito debe conservarse durante toda la conversación, incluyendo cambios de opinión y adiciones",
+          "La orden sólo puede crearse después de que el cliente confirme el resumen con el precio total",
+          "El enlace o QR de pago debe generarse usando el proveedor de pago configurado",
+          "La venta sólo puede finalizar cuando exista confirmación real del proveedor de pago",
+          "El movimiento de inventario debe aplicarse exactamente una vez por orden confirmada",
+          "Los mensajes duplicados deben detectarse y no reprocesarse",
+          "El estado de la conversación, el carrito, la orden y el pago debe persistir para sobrevivir reconexiones y reinicios del servidor",
+          "Un reintento de pago no debe volver a crear la orden ni volver a aplicar el movimiento de inventario"
+        ],
+        "missing_information": [
+          "Formato, ubicación y mecanismo de acceso del catálogo del negocio",
+          "Moneda, impuestos, descuentos y costos adicionales aplicables al total",
+          "Criterio de ordenamiento y de cantidad de alternativas a mostrar cuando hay varias marcas",
+          "Disponibilidad de stock en el catálogo y política ante stock insuficiente",
+          "Proveedor de pago concreto, su API, sus webhooks y su modelo de confirmación",
+          "Canal de mensajería concreto y formato de los mensajes",
+          "Identificación del cliente y clave de conversación",
+          "Tecnología y esquema del almacén de estado duradero e idempotencia",
+          "Tiempos de espera, número de reintentos y política de expiración del carrito y del enlace de pago",
+          "Qué hacer si el pago se confirma después de haber expirado o tras un reintento",
+          "Política de abandono, cancelación de orden y liberación de inventario",
+          "Manejo de múltiples conversaciones u órdenes simultáneas del mismo cliente",
+          "Idioma y tono de la comunicación con el cliente"
+        ],
+        "cognitive_operations": [
+          "Interpretar en lenguaje natural qué producto, marca y cantidad pide el cliente",
+          "Desambiguar el producto solicitado contra las entradas del catálogo",
+          "Redactar el mensaje con las alternativas de marcas y sus precios reales",
+          "Redactar el resumen del carrito con el precio total y la solicitud de confirmación",
+          "Redactar el aviso de pago fallido y la propuesta de reintento seguro",
+          "Comprender cambios de opinión y adiciones expresados de forma libre por el cliente"
+        ],
+        "completion_conditions": [
+          "La orden queda finalizada con pago confirmado por el proveedor y el movimiento de inventario aplicado exactamente una vez",
+          "El cliente recibe la confirmación de finalización de la venta"
+        ],
+        "irreversible_operations": [
+          "Creación de la orden",
+          "Generación del enlace o QR de pago (habilita un cobro real)",
+          "Finalización de la orden",
+          "Aplicación del movimiento de inventario",
+          "Cobro efectivo en el proveedor de pago"
+        ]
+      },
+      "clarifications": [],
+      "simulation_preview": null,
+      "capability_snapshot": {
+        "counts": {
+          "events": 37,
+          "resources": 0,
+          "capabilities": 64
+        },
+        "coverage": {
+          "events": 37,
+          "schema": "zent.capability.coverage/v1",
+          "by_source": {
+            "node": 30,
+            "binding": 1,
+            "commerce": 19,
+            "marketplace": 14
+          },
+          "by_status": {
+            "AVAILABLE": 45,
+            "NEEDS_INSTALLATION": 14,
+            "NEEDS_CONFIGURATION": 5
+          },
+          "resources": 0,
+          "by_category": {
+            "ai": 2,
+            "data": 2,
+            "logic": 12,
+            "output": 2,
+            "control": 5,
+            "trigger": 3,
+            "business": 1,
+            "commerce": 14,
+            "payments": 5,
+            "integration": 3,
+            "marketplace": 14,
+            "communication": 1
+          },
+          "contract_gaps": [
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "inventory.reserve"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "inventory.release"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "inventory.commit"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.create"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.get"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.confirm"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.mark_paid"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.fulfill"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.cancel"
+            }
+          ],
+          "business_complete": 25,
+          "total_capabilities": 64,
+          "business_capabilities": 34,
+          "business_completeness": 0.7353
+        },
+        "generated_at": "2026-10-21T19:54:11.234424+00:00",
+        "snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+        "catalog_version": 1
+      },
+      "resource_resolution": null,
+      "clarification_history": [],
+      "requires_durable_instance": false
+    }
+  },
+  "follow_up": {
+    "design_session": {
+      "id": "d4668bba-1b03-47e8-bf31-ddba1644f9a7",
+      "organization_id": "6400d76a-194a-4103-8366-72cbdf927152",
+      "workspace_id": "02434f6a-9662-4e4a-be4b-f1c98131e887",
+      "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+      "title": "Gold AI Sales",
+      "original_prompt": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor.",
+      "status": "active",
+      "revision": 2,
+      "plan_hash": null,
+      "capability_snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+      "workflow_id": null,
+      "state": {
+        "cost": null,
+        "state": "BLOCKED",
+        "trace": {
+          "path": [
+            "NECESIDAD",
+            "BÚSQUEDA",
+            "INSPECCIÓN",
+            "SELECCIÓN",
+            "PLAN",
+            "VALIDACIÓN",
+            "REPARACIÓN"
+          ],
+          "stages": [
+            {
+              "name": "UNDERSTAND",
+              "detail": "objetivo: Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reale…",
+              "duration_ms": 18300
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 18
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 41
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 38
+            },
+            {
+              "name": "BÚSQUEDA",
+              "detail": "capability.search",
+              "duration_ms": 40
+            },
+            {
+              "name": "INSPECCIÓN",
+              "detail": "event.inspect",
+              "duration_ms": 0
+            }
+          ],
+          "tool_calls": [
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "catálogo de productos, precio, stock, carrito, orden de venta, checkout de pago",
+                "executable_only": false
+              },
+              "duration_ms": 18,
+              "result_hash": "7850a59d44adf842",
+              "result_summary": "total_matches=31; results=5"
+            },
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "buscar productos en catálogo, precio de producto, cotizar carrito de venta, crear orden de venta, enviar mensaje al cli…"
+              },
+              "duration_ms": 40,
+              "result_hash": "1df25155e87df29c",
+              "result_summary": "total_matches=34; results=5"
+            },
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "aplicar movimiento de inventario, descontar o ajustar stock al confirmar el pago"
+              },
+              "duration_ms": 38,
+              "result_hash": "dc85e90ee415e2a4",
+              "result_summary": "total_matches=25; results=5"
+            },
+            {
+              "ok": true,
+              "tool": "capability.search",
+              "error": null,
+              "arguments": {
+                "limit": 5,
+                "query": "cotizar carrito de venta y enviar mensaje al cliente en la conversación"
+              },
+              "duration_ms": 40,
+              "result_hash": "036239947001330b",
+              "result_summary": "total_matches=29; results=5"
+            },
+            {
+              "ok": true,
+              "tool": "event.inspect",
+              "error": null,
+              "arguments": {
+                "event_type": "payment.succeeded"
+              },
+              "duration_ms": 0,
+              "result_hash": "b85f0e633211ac58",
+              "result_summary": "schema=zent.event.inspect/v1"
+            }
+          ],
+          "repair_attempts": 0
+        },
+        "usage": {
+          "repairs": 0,
+          "cancelled": false,
+          "llm_calls": 8,
+          "tool_calls": 5,
+          "duration_ms": 130268,
+          "total_tokens": 87639,
+          "prompt_tokens": 54433,
+          "completion_tokens": 33206,
+          "estimated_cost_usd": 0.0
+        },
+        "intent": {
+          "goal": "Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reales si hay varias marcas, permitir elegir/cambiar de opinión/agregar más productos, conservar el carrito durante toda la conversación, presentar resumen con precio total y pedir confirmación, crear la orden, generar enlace o QR de pago con el proveedor configurado del tenant, esperar la confirmación real del proveedor antes de finalizar, comunicar fallos y permitir reintento seguro, finalizar la orden y aplicar el movimiento de inventario exactamente una vez, soportando mensajes duplicados, reconexiones y reinicios del servidor.",
+          "actors": [
+            "Agente de ventas"
+          ],
+          "trigger_intent": "El cliente escribe por el canal de conversación que necesita un producto."
+        },
+        "issues": [
+          {
+            "code": "planner.invalid_llm_output",
+            "field": "planner",
+            "message": "El LLM no devolvió una acción JSON válida.",
+            "step_id": null,
+            "expected": "plan válido + matches",
+            "received": "planner.invalid_llm_output",
+            "severity": "error",
+            "issue_code": "planner.invalid_llm_output",
+            "requirement": null,
+            "alternatives": [],
+            "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+          }
+        ],
+        "matches": [],
+        "preview": [],
+        "blockers": [
+          {
+            "code": "planner.invalid_llm_output",
+            "kind": "issue",
+            "message": "El LLM no devolvió una acción JSON válida.",
+            "requirement": null
+          }
+        ],
+        "proposal": {
+          "cost": null,
+          "mode": "agentic",
+          "plan": null,
+          "graph": null,
+          "notes": [],
+          "state": "BLOCKED",
+          "trace": {
+            "path": [
+              "NECESIDAD",
+              "BÚSQUEDA",
+              "INSPECCIÓN",
+              "SELECCIÓN",
+              "PLAN",
+              "VALIDACIÓN",
+              "REPARACIÓN"
+            ],
+            "stages": [
+              {
+                "name": "UNDERSTAND",
+                "detail": "objetivo: Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reale…",
+                "duration_ms": 18300
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 18
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 41
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 38
+              },
+              {
+                "name": "BÚSQUEDA",
+                "detail": "capability.search",
+                "duration_ms": 40
+              },
+              {
+                "name": "INSPECCIÓN",
+                "detail": "event.inspect",
+                "duration_ms": 0
+              }
+            ],
+            "tool_calls": [
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "catálogo de productos, precio, stock, carrito, orden de venta, checkout de pago",
+                  "executable_only": false
+                },
+                "duration_ms": 18,
+                "result_hash": "7850a59d44adf842",
+                "result_summary": "total_matches=31; results=5"
+              },
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "buscar productos en catálogo, precio de producto, cotizar carrito de venta, crear orden de venta, enviar mensaje al cli…"
+                },
+                "duration_ms": 40,
+                "result_hash": "1df25155e87df29c",
+                "result_summary": "total_matches=34; results=5"
+              },
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "aplicar movimiento de inventario, descontar o ajustar stock al confirmar el pago"
+                },
+                "duration_ms": 38,
+                "result_hash": "dc85e90ee415e2a4",
+                "result_summary": "total_matches=25; results=5"
+              },
+              {
+                "ok": true,
+                "tool": "capability.search",
+                "error": null,
+                "arguments": {
+                  "limit": 5,
+                  "query": "cotizar carrito de venta y enviar mensaje al cliente en la conversación"
+                },
+                "duration_ms": 40,
+                "result_hash": "036239947001330b",
+                "result_summary": "total_matches=29; results=5"
+              },
+              {
+                "ok": true,
+                "tool": "event.inspect",
+                "error": null,
+                "arguments": {
+                  "event_type": "payment.succeeded"
+                },
+                "duration_ms": 0,
+                "result_hash": "b85f0e633211ac58",
+                "result_summary": "schema=zent.event.inspect/v1"
+              }
+            ],
+            "repair_attempts": 0
+          },
+          "usage": {
+            "repairs": 0,
+            "cancelled": false,
+            "llm_calls": 8,
+            "tool_calls": 5,
+            "duration_ms": 130268,
+            "total_tokens": 87639,
+            "prompt_tokens": 54433,
+            "completion_tokens": 33206,
+            "estimated_cost_usd": 0.0
+          },
+          "intent": {
+            "goal": "Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reales si hay varias marcas, permitir elegir/cambiar de opinión/agregar más productos, conservar el carrito durante toda la conversación, presentar resumen con precio total y pedir confirmación, crear la orden, generar enlace o QR de pago con el proveedor configurado del tenant, esperar la confirmación real del proveedor antes de finalizar, comunicar fallos y permitir reintento seguro, finalizar la orden y aplicar el movimiento de inventario exactamente una vez, soportando mensajes duplicados, reconexiones y reinicios del servidor.",
+            "actors": [
+              "Agente de ventas"
+            ],
+            "trigger_intent": "El cliente escribe por el canal de conversación que necesita un producto."
+          },
+          "issues": [
+            {
+              "code": "planner.invalid_llm_output",
+              "field": "planner",
+              "message": "El LLM no devolvió una acción JSON válida.",
+              "step_id": null,
+              "expected": "plan válido + matches",
+              "received": "planner.invalid_llm_output",
+              "severity": "error",
+              "issue_code": "planner.invalid_llm_output",
+              "requirement": null,
+              "alternatives": [],
+              "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+            }
+          ],
+          "phases": [
+            {
+              "name": "UNDERSTAND",
+              "duration_ms": 18300
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 18
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 41
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 38
+            },
+            {
+              "name": "BÚSQUEDA",
+              "duration_ms": 40
+            },
+            {
+              "name": "INSPECCIÓN",
+              "duration_ms": 0
+            }
+          ],
+          "source": "llm",
+          "matches": [],
+          "planner": {
+            "model": null,
+            "source": "llm",
+            "version": "architect/1.2.0+agentic",
+            "provider": "LiteLLMProvider"
+          },
+          "preview": [],
+          "blockers": [
+            {
+              "code": "planner.invalid_llm_output",
+              "kind": "issue",
+              "message": "El LLM no devolvió una acción JSON válida.",
+              "requirement": null
+            }
+          ],
+          "fallback": null,
+          "plan_hash": null,
+          "questions": [],
+          "readiness": null,
+          "steps_map": {},
+          "session_id": "d4668bba-1b03-47e8-bf31-ddba1644f9a7",
+          "simulation": null,
+          "assumptions": [
+            {
+              "impact": "medium",
+              "statement": "El tenant tiene configurado un binding de pago disponible y ese es el proveedor a usar.",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "El evento payment.succeeded es firmado y confiable.",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "Las APIs indicadas existen y son invocables.",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "El carrito puede persistirse durante toda la conversación.",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "La tienda opera en moneda PEN.",
+              "needs_confirmation": false
+            },
+            {
+              "impact": "medium",
+              "statement": "La aplicación exacta una vez del movimiento de inventario es un requisito de negocio.",
+              "needs_confirmation": false
+            }
+          ],
+          "publishable": false,
+          "requirements": [],
+          "specification": {
+            "goal": "Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reales si hay varias marcas, permitir elegir/cambiar de opinión/agregar más productos, conservar el carrito durante toda la conversación, presentar resumen con precio total y pedir confirmación, crear la orden, generar enlace o QR de pago con el proveedor configurado del tenant, esperar la confirmación real del proveedor antes de finalizar, comunicar fallos y permitir reintento seguro, finalizar la orden y aplicar el movimiento de inventario exactamente una vez, soportando mensajes duplicados, reconexiones y reinicios del servidor.",
+            "actor": "Agente de ventas",
+            "inputs": [
+              "Mensajes del cliente por conversation.send",
+              "Solicitud de producto del cliente",
+              "Selección de alternativa del cliente",
+              "Cambios de opinión del cliente",
+              "Productos adicionales solicitados por el cliente",
+              "Confirmación del cliente sobre el resumen",
+              "Binding de pago configurado del tenant",
+              "Evento firmado payment.succeeded"
+            ],
+            "retries": [
+              "Reintento seguro de pago si el pago falla, según política no especificada.",
+              "Reintento o recuperación de operaciones idempotentes ante reconexión o reinicio, con mecánica no especificada.",
+              "Deduplicación de mensajes duplicados."
+            ],
+            "sources": [
+              "commerce: catalog.products.search",
+              "commerce: catalog.product.price",
+              "inventory.stock.get",
+              "sales.cart.quote",
+              "sales.order.create",
+              "payments.checkout.create",
+              "conversation.send",
+              "payment.succeeded",
+              "binding de pago configurado del tenant"
+            ],
+            "timeouts": [
+              "1800 segundos para esperar payment.succeeded.",
+              "Timeout de conversación u otras operaciones no especificado."
+            ],
+            "approvals": [
+              "Confirmación explícita del cliente sobre el resumen antes de crear la orden y cobrar.",
+              "Confirmación o aceptación del cliente para reintentar el pago tras un fallo, si la política de reintento lo requiere."
+            ],
+            "decisions": [
+              "Buscar el producto solicitado en el catálogo del negocio.",
+              "Si existen varias marcas, mostrar alternativas y sus precios reales.",
+              "Permitir que el cliente elija una alternativa, cambie de opinión o agregue más productos.",
+              "Determinar cuándo el cliente terminó y presentar el resumen con el precio total.",
+              "Solicitar confirmación del cliente antes de crear la orden y cobrar.",
+              "Si el pago falla, comunicarlo y permitir un reintento seguro.",
+              "Si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez.",
+              "Ante mensajes duplicados, reconexiones o reinicios, recuperar el estado y evitar efectos duplicados."
+            ],
+            "confidence": 0.65,
+            "assumptions": [
+              "El tenant tiene configurado un binding de pago disponible y ese es el proveedor a usar.",
+              "El evento payment.succeeded es firmado y confiable.",
+              "Las APIs indicadas existen y son invocables.",
+              "El carrito puede persistirse durante toda la conversación.",
+              "La tienda opera en moneda PEN.",
+              "La aplicación exacta una vez del movimiento de inventario es un requisito de negocio."
+            ],
+            "wait_events": [
+              "Confirmación del cliente sobre el resumen.",
+              "Evento firmado payment.succeeded con timeout de 1800 segundos."
+            ],
+            "durable_state": [
+              "Carrito activo de la conversación.",
+              "Contexto de la conversación.",
+              "Resumen confirmado por el cliente.",
+              "Orden creada.",
+              "Estado del checkout o pago.",
+              "Resultado de payment.succeeded.",
+              "Bandera de movimiento de inventario aplicado.",
+              "Claves de idempotencia o deduplicación.",
+              "Estado de reintentos de pago."
+            ],
+            "trigger_event": "El cliente escribe por el canal de conversación que necesita un producto.",
+            "expected_errors": [
+              "Pago fallido.",
+              "Timeout esperando payment.succeeded.",
+              "Producto no encontrado.",
+              "Sin stock disponible.",
+              "Carrito vacío.",
+              "Fallo al crear la orden o el checkout.",
+              "Mensaje duplicado.",
+              "Reconexión.",
+              "Reinicio del servidor.",
+              "Firma inválida o no verificable del evento payment.succeeded."
+            ],
+            "external_actions": [
+              "Consultar catálogo con catalog.products.search.",
+              "Consultar precios con catalog.product.price.",
+              "Consultar stock con inventory.stock.get.",
+              "Cotizar el carrito con sales.cart.quote.",
+              "Enviar mensajes al cliente con conversation.send.",
+              "Crear la orden con sales.order.create.",
+              "Crear el cobro/checkout con payments.checkout.create.",
+              "Esperar el evento firmado payment.succeeded.",
+              "Aplicar el movimiento de inventario exactamente una vez."
+            ],
+            "deterministic_rules": [
+              "La moneda es PEN.",
+              "La espera del evento payment.succeeded tiene un timeout de 1800 segundos.",
+              "No se debe inventar proveedor de pago: se usa el binding de pago configurado del tenant.",
+              "El carrito debe conservarse durante toda la conversación.",
+              "No se debe finalizar la venta sin la confirmación real del proveedor de pago.",
+              "El movimiento de inventario debe aplicarse exactamente una vez.",
+              "Se deben soportar mensajes duplicados, reconexiones y reinicios del servidor.",
+              "El enlace o QR de pago debe generarse con el proveedor configurado del tenant."
+            ],
+            "missing_information": [
+              "No se especifica la operación o API para aplicar el movimiento de inventario exactamente una vez; inventory.stock.get solo consulta.",
+              "No se especifica el identificador ni la configuración concreta del binding de pago del tenant.",
+              "No se especifica el formato del enlace o QR de pago.",
+              "No se especifica el mecanismo exacto de deduplicación, reconexión y recuperación ante reinicios.",
+              "No se especifica la política de reintentos de pago: número, condiciones, backoff ni límite.",
+              "No se especifica timeout de conversación ni de otras operaciones fuera de payment.succeeded.",
+              "No se especifica cómo ordenar o priorizar múltiples marcas/productos equivalentes.",
+              "No se especifican los datos obligatorios de la orden ni validaciones adicionales.",
+              "No se especifica cómo verificar la firma del evento payment.succeeded.",
+              "No se especifica el contrato exacto de sales.order.create, payments.checkout.create ni sales.cart.quote."
+            ],
+            "cognitive_operations": [
+              "Interpretar el mensaje del cliente para detectar necesidad de producto.",
+              "Extraer producto y cantidad solicitados.",
+              "Presentar alternativas, marcas y precios reales.",
+              "Mantener el contexto del carrito a lo largo de la conversación.",
+              "Redactar el resumen con precio total y solicitar confirmación.",
+              "Comunicar al cliente el resultado del pago o los fallos.",
+              "Ofrecer un reintento seguro cuando el pago falla."
+            ],
+            "completion_conditions": [
+              "El cliente confirma el resumen.",
+              "La orden fue creada.",
+              "El pago fue confirmado mediante payment.succeeded.",
+              "La orden fue finalizada.",
+              "El movimiento de inventario fue aplicado exactamente una vez.",
+              "El cliente fue notificado del resultado final."
+            ],
+            "irreversible_operations": [
+              "Crear la orden.",
+              "Iniciar el cobro con el proveedor de pago configurado.",
+              "Aplicar el movimiento de inventario.",
+              "Finalizar la orden."
+            ]
+          },
+          "clarifications": [],
+          "simulation_preview": null,
+          "capability_snapshot": {
+            "counts": {
+              "events": 37,
+              "resources": 0,
+              "capabilities": 64
+            },
+            "coverage": {
+              "events": 37,
+              "schema": "zent.capability.coverage/v1",
+              "by_source": {
+                "node": 30,
+                "binding": 1,
+                "commerce": 19,
+                "marketplace": 14
+              },
+              "by_status": {
+                "AVAILABLE": 45,
+                "NEEDS_INSTALLATION": 14,
+                "NEEDS_CONFIGURATION": 5
+              },
+              "resources": 0,
+              "by_category": {
+                "ai": 2,
+                "data": 2,
+                "logic": 12,
+                "output": 2,
+                "control": 5,
+                "trigger": 3,
+                "business": 1,
+                "commerce": 14,
+                "payments": 5,
+                "integration": 3,
+                "marketplace": 14,
+                "communication": 1
+              },
+              "contract_gaps": [
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "inventory.reserve"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "inventory.release"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "inventory.commit"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.create"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.get"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.confirm"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.mark_paid"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.fulfill"
+                },
+                {
+                  "missing": [
+                    "output_schema"
+                  ],
+                  "capability_ref": "sales.order.cancel"
+                }
+              ],
+              "business_complete": 25,
+              "total_capabilities": 64,
+              "business_capabilities": 34,
+              "business_completeness": 0.7353
+            },
+            "generated_at": "2026-10-21T19:58:04.449916+00:00",
+            "snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+            "catalog_version": 1
+          },
+          "resource_resolution": null,
+          "clarification_history": [
+            "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor."
+          ],
+          "requires_durable_instance": false
+        },
+        "decisions": [
+          {
+            "kind": "initial",
+            "revision": 1,
+            "instruction": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe pres"
+          },
+          {
+            "kind": "plan",
+            "revision": 2,
+            "instruction": "Usa la fuente de catálogo commerce: catalog.products.search y catalog.product.price; el stock sale de inventory.stock.get. Usa sales.cart.quote para el carrito. Crea la orden con sales.order.create, cobra con payments.checkout.create y espera el evento firmado payment.succeeded con timeout 1800 segundos. El canal de conversación es conversation.send. Moneda PEN. No inventes proveedores: usa el bin"
+          }
+        ],
+        "questions": [],
+        "readiness": null,
+        "assumptions": [
+          {
+            "impact": "medium",
+            "statement": "El tenant tiene configurado un binding de pago disponible y ese es el proveedor a usar.",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "El evento payment.succeeded es firmado y confiable.",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "Las APIs indicadas existen y son invocables.",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "El carrito puede persistirse durante toda la conversación.",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "La tienda opera en moneda PEN.",
+            "needs_confirmation": false
+          },
+          {
+            "impact": "medium",
+            "statement": "La aplicación exacta una vez del movimiento de inventario es un requisito de negocio.",
+            "needs_confirmation": false
+          }
+        ],
+        "publishable": false,
+        "requirements": [],
+        "specification": {
+          "goal": "Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reales si hay varias marcas, permitir elegir/cambiar de opinión/agregar más productos, conservar el carrito durante toda la conversación, presentar resumen con precio total y pedir confirmación, crear la orden, generar enlace o QR de pago con el proveedor configurado del tenant, esperar la confirmación real del proveedor antes de finalizar, comunicar fallos y permitir reintento seguro, finalizar la orden y aplicar el movimiento de inventario exactamente una vez, soportando mensajes duplicados, reconexiones y reinicios del servidor.",
+          "actor": "Agente de ventas",
+          "inputs": [
+            "Mensajes del cliente por conversation.send",
+            "Solicitud de producto del cliente",
+            "Selección de alternativa del cliente",
+            "Cambios de opinión del cliente",
+            "Productos adicionales solicitados por el cliente",
+            "Confirmación del cliente sobre el resumen",
+            "Binding de pago configurado del tenant",
+            "Evento firmado payment.succeeded"
+          ],
+          "retries": [
+            "Reintento seguro de pago si el pago falla, según política no especificada.",
+            "Reintento o recuperación de operaciones idempotentes ante reconexión o reinicio, con mecánica no especificada.",
+            "Deduplicación de mensajes duplicados."
+          ],
+          "sources": [
+            "commerce: catalog.products.search",
+            "commerce: catalog.product.price",
+            "inventory.stock.get",
+            "sales.cart.quote",
+            "sales.order.create",
+            "payments.checkout.create",
+            "conversation.send",
+            "payment.succeeded",
+            "binding de pago configurado del tenant"
+          ],
+          "timeouts": [
+            "1800 segundos para esperar payment.succeeded.",
+            "Timeout de conversación u otras operaciones no especificado."
+          ],
+          "approvals": [
+            "Confirmación explícita del cliente sobre el resumen antes de crear la orden y cobrar.",
+            "Confirmación o aceptación del cliente para reintentar el pago tras un fallo, si la política de reintento lo requiere."
+          ],
+          "decisions": [
+            "Buscar el producto solicitado en el catálogo del negocio.",
+            "Si existen varias marcas, mostrar alternativas y sus precios reales.",
+            "Permitir que el cliente elija una alternativa, cambie de opinión o agregue más productos.",
+            "Determinar cuándo el cliente terminó y presentar el resumen con el precio total.",
+            "Solicitar confirmación del cliente antes de crear la orden y cobrar.",
+            "Si el pago falla, comunicarlo y permitir un reintento seguro.",
+            "Si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez.",
+            "Ante mensajes duplicados, reconexiones o reinicios, recuperar el estado y evitar efectos duplicados."
+          ],
+          "confidence": 0.65,
+          "assumptions": [
+            "El tenant tiene configurado un binding de pago disponible y ese es el proveedor a usar.",
+            "El evento payment.succeeded es firmado y confiable.",
+            "Las APIs indicadas existen y son invocables.",
+            "El carrito puede persistirse durante toda la conversación.",
+            "La tienda opera en moneda PEN.",
+            "La aplicación exacta una vez del movimiento de inventario es un requisito de negocio."
+          ],
+          "wait_events": [
+            "Confirmación del cliente sobre el resumen.",
+            "Evento firmado payment.succeeded con timeout de 1800 segundos."
+          ],
+          "durable_state": [
+            "Carrito activo de la conversación.",
+            "Contexto de la conversación.",
+            "Resumen confirmado por el cliente.",
+            "Orden creada.",
+            "Estado del checkout o pago.",
+            "Resultado de payment.succeeded.",
+            "Bandera de movimiento de inventario aplicado.",
+            "Claves de idempotencia o deduplicación.",
+            "Estado de reintentos de pago."
+          ],
+          "trigger_event": "El cliente escribe por el canal de conversación que necesita un producto.",
+          "expected_errors": [
+            "Pago fallido.",
+            "Timeout esperando payment.succeeded.",
+            "Producto no encontrado.",
+            "Sin stock disponible.",
+            "Carrito vacío.",
+            "Fallo al crear la orden o el checkout.",
+            "Mensaje duplicado.",
+            "Reconexión.",
+            "Reinicio del servidor.",
+            "Firma inválida o no verificable del evento payment.succeeded."
+          ],
+          "external_actions": [
+            "Consultar catálogo con catalog.products.search.",
+            "Consultar precios con catalog.product.price.",
+            "Consultar stock con inventory.stock.get.",
+            "Cotizar el carrito con sales.cart.quote.",
+            "Enviar mensajes al cliente con conversation.send.",
+            "Crear la orden con sales.order.create.",
+            "Crear el cobro/checkout con payments.checkout.create.",
+            "Esperar el evento firmado payment.succeeded.",
+            "Aplicar el movimiento de inventario exactamente una vez."
+          ],
+          "deterministic_rules": [
+            "La moneda es PEN.",
+            "La espera del evento payment.succeeded tiene un timeout de 1800 segundos.",
+            "No se debe inventar proveedor de pago: se usa el binding de pago configurado del tenant.",
+            "El carrito debe conservarse durante toda la conversación.",
+            "No se debe finalizar la venta sin la confirmación real del proveedor de pago.",
+            "El movimiento de inventario debe aplicarse exactamente una vez.",
+            "Se deben soportar mensajes duplicados, reconexiones y reinicios del servidor.",
+            "El enlace o QR de pago debe generarse con el proveedor configurado del tenant."
+          ],
+          "missing_information": [
+            "No se especifica la operación o API para aplicar el movimiento de inventario exactamente una vez; inventory.stock.get solo consulta.",
+            "No se especifica el identificador ni la configuración concreta del binding de pago del tenant.",
+            "No se especifica el formato del enlace o QR de pago.",
+            "No se especifica el mecanismo exacto de deduplicación, reconexión y recuperación ante reinicios.",
+            "No se especifica la política de reintentos de pago: número, condiciones, backoff ni límite.",
+            "No se especifica timeout de conversación ni de otras operaciones fuera de payment.succeeded.",
+            "No se especifica cómo ordenar o priorizar múltiples marcas/productos equivalentes.",
+            "No se especifican los datos obligatorios de la orden ni validaciones adicionales.",
+            "No se especifica cómo verificar la firma del evento payment.succeeded.",
+            "No se especifica el contrato exacto de sales.order.create, payments.checkout.create ni sales.cart.quote."
+          ],
+          "cognitive_operations": [
+            "Interpretar el mensaje del cliente para detectar necesidad de producto.",
+            "Extraer producto y cantidad solicitados.",
+            "Presentar alternativas, marcas y precios reales.",
+            "Mantener el contexto del carrito a lo largo de la conversación.",
+            "Redactar el resumen con precio total y solicitar confirmación.",
+            "Comunicar al cliente el resultado del pago o los fallos.",
+            "Ofrecer un reintento seguro cuando el pago falla."
+          ],
+          "completion_conditions": [
+            "El cliente confirma el resumen.",
+            "La orden fue creada.",
+            "El pago fue confirmado mediante payment.succeeded.",
+            "La orden fue finalizada.",
+            "El movimiento de inventario fue aplicado exactamente una vez.",
+            "El cliente fue notificado del resultado final."
+          ],
+          "irreversible_operations": [
+            "Crear la orden.",
+            "Iniciar el cobro con el proveedor de pago configurado.",
+            "Aplicar el movimiento de inventario.",
+            "Finalizar la orden."
+          ]
+        },
+        "clarifications": [],
+        "capability_snapshot": {
+          "counts": {
+            "events": 37,
+            "resources": 0,
+            "capabilities": 64
+          },
+          "coverage": {
+            "events": 37,
+            "schema": "zent.capability.coverage/v1",
+            "by_source": {
+              "node": 30,
+              "binding": 1,
+              "commerce": 19,
+              "marketplace": 14
+            },
+            "by_status": {
+              "AVAILABLE": 45,
+              "NEEDS_INSTALLATION": 14,
+              "NEEDS_CONFIGURATION": 5
+            },
+            "resources": 0,
+            "by_category": {
+              "ai": 2,
+              "data": 2,
+              "logic": 12,
+              "output": 2,
+              "control": 5,
+              "trigger": 3,
+              "business": 1,
+              "commerce": 14,
+              "payments": 5,
+              "integration": 3,
+              "marketplace": 14,
+              "communication": 1
+            },
+            "contract_gaps": [
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "inventory.reserve"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "inventory.release"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "inventory.commit"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.create"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.get"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.confirm"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.mark_paid"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.fulfill"
+              },
+              {
+                "missing": [
+                  "output_schema"
+                ],
+                "capability_ref": "sales.order.cancel"
+              }
+            ],
+            "business_complete": 25,
+            "total_capabilities": 64,
+            "business_capabilities": 34,
+            "business_completeness": 0.7353
+          },
+          "generated_at": "2026-10-21T19:58:04.449916+00:00",
+          "snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+          "catalog_version": 1
+        },
+        "resource_resolution": null,
+        "requires_durable_instance": false
+      },
+      "created_at": "2026-10-21T19:54:08.478434+00:00",
+      "updated_at": "2026-10-21T20:00:14.468705+00:00",
+      "closed_at": null,
+      "plan": null,
+      "graph": null,
+      "revisions": [
+        {
+          "revision": 2,
+          "kind": "plan",
+          "instruction": "Usa la fuente de catálogo commerce: catalog.products.search y catalog.product.price; el stock sale de inventory.stock.get. Usa sales.cart.quote para el carrito. Crea la orden con sales.order.create, cobra con payments.checkout.create y espera el evento firmado payment.succeeded con timeout 1800 segundos. El canal de conversación es conversation.send. Moneda PEN. No inventes proveedores: usa el binding de pago configurado del tenant.",
+          "summary": "Nuevo plan desde conversación",
+          "diff": {
+            "summary": "Nuevo plan desde conversación"
+          },
+          "plan_hash": null,
+          "validation": {
+            "state": "BLOCKED",
+            "issues": [
+              {
+                "code": "planner.invalid_llm_output",
+                "field": "planner",
+                "message": "El LLM no devolvió una acción JSON válida.",
+                "step_id": null,
+                "expected": "plan válido + matches",
+                "received": "planner.invalid_llm_output",
+                "severity": "error",
+                "issue_code": "planner.invalid_llm_output",
+                "requirement": null,
+                "alternatives": [],
+                "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+              }
+            ],
+            "readiness": null,
+            "requirements": []
+          },
+          "simulation": {
+            "preview": null
+          },
+          "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+          "created_at": "2026-10-21T20:00:14.087005+00:00"
+        },
+        {
+          "revision": 1,
+          "kind": "initial",
+          "instruction": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor.",
+          "summary": "Plan inicial",
+          "diff": {
+            "summary": "Plan inicial"
+          },
+          "plan_hash": null,
+          "validation": {
+            "state": "BLOCKED",
+            "issues": [
+              {
+                "code": "planner.invalid_llm_output",
+                "field": "planner",
+                "message": "El LLM no devolvió una acción JSON válida.",
+                "step_id": null,
+                "expected": "plan válido + matches",
+                "received": "planner.invalid_llm_output",
+                "severity": "error",
+                "issue_code": "planner.invalid_llm_output",
+                "requirement": null,
+                "alternatives": [],
+                "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+              }
+            ],
+            "readiness": null,
+            "requirements": []
+          },
+          "simulation": {
+            "preview": null
+          },
+          "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+          "created_at": "2026-10-21T19:57:59.396473+00:00"
+        }
+      ],
+      "messages": [
+        {
+          "id": "3c498e28-7113-4eaa-9726-93f93d0f8b22",
+          "role": "user",
+          "content": "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor.",
+          "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+          "revision": 0,
+          "metadata": {},
+          "created_at": "2026-10-21T19:54:08.859812+00:00"
+        },
+        {
+          "id": "6e37ad25-07cd-47d5-843b-292a68bfa68e",
+          "role": "assistant",
+          "content": "El diseño quedó en estado BLOCKED. Revisa los detalles antes de continuar.",
+          "user_id": null,
+          "revision": 1,
+          "metadata": {
+            "state": "BLOCKED"
+          },
+          "created_at": "2026-10-21T19:58:00.437767+00:00"
+        },
+        {
+          "id": "1403da58-994a-44e6-832c-13a9f91addd0",
+          "role": "user",
+          "content": "Usa la fuente de catálogo commerce: catalog.products.search y catalog.product.price; el stock sale de inventory.stock.get. Usa sales.cart.quote para el carrito. Crea la orden con sales.order.create, cobra con payments.checkout.create y espera el evento firmado payment.succeeded con timeout 1800 segundos. El canal de conversación es conversation.send. Moneda PEN. No inventes proveedores: usa el binding de pago configurado del tenant.",
+          "user_id": "328b8566-f4f4-4228-b723-b08696174085",
+          "revision": 1,
+          "metadata": {},
+          "created_at": "2026-10-21T19:58:03.333405+00:00"
+        },
+        {
+          "id": "9c5e2096-2f93-4be8-80da-c8b8075fb8c9",
+          "role": "assistant",
+          "content": "El diseño quedó en estado BLOCKED. Revisa los detalles antes de continuar.",
+          "user_id": null,
+          "revision": 2,
+          "metadata": {
+            "kind": "plan",
+            "state": "BLOCKED"
+          },
+          "created_at": "2026-10-21T20:00:14.468705+00:00"
+        }
+      ]
+    },
+    "proposal": {
+      "cost": null,
+      "mode": "agentic",
+      "plan": null,
+      "graph": null,
+      "notes": [],
+      "state": "BLOCKED",
+      "trace": {
+        "path": [
+          "NECESIDAD",
+          "BÚSQUEDA",
+          "INSPECCIÓN",
+          "SELECCIÓN",
+          "PLAN",
+          "VALIDACIÓN",
+          "REPARACIÓN"
+        ],
+        "stages": [
+          {
+            "name": "UNDERSTAND",
+            "detail": "objetivo: Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reale…",
+            "duration_ms": 18300
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 18
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 41
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 38
+          },
+          {
+            "name": "BÚSQUEDA",
+            "detail": "capability.search",
+            "duration_ms": 40
+          },
+          {
+            "name": "INSPECCIÓN",
+            "detail": "event.inspect",
+            "duration_ms": 0
+          }
+        ],
+        "tool_calls": [
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "catálogo de productos, precio, stock, carrito, orden de venta, checkout de pago",
+              "executable_only": false
+            },
+            "duration_ms": 18,
+            "result_hash": "7850a59d44adf842",
+            "result_summary": "total_matches=31; results=5"
+          },
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "buscar productos en catálogo, precio de producto, cotizar carrito de venta, crear orden de venta, enviar mensaje al cli…"
+            },
+            "duration_ms": 40,
+            "result_hash": "1df25155e87df29c",
+            "result_summary": "total_matches=34; results=5"
+          },
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "aplicar movimiento de inventario, descontar o ajustar stock al confirmar el pago"
+            },
+            "duration_ms": 38,
+            "result_hash": "dc85e90ee415e2a4",
+            "result_summary": "total_matches=25; results=5"
+          },
+          {
+            "ok": true,
+            "tool": "capability.search",
+            "error": null,
+            "arguments": {
+              "limit": 5,
+              "query": "cotizar carrito de venta y enviar mensaje al cliente en la conversación"
+            },
+            "duration_ms": 40,
+            "result_hash": "036239947001330b",
+            "result_summary": "total_matches=29; results=5"
+          },
+          {
+            "ok": true,
+            "tool": "event.inspect",
+            "error": null,
+            "arguments": {
+              "event_type": "payment.succeeded"
+            },
+            "duration_ms": 0,
+            "result_hash": "b85f0e633211ac58",
+            "result_summary": "schema=zent.event.inspect/v1"
+          }
+        ],
+        "repair_attempts": 0
+      },
+      "usage": {
+        "repairs": 0,
+        "cancelled": false,
+        "llm_calls": 8,
+        "tool_calls": 5,
+        "duration_ms": 130268,
+        "total_tokens": 87639,
+        "prompt_tokens": 54433,
+        "completion_tokens": 33206,
+        "estimated_cost_usd": 0.0
+      },
+      "intent": {
+        "goal": "Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reales si hay varias marcas, permitir elegir/cambiar de opinión/agregar más productos, conservar el carrito durante toda la conversación, presentar resumen con precio total y pedir confirmación, crear la orden, generar enlace o QR de pago con el proveedor configurado del tenant, esperar la confirmación real del proveedor antes de finalizar, comunicar fallos y permitir reintento seguro, finalizar la orden y aplicar el movimiento de inventario exactamente una vez, soportando mensajes duplicados, reconexiones y reinicios del servidor.",
+        "actors": [
+          "Agente de ventas"
+        ],
+        "trigger_intent": "El cliente escribe por el canal de conversación que necesita un producto."
+      },
+      "issues": [
+        {
+          "code": "planner.invalid_llm_output",
+          "field": "planner",
+          "message": "El LLM no devolvió una acción JSON válida.",
+          "step_id": null,
+          "expected": "plan válido + matches",
+          "received": "planner.invalid_llm_output",
+          "severity": "error",
+          "issue_code": "planner.invalid_llm_output",
+          "requirement": null,
+          "alternatives": [],
+          "action_required": "Revisa la configuración del proveedor o reformula el pedido."
+        }
+      ],
+      "phases": [
+        {
+          "name": "UNDERSTAND",
+          "duration_ms": 18300
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 18
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 41
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 38
+        },
+        {
+          "name": "BÚSQUEDA",
+          "duration_ms": 40
+        },
+        {
+          "name": "INSPECCIÓN",
+          "duration_ms": 0
+        }
+      ],
+      "source": "llm",
+      "matches": [],
+      "planner": {
+        "model": null,
+        "source": "llm",
+        "version": "architect/1.2.0+agentic",
+        "provider": "LiteLLMProvider"
+      },
+      "preview": [],
+      "blockers": [
+        {
+          "code": "planner.invalid_llm_output",
+          "kind": "issue",
+          "message": "El LLM no devolvió una acción JSON válida.",
+          "requirement": null
+        }
+      ],
+      "fallback": null,
+      "plan_hash": null,
+      "questions": [],
+      "readiness": null,
+      "steps_map": {},
+      "session_id": "d4668bba-1b03-47e8-bf31-ddba1644f9a7",
+      "simulation": null,
+      "assumptions": [
+        {
+          "impact": "medium",
+          "statement": "El tenant tiene configurado un binding de pago disponible y ese es el proveedor a usar.",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "El evento payment.succeeded es firmado y confiable.",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "Las APIs indicadas existen y son invocables.",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "El carrito puede persistirse durante toda la conversación.",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "La tienda opera en moneda PEN.",
+          "needs_confirmation": false
+        },
+        {
+          "impact": "medium",
+          "statement": "La aplicación exacta una vez del movimiento de inventario es un requisito de negocio.",
+          "needs_confirmation": false
+        }
+      ],
+      "publishable": false,
+      "requirements": [],
+      "specification": {
+        "goal": "Agente de ventas para una tienda: cuando un cliente escriba que necesita un producto, buscarlo en el catálogo del negocio, mostrar alternativas y precios reales si hay varias marcas, permitir elegir/cambiar de opinión/agregar más productos, conservar el carrito durante toda la conversación, presentar resumen con precio total y pedir confirmación, crear la orden, generar enlace o QR de pago con el proveedor configurado del tenant, esperar la confirmación real del proveedor antes de finalizar, comunicar fallos y permitir reintento seguro, finalizar la orden y aplicar el movimiento de inventario exactamente una vez, soportando mensajes duplicados, reconexiones y reinicios del servidor.",
+        "actor": "Agente de ventas",
+        "inputs": [
+          "Mensajes del cliente por conversation.send",
+          "Solicitud de producto del cliente",
+          "Selección de alternativa del cliente",
+          "Cambios de opinión del cliente",
+          "Productos adicionales solicitados por el cliente",
+          "Confirmación del cliente sobre el resumen",
+          "Binding de pago configurado del tenant",
+          "Evento firmado payment.succeeded"
+        ],
+        "retries": [
+          "Reintento seguro de pago si el pago falla, según política no especificada.",
+          "Reintento o recuperación de operaciones idempotentes ante reconexión o reinicio, con mecánica no especificada.",
+          "Deduplicación de mensajes duplicados."
+        ],
+        "sources": [
+          "commerce: catalog.products.search",
+          "commerce: catalog.product.price",
+          "inventory.stock.get",
+          "sales.cart.quote",
+          "sales.order.create",
+          "payments.checkout.create",
+          "conversation.send",
+          "payment.succeeded",
+          "binding de pago configurado del tenant"
+        ],
+        "timeouts": [
+          "1800 segundos para esperar payment.succeeded.",
+          "Timeout de conversación u otras operaciones no especificado."
+        ],
+        "approvals": [
+          "Confirmación explícita del cliente sobre el resumen antes de crear la orden y cobrar.",
+          "Confirmación o aceptación del cliente para reintentar el pago tras un fallo, si la política de reintento lo requiere."
+        ],
+        "decisions": [
+          "Buscar el producto solicitado en el catálogo del negocio.",
+          "Si existen varias marcas, mostrar alternativas y sus precios reales.",
+          "Permitir que el cliente elija una alternativa, cambie de opinión o agregue más productos.",
+          "Determinar cuándo el cliente terminó y presentar el resumen con el precio total.",
+          "Solicitar confirmación del cliente antes de crear la orden y cobrar.",
+          "Si el pago falla, comunicarlo y permitir un reintento seguro.",
+          "Si el pago se confirma, finalizar la orden y aplicar el movimiento de inventario exactamente una vez.",
+          "Ante mensajes duplicados, reconexiones o reinicios, recuperar el estado y evitar efectos duplicados."
+        ],
+        "confidence": 0.65,
+        "assumptions": [
+          "El tenant tiene configurado un binding de pago disponible y ese es el proveedor a usar.",
+          "El evento payment.succeeded es firmado y confiable.",
+          "Las APIs indicadas existen y son invocables.",
+          "El carrito puede persistirse durante toda la conversación.",
+          "La tienda opera en moneda PEN.",
+          "La aplicación exacta una vez del movimiento de inventario es un requisito de negocio."
+        ],
+        "wait_events": [
+          "Confirmación del cliente sobre el resumen.",
+          "Evento firmado payment.succeeded con timeout de 1800 segundos."
+        ],
+        "durable_state": [
+          "Carrito activo de la conversación.",
+          "Contexto de la conversación.",
+          "Resumen confirmado por el cliente.",
+          "Orden creada.",
+          "Estado del checkout o pago.",
+          "Resultado de payment.succeeded.",
+          "Bandera de movimiento de inventario aplicado.",
+          "Claves de idempotencia o deduplicación.",
+          "Estado de reintentos de pago."
+        ],
+        "trigger_event": "El cliente escribe por el canal de conversación que necesita un producto.",
+        "expected_errors": [
+          "Pago fallido.",
+          "Timeout esperando payment.succeeded.",
+          "Producto no encontrado.",
+          "Sin stock disponible.",
+          "Carrito vacío.",
+          "Fallo al crear la orden o el checkout.",
+          "Mensaje duplicado.",
+          "Reconexión.",
+          "Reinicio del servidor.",
+          "Firma inválida o no verificable del evento payment.succeeded."
+        ],
+        "external_actions": [
+          "Consultar catálogo con catalog.products.search.",
+          "Consultar precios con catalog.product.price.",
+          "Consultar stock con inventory.stock.get.",
+          "Cotizar el carrito con sales.cart.quote.",
+          "Enviar mensajes al cliente con conversation.send.",
+          "Crear la orden con sales.order.create.",
+          "Crear el cobro/checkout con payments.checkout.create.",
+          "Esperar el evento firmado payment.succeeded.",
+          "Aplicar el movimiento de inventario exactamente una vez."
+        ],
+        "deterministic_rules": [
+          "La moneda es PEN.",
+          "La espera del evento payment.succeeded tiene un timeout de 1800 segundos.",
+          "No se debe inventar proveedor de pago: se usa el binding de pago configurado del tenant.",
+          "El carrito debe conservarse durante toda la conversación.",
+          "No se debe finalizar la venta sin la confirmación real del proveedor de pago.",
+          "El movimiento de inventario debe aplicarse exactamente una vez.",
+          "Se deben soportar mensajes duplicados, reconexiones y reinicios del servidor.",
+          "El enlace o QR de pago debe generarse con el proveedor configurado del tenant."
+        ],
+        "missing_information": [
+          "No se especifica la operación o API para aplicar el movimiento de inventario exactamente una vez; inventory.stock.get solo consulta.",
+          "No se especifica el identificador ni la configuración concreta del binding de pago del tenant.",
+          "No se especifica el formato del enlace o QR de pago.",
+          "No se especifica el mecanismo exacto de deduplicación, reconexión y recuperación ante reinicios.",
+          "No se especifica la política de reintentos de pago: número, condiciones, backoff ni límite.",
+          "No se especifica timeout de conversación ni de otras operaciones fuera de payment.succeeded.",
+          "No se especifica cómo ordenar o priorizar múltiples marcas/productos equivalentes.",
+          "No se especifican los datos obligatorios de la orden ni validaciones adicionales.",
+          "No se especifica cómo verificar la firma del evento payment.succeeded.",
+          "No se especifica el contrato exacto de sales.order.create, payments.checkout.create ni sales.cart.quote."
+        ],
+        "cognitive_operations": [
+          "Interpretar el mensaje del cliente para detectar necesidad de producto.",
+          "Extraer producto y cantidad solicitados.",
+          "Presentar alternativas, marcas y precios reales.",
+          "Mantener el contexto del carrito a lo largo de la conversación.",
+          "Redactar el resumen con precio total y solicitar confirmación.",
+          "Comunicar al cliente el resultado del pago o los fallos.",
+          "Ofrecer un reintento seguro cuando el pago falla."
+        ],
+        "completion_conditions": [
+          "El cliente confirma el resumen.",
+          "La orden fue creada.",
+          "El pago fue confirmado mediante payment.succeeded.",
+          "La orden fue finalizada.",
+          "El movimiento de inventario fue aplicado exactamente una vez.",
+          "El cliente fue notificado del resultado final."
+        ],
+        "irreversible_operations": [
+          "Crear la orden.",
+          "Iniciar el cobro con el proveedor de pago configurado.",
+          "Aplicar el movimiento de inventario.",
+          "Finalizar la orden."
+        ]
+      },
+      "clarifications": [],
+      "simulation_preview": null,
+      "capability_snapshot": {
+        "counts": {
+          "events": 37,
+          "resources": 0,
+          "capabilities": 64
+        },
+        "coverage": {
+          "events": 37,
+          "schema": "zent.capability.coverage/v1",
+          "by_source": {
+            "node": 30,
+            "binding": 1,
+            "commerce": 19,
+            "marketplace": 14
+          },
+          "by_status": {
+            "AVAILABLE": 45,
+            "NEEDS_INSTALLATION": 14,
+            "NEEDS_CONFIGURATION": 5
+          },
+          "resources": 0,
+          "by_category": {
+            "ai": 2,
+            "data": 2,
+            "logic": 12,
+            "output": 2,
+            "control": 5,
+            "trigger": 3,
+            "business": 1,
+            "commerce": 14,
+            "payments": 5,
+            "integration": 3,
+            "marketplace": 14,
+            "communication": 1
+          },
+          "contract_gaps": [
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "inventory.reserve"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "inventory.release"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "inventory.commit"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.create"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.get"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.confirm"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.mark_paid"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.fulfill"
+            },
+            {
+              "missing": [
+                "output_schema"
+              ],
+              "capability_ref": "sales.order.cancel"
+            }
+          ],
+          "business_complete": 25,
+          "total_capabilities": 64,
+          "business_capabilities": 34,
+          "business_completeness": 0.7353
+        },
+        "generated_at": "2026-10-21T19:58:04.449916+00:00",
+        "snapshot_hash": "579a8818a5c12b3a3e8a26032d885377977646d0995207e824509b7795d31239",
+        "catalog_version": 1
+      },
+      "resource_resolution": null,
+      "clarification_history": [
+        "Quiero un agente de ventas para una tienda.\nCuando un cliente escriba que necesita un producto, el sistema debe buscarlo en el\ncatálogo del negocio. Si existen varias marcas, debe mostrar alternativas y sus\nprecios reales. El cliente podrá elegir una alternativa, cambiar de opinión y\nagregar más productos. Debe conservar el carrito durante toda la conversación.\nCuando el cliente termine, debe presentar el resumen con el precio total y pedir\nconfirmación. Después debe crear una orden y generar un enlace o QR de pago\nutilizando el proveedor configurado. Debe esperar la confirmación real del\nproveedor de pago antes de finalizar la venta. Si el pago falla, debe comunicarlo\ny permitir un reintento seguro. Si el pago se confirma, debe finalizar la orden y\naplicar el movimiento de inventario exactamente una vez. Debe soportar mensajes\nduplicados, reconexiones y reinicios del servidor."
+      ],
+      "requires_durable_instance": false
+    }
+  }
+}

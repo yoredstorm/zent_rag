@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { nodeMeta } from "../../lib/workflowGraph";
 import { WorkflowContextPanel } from "./WorkflowContextPanel";
@@ -49,6 +49,35 @@ describe("WorkflowContextPanel", () => {
     expect(screen.getByTestId("wf-context-writes-query_business_data")).toHaveTextContent("data, evidence");
     expect(screen.getByTestId("wf-context-run-sections")).toHaveTextContent("evidence_refs · 2");
     expect(screen.getByTestId("wf-context-run-sections")).toHaveTextContent("data · 1");
+  });
+
+  it("muestra el contexto usado, el mapeo y el control de memoria", () => {
+    const onMemory = vi.fn();
+    render(
+      <WorkflowContextPanel
+        used={[
+          {
+            plane: "knowledge.rag",
+            source: "kb-help",
+            label: "Artículo",
+            timestamp: "2026-10-22T00:00:00Z",
+            scope: "tenant",
+            quality: "cited",
+          },
+        ]}
+        mapping={{
+          mappings: [{ source_id: "pg_products", field: "sku", target: "product" }],
+          memory: { enabled: false },
+        }}
+        onMemoryEnabledChange={onMemory}
+      />
+    );
+    fireEvent.click(screen.getByTestId("wf-context-tab-used"));
+    expect(screen.getByTestId("wf-context-used-kb-help")).toHaveTextContent("knowledge.rag");
+    expect(screen.getByTestId("wf-context-used-kb-help")).toHaveTextContent("cited");
+    expect(screen.getByTestId("wf-context-mapping")).toHaveTextContent("pg_products.sku = product");
+    fireEvent.click(screen.getByTestId("wf-context-memory-toggle"));
+    expect(onMemory).toHaveBeenCalledWith(true);
   });
 
   it("muestra vacíos y permite cerrar", () => {

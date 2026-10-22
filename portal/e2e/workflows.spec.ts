@@ -23,6 +23,10 @@ test.describe("Workflow Studio", () => {
     // La lista ya no trae editor: modo manual → estudio.
     await page.getByTestId("wf-new-modes").click();
     await expect(page).toHaveURL(/\/workflows\/new/, { timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: "¿Qué quieres que ZENT haga?" })).toBeVisible();
+    await expect(page.getByTestId("wf-mode-ai")).toBeVisible();
+    await expect(page.getByTestId("wf-mode-manual")).toBeVisible();
+    await expect(page.getByTestId("wf-mode-templates")).toBeVisible();
     await page.getByTestId("wf-mode-manual").click();
     await page.getByTestId("wf-new-name").fill("E2E Studio Flow");
     await page.getByTestId("wf-create").click();

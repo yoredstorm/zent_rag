@@ -67,7 +67,7 @@ describe("WorkflowHealthBar", () => {
     await waitFor(() => expect(screen.getByTestId("wf-readiness-ready")).toHaveTextContent("Listo para publicar"));
   });
 
-  it("muestra Readiness % y el CTA al Marketplace para requisitos de portabilidad", async () => {
+  it("un bloqueo crítico no se disfraza de porcentaje", async () => {
     stubApi({
       ready: false,
       errors: 1,
@@ -84,7 +84,8 @@ describe("WorkflowHealthBar", () => {
       ],
     });
     render(<WorkflowHealthBar workflowId="wf-1" />);
-    await waitFor(() => expect(screen.getByTestId("wf-readiness-score")).toHaveTextContent("Readiness 50%"));
+    await waitFor(() => expect(screen.getByTestId("wf-readiness-score")).toHaveTextContent("Requiere configuración"));
+    expect(screen.getByTestId("wf-readiness-score")).not.toHaveTextContent("%");
     expect(screen.getByTestId("wf-readiness-resolve")).toHaveTextContent("Resolver en Marketplace");
   });
 });
