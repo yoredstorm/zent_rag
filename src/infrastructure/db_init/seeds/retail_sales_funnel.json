@@ -201,6 +201,26 @@
       },
       "name": "Reservar stock",
       "output_schema": {
+        "properties": {
+          "available": {
+            "type": "number"
+          },
+          "committed": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "released": {
+            "type": "number"
+          },
+          "reservation_id": {
+            "type": "string"
+          },
+          "reserved": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -236,6 +256,26 @@
       },
       "name": "Liberar stock",
       "output_schema": {
+        "properties": {
+          "available": {
+            "type": "number"
+          },
+          "committed": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "released": {
+            "type": "number"
+          },
+          "reservation_id": {
+            "type": "string"
+          },
+          "reserved": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -271,6 +311,26 @@
       },
       "name": "Confirmar stock",
       "output_schema": {
+        "properties": {
+          "available": {
+            "type": "number"
+          },
+          "committed": {
+            "type": "number"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "released": {
+            "type": "number"
+          },
+          "reservation_id": {
+            "type": "string"
+          },
+          "reserved": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -314,10 +374,42 @@
             "type": "string"
           }
         },
+        "required": [
+          "items"
+        ],
         "type": "object"
       },
       "name": "Crear venta",
       "output_schema": {
+        "properties": {
+          "cart": {
+            "type": "object"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -343,6 +435,9 @@
             "type": "array"
           }
         },
+        "required": [
+          "items"
+        ],
         "type": "object"
       },
       "name": "Cotizar carrito",
@@ -385,6 +480,9 @@
           "amount": {
             "type": "number"
           },
+          "currency": {
+            "type": "string"
+          },
           "order_id": {
             "type": "string"
           },
@@ -392,6 +490,9 @@
             "type": "string"
           },
           "payment_reference": {
+            "type": "string"
+          },
+          "payment_status": {
             "type": "string"
           },
           "provider": {
@@ -402,6 +503,35 @@
       },
       "name": "Consultar venta",
       "output_schema": {
+        "properties": {
+          "cart": {
+            "type": "object"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -423,6 +553,9 @@
           "amount": {
             "type": "number"
           },
+          "currency": {
+            "type": "string"
+          },
           "order_id": {
             "type": "string"
           },
@@ -430,6 +563,9 @@
             "type": "string"
           },
           "payment_reference": {
+            "type": "string"
+          },
+          "payment_status": {
             "type": "string"
           },
           "provider": {
@@ -440,6 +576,35 @@
       },
       "name": "Confirmar venta",
       "output_schema": {
+        "properties": {
+          "cart": {
+            "type": "object"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -461,6 +626,9 @@
           "amount": {
             "type": "number"
           },
+          "currency": {
+            "type": "string"
+          },
           "order_id": {
             "type": "string"
           },
@@ -468,6 +636,9 @@
             "type": "string"
           },
           "payment_reference": {
+            "type": "string"
+          },
+          "payment_status": {
             "type": "string"
           },
           "provider": {
@@ -478,6 +649,35 @@
       },
       "name": "Marcar pagada",
       "output_schema": {
+        "properties": {
+          "cart": {
+            "type": "object"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -499,6 +699,9 @@
           "amount": {
             "type": "number"
           },
+          "currency": {
+            "type": "string"
+          },
           "order_id": {
             "type": "string"
           },
@@ -506,6 +709,9 @@
             "type": "string"
           },
           "payment_reference": {
+            "type": "string"
+          },
+          "payment_status": {
             "type": "string"
           },
           "provider": {
@@ -516,6 +722,35 @@
       },
       "name": "Completar venta",
       "output_schema": {
+        "properties": {
+          "cart": {
+            "type": "object"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -537,6 +772,9 @@
           "amount": {
             "type": "number"
           },
+          "currency": {
+            "type": "string"
+          },
           "order_id": {
             "type": "string"
           },
@@ -544,6 +782,9 @@
             "type": "string"
           },
           "payment_reference": {
+            "type": "string"
+          },
+          "payment_status": {
             "type": "string"
           },
           "provider": {
@@ -554,6 +795,35 @@
       },
       "name": "Cancelar venta",
       "output_schema": {
+        "properties": {
+          "cart": {
+            "type": "object"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object"
+          },
+          "items": {
+            "type": "array"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
         "type": "object"
       },
       "provider_kinds": [
@@ -594,6 +864,9 @@
             "type": "integer"
           }
         },
+        "required": [
+          "order_id"
+        ],
         "type": "object"
       },
       "name": "Crear checkout",
@@ -605,10 +878,22 @@
           "checkout_id": {
             "type": "string"
           },
+          "checkout_url": {
+            "type": "string"
+          },
           "currency": {
             "type": "string"
           },
+          "order_id": {
+            "type": "string"
+          },
+          "order_number": {
+            "type": "string"
+          },
           "provider": {
+            "type": "string"
+          },
+          "qr_payload": {
             "type": "string"
           },
           "reference": {
