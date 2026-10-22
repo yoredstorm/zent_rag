@@ -421,7 +421,9 @@ export default function WorkflowStudioPage() {
     }
   }
 
-  saveRef.current = save;
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
 
   const mentorNamed = useRef(false);
   useEffect(() => {

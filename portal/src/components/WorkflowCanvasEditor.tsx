@@ -1,4 +1,4 @@
-import { ChartLineUp, Plus, WarningOctagon } from "@phosphor-icons/react";
+import { ChartLineUp, WarningOctagon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -12,7 +12,6 @@ import { NodeLibrary, type MarketplaceContext, type MxRecommendation } from "./N
 import { WorkflowCanvas, type RunOverlay } from "./WorkflowCanvas";
 import type { RunDetail } from "./WorkflowRunInspector";
 import { WorkflowContextPanel } from "./workflowStudio/WorkflowContextPanel";
-import { ErrorInline } from "./ui";
 
 type Props = {
   workflowId: string | null;
@@ -65,7 +64,6 @@ export function WorkflowCanvasEditor({
 }: Props) {
   const { session } = useAuth();
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
-  const [error, setError] = useState("");
   const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
   const [catalogNodes, setCatalogNodes] = useState<Record<string, NodeMeta> | null>(null);
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string> | null>(null);
@@ -494,12 +492,6 @@ export function WorkflowCanvasEditor({
           </div>
         )}
 
-        {error && (
-          <div className="absolute top-3 left-1/2 z-30 w-[min(420px,90%)] -translate-x-1/2">
-            <ErrorInline>{error}</ErrorInline>
-          </div>
-        )}
-
         {isEmptyCanvas && (
           <div
             className="absolute bottom-4 left-4 z-20 w-[min(340px,calc(100%-2rem))] rounded-lg border border-accent/30 bg-surface/95 p-3 shadow-panel backdrop-blur-sm"
@@ -586,7 +578,7 @@ export function WorkflowCanvasEditor({
                 plane: item.section,
                 source: item.node_id || item.section,
                 label: item.payload?.label ? String(item.payload.label) : item.section,
-                scope: item.node_type,
+                scope: item.node_type || undefined,
               }))}
               mapping={
                 local?.metadata?.data_mapping && typeof local.metadata.data_mapping === "object"
