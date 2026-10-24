@@ -221,6 +221,15 @@ acciones instaladas. `return_to` sigue saneado, la instalación contextual
 reutiliza el mismo registro y el blueprint portable no cambia. Evidencia: 40
 tests backend. Detalle en `12-p10-marketplace.md`.
 
+## 6.11 Actualización P11/P12
+
+P11 añadió la cola de operación/dead-letter y resumen en la consola sobre
+`workflow_instances`, sin estado nuevo. P12 formalizó la matriz de seis roles y
+el reporte de gates: GO para staging; NO_GO para piloto controlado/GA por UX de
+5 usuarios, proveedor real y chaos de Redis/Postgres no verificados. Evidencia
+en `13-p11-operations.md`, `14-p12-certification.md` y
+`artifacts/certification/p11|p12`.
+
 ## 7. Dictamen P00
 
 **GO P00 (auditoría), NO-GO release.**

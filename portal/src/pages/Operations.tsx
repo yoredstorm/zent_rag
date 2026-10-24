@@ -23,6 +23,11 @@ type TimelineStep = {
   fault?: string | null;
 };
 
+type OpsQueue = {
+  total: number;
+  summary: { failed: number; needs_human: number; expired: number; by_kind: Record<string, number> };
+};
+
 const VIEW_FILTERS = [
   "running",
   "waiting",
@@ -44,6 +49,7 @@ export default function OperationsPage() {
   const [keyFilter, setKeyFilter] = useState("");
   const [timeline, setTimeline] = useState<TimelineStep[] | null>(null);
   const [openId, setOpenId] = useState("");
+  const [queue, setQueue] = useState<OpsQueue | null>(null);
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -52,11 +58,18 @@ export default function OperationsPage() {
     try {
       const params = new URLSearchParams();
       if (keyFilter.trim()) params.set("business_key", keyFilter.trim());
-      const data = await api<{ instances: InstanceRow[] }>(
-        `/api/v1/workflows/instances${params.toString() ? `?${params}` : ""}`,
-        { token: session.token, organizationId: session.organizationId },
-      );
+      const [data, queueData] = await Promise.all([
+        api<{ instances: InstanceRow[] }>(
+          `/api/v1/workflows/instances${params.toString() ? `?${params}` : ""}`,
+          { token: session.token, organizationId: session.organizationId },
+        ),
+        api<OpsQueue>("/api/v1/workflows/operations/queue", {
+          token: session.token,
+          organizationId: session.organizationId,
+        }).catch(() => null),
+      ]);
       setRows(data.instances || []);
+      setQueue(queueData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pude leer las instancias");
     } finally {
@@ -110,6 +123,19 @@ export default function OperationsPage() {
         subtitle="Procesos durables del motor. El estado de pantalla sale del estado guardado, no de una lista paralela."
       />
       <ErrorInline message={error} />
+      {queue && (
+        <div
+          className="mb-3 flex flex-wrap gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px]"
+          role="status"
+          data-testid="ops-queue"
+        >
+          <span className="font-medium text-text">Cola de intervención</span>
+          <span className="text-muted">{queue.total} en total</span>
+          <span className="text-warn">{queue.summary.failed} fallos</span>
+          <span className="text-warn">{queue.summary.needs_human} esperan humano</span>
+          <span className="text-muted">{queue.summary.expired} expirados</span>
+        </div>
+      )}
       <div className="mb-3 flex flex-wrap items-end gap-2">
         <label className="text-[12px] text-muted">
           Identificador

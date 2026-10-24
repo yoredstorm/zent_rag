@@ -22,6 +22,8 @@ de runtime.
 | `10-p08-test-studio.md` | P08: niveles, reporte persistido, hashes y UI |
 | `11-p09-solution-workspace.md` | P09: workspace único, modos, gate, copiloto y undo/redo |
 | `12-p10-marketplace.md` | P10: catálogo único, discovery y retorno seguro |
+| `13-p11-operations.md` | P11: cola de operación, timeline y runbook |
+| `14-p12-certification.md` | P12: certificación horizontal y gates |
 
 ## Autoridades que este programa NO reemplaza
 

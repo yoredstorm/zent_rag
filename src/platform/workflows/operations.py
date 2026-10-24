@@ -7,7 +7,13 @@
 # =============================================================================
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
+
+from sqlalchemy import text
+
+from src.infrastructure.postgres.session import get_async_session
 
 STORED_STATUSES = frozenset(
     {"NEW", "RUNNING", "WAITING", "SUSPENDED", "COMPLETED", "FAILED", "CANCELLED", "EXPIRED"}
@@ -183,6 +189,124 @@ def chaos_observation(name: str, *, dependency_available: bool) -> dict[str, Any
         "passed": False,
         "reason": "hace falta el motor y el inbox reales para afirmar el desenlace",
     }
+
+
+_QUEUE_KINDS = frozenset(
+    {
+        "failed",
+        "expired",
+        "cancelled",
+        "needs_human",
+        "pending_approval",
+        "retry_scheduled",
+    }
+)
+
+
+def _queue_kind(instance: dict[str, Any]) -> str | None:
+    view = operational_status(instance)
+    if view in _QUEUE_KINDS:
+        return view
+    return None
+
+
+def build_operations_queue(
+    instances: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Cola de intervención sin estado nuevo: solo `workflow_instances`."""
+    current = now or datetime.now(timezone.utc)
+    items: list[dict[str, Any]] = []
+    for instance in instances:
+        kind = _queue_kind(instance)
+        if kind is None:
+            continue
+        updated = instance.get("updated_at")
+        age_seconds = None
+        if isinstance(updated, datetime):
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            age_seconds = max(0, int((current - updated).total_seconds()))
+        error = str(instance.get("error") or "")
+        items.append(
+            {
+                "instance_id": str(instance.get("id")),
+                "workflow_id": str(instance.get("workflow_id")),
+                "workspace_id": (
+                    str(instance.get("workspace_id"))
+                    if instance.get("workspace_id")
+                    else None
+                ),
+                "kind": kind,
+                "view_status": kind,
+                "stored_status": str(instance.get("status") or ""),
+                "business_key": instance.get("business_key"),
+                "waiting_event_type": instance.get("waiting_event_type"),
+                "fault": classify_fault(error) if error else None,
+                "recommended_action": (
+                    "manual_review"
+                    if kind in {"failed", "expired", "needs_human", "pending_approval"}
+                    else "retry_scheduled"
+                ),
+                "error": error[:300] if error else None,
+                "age_seconds": age_seconds,
+            }
+        )
+    items.sort(key=lambda item: (item["age_seconds"] is None, -(item["age_seconds"] or 0)))
+    bounded = max(1, min(int(limit or 100), 200))
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item["kind"]] = counts.get(item["kind"], 0) + 1
+    return {
+        "items": items[:bounded],
+        "total": len(items),
+        "summary": {
+            "by_kind": counts,
+            "failed": counts.get("failed", 0),
+            "needs_human": counts.get("needs_human", 0) + counts.get("pending_approval", 0),
+            "expired": counts.get("expired", 0),
+        },
+        "limit": bounded,
+    }
+
+
+async def list_operations_queue(
+    organization_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    clauses = [
+        "organization_id = :oid",
+        "("
+        "status IN ('FAILED', 'EXPIRED', 'SUSPENDED') "
+        "OR (status = 'WAITING' AND waiting_event_type IS NOT NULL)"
+        ")",
+    ]
+    params: dict[str, Any] = {"oid": organization_id, "lim": max(1, min(int(limit or 100), 200))}
+    if workspace_id is not None:
+        clauses.append("workspace_id = :ws")
+        params["ws"] = workspace_id
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, workflow_id, workspace_id, status, business_key, "
+                    "waiting_event_type, waiting_for, error, updated_at "
+                    "FROM workflow_instances WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY updated_at DESC LIMIT :lim"
+                ),
+                params,
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    body = [dict(row._mapping) for row in rows]
+    return build_operations_queue(body, limit=limit)
 
 
 def record_transition(status: str) -> None:

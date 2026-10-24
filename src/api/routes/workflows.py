@@ -1857,6 +1857,22 @@ async def tenant_workflow_test_reports(
 
 
 @router.get(
+    "/operations/queue",
+    summary="Cola de operación: fallos, expirados y esperas humanas",
+)
+async def tenant_workflow_operations_queue(request: Request, limit: int = 100):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.operations import list_operations_queue
+
+    ctx = require_permission(request, "workflow_runs:read")
+    return await list_operations_queue(
+        ctx.organization_id,
+        workspace_id=await _workspace_id(request),
+        limit=limit,
+    )
+
+
+@router.get(
     "/capabilities/discover",
     summary="Descubrir capacidades disponibles e instaladas (catálogo único)",
 )
