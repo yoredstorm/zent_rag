@@ -135,7 +135,11 @@ async def test_export_import_dependency_resolution_and_execution(
     published = await async_client.post(
         f"/api/v1/workflows/{new_workflow_id}/publish", headers=_headers(tenant_b)
     )
-    assert published.status_code == 200, published.text
+    # Un flujo importado con efectos externos no publica sin certificado
+    # sandbox/provider. La ejecución de abajo valida el grafo en draft.
+    assert published.status_code == 409, published.text
+    assert published.json()["details"]["code"] == "release_blocked"
+    assert "certification_required" in str(published.json()["details"]["blockers"])
 
     # --- Ejecutar el flujo importado con los datos de B ---------------------
     started = await start_funnel(

@@ -221,12 +221,14 @@ export function WorkflowTestPanel({
           error: item.error ? String(item.error) : null,
         };
       });
-      onRun({
+      const testRun: RunDetail = {
         id: report.test_report_id ?? report.report_id ?? "test-report",
         status: report.result.toLowerCase(),
         steps,
         result: {},
-      });
+      };
+      setRun(testRun);
+      onRun(testRun);
       const requested = report.requested_level;
       const effective = report.effective_level;
       const result = report.result;

@@ -316,6 +316,16 @@ async def test_watcher_e2e_fires_workflow_on_enter(
         json={"workflow_id": workflow_id, "event_type": "inventory.stock.low", "filters": {}},
     )
     assert sub.status_code == 200, sub.text
+    certified = await async_client.post(
+        f"/api/v1/workflows/{workflow_id}/certifications",
+        headers={**h, "Idempotency-Key": f"living-cert-{uuid4().hex}"},
+        json={"level": "design"},
+    )
+    assert certified.status_code == 200, certified.text
+    activated = await async_client.post(
+        f"/api/v1/workflows/{workflow_id}/activate", headers=h
+    )
+    assert activated.status_code == 200, activated.text
 
     created_w = await async_client.post(
         "/api/v1/workflows/watchers",
