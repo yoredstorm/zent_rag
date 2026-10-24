@@ -69,7 +69,7 @@ export default function OperationsPage() {
         }).catch(() => null),
       ]);
       setRows(data.instances || []);
-      setQueue(queueData);
+      setQueue(queueData && queueData.summary ? queueData : null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pude leer las instancias");
     } finally {
