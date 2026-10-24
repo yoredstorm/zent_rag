@@ -1,10 +1,22 @@
-import { ArrowCounterClockwise, Camera, RocketLaunch } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Camera, RocketLaunch, SealCheck } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { fmtDateTime } from "../../lib/format";
 import { Button, ConfirmDialog, ErrorInline, Field, Input, StatusBadge, SuccessInline } from "../ui";
 import { type WorkflowVersion } from "./types";
+
+type GateBlocker = { code: string; message: string; mitigation?: string };
+
+type ReleaseGate = {
+  allowed: boolean;
+  state: string;
+  risk_class: string;
+  required_level: string;
+  blockers: GateBlocker[];
+  legacy?: boolean;
+  certificate?: { level?: string; state?: string; expires_at?: string | null } | null;
+};
 
 type Props = {
   workflowId: string;
@@ -38,6 +50,21 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [restoreTarget, setRestoreTarget] = useState<WorkflowVersion | null>(null);
+  const [gate, setGate] = useState<ReleaseGate | null>(null);
+
+  const loadGate = useCallback(async () => {
+    if (!session) return;
+    try {
+      const d = await api<ReleaseGate>(
+        `/api/v1/workflows/${workflowId}/release-gate?action=publish`,
+        { token: session.token, organizationId: session.organizationId },
+      );
+      setGate(d);
+    } catch (e) {
+      setGate(null);
+      setError(e instanceof Error ? e.message : "Error");
+    }
+  }, [session, workflowId]);
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -47,10 +74,11 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
         { token: session.token, organizationId: session.organizationId },
       );
       setVersions(d.versions || []);
+      await loadGate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     }
-  }, [session, workflowId]);
+  }, [session, workflowId, loadGate]);
 
   useEffect(() => {
     void load();
@@ -77,7 +105,29 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
       setMsg(okMsg);
       setNotes("");
       await load();
+      await loadGate();
       if (reloadStudio) onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function certify() {
+    if (!session) return;
+    setBusy("certify");
+    setError("");
+    setMsg("");
+    try {
+      await api(`/api/v1/workflows/${workflowId}/certifications`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ level: "design" }),
+      });
+      setMsg("Certificado de diseño emitido por el backend.");
+      await loadGate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -103,12 +153,56 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
             maxLength={500}
           />
         </Field>
+        <div
+          className="rounded-md border border-border bg-soft/40 p-3"
+          data-testid="wf-release-gate"
+        >
+          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+            <SealCheck className="h-4 w-4 text-muted" aria-hidden />
+            <span className="font-medium text-text">
+              Gate de release: {gate ? gate.state : "cargando"}
+            </span>
+            {gate && (
+              <span className="text-faint">
+                riesgo {gate.risk_class} · exige {gate.required_level}
+                {gate.legacy ? " · política legacy" : ""}
+              </span>
+            )}
+          </div>
+          {gate && !gate.allowed && (
+            <ul className="mt-2 space-y-1" data-testid="wf-release-blockers">
+              {gate.blockers.map((item) => (
+                <li key={item.code} className="text-[12px] leading-relaxed text-muted">
+                  <span className="font-medium text-text">{item.message}</span>
+                  {item.mitigation ? ` ${item.mitigation}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+          {gate?.allowed && (
+            <p className="mt-2 text-[12px] text-muted" data-testid="wf-release-allowed">
+              Evidencia vigente. Publicar crea el snapshot inmutable y activa el workflow.
+            </p>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={SealCheck}
+            className="mt-2 text-[11px]"
+            loading={busy === "certify"}
+            disabled={!!busy}
+            data-testid="wf-certify"
+            onClick={() => void certify()}
+          >
+            Certificar diseño
+          </Button>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="primary"
             leadingIcon={RocketLaunch}
             loading={busy === "publish"}
-            disabled={!!busy}
+            disabled={!!busy || !gate?.allowed}
             data-testid="wf-publish"
             onClick={() =>
               void call(

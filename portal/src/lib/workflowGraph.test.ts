@@ -210,8 +210,17 @@ describe("graphIssues", () => {
 
   it("effectNodes lista solo los nodos con efectos reales", () => {
     const g = emptyGraph("webhook");
-    g.nodes.push(makeNode("notify"), makeNode("kb_query"), makeNode("api_call"));
-    expect(effectNodes(g).map((n) => n.type)).toEqual(["notify", "api_call"]);
+    g.nodes.push(
+      makeNode("notify"),
+      makeNode("kb_query"),
+      makeNode("api_call"),
+      makeNode("capability_call"),
+    );
+    expect(effectNodes(g).map((n) => n.type)).toEqual([
+      "notify",
+      "api_call",
+      "capability_call",
+    ]);
   });
 
   it("sin grafo no hay avisos", () => {

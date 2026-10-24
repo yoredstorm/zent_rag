@@ -138,7 +138,15 @@ class KnowledgeScope(BaseModel):
 class MemoryPolicy(BaseModel):
     model_config = MODEL_CONFIG
 
-    scope: Literal["none", "session", "participant", "workspace", "long_term"] = "session"
+    scope: Literal[
+        "none",
+        "session",
+        "participant",
+        "workspace",
+        "long_term",
+        "durable_business_state",
+        "long_term_consent",
+    ] = "session"
     retention_days: int | None = Field(default=None, ge=0, le=3650)
     consent_required: bool = False
     pii_masking: bool = True

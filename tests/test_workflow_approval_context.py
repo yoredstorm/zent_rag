@@ -85,8 +85,9 @@ async def test_approval_snapshot_and_decide(async_client: AsyncClient) -> None:
     )
     assert run.status_code == 200, run.text
     body = run.json()
-    assert body["status"] == "pending_approval", body
-    run_id = body["run_id"]
+    assert body["status"] == "running", body
+    assert body["run"]["status"] == "pending_approval", body
+    run_id = body["run"]["run_id"]
 
     approvals = await async_client.get(
         f"/api/v1/workflows/runs/{run_id}/approvals", headers=headers

@@ -1,6 +1,11 @@
 import { CaretRight, Crosshair, WarningCircle } from "@phosphor-icons/react";
 import { useState, type ReactNode } from "react";
 import { fmtLatency } from "../lib/format";
+import {
+  classifyPlannedEffects,
+  effectLabel,
+  type EffectVerification,
+} from "../lib/workflowEffects";
 import { Button, Drawer, ErrorInline, IconButton, StatusBadge } from "./ui";
 import { WorkflowApprovalPanel } from "./WorkflowApprovalPanel";
 import { DataView } from "./workflowStudio/DataView";
@@ -63,6 +68,7 @@ export type RunDetail = {
   instance_seq?: number | null;
   steps?: RunStep[];
   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
+  effect_verification?: EffectVerification;
   result?: { notifications?: unknown[]; errors?: unknown[]; cost_ms?: number };
   /** Contexto proyectado del run (sin `security`). */
   context?: Record<string, unknown>;
@@ -297,6 +303,9 @@ export function WorkflowRunInspector({
   const steps = run.steps ?? [];
   const status = RUN_STATUS_META[run.status] ?? { status: run.status };
   const failed = steps.filter((s) => s.status === "failed" || s.status === "denied").length;
+  const fallbackEffects =
+    plannedEffects && plannedEffects.length > 0 ? plannedEffects : run.planned_effects;
+  const verification = run.effect_verification ?? classifyPlannedEffects(fallbackEffects);
 
   return (
     <div className="flex flex-col gap-2.5" data-testid="wf-run-inspector">
@@ -337,16 +346,53 @@ export function WorkflowRunInspector({
         </ol>
       )}
 
-      {plannedEffects && plannedEffects.length > 0 && (
-        <div className="rounded-md border border-border bg-raised/50 px-3 py-2.5">
-          <p className="text-[11px] font-medium text-muted">Efectos no ejecutados en la prueba</p>
-          <ul className="mt-1.5 flex flex-col gap-1">
-            {plannedEffects.map((p) => (
-              <li key={p.node_id} className="truncate text-[11px] text-faint" title={`${p.node_type} — ${JSON.stringify(p.planned)}`}>
-                <span className="text-muted">{p.node_type}</span> — {JSON.stringify(p.planned)}
-              </li>
-            ))}
-          </ul>
+      {verification && verification.level !== "NONE" && (
+        <div
+          className="rounded-md border border-border bg-raised/50 px-3 py-2.5"
+          data-testid="wf-effect-verification"
+        >
+          <p className="text-[11px] font-medium text-muted">
+            Efectos en la prueba: <span className="mono text-text">{verification.level}</span>
+          </p>
+          {verification.unverified.length > 0 && (
+            <div className="mt-1.5" data-testid="wf-effects-unverified">
+              <p className="text-[10px] font-medium text-danger">Sin doble</p>
+              <ul className="flex flex-col gap-0.5">
+                {verification.unverified.map((item) => (
+                  <li key={item.node_id} className="truncate text-[11px] text-faint">
+                    <span className="text-muted">{effectLabel(item)}</span>
+                    {item.node_type ? ` — ${item.node_type}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {verification.declared.length > 0 && (
+            <div className="mt-1.5" data-testid="wf-effects-declared">
+              <p className="text-[10px] font-medium text-warn">Fijados, declarados</p>
+              <ul className="flex flex-col gap-0.5">
+                {verification.declared.map((item) => (
+                  <li key={item.node_id} className="truncate text-[11px] text-faint">
+                    <span className="text-muted">{effectLabel(item)}</span>
+                    {item.node_type ? ` — ${item.node_type}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {verification.simulated.length > 0 && (
+            <div className="mt-1.5" data-testid="wf-effects-simulated">
+              <p className="text-[10px] font-medium text-muted">Simulados</p>
+              <ul className="flex flex-col gap-0.5">
+                {verification.simulated.map((item) => (
+                  <li key={item.node_id} className="truncate text-[11px] text-faint">
+                    <span className="text-muted">{effectLabel(item)}</span>
+                    {item.node_type ? ` — ${item.node_type}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

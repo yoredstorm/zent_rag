@@ -1,4 +1,4 @@
-import { ArrowLeft, ChatCircleDots, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowLeft, Brain, ChatCircleDots, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
@@ -26,6 +26,8 @@ import type { SaveState } from "../components/ui";
 import { WorkflowCanvasEditor } from "../components/WorkflowCanvasEditor";
 import type { RunOverlay } from "../components/WorkflowCanvas";
 import type { RunDetail } from "../components/WorkflowRunInspector";
+import { AgentMemoryPanel } from "../components/workflowStudio/AgentMemoryPanel";
+import { SubflowLibraryPanel } from "../components/workflowStudio/SubflowLibraryPanel";
 import { WorkflowApiPanel } from "../components/workflowStudio/WorkflowApiPanel";
 import { WorkflowHealthBar } from "../components/workflowStudio/WorkflowHealthBar";
 import { SalesFunnelChecklist } from "../components/commerce/SalesFunnelChecklist";
@@ -43,11 +45,12 @@ import {
   type WorkflowDetail,
 } from "../components/workflowStudio/types";
 import type { ParameterLevel } from "../lib/businessSchema";
-import type { WorkflowGraph } from "../lib/workflowGraph";
+import type { GraphNode, WorkflowGraph } from "../lib/workflowGraph";
 import {
   effectNodes,
   emptyGraph,
   graphIssues,
+  newGraphNodeId,
   nodeMeta,
   prepareGraphForSave,
   triggerConfigOf,
@@ -152,6 +155,13 @@ export default function WorkflowStudioPage() {
   const [savedSignature, setSavedSignature] = useState("");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [configLevel, setConfigLevel] = useState<ParameterLevel>("simple");
+  const historyRef = useRef<{ past: WorkflowGraph[]; future: WorkflowGraph[] }>({
+    past: [],
+    future: [],
+  });
+  const graphRef = useRef<WorkflowGraph | null>(null);
+  const historyStampRef = useRef(0);
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [run, setRun] = useState<RunDetail | null>(null);
   // El dock de prueba es la hoja móvil: en desktop el panel ya vive en la columna derecha,
   // así que `?panel=test` no debe abrir un scrim que bloquee el lienzo.
@@ -425,6 +435,55 @@ export default function WorkflowStudioPage() {
     saveRef.current = save;
   }, [save]);
 
+  useEffect(() => {
+    graphRef.current = graph;
+  }, [graph]);
+
+  const commitGraph = useCallback((next: WorkflowGraph) => {
+    const previous = graphRef.current ?? graph;
+    if (previous) {
+      const now = Date.now();
+      if (now - historyStampRef.current > 350) {
+        historyRef.current.past.push(structuredClone(previous));
+        if (historyRef.current.past.length > 40) historyRef.current.past.shift();
+        historyRef.current.future = [];
+        historyStampRef.current = now;
+      }
+    }
+    graphRef.current = next;
+    setGraph(next);
+    setHistoryState({
+      canUndo: historyRef.current.past.length > 0,
+      canRedo: historyRef.current.future.length > 0,
+    });
+  }, [graph]);
+
+  const undo = useCallback(() => {
+    const previous = historyRef.current.past.pop();
+    const current = graphRef.current ?? graph;
+    if (!previous || !current) return;
+    historyRef.current.future.push(structuredClone(current));
+    graphRef.current = previous;
+    setGraph(previous);
+    setHistoryState({
+      canUndo: historyRef.current.past.length > 0,
+      canRedo: historyRef.current.future.length > 0,
+    });
+  }, [graph]);
+
+  const redo = useCallback(() => {
+    const next = historyRef.current.future.pop();
+    const current = graphRef.current ?? graph;
+    if (!next || !current) return;
+    historyRef.current.past.push(structuredClone(current));
+    graphRef.current = next;
+    setGraph(next);
+    setHistoryState({
+      canUndo: historyRef.current.past.length > 0,
+      canRedo: historyRef.current.future.length > 0,
+    });
+  }, [graph]);
+
   const mentorNamed = useRef(false);
   useEffect(() => {
     if (mentorNamed.current || !isNew || searchParams.get("plantilla") !== "mentor") return;
@@ -447,14 +506,30 @@ export default function WorkflowStudioPage() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const editing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         if (!isNew) void saveRef.current();
+        return;
+      }
+      if (editing) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redo();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isNew]);
+  }, [isNew, redo, undo]);
 
   function updateMission(next: MissionFields) {
     setGraph((current) =>
@@ -658,6 +733,30 @@ export default function WorkflowStudioPage() {
               label="Activo"
             />
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={ArrowCounterClockwise}
+            disabled={!historyState.canUndo}
+            onClick={undo}
+            title="Deshacer (Ctrl+Z)"
+            aria-label="Deshacer"
+            data-testid="wf-undo"
+          >
+            Deshacer
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={ArrowClockwise}
+            disabled={!historyState.canRedo}
+            onClick={redo}
+            title="Rehacer (Ctrl+Shift+Z)"
+            aria-label="Rehacer"
+            data-testid="wf-redo"
+          >
+            Rehacer
+          </Button>
           <Button variant="secondary" size="sm" leadingIcon={Code} onClick={() => openDrawer("api")} data-testid="wf-open-api">
             API
           </Button>
@@ -669,6 +768,24 @@ export default function WorkflowStudioPage() {
             data-testid="wf-open-advanced"
           >
             Avanzado
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={Brain}
+            onClick={() => openDrawer("memory")}
+            data-testid="wf-open-memory"
+          >
+            Memoria
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={Lightning}
+            onClick={() => openDrawer("library")}
+            data-testid="wf-open-library"
+          >
+            Subflujos
           </Button>
           <Button variant="secondary" size="sm" leadingIcon={MagicWand} onClick={() => setPatchOpen(true)} data-testid="wf-open-patch">
             Editar con IA
@@ -769,7 +886,7 @@ export default function WorkflowStudioPage() {
             heightClass="h-full"
             workflowId={id ?? null}
             graph={graph}
-            onChangeGraph={(g) => setGraph(structuredClone(g))}
+            onChangeGraph={(g) => commitGraph(structuredClone(g))}
             kbs={kbs}
             agents={agents}
             overlay={overlay}
@@ -856,6 +973,42 @@ export default function WorkflowStudioPage() {
                 hasHookSecret={Boolean(detail?.has_hook_secret) || Boolean(secret)}
                 secret={secret}
                 onSecret={setSecret}
+              />
+            ) : drawer === "memory" ? (
+              <AgentMemoryPanel agents={agents} />
+            ) : drawer === "library" ? (
+              <SubflowLibraryPanel
+                onInsert={(subflow) => {
+                  const node: GraphNode = {
+                    id: newGraphNodeId(),
+                    type: "subworkflow_call",
+                    version: 1,
+                    label: subflow.name,
+                    position: { x: 160, y: 160 },
+                    config: subflow.node_config,
+                    input_ports: [{ name: "in", type: "json" }],
+                    output_ports: [{ name: "out", type: "json" }],
+                    retry_policy: { max_attempts: 1 },
+                    timeout_ms: 60000,
+                    error_policy: "fail",
+                    metadata: { subflow: subflow.name, version: subflow.version },
+                  };
+                  const current = graphRef.current ?? graph;
+                  commitGraph(
+                    current
+                      ? { ...current, nodes: [...current.nodes, node] }
+                      : {
+                          workflow_version: 2,
+                          nodes: [node],
+                          edges: [],
+                          variables: {},
+                          entrypoints: [],
+                          metadata: {},
+                        }
+                  );
+                  setSelectedNode(node.id);
+                  openDrawer(null);
+                }}
               />
             ) : (
               <WorkflowVersionsPanel workflowId={id} status={status} onChanged={() => void load(true)} />

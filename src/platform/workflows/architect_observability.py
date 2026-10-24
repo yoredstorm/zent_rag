@@ -178,7 +178,15 @@ def design_state(
     permission_issues = [
         issue for issue in issues if getattr(issue, "code", "").startswith("permission.")
     ]
-    if requirements or readiness_errors or permission_issues:
+    # Un warning operativo que impide ejecutar de verdad (p. ej. un nodo LLM
+    # sin agente) tampoco puede presentarse como DRAFT_READY.
+    operational_warnings = [
+        issue
+        for issue in issues
+        if getattr(issue, "severity", "") == "warning"
+        and getattr(issue, "code", "") in {"plan.agent_needs_selection"}
+    ]
+    if requirements or readiness_errors or permission_issues or operational_warnings:
         return STATE_NEEDS_CONFIGURATION
     return STATE_DRAFT_READY
 

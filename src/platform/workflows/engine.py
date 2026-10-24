@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
+from src.platform.workflows.effect_verification import classify_effects
 from src.platform.workflows.narrative import run_story
 
 logger = get_logger(__name__)
@@ -601,6 +602,7 @@ async def run_workflow(
         preload_ports=preload_ports or None,
     )
 
+    effect_verification = classify_effects(result.node_executions, graph)
     duration = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
     if simulate and result.status == "succeeded":
         final_status = "simulated"
@@ -683,6 +685,7 @@ async def run_workflow(
                 "duration_ms": duration,
                 "error": result.error,
                 "simulate": bool(simulate),
+                "effect_verification": effect_verification,
             },
         )
     except Exception as exc:  # noqa: BLE001 — no romper la respuesta del run
@@ -724,6 +727,7 @@ async def run_workflow(
         "cost_ms": round(result.cost_ms, 4),
         "simulate": bool(simulate),
         "run_mode": run_mode,
+        "effect_verification": effect_verification,
     }
     if instance_id is not None:
         body["instance_id"] = str(instance_id)
@@ -731,6 +735,8 @@ async def run_workflow(
         if final_status == "waiting":
             body["waiting_for"] = result.waiting
             body["wait_node_id"] = result.wait_node_id
+    from src.platform.workflows.error_contract import port_for_message
+
     body["result"] = {
         "summary": summaries[:5],
         "structured_output": {
@@ -743,7 +749,12 @@ async def run_workflow(
         "evidence": [],
         "notifications": notifications,
         "errors": [
-            {"node_id": nid, "error": e.error}
+            {
+                "node_id": nid,
+                "error": e.error,
+                "typed_port": (e.output or {}).get("typed_port")
+                or port_for_message(e.error),
+            }
             for nid, e in result.node_executions.items()
             if e.error
         ],
@@ -918,8 +929,9 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
                 text(
                     "SELECT id, name, description, trigger_type, trigger_config, steps, "
                     "status, created_at, updated_at, editor_state, graph, "
-                    "workspace_id, workflow_version, graph_source, package FROM workflows "
-                    "WHERE id = :wid AND organization_id = :oid"
+                    "workspace_id, workflow_version, graph_source, package, "
+                    "release_policy, release_policy_reason, release_policy_at "
+                    "FROM workflows WHERE id = :wid AND organization_id = :oid"
                 ),
                 {"wid": workflow_id, "oid": organization_id},
             )
@@ -947,6 +959,13 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
         "hook_url": f"/api/v1/public/workflows/{row.id}/hook",
         "has_hook_secret": bool(tcfg.get("hook_secret_hash")),
         "package": dict(row.package or {}),
+        "release_policy": str(getattr(row, "release_policy", None) or "standard"),
+        "release_policy_reason": getattr(row, "release_policy_reason", None),
+        "release_policy_at": (
+            row.release_policy_at.isoformat()
+            if getattr(row, "release_policy_at", None)
+            else None
+        ),
     }
 
 
@@ -1356,6 +1375,14 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         "events": events,
         "chain_of_thought_exposed": False,
     }
+    finished = next(
+        (event for event in reversed(events) if event.get("kind") == "run_finished"),
+        None,
+    )
+    if finished and isinstance(finished.get("payload"), dict):
+        verification = finished["payload"].get("effect_verification")
+        if verification:
+            payload_out["effect_verification"] = verification
     payload_out["story"] = run_story(payload_out)
     return payload_out
 
@@ -1551,16 +1578,25 @@ async def run_due_scheduled_workflows(
             continue
 
         try:
-            await run_workflow(
-                row.id,
-                {"scheduled_at": now.isoformat(), "next_trigger_at": _iso(next_trigger_at(cfg, now))},
-                trigger="schedule",
+            from src.platform.workflows.ingress import route_ingress
+
+            result = await route_ingress(
+                workflow_id=row.id,
                 organization_id=row.organization_id,
+                trigger="schedule",
+                payload={
+                    "scheduled_at": now.isoformat(),
+                    "next_trigger_at": _iso(next_trigger_at(cfg, now)),
+                },
                 workspace_id=row.workspace_id,
+                idempotency_key=f"sched:{row.id}:{int(now.timestamp())}",
                 actor_type="scheduler",
                 system_context=True,
                 correlation_id=f"sched:{row.id}:{int(now.timestamp())}",
+                require_active=True,
             )
+            if result.get("error") in ("inactive", "not_found", "paused"):
+                continue
         except WorkflowAccessError:
             continue
         session = await get_async_session()
@@ -1591,8 +1627,12 @@ async def workflow_v2_scheduler_loop() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Workflow v2 scheduler iteration failed", error=str(exc)[:200])
         try:
+            from src.platform.workflows.ingress import sweep_ingress_events
             from src.platform.workflows.instances import sweep_waiting_instances
 
+            ingress_stats = await sweep_ingress_events()
+            if ingress_stats.get("requeued"):
+                logger.info("workflow ingress reclaimed", **ingress_stats)
             stats = await sweep_waiting_instances()
             if stats.get("waits_timed_out") or stats.get("instances_expired"):
                 logger.info("workflow durable sweep", **stats)
@@ -1601,7 +1641,14 @@ async def workflow_v2_scheduler_loop() -> None:
         await asyncio.sleep(60)
 
 
-async def run_workflow_from_hook(workflow_id: UUID, secret: str, payload: dict | None) -> dict:
+async def run_workflow_from_hook(
+    workflow_id: UUID,
+    secret: str,
+    payload: dict | None,
+    *,
+    idempotency_key: str | None = None,
+    external_event_id: str | None = None,
+) -> dict:
     """Inbound público: compara secret y dispara el workflow (ExecutionContext
     derivado de la fila — el hook es la única vía que solo lleva UUID + secret)."""
     session = await get_async_session()
@@ -1628,22 +1675,32 @@ async def run_workflow_from_hook(workflow_id: UUID, secret: str, payload: dict |
     got = _hash_hook_secret(secret or "")
     if not expected or not hmac.compare_digest(expected, got):
         return {"error": "unauthorized", "status_code": 401}
-    return await run_workflow(
-        workflow_id,
-        payload or {},
-        trigger="webhook",
+    from src.platform.workflows.ingress import route_ingress
+
+    return await route_ingress(
+        workflow_id=workflow_id,
         organization_id=row.organization_id,
+        trigger="webhook",
+        payload=payload or {},
         workspace_id=row.workspace_id,
+        idempotency_key=idempotency_key,
+        external_event_id=external_event_id,
         actor_type="webhook",
         system_context=True,
         correlation_id=f"hook:{workflow_id}",
+        require_active=True,
     )
 
 
 # ---------------------------------------------------------------------------
 # Aprobaciones humanas (Phase 32A)
 # ---------------------------------------------------------------------------
-async def list_approvals(organization_id: UUID, run_id: UUID | None = None) -> dict:
+async def list_approvals(
+    organization_id: UUID,
+    run_id: UUID | None = None,
+    *,
+    workspace_id: UUID | None = None,
+) -> dict:
     session = await get_async_session()
     try:
         sql = (
@@ -1655,6 +1712,9 @@ async def list_approvals(organization_id: UUID, run_id: UUID | None = None) -> d
         if run_id is not None:
             sql += " AND run_id = :rid"
             params["rid"] = run_id
+        if workspace_id is not None:
+            sql += " AND (workspace_id IS NULL OR workspace_id = :ws)"
+            params["ws"] = str(workspace_id)
         rows = (await session.execute(text(sql + " ORDER BY requested_at DESC"), params)).fetchall()
     finally:
         await session.close()
@@ -1696,32 +1756,62 @@ async def _run_instance_id(run_id: UUID) -> UUID | None:
     return UUID(str(row.instance_id))
 
 
+def self_approval_denied(
+    requested_by: UUID | str | None,
+    decided_by: UUID | str | None,
+    *,
+    allow_owner_self_approval: bool = False,
+) -> bool:
+    """Separation of duties; el owner conserva un break-glass explícito."""
+    if allow_owner_self_approval:
+        return False
+    return bool(
+        requested_by
+        and decided_by
+        and str(requested_by) == str(decided_by)
+    )
+
+
 async def decide_approval(
     organization_id: UUID,
     approval_id: UUID,
     decision: str,
     decided_by: UUID | None = None,
     comment: str | None = None,
+    *,
+    workspace_id: UUID | None = None,
+    allow_owner_self_approval: bool = False,
 ) -> dict | None:
     if decision not in ("approved", "rejected"):
         raise ValueError("decision debe ser approved|rejected")
     session = await get_async_session()
     try:
-        row = (
-            await session.execute(
-                text(
-                    "SELECT id, run_id, workflow_id, status FROM workflow_approvals "
-                    "WHERE id = :aid AND organization_id = :oid"
-                ),
-                {"aid": approval_id, "oid": organization_id},
-            )
-        ).fetchone()
+        sql = (
+            "SELECT id, run_id, workflow_id, status, requested_by, workspace_id "
+            "FROM workflow_approvals WHERE id = :aid AND organization_id = :oid"
+        )
+        params: dict = {"aid": approval_id, "oid": organization_id}
+        if workspace_id is not None:
+            sql += " AND (workspace_id IS NULL OR workspace_id = :ws)"
+            params["ws"] = str(workspace_id)
+        row = (await session.execute(text(sql), params)).fetchone()
         if row is None:
             await session.commit()
             return None
         if row.status != "pending":
             await session.commit()
             return {"approval_id": str(approval_id), "status": row.status, "already": True}
+        if self_approval_denied(
+            row.requested_by,
+            decided_by,
+            allow_owner_self_approval=allow_owner_self_approval,
+        ):
+            await session.commit()
+            return {
+                "approval_id": str(approval_id),
+                "status": "forbidden",
+                "error": "self_approval",
+            }
         await session.execute(
             text(
                 "UPDATE workflow_approvals SET status = :dec, decided_by = :by, "

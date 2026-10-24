@@ -38,6 +38,8 @@ def _walk_rules_refs(rules: Any, found: set[str]) -> None:
 def readiness_checks(
     graph: dict[str, Any],
     capabilities: dict[str, Any] | None = None,
+    *,
+    trigger_type: str | None = None,
 ) -> list[dict[str, Any]]:
     caps = capabilities or {}
     nodes = _node_list(graph)
@@ -45,8 +47,10 @@ def readiness_checks(
     types = [str(n.get("type")) for n in nodes]
     checks: list[dict[str, Any]] = []
 
-    # 1) Trigger
-    if any(t.startswith("trigger_") for t in types):
+    # 1) Trigger. Un grafo legacy puede tener el trigger en la fila del
+    # workflow en lugar de un nodo; se pasa explícitamente.
+    has_trigger = any(t.startswith("trigger_") for t in types) or bool(trigger_type)
+    if has_trigger:
         checks.append(_check("trigger", "Inicio del flujo", "ok", "El flujo tiene un disparador."))
     else:
         checks.append(
@@ -177,7 +181,9 @@ async def workflow_readiness(
         )
         graph = adapted.to_dict()
     capabilities = await load_capabilities(organization_id, workspace_id)
-    checks = readiness_checks(graph, capabilities)
+    checks = readiness_checks(
+        graph, capabilities, trigger_type=str(workflow.get("trigger_type") or "")
+    )
 
     # Requisitos del paquete portable (si el workflow fue importado): los
     # mismos estados del readiness report, en el shape del checklist.

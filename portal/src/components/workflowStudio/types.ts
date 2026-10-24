@@ -92,12 +92,14 @@ export const STATUS_BADGE: Record<string, string> = {
  * API y Avanzado se abren como drawers desde la cabecera, y `?panel=` sigue
  * siendo el deep-link que usa la lista de workflows.
  */
-export const STUDIO_DRAWERS = ["api", "advanced"] as const;
+export const STUDIO_DRAWERS = ["api", "advanced", "memory", "library"] as const;
 export type StudioDrawer = (typeof STUDIO_DRAWERS)[number];
 
 export const STUDIO_DRAWER_LABELS: Record<StudioDrawer, string> = {
   api: "API",
   advanced: "Avanzado",
+  memory: "Memoria del agente",
+  library: "Biblioteca de subflujos",
 };
 
 export function isStudioDrawer(value: string | null): value is StudioDrawer {

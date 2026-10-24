@@ -44,6 +44,9 @@ class InMemoryMemoryRepository(MemoryRepository):
         organization_id: UUID,
         memory_type: MemoryType,
         pattern_signature: str,
+        *,
+        workspace_id: UUID | None = None,
+        subject_id: str | None = None,
     ) -> MemoryRecord | None:
         for record in self.records.values():
             if record.organization_id != organization_id:
@@ -53,6 +56,12 @@ class InMemoryMemoryRepository(MemoryRepository):
             if record.pattern_signature != pattern_signature:
                 continue
             if record.status in TERMINAL_STATUSES:
+                continue
+            if record.deleted_at is not None:
+                continue
+            if workspace_id is not None and record.workspace_id != workspace_id:
+                continue
+            if subject_id is not None and record.subject_id != subject_id:
                 continue
             return record
         return None
@@ -108,6 +117,9 @@ class InMemoryMemoryRepository(MemoryRepository):
         memory_type: str | None = None,
         status: str | None = None,
         agent_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        subject_id: str | None = None,
+        scope: str | None = None,
         source_component: str | None = None,
         pattern: str | None = None,
         confidence_min: float | None = None,
@@ -123,6 +135,17 @@ class InMemoryMemoryRepository(MemoryRepository):
             rows = [row for row in rows if row.status.value == status]
         if agent_id is not None:
             rows = [row for row in rows if row.agent_id == agent_id]
+        if workspace_id is not None:
+            rows = [
+                row
+                for row in rows
+                if row.workspace_id is None or row.workspace_id == workspace_id
+            ]
+        if subject_id is not None:
+            rows = [row for row in rows if row.subject_id == subject_id]
+        if scope is not None:
+            rows = [row for row in rows if row.scope == scope]
+        rows = [row for row in rows if row.deleted_at is None]
         if source_component:
             rows = [row for row in rows if row.source_component == source_component]
         if pattern:

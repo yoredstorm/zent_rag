@@ -195,7 +195,12 @@ async def _simulate(plan: dict, scenario: SimulationScenario):
         [scenario],
         organization_id=uuid4(),
         permissions=frozenset(
-            {"workflows:read", "workflows:create", "external_actions:execute"}
+            {
+                "workflows:read",
+                "workflows:create",
+                "workflows:run",
+                "external_actions:execute",
+            }
         ),
     )
 
@@ -408,6 +413,7 @@ async def test_bounded_repair_applies_patch_to_draft_and_revalidates(monkeypatch
         [SimulationScenario(scenario_id="repair", responses=[_product_response()])],
         organization_id=uuid4(),
         max_repairs=2,
+        permissions=frozenset({"workflows:run", "external_actions:execute"}),
     )
     assert result["changed"] is True
     assert result["attempts"][0]["accepted"] is True

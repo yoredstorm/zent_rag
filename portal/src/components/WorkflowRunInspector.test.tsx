@@ -82,4 +82,39 @@ describe("WorkflowRunInspector — Execution Inspector", () => {
     expect(screen.queryByTestId("wf-run-actions")).toBeNull();
     expect(screen.queryByText(/chain of thought/i)).toBeNull();
   });
+
+  it("separa efectos sin doble, declarados y simulados", () => {
+    render(
+      <WorkflowRunInspector
+        run={{
+          ...RUN,
+          effect_verification: {
+            level: "UNVERIFIED",
+            unverified: [{ node_id: "pay", node_type: "capability_call", label: "Cobrar" }],
+            declared: [{ node_id: "mail", node_type: "notify", label: "Avisar" }],
+            simulated: [{ node_id: "state", node_type: "state_set", label: "Guardar" }],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("wf-effect-verification")).toHaveTextContent("UNVERIFIED");
+    expect(screen.getByTestId("wf-effects-unverified")).toHaveTextContent("Cobrar");
+    expect(screen.getByTestId("wf-effects-declared")).toHaveTextContent("Avisar");
+    expect(screen.getByTestId("wf-effects-simulated")).toHaveTextContent("Guardar");
+  });
+
+  it("clasifica plannedEffects viejos sin effect_verification", () => {
+    render(
+      <WorkflowRunInspector
+        run={{
+          ...RUN,
+          planned_effects: [
+            { node_id: "pay", node_type: "capability_call", planned: { kind: "capability" } },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByTestId("wf-effect-verification")).toHaveTextContent("UNVERIFIED");
+    expect(screen.getByTestId("wf-effects-unverified")).toHaveTextContent("pay");
+  });
 });

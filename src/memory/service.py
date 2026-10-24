@@ -55,6 +55,11 @@ class MemoryObservation:
     request_id: UUID | None = None
     agent_id: UUID | None = None
     workflow_id: UUID | None = None
+    workspace_id: UUID | None = None
+    subject_id: str | None = None
+    scope: str = "tenant"
+    consent: bool = False
+    expires_at: datetime | None = None
     success: bool | None = None
     evidence: list[EvidenceRef] = field(default_factory=list)
     idempotency_key: str | None = None
@@ -509,6 +514,73 @@ class MemoryFoundationService:
             source_component=source_component,
         )
 
+    async def revoke_consent(
+        self,
+        organization_id: UUID,
+        memory_id: UUID,
+        *,
+        actor_id: UUID | None = None,
+        reason: str = "",
+        source_component: str = "memory.consent",
+    ) -> MemoryRecord:
+        """Revoca el consentimiento y saca la memoria de recall, sin borrar auditoría."""
+
+        async def apply(record: MemoryRecord, now: datetime) -> None:
+            record.status = MemoryStatus.EXPIRED
+            record.activated_at = None
+            record.consent_at = None
+            record.deleted_at = now
+            record.expires_at = now
+            record.updated_at = now
+            record.metadata = {
+                **dict(record.metadata or {}),
+                "consent_revoked": True,
+                "revoked_reason": str(reason)[:200],
+            }
+
+        return await self._admin_transition(
+            organization_id,
+            memory_id,
+            event_type=MemoryEventType.EXPIRED,
+            actor_id=actor_id,
+            source_component=source_component,
+            apply=apply,
+        )
+
+    async def erase(
+        self,
+        organization_id: UUID,
+        memory_id: UUID,
+        *,
+        actor_id: UUID | None = None,
+        reason: str = "",
+        source_component: str = "memory.erasure",
+    ) -> MemoryRecord:
+        """Borra el contenido y bloquea recall; conserva el evento de borrado."""
+
+        async def apply(record: MemoryRecord, now: datetime) -> None:
+            record.status = MemoryStatus.EXPIRED
+            record.activated_at = None
+            record.consent_at = None
+            record.deleted_at = now
+            record.expires_at = now
+            record.title = "[eliminado]"
+            record.description = ""
+            record.metadata = {
+                "erased": True,
+                "erased_reason": str(reason)[:200],
+            }
+            record.updated_at = now
+
+        return await self._admin_transition(
+            organization_id,
+            memory_id,
+            event_type=MemoryEventType.EXPIRED,
+            actor_id=actor_id,
+            source_component=source_component,
+            apply=apply,
+        )
+
     async def restore(
         self,
         organization_id: UUID,
@@ -716,6 +788,19 @@ class MemoryFoundationService:
     ) -> tuple[str, str, dict[str, Any]]:
         if observation.memory_type == MemoryType.CONVERSATION and observation.conversation_id is None:
             raise MemoryPolicyError("conversation memory requires conversation_id")
+        if observation.scope not in {
+            "tenant",
+            "workspace",
+            "participant",
+            "session",
+            "durable_business_state",
+            "long_term_consent",
+        }:
+            raise MemoryPolicyError("unknown memory scope")
+        if observation.scope == "long_term_consent" and (
+            not observation.consent or observation.expires_at is None
+        ):
+            raise MemoryPolicyError("long-term memory requires consent and expiry")
         title = assert_safe_text(observation.title, field_name="title")
         description = assert_safe_text(observation.description, field_name="description")
         metadata = sanitize_metadata(observation.metadata)
@@ -761,6 +846,11 @@ class MemoryFoundationService:
             last_observed_at=now,
             created_from_conversation_id=observation.conversation_id,
             created_from_run_id=observation.run_id,
+            workspace_id=observation.workspace_id,
+            subject_id=observation.subject_id,
+            scope=observation.scope,
+            consent_at=now if observation.consent else None,
+            expires_at=observation.expires_at,
             intent_family=features.intent_family,
             source_type=features.source_type,
             retrieval_modality=features.retrieval_modality,

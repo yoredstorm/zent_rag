@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="59.061" timestamp="2026-10-23T15:12:37.976416-05:00" hostname="LAP-PPIMENTEL"><testcase classname="tests.red.test_p00_policy_red" name="test_notify_node_is_denied_without_permission" time="0.979"><failure message="AssertionError: NodeExecution(status='simulated', output={'simulated': True, 'channel': 'in_app', 'title': 'P00 policy'}, error=None, ...tion', 'channel': 'in_app', 'title': 'P00 policy'}, control=None, cost_ms=0.0, contribution={}, looping={}, waiting={})&#10;assert 'simulated' == 'denied'&#10;  &#10;  - denied&#10;  + simulated">@pytest.mark.asyncio
+    async def test_notify_node_is_denied_without_permission() -&gt; None:
+        graph = _graph(
+            nodes=[
+                _notify_node("n", "P00 policy"),
+                {"id": "end", "type": "end", "label": "Fin"},
+            ],
+            edges=[_edge("e1", "n", "end")],
+            entrypoints=["n"],
+        )
+        ctx = ExecutionContext(
+            organization_id=uuid4(),
+            workflow_id=uuid4(),
+            run_id=uuid4(),
+            actor_type="user",
+            trigger_type="manual",
+            permissions=frozenset(),
+            simulate=True,
+        )
+    
+        result = await execute_graph(
+            WorkflowGraph.from_dict(graph), ctx, {}, persist_execution=False
+        )
+    
+&gt;       assert result.node_executions["n"].status == "denied", result.node_executions["n"]
+E       AssertionError: NodeExecution(status='simulated', output={'simulated': True, 'channel': 'in_app', 'title': 'P00 policy'}, error=None, ...tion', 'channel': 'in_app', 'title': 'P00 policy'}, control=None, cost_ms=0.0, contribution={}, looping={}, waiting={})
+E       assert 'simulated' == 'denied'
+E         
+E         - denied
+E         + simulated
+
+tests\red\test_p00_policy_red.py:49: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_policy_red" name="test_wellness_capability_decision_is_wired_into_workflow_runtime" time="0.088"><failure message="AssertionError: assert 'capability_decision' in '# =============================================================================\n# Phase 32A — WorkflowNodeHandler re...ict(outcome.planned or {}),\n        control=outcome.control,\n        cost_ms=float(outcome.cost_ms or 0.0),\n    )\n'">def test_wellness_capability_decision_is_wired_into_workflow_runtime() -&gt; None:
+        """La autonomía del rol (answer_only/propose_actions) debe ser consultada por
+        el runtime de workflows, no solo por el endpoint de agentes. Hoy
+        `src/platform/studio/policy.py` no tiene ningún caller de producción."""
+        from src.platform.workflows import nodes, runtime
+    
+        source = inspect.getsource(nodes) + inspect.getsource(runtime)
+&gt;       assert "capability_decision" in source
+E       AssertionError: assert 'capability_decision' in '# =============================================================================\n# Phase 32A — WorkflowNodeHandler re...ict(outcome.planned or {}),\n        control=outcome.control,\n        cost_ms=float(outcome.cost_ms or 0.0),\n    )\n'
+
+tests\red\test_p00_policy_red.py:59: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_workspace_isolation_red" name="test_instance_list_does_not_leak_across_workspaces" time="29.574"><failure message="AssertionError: una instancia de A no puede verse desde B&#10;assert 'b9a8a05b-4b03-4d24-b235-211802e4d348' not in {'b9a8a05b-4b03-4d24-b235-211802e4d348'}">async_client = &lt;httpx.AsyncClient object at 0x0000025894508890&gt;
+
+    @pytest.mark.asyncio
+    async def test_instance_list_does_not_leak_across_workspaces(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P00 WS List")
+        ws_a = await _default_workspace(async_client, org)
+        created = await async_client.post(
+            "/api/v1/workspaces", headers=_headers(org), json={"name": "Workspace B"}
+        )
+        assert created.status_code == 201, created.text
+        ws_b = created.json()
+    
+        workflow = await async_client.post(
+            "/api/v1/workflows",
+            headers=_ws_headers(org, ws_a["id"]),
+            json={
+                "name": "WAIT en A",
+                "trigger_type": "webhook",
+                "workspace_id": ws_a["id"],
+                "graph": _durable_graph(),
+                "workflow_version": 2,
+            },
+        )
+        assert workflow.status_code == 200, workflow.text
+        wid = workflow.json()["workflow_id"]
+    
+        started = await async_client.post(
+            f"/api/v1/workflows/{wid}/instances",
+            headers={**_ws_headers(org, ws_a["id"]), "Idempotency-Key": f"p00-{uuid4().hex}"},
+            json={"payload": {"message": "hola"}},
+        )
+        assert started.status_code == 200, started.text
+        instance_id = started.json()["instance_id"]
+    
+        listed = await async_client.get(
+            "/api/v1/workflows/instances", headers=_ws_headers(org, ws_b["id"])
+        )
+        assert listed.status_code == 200, listed.text
+        ids = {item["id"] for item in listed.json().get("instances", [])}
+&gt;       assert instance_id not in ids, "una instancia de A no puede verse desde B"
+E       AssertionError: una instancia de A no puede verse desde B
+E       assert 'b9a8a05b-4b03-4d24-b235-211802e4d348' not in {'b9a8a05b-4b03-4d24-b235-211802e4d348'}
+
+tests\red\test_p00_workspace_isolation_red.py:77: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_workspace_isolation_red" name="test_signal_from_other_workspace_is_denied" time="27.583"><failure message="AssertionError: {&quot;status&quot;:&quot;resumed&quot;,&quot;signal_id&quot;:&quot;543a1d9a-51de-4bee-bf3e-6487da6cef1c&quot;,&quot;resumed&quot;:true,&quot;results&quot;:[{&quot;instance_id&quot;:&quot;05e72218-9c11-4147-a41e-8f9849aba7c6&quot;,&quot;claimed&quot;:true,&quot;status&quot;:&quot;COMPLETED&quot;,&quot;run&quot;:{&quot;run_id&quot;:&quot;e8938298-13b8-9a4c-f135-50b37ccc1d74&quot;,&quot;workflow_id&quot;:&quot;3771d3fe-bf17-4961-8570-b5465dab67a2&quot;,&quot;status&quot;:&quot;succeeded&quot;,&quot;duration_ms&quot;:860,&quot;error&quot;:null,&quot;nodes&quot;:6,&quot;correlation_id&quot;:&quot;inst:05e72218-9c11-4147-a41e-8f9849aba7c6:r2&quot;,&quot;cost_ms&quot;:0.0,&quot;simulate&quot;:false,&quot;run_mode&quot;:&quot;full&quot;,&quot;effect_verification&quot;:{&quot;level&quot;:&quot;NONE&quot;,&quot;unverified&quot;:[],&quot;declared&quot;:[],&quot;simulated&quot;:[]},&quot;instance_id&quot;:&quot;05e72218-9c11-4147-a41e-8f9849aba7c6&quot;,&quot;instance_seq&quot;:2,&quot;result&quot;:{&quot;summary&quot;:[],&quot;structured_output&quot;:{&quot;nodes&quot;:{&quot;t&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;end&quot;:true}},&quot;n1&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;value&quot;:&quot;amigo&quot;,&quot;variable&quot;:&quot;greeting&quot;}},&quot;n2&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;state&quot;:{&quot;op&quot;:&quot;append&quot;,&quot;path&quot;:&quot;cart.items&quot;,&quot;value&quot;:[{&quot;sku&quot;:&quot;ARZ-1&quot;}]}}},&quot;w1&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;port&quot;:&quot;out&quot;,&quot;message&quot;:&quot;desde B&quot;,&quot;waiting&quot;:true,&quot;event_type&quot;:&quot;conversation.message&quot;,&quot;correlation&quot;:{},&quot;signal_received&quot;:true,&quot;timeout_seconds&quot;:null}},&quot;n3&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;state&quot;:{&quot;op&quot;:&quot;set&quot;,&quot;path&quot;:&quot;echo&quot;,&quot;value&quot;:&quot;amigo&quot;}}},&quot;end&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;end&quot;:true}}}},&quot;context&quot;:{&quot;identity&quot;:{&quot;organization_id&quot;:&quot;32e564b1-e94c-4b3f-8e1d-595ce4715ed1&quot;,&quot;workflow_id&quot;:&quot;3771d3fe-bf17-4961-8570-b5465dab67a2&quot;,&quot;run_id&quot;:&quot;e8938298-13b8-9a4c-f135-50b37ccc1d74&quot;,&quot;actor_type&quot;:&quot;signal&quot;,&quot;actor_id&quot;:null,&quot;workspace_id&quot;:&quot;c63cffe9-8a9e-460a-8855-356fdd913005&quot;,&quot;correlation_id&quot;:&quot;inst:05e72218-9c11-4147-a41e-8f9849aba7c6:r2&quot;},&quot;trigger&quot;:{&quot;source&quot;:&quot;signal&quot;,&quot;event_type&quot;:&quot;signal&quot;,&quot;payload&quot;:{&quot;message&quot;:&quot;desde B&quot;},&quot;occurred_at&quot;:&quot;2026-10-23T20:13:34.993875+00:00&quot;},&quot;data&quot;:{},&quot;knowledge&quot;:{},&quot;evidence_refs&quot;:[],&quot;claim_refs&quot;:[],&quot;entity_refs&quot;:[],&quot;findings&quot;:[],&quot;decisions&quot;:[],&quot;artifacts&quot;:[],&quot;variables&quot;:{},&quot;execution&quot;:{&quot;nodes&quot;:{&quot;n3&quot;:{&quot;node_type&quot;:&quot;state_set&quot;,&quot;status&quot;:&quot;succeeded&quot;,&quot;error&quot;:null,&quot;duration_ms&quot;:237,&quot;simulated&quot;:false},&quot;end&quot;:{&quot;node_type&quot;:&quot;end&quot;,&quot;status&quot;:&quot;succeeded&quot;,&quot;error&quot;:null,&quot;duration_ms&quot;:0,&quot;simulated&quot;:false}}}},&quot;evidence&quot;:[],&quot;notifications&quot;:[],&quot;errors&quot;:[],&quot;cost_ms&quot;:0.0,&quot;duration_ms&quot;:860}}}]}&#10;assert 200 in (403, 404)&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">async_client = &lt;httpx.AsyncClient object at 0x00000258954DC050&gt;
+
+    @pytest.mark.asyncio
+    async def test_signal_from_other_workspace_is_denied(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P00 WS Signal")
+        ws_a = await _default_workspace(async_client, org)
+        created = await async_client.post(
+            "/api/v1/workspaces", headers=_headers(org), json={"name": "Workspace B2"}
+        )
+        assert created.status_code == 201, created.text
+        ws_b = created.json()
+    
+        workflow = await async_client.post(
+            "/api/v1/workflows",
+            headers=_ws_headers(org, ws_a["id"]),
+            json={
+                "name": "WAIT señal A",
+                "trigger_type": "webhook",
+                "workspace_id": ws_a["id"],
+                "graph": _durable_graph(),
+                "workflow_version": 2,
+            },
+        )
+        assert workflow.status_code == 200, workflow.text
+        wid = workflow.json()["workflow_id"]
+    
+        started = await async_client.post(
+            f"/api/v1/workflows/{wid}/instances",
+            headers={**_ws_headers(org, ws_a["id"]), "Idempotency-Key": f"p00-{uuid4().hex}"},
+            json={"payload": {"message": "hola"}},
+        )
+        assert started.status_code == 200, started.text
+        instance_id = started.json()["instance_id"]
+    
+        detail = await async_client.get(
+            f"/api/v1/workflows/instances/{instance_id}", headers=_ws_headers(org, ws_a["id"])
+        )
+        assert detail.status_code == 200, detail.text
+        event_type = detail.json().get("waiting_event_type")
+        assert event_type, detail.text
+    
+        signaled = await async_client.post(
+            f"/api/v1/workflows/instances/{instance_id}/signal",
+            headers=_ws_headers(org, ws_b["id"]),
+            json={"event_type": event_type, "payload": {"message": "desde B"}},
+        )
+&gt;       assert signaled.status_code in (403, 404), signaled.text
+E       AssertionError: {"status":"resumed","signal_id":"543a1d9a-51de-4bee-bf3e-6487da6cef1c","resumed":true,"results":[{"instance_id":"05e72218-9c11-4147-a41e-8f9849aba7c6","claimed":true,"status":"COMPLETED","run":{"run_id":"e8938298-13b8-9a4c-f135-50b37ccc1d74","workflow_id":"3771d3fe-bf17-4961-8570-b5465dab67a2","status":"succeeded","duration_ms":860,"error":null,"nodes":6,"correlation_id":"inst:05e72218-9c11-4147-a41e-8f9849aba7c6:r2","cost_ms":0.0,"simulate":false,"run_mode":"full","effect_verification":{"level":"NONE","unverified":[],"declared":[],"simulated":[]},"instance_id":"05e72218-9c11-4147-a41e-8f9849aba7c6","instance_seq":2,"result":{"summary":[],"structured_output":{"nodes":{"t":{"status":"succeeded","output":{"end":true}},"n1":{"status":"succeeded","output":{"value":"amigo","variable":"greeting"}},"n2":{"status":"succeeded","output":{"state":{"op":"append","path":"cart.items","value":[{"sku":"ARZ-1"}]}}},"w1":{"status":"succeeded","output":{"port":"out","message":"desde B","waiting":true,"event_type":"conversation.message","correlation":{},"signal_received":true,"timeout_seconds":null}},"n3":{"status":"succeeded","output":{"state":{"op":"set","path":"echo","value":"amigo"}}},"end":{"status":"succeeded","output":{"end":true}}}},"context":{"identity":{"organization_id":"32e564b1-e94c-4b3f-8e1d-595ce4715ed1","workflow_id":"3771d3fe-bf17-4961-8570-b5465dab67a2","run_id":"e8938298-13b8-9a4c-f135-50b37ccc1d74","actor_type":"signal","actor_id":null,"workspace_id":"c63cffe9-8a9e-460a-8855-356fdd913005","correlation_id":"inst:05e72218-9c11-4147-a41e-8f9849aba7c6:r2"},"trigger":{"source":"signal","event_type":"signal","payload":{"message":"desde B"},"occurred_at":"2026-10-23T20:13:34.993875+00:00"},"data":{},"knowledge":{},"evidence_refs":[],"claim_refs":[],"entity_refs":[],"findings":[],"decisions":[],"artifacts":[],"variables":{},"execution":{"nodes":{"n3":{"node_type":"state_set","status":"succeeded","error":null,"duration_ms":237,"simulated":false},"end":{"node_type":"end","status":"succeeded","error":null,"duration_ms":0,"simulated":false}}}},"evidence":[],"notifications":[],"errors":[],"cost_ms":0.0,"duration_ms":860}}}]}
+E       assert 200 in (403, 404)
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\red\test_p00_workspace_isolation_red.py:126: AssertionError</failure></testcase></testsuite></testsuites>

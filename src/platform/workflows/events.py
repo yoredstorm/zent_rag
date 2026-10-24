@@ -199,8 +199,6 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
     if not isinstance(chain, list):
         chain = []
 
-    from src.platform.workflows.engine import run_workflow
-
     org_raw = payload.get("organization_id")
     if not org_raw:
         return 0
@@ -254,16 +252,36 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
                 continue
             child_payload = {k: v for k, v in payload.items() if not k.startswith("_")}
             child_payload["_wf_chain"] = chain + [str(row.workflow_id)]
-            await run_workflow(
-                row.workflow_id,
-                child_payload,
-                trigger="event",
+            from src.platform.workflows.ingress import route_ingress
+
+            business_key = (
+                child_payload.get("business_key")
+                or child_payload.get("order_id")
+                or child_payload.get("conversation_id")
+            )
+            conversation_id = None
+            if child_payload.get("conversation_id"):
+                try:
+                    conversation_id = UUID(str(child_payload["conversation_id"]))
+                except (ValueError, TypeError):
+                    conversation_id = None
+            result = await route_ingress(
+                workflow_id=row.workflow_id,
                 organization_id=organization_id,
+                trigger="event",
+                payload=child_payload,
                 workspace_id=row.workspace_id,
+                idempotency_key=f"evt:{row.workflow_id}:{event_id}",
+                business_key=str(business_key) if business_key else None,
+                conversation_id=conversation_id,
+                external_event_id=str(event_id),
                 actor_type="event_dispatcher",
                 system_context=True,
                 correlation_id=f"evt:{event_type}:{event_id}",
+                require_active=True,
             )
+            if result.get("error") in ("inactive", "not_found", "paused"):
+                continue
             fired += 1
         except Exception as exc:  # noqa: BLE001
             logger.warning(

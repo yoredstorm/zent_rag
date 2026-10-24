@@ -33,8 +33,9 @@ HANDLER_PERMISSIONS: dict[str, tuple[str, ...]] = {
 #: Sitios que ejecutan workflows SIN permisos explícitos: deben declarar
 #: `system_context=True` (disparadores internos con autorización propia).
 WORKFLOW_SYSTEM_CALLERS: dict[str, int] = {
-    "src/platform/workflows/engine.py": 3,
-    "src/platform/workflows/events.py": 1,
+    # P02 movió schedule/hook/event a ingress.py, que pasa permissions= o
+    # system_context de forma explícita. Queda el resume de aprobación.
+    "src/platform/workflows/engine.py": 1,
 }
 
 

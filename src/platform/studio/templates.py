@@ -31,6 +31,7 @@ _ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "allowed_tools": ["search_knowledge", "query_database"],
         "autonomy_level": "require_approval",
         "risk_class": "medium",
+        "memory_policy": {"scope": "durable_business_state", "retention_days": 90},
         "expected_outcomes": [
             {"name": "venta preparada", "metric": "orden_confirmada", "target": "> 0", "window": "sesión"},
         ],
@@ -54,6 +55,11 @@ _ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "allowed_tools": ["search_knowledge"],
         "autonomy_level": "propose_actions",
         "risk_class": "low",
+        "memory_policy": {
+            "scope": "long_term_consent",
+            "retention_days": 365,
+            "consent_required": True,
+        },
         "expected_outcomes": [
             {"name": "progreso", "metric": "ejercicios_completados", "target": "> 0", "window": "semana"},
         ],
@@ -76,6 +82,11 @@ _ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "allowed_tools": ["search_knowledge"],
         "autonomy_level": "propose_actions",
         "risk_class": "low",
+        "memory_policy": {
+            "scope": "long_term_consent",
+            "retention_days": 365,
+            "consent_required": True,
+        },
         "expected_outcomes": [
             {"name": "plan activo", "metric": "sesiones_con_plan", "target": "> 0", "window": "mes"},
         ],
@@ -98,6 +109,7 @@ _ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "allowed_tools": ["search_knowledge"],
         "autonomy_level": "propose_actions",
         "risk_class": "medium",
+        "memory_policy": {"scope": "durable_business_state", "retention_days": 30},
         "expected_outcomes": [
             {"name": "resolución", "metric": "incidentes_resueltos", "target": "> 0", "window": "día"},
         ],
@@ -120,6 +132,7 @@ _ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "allowed_tools": ["search_knowledge", "query_database"],
         "autonomy_level": "propose_actions",
         "risk_class": "high",
+        "memory_policy": {"scope": "durable_business_state", "retention_days": 365},
         "expected_outcomes": [
             {"name": "hallazgos", "metric": "diferencias_documentadas", "target": "> 0", "window": "auditoría"},
         ],
@@ -148,6 +161,12 @@ _ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "allowed_tools": ["search_knowledge"],
         "autonomy_level": "answer_only",
         "risk_class": "regulated",
+        "memory_policy": {
+            "scope": "session",
+            "retention_days": 0,
+            "consent_required": True,
+            "pii_masking": True,
+        },
         "expected_outcomes": [
             {"name": "derivación segura", "metric": "crisis_derivadas", "target": "100%", "window": "sesión"},
         ],
@@ -250,6 +269,18 @@ def match_role_template(prompt: str) -> tuple[str, int]:
             word in text for word in ("auditor", "auditoría", "control", "diferencia", "evidencia")
         ),
     }
+    # Palabras de intención explícita pesan más que coincidencias accidentales
+    # ("ejercicio" aparece en mentoría y tutoría).
+    if "mentor" in text or "mentoría" in text:
+        scores["mentor"] += 3
+    if "tutor" in text or "estudiante" in text:
+        scores["tutor"] += 3
+    if "auditar" in text or "auditor" in text or "auditoría" in text:
+        scores["auditor"] += 3
+    if "vender" in text or "venta" in text or "catálogo" in text:
+        scores["sales_advisor"] += 3
+    if "bienestar" in text or "emocional" in text:
+        scores["wellness_companion"] += 3
     best = max(scores, key=lambda key: (scores[key], key == "support_agent"))
     return best, int(scores[best])
 

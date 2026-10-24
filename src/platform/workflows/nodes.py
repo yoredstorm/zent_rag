@@ -44,6 +44,11 @@ _CAPABILITY_PERMISSION = {
     CALLS_EXTERNAL: "external_actions:execute",
     CALLS_AGENT: "agents:execute",
     "uses_integration": "integrations:use",
+    # Nodos de efecto interno: exigen ejecutar workflows, no solo leerlos.
+    SENDS_NOTIFICATION: "workflows:run",
+    NEEDS_APPROVAL: "workflows:run",
+    "writes_db": "workflows:run",
+    "reads_db": "workflows:run",
 }
 
 # Modos de conocimiento del nodo kb_query (Cognitive Workflows, Fase 1).
@@ -1873,6 +1878,28 @@ def _auto_context_reads(rctx: NodeContext) -> tuple[str, ...]:
     return tuple(present)
 
 
+def _memory_conversation_id(rctx: NodeContext) -> UUID | None:
+    if rctx.instance is not None and rctx.instance.conversation_id is not None:
+        return rctx.instance.conversation_id
+    for source in (rctx.trigger or {}, rctx.payload or {}):
+        value = source.get("conversation_id") or source.get("session_id")
+        if value:
+            try:
+                return UUID(str(value))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _memory_subject_id(rctx: NodeContext) -> str | None:
+    for source in (rctx.trigger or {}, rctx.payload or {}):
+        for key in ("participant_id", "customer_id", "user_id", "subject_id"):
+            value = source.get(key)
+            if value:
+                return str(value)[:160]
+    return None
+
+
 async def _agent_context_payload(
     rctx: NodeContext,
 ) -> tuple[dict[str, Any] | None, list[str], dict[str, Any] | None, tuple[str, ...]]:
@@ -2003,13 +2030,49 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         # the same Agent entity and the same workflow engine.
         from src.platform.studio.roles import apply_role_to_agent, get_agent_role
 
-        agent_role = await get_agent_role(rctx.organization_id, agent_id)
+        agent_role = None
+        pinned = getattr(rctx.instance, "policy_snapshot", None) if rctx.instance else None
+        if isinstance(pinned, dict):
+            entry = next(
+                (
+                    item
+                    for item in pinned.get("agents") or []
+                    if isinstance(item, dict) and item.get("agent_id") == str(agent_id)
+                ),
+                None,
+            )
+            if entry is not None:
+                agent_role = entry.get("role")
+        if agent_role is None:
+            agent_role = await get_agent_role(rctx.organization_id, agent_id)
         if agent_role is not None:
             agent = apply_role_to_agent(agent, agent_role)
         org_config = await _org_config_json(rctx.organization_id)
         context_payload, context_truncated, context_summary, requested_reads = (
             await _agent_context_payload(rctx)
         )
+        from src.platform.workflows.context_service import assemble_memory_context
+
+        memory_context = await assemble_memory_context(
+            organization_id=rctx.organization_id,
+            workspace_id=rctx.workspace_id,
+            role=agent_role,
+            agent_id=agent_id,
+            run_id=rctx.execution.run_id,
+            workflow_id=rctx.execution.workflow_id,
+            conversation_id=_memory_conversation_id(rctx),
+            subject_id=_memory_subject_id(rctx),
+            record_usage=not rctx.simulate,
+        )
+        if memory_context.items:
+            context_payload = {
+                **(context_payload or {}),
+                "memory": memory_context.payload,
+            }
+            context_summary = {
+                **(context_summary or {}),
+                "memory": memory_context.summary(),
+            }
         result = await _resolve_dep(get_agent_runtime).run(
             AgentRunRequest(
                 agent=agent,
@@ -4156,6 +4219,16 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
         read_effect,
         schema_errors,
     )
+    from src.platform.workflows.error_contract import error_contract, port_for_failure
+
+    def failure(base: dict[str, Any], mode: str, message: str, port: str | None = None) -> dict[str, Any]:
+        resolved = port or port_for_failure(mode)
+        return {
+            **base,
+            "failure_mode": mode,
+            "typed_port": resolved,
+            "error_contract": error_contract(mode, message, port=resolved),
+        }
 
     cfg = dict(rctx.node.config or {})
     stack, depth = composition_frame(rctx.payload if isinstance(rctx.payload, dict) else {})
@@ -4178,7 +4251,12 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
     except CompositionError as exc:
         return NodeOutcome(
             error=exc.message,
-            output={"failure_mode": exc.code, "execute_capability": False},
+            output={
+                "failure_mode": exc.code,
+                "typed_port": port_for_failure(exc.code),
+                "error_contract": error_contract(exc.code, exc.message),
+                "execute_capability": False,
+            },
         )
     output_base = {
         "contract": spec["contract"],
@@ -4187,6 +4265,9 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
         "snapshot_hash": spec["snapshot_hash"],
         "dropped_permissions": spec["dropped_permissions"],
         "effective_permissions": spec["effective_permissions"],
+        "output_ports": spec["output_ports"],
+        "max_fanout": spec["max_fanout"],
+        "typed_port": "success",
     }
     if rctx.simulate:
         return NodeOutcome(
@@ -4199,14 +4280,16 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
             output=output_base,
         )
     if rctx.instance is None:
+        message = "subworkflow.call requiere una instancia durable"
         return NodeOutcome(
-            error="subworkflow.call requiere una instancia durable",
-            output={**output_base, "failure_mode": "contract_mismatch"},
+            error=message,
+            output=failure(output_base, "contract_mismatch", message),
         )
     if str(rctx.instance.status or "").upper() in {"CANCELLED", "FAILED"}:
+        message = "instancia cerrada"
         return NodeOutcome(
-            error="instancia cerrada",
-            output={**output_base, "failure_mode": "user_cancelled"},
+            error=message,
+            output=failure(output_base, "user_cancelled", message, port="needs_human"),
         )
     ledger: dict[str, Any] = {}
     existing = read_effect(rctx.instance.state, spec["idempotency_key"])
@@ -4219,16 +4302,18 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
         replayed["snapshot_hash"] = spec["snapshot_hash"]
         return NodeOutcome(output=replayed)
     if claim["action"] == "blocked":
+        message = "efecto incompleto; no se reejecuta"
         return NodeOutcome(
-            error="efecto incompleto; no se reejecuta",
-            output={**output_base, "failure_mode": "contract_mismatch", "replayed": False},
+            error=message,
+            output={**failure(output_base, "contract_mismatch", message), "replayed": False},
         )
     try:
         await _persist_effect(rctx, spec["idempotency_key"], "started", None)
     except Exception as exc:  # noqa: BLE001
+        message = str(exc)[:200]
         return NodeOutcome(
-            error=str(exc)[:200],
-            output={**output_base, "failure_mode": "provider_unavailable"},
+            error=message,
+            output=failure(output_base, "provider_unavailable", message, port="retryable_error"),
         )
     try:
         result = await asyncio.wait_for(
@@ -4251,18 +4336,20 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
             await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
         except Exception:  # noqa: BLE001
             logger.warning("effect incomplete mark failed", node_id=rctx.node_id)
+        message = "timeout de subworkflow"
         return NodeOutcome(
-            error="timeout de subworkflow",
-            output={**output_base, "failure_mode": "timeout"},
+            error=message,
+            output=failure(output_base, "timeout", message, port="timeout"),
         )
     except Exception as exc:  # noqa: BLE001
         try:
             await _persist_effect(rctx, spec["idempotency_key"], "failed", None)
         except Exception:  # noqa: BLE001
             logger.warning("effect failure mark failed", node_id=rctx.node_id)
+        message = str(exc)[:300]
         return NodeOutcome(
-            error=str(exc)[:300],
-            output={**output_base, "failure_mode": "provider_unavailable"},
+            error=message,
+            output=failure(output_base, "provider_unavailable", message, port="retryable_error"),
         )
     status = str(getattr(result, "status", "") or "")
     if status == "waiting":
@@ -4270,18 +4357,20 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
             await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
         except Exception:  # noqa: BLE001
             logger.warning("effect waiting mark failed", node_id=rctx.node_id)
+        message = "WAIT anidado rechazado"
         return NodeOutcome(
-            error="WAIT anidado rechazado",
-            output={**output_base, "failure_mode": "contract_mismatch"},
+            error=message,
+            output=failure(output_base, "contract_mismatch", message, port="needs_human"),
         )
     if status not in {"succeeded", "simulated", "stopped"}:
         try:
             await _persist_effect(rctx, spec["idempotency_key"], "failed", None)
         except Exception:  # noqa: BLE001
             logger.warning("effect failure mark failed", node_id=rctx.node_id)
+        message = str(getattr(result, "error", None) or status or "subworkflow falló")[:300]
         return NodeOutcome(
-            error=str(getattr(result, "error", None) or status or "subworkflow falló")[:300],
-            output={**output_base, "failure_mode": "provider_unavailable"},
+            error=message,
+            output=failure(output_base, "provider_unavailable", message, port="retryable_error"),
         )
     public = child_public_output(result)
     public.update(output_base)
@@ -4290,9 +4379,10 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
             await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
         except Exception:  # noqa: BLE001
             logger.warning("effect mismatch mark failed", node_id=rctx.node_id)
+        message = "salida de subworkflow no cumple el contrato"
         return NodeOutcome(
-            error="salida de subworkflow no cumple el contrato",
-            output={**output_base, "failure_mode": "contract_mismatch"},
+            error=message,
+            output=failure(output_base, "contract_mismatch", message),
         )
     usage = public.get("usage") if isinstance(public.get("usage"), dict) else {}
     max_tokens = spec["budget"].get("max_tokens")
@@ -4300,9 +4390,10 @@ async def _exec_subworkflow_call(rctx: NodeContext) -> NodeOutcome:
         try:
             if int(usage.get("tokens") or 0) > int(max_tokens):
                 await _persist_effect(rctx, spec["idempotency_key"], "incomplete", None)
+                message = "presupuesto de tokens excedido"
                 return NodeOutcome(
-                    error="presupuesto de tokens excedido",
-                    output={**output_base, "failure_mode": "contract_mismatch"},
+                    error=message,
+                    output=failure(output_base, "contract_mismatch", message),
                 )
         except (TypeError, ValueError):
             pass

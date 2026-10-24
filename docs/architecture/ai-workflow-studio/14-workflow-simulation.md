@@ -116,6 +116,24 @@ Reglas:
 - fallo de escenario queda en `FAILED_VALIDATION`;
 - solo todos los escenarios PASSED y sin unverified producen `READY_TO_PUBLISH`.
 
+### 5.1 Clasificación en el run de prueba
+
+`POST /api/v1/workflows/{id}/run` con `simulate=true` devuelve
+`effect_verification`:
+
+- `NONE`: sin efectos simulados.
+- `SIMULATED`: nodos internos o simulados por diseño (`state_*`, `wait_event`,
+  `loop`, `human_approval`, `notify`, `business_result`, `ai_decision`,
+  `adaptive_route`).
+- `DECLARED`: el usuario fijó la respuesta en `workflow_pinned_data`. Es un
+  doble declarado, no una verificación de proveedor.
+- `UNVERIFIED`: efecto externo (`capability_call`, `marketplace_action`,
+  `api_call`, `business_node`) sin doble.
+
+Solo `UNVERIFIED` significa “sin doble”. `DECLARED` y `SIMULATED` tampoco son
+PASSED. La UI usa esta clasificación y no `planned_effects.length`. Sandbox y
+proveedor real siguen pendientes.
+
 ## 6. Reparación (Parte E)
 
 `simulate_with_repair`:

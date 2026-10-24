@@ -1,0 +1,722 @@
+diff --git a/docs/architecture/ai-workflow-studio/14-workflow-simulation.md b/docs/architecture/ai-workflow-studio/14-workflow-simulation.md
+index ad8a98f..4917b1c 100644
+--- a/docs/architecture/ai-workflow-studio/14-workflow-simulation.md
++++ b/docs/architecture/ai-workflow-studio/14-workflow-simulation.md
+@@ -116,6 +116,24 @@ Reglas:
+ - fallo de escenario queda en `FAILED_VALIDATION`;
+ - solo todos los escenarios PASSED y sin unverified producen `READY_TO_PUBLISH`.
+ 
++### 5.1 Clasificación en el run de prueba
++
++`POST /api/v1/workflows/{id}/run` con `simulate=true` devuelve
++`effect_verification`:
++
++- `NONE`: sin efectos simulados.
++- `SIMULATED`: nodos internos o simulados por diseño (`state_*`, `wait_event`,
++  `loop`, `human_approval`, `notify`, `business_result`, `ai_decision`,
++  `adaptive_route`).
++- `DECLARED`: el usuario fijó la respuesta en `workflow_pinned_data`. Es un
++  doble declarado, no una verificación de proveedor.
++- `UNVERIFIED`: efecto externo (`capability_call`, `marketplace_action`,
++  `api_call`, `business_node`) sin doble.
++
++Solo `UNVERIFIED` significa “sin doble”. `DECLARED` y `SIMULATED` tampoco son
++PASSED. La UI usa esta clasificación y no `planned_effects.length`. Sandbox y
++proveedor real siguen pendientes.
++
+ ## 6. Reparación (Parte E)
+ 
+ `simulate_with_repair`:
+diff --git a/docs/architecture/universal-studio/03-gap-matrix.md b/docs/architecture/universal-studio/03-gap-matrix.md
+index da9cfff..8a585f6 100644
+--- a/docs/architecture/universal-studio/03-gap-matrix.md
++++ b/docs/architecture/universal-studio/03-gap-matrix.md
+@@ -174,6 +174,12 @@ declararlo explícitamente.
+ Hoy `READY_TO_PUBLISH` puede alcanzarse con respuestas inventadas por el
+ usuario. Eso viola la regla “nunca READY con efectos externos no verificados”.
+ 
++**Avance parcial (2026-10-23).** El run de prueba ya devuelve
++`effect_verification` con `NONE`, `SIMULATED`, `DECLARED` o `UNVERIFIED`:
++distingue pinned, interno simulado y externo sin doble. Siguen abiertos
++`SANDBOX`, `PROVIDER`, `AWAITING_EFFECT_VERIFICATION` y el puente certificación
++a publicación.
++
+ **Archivo responsable**
+ 
+ - `src/platform/workflows/workflow_simulation.py`
+diff --git a/docs/architecture/universal-studio/12-release-gold.md b/docs/architecture/universal-studio/12-release-gold.md
+index b425f94..6b9451d 100644
+--- a/docs/architecture/universal-studio/12-release-gold.md
++++ b/docs/architecture/universal-studio/12-release-gold.md
+@@ -50,7 +50,7 @@ No se rellenan con estimaciones. Una celda vacía es “no medido”.
+ 2. Entrar a `/workflows/new`. Los tres caminos abren el mismo lienzo.
+ 3. Para mentor: `/workflows/new/manual?plantilla=mentor`. Revisar la ficha. No activar.
+ 4. Para ventas con LLM real, usar el architect solo en staging y guardar el JSON de la sesión. No marcar PASSED si el estado no es `DRAFT_READY` o si `workflow_id` sigue vacío.
+-5. Simular con el nivel “Simulación determinista”. Si hay efecto sin doble, la UI dice `UNVERIFIED`.
++5. Simular con el nivel “Simulación determinista”. Un efecto externo sin doble da `UNVERIFIED`. Un efecto fijado da `DECLARED`. Ninguno es PASSED.
+ 6. Certificación con proveedor solo cuenta si el proveedor respondió. Si no, queda `UNVERIFIED`.
+ 7. Activar un flujo con ficha de misión debe responder 409 mientras el flag esté apagado.
+ 8. Portabilidad: exportar el paquete con `export_workflow_package`, inspeccionar en otro tenant, resolver capacidades en `/marketplace`, no copiar secretos ni `organization_id`. Este corte no ejecutó Tenant A contra Tenant B.
+diff --git a/portal/src/components/WorkflowRunInspector.test.tsx b/portal/src/components/WorkflowRunInspector.test.tsx
+index f5d613b..9629310 100644
+--- a/portal/src/components/WorkflowRunInspector.test.tsx
++++ b/portal/src/components/WorkflowRunInspector.test.tsx
+@@ -82,4 +82,39 @@ describe("WorkflowRunInspector — Execution Inspector", () => {
+     expect(screen.queryByTestId("wf-run-actions")).toBeNull();
+     expect(screen.queryByText(/chain of thought/i)).toBeNull();
+   });
++
++  it("separa efectos sin doble, declarados y simulados", () => {
++    render(
++      <WorkflowRunInspector
++        run={{
++          ...RUN,
++          effect_verification: {
++            level: "UNVERIFIED",
++            unverified: [{ node_id: "pay", node_type: "capability_call", label: "Cobrar" }],
++            declared: [{ node_id: "mail", node_type: "notify", label: "Avisar" }],
++            simulated: [{ node_id: "state", node_type: "state_set", label: "Guardar" }],
++          },
++        }}
++      />,
++    );
++    expect(screen.getByTestId("wf-effect-verification")).toHaveTextContent("UNVERIFIED");
++    expect(screen.getByTestId("wf-effects-unverified")).toHaveTextContent("Cobrar");
++    expect(screen.getByTestId("wf-effects-declared")).toHaveTextContent("Avisar");
++    expect(screen.getByTestId("wf-effects-simulated")).toHaveTextContent("Guardar");
++  });
++
++  it("clasifica plannedEffects viejos sin effect_verification", () => {
++    render(
++      <WorkflowRunInspector
++        run={{
++          ...RUN,
++          planned_effects: [
++            { node_id: "pay", node_type: "capability_call", planned: { kind: "capability" } },
++          ],
++        }}
++      />,
++    );
++    expect(screen.getByTestId("wf-effect-verification")).toHaveTextContent("UNVERIFIED");
++    expect(screen.getByTestId("wf-effects-unverified")).toHaveTextContent("pay");
++  });
+ });
+diff --git a/portal/src/components/WorkflowRunInspector.tsx b/portal/src/components/WorkflowRunInspector.tsx
+index ff4b804..a0642b8 100644
+--- a/portal/src/components/WorkflowRunInspector.tsx
++++ b/portal/src/components/WorkflowRunInspector.tsx
+@@ -1,6 +1,11 @@
+ import { CaretRight, Crosshair, WarningCircle } from "@phosphor-icons/react";
+ import { useState, type ReactNode } from "react";
+ import { fmtLatency } from "../lib/format";
++import {
++  classifyPlannedEffects,
++  effectLabel,
++  type EffectVerification,
++} from "../lib/workflowEffects";
+ import { Button, Drawer, ErrorInline, IconButton, StatusBadge } from "./ui";
+ import { WorkflowApprovalPanel } from "./WorkflowApprovalPanel";
+ import { DataView } from "./workflowStudio/DataView";
+@@ -63,6 +68,7 @@ export type RunDetail = {
+   instance_seq?: number | null;
+   steps?: RunStep[];
+   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
++  effect_verification?: EffectVerification;
+   result?: { notifications?: unknown[]; errors?: unknown[]; cost_ms?: number };
+   /** Contexto proyectado del run (sin `security`). */
+   context?: Record<string, unknown>;
+@@ -297,6 +303,9 @@ export function WorkflowRunInspector({
+   const steps = run.steps ?? [];
+   const status = RUN_STATUS_META[run.status] ?? { status: run.status };
+   const failed = steps.filter((s) => s.status === "failed" || s.status === "denied").length;
++  const fallbackEffects =
++    plannedEffects && plannedEffects.length > 0 ? plannedEffects : run.planned_effects;
++  const verification = run.effect_verification ?? classifyPlannedEffects(fallbackEffects);
+ 
+   return (
+     <div className="flex flex-col gap-2.5" data-testid="wf-run-inspector">
+@@ -337,16 +346,53 @@ export function WorkflowRunInspector({
+         </ol>
+       )}
+ 
+-      {plannedEffects && plannedEffects.length > 0 && (
+-        <div className="rounded-md border border-border bg-raised/50 px-3 py-2.5">
+-          <p className="text-[11px] font-medium text-muted">Efectos no ejecutados en la prueba</p>
+-          <ul className="mt-1.5 flex flex-col gap-1">
+-            {plannedEffects.map((p) => (
+-              <li key={p.node_id} className="truncate text-[11px] text-faint" title={`${p.node_type} — ${JSON.stringify(p.planned)}`}>
+-                <span className="text-muted">{p.node_type}</span> — {JSON.stringify(p.planned)}
+-              </li>
+-            ))}
+-          </ul>
++      {verification && verification.level !== "NONE" && (
++        <div
++          className="rounded-md border border-border bg-raised/50 px-3 py-2.5"
++          data-testid="wf-effect-verification"
++        >
++          <p className="text-[11px] font-medium text-muted">
++            Efectos en la prueba: <span className="mono text-text">{verification.level}</span>
++          </p>
++          {verification.unverified.length > 0 && (
++            <div className="mt-1.5" data-testid="wf-effects-unverified">
++              <p className="text-[10px] font-medium text-danger">Sin doble</p>
++              <ul className="flex flex-col gap-0.5">
++                {verification.unverified.map((item) => (
++                  <li key={item.node_id} className="truncate text-[11px] text-faint">
++                    <span className="text-muted">{effectLabel(item)}</span>
++                    {item.node_type ? ` — ${item.node_type}` : ""}
++                  </li>
++                ))}
++              </ul>
++            </div>
++          )}
++          {verification.declared.length > 0 && (
++            <div className="mt-1.5" data-testid="wf-effects-declared">
++              <p className="text-[10px] font-medium text-warn">Fijados, declarados</p>
++              <ul className="flex flex-col gap-0.5">
++                {verification.declared.map((item) => (
++                  <li key={item.node_id} className="truncate text-[11px] text-faint">
++                    <span className="text-muted">{effectLabel(item)}</span>
++                    {item.node_type ? ` — ${item.node_type}` : ""}
++                  </li>
++                ))}
++              </ul>
++            </div>
++          )}
++          {verification.simulated.length > 0 && (
++            <div className="mt-1.5" data-testid="wf-effects-simulated">
++              <p className="text-[10px] font-medium text-muted">Simulados</p>
++              <ul className="flex flex-col gap-0.5">
++                {verification.simulated.map((item) => (
++                  <li key={item.node_id} className="truncate text-[11px] text-faint">
++                    <span className="text-muted">{effectLabel(item)}</span>
++                    {item.node_type ? ` — ${item.node_type}` : ""}
++                  </li>
++                ))}
++              </ul>
++            </div>
++          )}
+         </div>
+       )}
+ 
+diff --git a/portal/src/components/workflowStudio/WorkflowTestPanel.test.tsx b/portal/src/components/workflowStudio/WorkflowTestPanel.test.tsx
+index 6a37fc9..7c41705 100644
+--- a/portal/src/components/workflowStudio/WorkflowTestPanel.test.tsx
++++ b/portal/src/components/workflowStudio/WorkflowTestPanel.test.tsx
+@@ -20,7 +20,11 @@ function json(body: unknown) {
+ }
+ 
+ /** Backend mínimo: lista de runs, POST run y detalle del run. */
+-function stubApi(steps: Record<string, unknown>[], runStatus = "succeeded") {
++function stubApi(
++  steps: Record<string, unknown>[],
++  runStatus = "succeeded",
++  runOut: Record<string, unknown> = {},
++) {
+   vi.stubGlobal(
+     "fetch",
+     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+@@ -29,7 +33,9 @@ function stubApi(steps: Record<string, unknown>[], runStatus = "succeeded") {
+         return Promise.resolve(json({ runs: [] }));
+       }
+       if (url.endsWith("/run")) {
+-        return Promise.resolve(json({ run_id: "r1", status: runStatus, planned_effects: [] }));
++        return Promise.resolve(
++          json({ run_id: "r1", status: runStatus, planned_effects: [], ...runOut }),
++        );
+       }
+       if (url.includes("/workflows/runs/r1")) {
+         return Promise.resolve(json({ id: "r1", status: runStatus, steps }));
+@@ -39,6 +45,13 @@ function stubApi(steps: Record<string, unknown>[], runStatus = "succeeded") {
+   );
+ }
+ 
++function systemMessages(): string {
++  return screen
++    .getAllByTestId("wf-chat-system")
++    .map((element) => element.textContent ?? "")
++    .join(" ");
++}
++
+ function renderDock(extra: Partial<Parameters<typeof WorkflowTestPanel>[0]> = {}) {
+   return render(
+     <MemoryRouter>
+@@ -140,11 +153,83 @@ describe("WorkflowTestPanel (dock de prueba)", () => {
+     await user.click(screen.getByTestId("wf-role-bienestar"));
+     expect(screen.getByTestId("wf-test-payload")).toHaveValue("Dime qué enfermedad tengo");
+     await user.click(screen.getByTestId("wf-test"));
++    await waitFor(() => expect(systemMessages()).toContain("UNVERIFIED"));
++  });
++
++  it("un efecto fijado queda DECLARED, no UNVERIFIED", async () => {
++    stubApi([], "succeeded", {
++      planned_effects: [
++        { node_id: "pay", node_type: "capability_call", planned: { pinned: true } },
++      ],
++      effect_verification: {
++        level: "DECLARED",
++        unverified: [],
++        declared: [{ node_id: "pay", node_type: "capability_call", label: "Cobrar" }],
++        simulated: [],
++      },
++    });
++    const user = userEvent.setup();
++    renderDock();
++
++    await user.type(screen.getByTestId("wf-test-payload"), "hola");
++    await user.click(screen.getByTestId("wf-test"));
++    await waitFor(() => expect(systemMessages()).toContain("DECLARED"));
++    expect(systemMessages()).not.toContain("UNVERIFIED");
++  });
++
++  it("un nodo interno simulado no se reporta como efecto sin doble", async () => {
++    stubApi([], "succeeded", {
++      planned_effects: [
++        { node_id: "state", node_type: "state_set", planned: { kind: "state" } },
++      ],
++      effect_verification: {
++        level: "SIMULATED",
++        unverified: [],
++        declared: [],
++        simulated: [{ node_id: "state", node_type: "state_set", label: "Guardar" }],
++      },
++    });
++    const user = userEvent.setup();
++    renderDock();
++
++    await user.type(screen.getByTestId("wf-test-payload"), "hola");
++    await user.click(screen.getByTestId("wf-test"));
++    await waitFor(() => expect(systemMessages()).toContain("SIMULADO"));
++    expect(systemMessages()).not.toContain("UNVERIFIED");
++  });
++
++  it("preview no ejecuta el workflow", async () => {
++    stubApi([]);
++    const user = userEvent.setup();
++    renderDock();
++
++    await user.click(screen.getByTestId("wf-level-preview"));
++    await user.click(screen.getByTestId("wf-test"));
+     await waitFor(() =>
+-      expect(screen.getByText(/UNVERIFIED/)).toBeInTheDocument(),
++      expect(screen.getByTestId("wf-chat-system")).toHaveTextContent("Preview teórico"),
+     );
++    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
++    expect(calls.some((c) => String(c[0]).endsWith("/run"))).toBe(false);
+   });
+ 
++  it.each(["sandbox", "provider"] as const)(
++    "el nivel %s no simula un pase",
++    async (level) => {
++      stubApi([]);
++      const user = userEvent.setup();
++      renderDock();
++
++      await user.click(screen.getByTestId(`wf-level-${level}`));
++      expect(screen.getByTestId("wf-level-unavailable")).toBeInTheDocument();
++      await user.click(screen.getByTestId("wf-test"));
++      await waitFor(() =>
++        expect(screen.getByTestId("wf-chat-system")).toHaveTextContent(/no está conectad/),
++      );
++      const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
++      expect(calls.some((c) => String(c[0]).endsWith("/run"))).toBe(false);
++    },
++  );
++
+   it("los avisos del grafo llevan al nodo culpable", async () => {
+     stubApi([]);
+     const onSelectNode = vi.fn();
+diff --git a/portal/src/components/workflowStudio/WorkflowTestPanel.tsx b/portal/src/components/workflowStudio/WorkflowTestPanel.tsx
+index adf5c1f..07068d1 100644
+--- a/portal/src/components/workflowStudio/WorkflowTestPanel.tsx
++++ b/portal/src/components/workflowStudio/WorkflowTestPanel.tsx
+@@ -2,9 +2,15 @@ import { ArrowUp, Lightning, MagicWand, Warning } from "@phosphor-icons/react";
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { api } from "../../api";
+ import { useAuth } from "../../auth";
+-import type { WorkflowGraph } from "../../lib/workflowGraph";
++import { effectNodes, nodeMeta } from "../../lib/workflowGraph";
++import type { GraphIssue, WorkflowGraph } from "../../lib/workflowGraph";
++import {
++  classifyPlannedEffects,
++  effectLabel,
++  type EffectVerification,
++  type EffectVerificationItem,
++} from "../../lib/workflowEffects";
+ import { humanizeWorkflowError } from "../../lib/workflowErrors";
+-import type { GraphIssue } from "../../lib/workflowGraph";
+ import { Button, ErrorInline, StatusBadge, Textarea } from "../ui";
+ import { WorkflowRunInspector, type RunDetail } from "../WorkflowRunInspector";
+ import { answerFromSteps, normalizeTestPayload, type WorkflowRun } from "./types";
+@@ -36,6 +42,7 @@ type RunOut = {
+   run_id: string;
+   status: string;
+   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
++  effect_verification?: EffectVerification;
+   result?: unknown;
+ };
+ 
+@@ -48,6 +55,11 @@ const TEST_LEVELS = [
+ 
+ type TestLevel = (typeof TEST_LEVELS)[number]["id"];
+ 
++const UNAVAILABLE_LEVELS: Partial<Record<TestLevel, string>> = {
++  sandbox: "Sandbox real no está conectado en este panel. No simulo un pase.",
++  provider: "Certificación con proveedor real no está conectada. No simulo un pase.",
++};
++
+ const ROLE_EXAMPLES: { id: string; label: string; message: string }[] = [
+   { id: "ventas", label: "Ventas", message: "Quiero un kilo de arroz" },
+   { id: "mentor", label: "Mentor", message: "Ahora quiero restas" },
+@@ -60,7 +72,7 @@ const ROLE_EXAMPLES: { id: string; label: string; message: string }[] = [
+ type Message =
+   | { role: "user"; text: string }
+   | { role: "agent"; text: string; echo: boolean; node_id: string | null }
+-  | { role: "system"; text: string; tone: "info" | "danger" };
++  | { role: "system"; text: string; tone: "info" | "warn" | "danger" };
+ 
+ export function WorkflowTestPanel({
+   workflowId,
+@@ -149,6 +161,27 @@ export function WorkflowTestPanel({
+ 
+   async function execute(simulate: boolean) {
+     if (!session || busy) return;
++    if (simulate) {
++      const unavailable = UNAVAILABLE_LEVELS[level];
++      if (unavailable) {
++        push({ role: "system", text: unavailable, tone: "danger" });
++        return;
++      }
++      if (level === "preview") {
++        const plannedLabels = graph
++          ? effectNodes(graph).map((node) => node.label || nodeMeta(node.type).label)
++          : [];
++        push({
++          role: "system",
++          text:
++            plannedLabels.length > 0
++              ? `Preview teórico. No ejecuta efectos y no es un pase. Efectos previstos: ${plannedLabels.join(", ")}.`
++              : "Preview teórico. No ejecuta efectos y no es un pase.",
++          tone: "info",
++        });
++        return;
++      }
++    }
+     if (!simulate && effectLabels.length > 0) {
+       const ok = window.confirm(
+         `Ejecutar de verdad va a disparar ${effectLabels.length} nodo(s) con efectos reales: ` +
+@@ -179,19 +212,34 @@ export function WorkflowTestPanel({
+         body: JSON.stringify({ payload: normalized.payload, simulate }),
+       });
+       setPlanned(simulate ? out.planned_effects : undefined);
+-      const unverified = simulate && (out.planned_effects?.length ?? 0) > 0;
+-      if (level === "preview") {
+-        push({
+-          role: "system",
+-          text: "Preview teórico. No ejecuta efectos y no es un pase.",
+-          tone: "info",
+-        });
+-      } else if (unverified) {
+-        push({
+-          role: "system",
+-          text: "UNVERIFIED: hay un efecto externo sin doble. No es PASSED.",
+-          tone: "danger",
+-        });
++      if (simulate) {
++        const verification =
++          out.effect_verification ?? classifyPlannedEffects(out.planned_effects);
++        const labels = (items: EffectVerificationItem[]) =>
++          items.map((item) => effectLabel(item)).join(", ");
++        if (verification.level === "UNVERIFIED") {
++          push({
++            role: "system",
++            text: `UNVERIFIED: efecto externo sin doble en ${labels(verification.unverified)}. Fija la salida (doble declarado) o usa proveedor real. No es PASSED.`,
++            tone: "danger",
++          });
++        } else if (verification.level === "DECLARED") {
++          push({
++            role: "system",
++            text: `DECLARED: efecto fijado con datos de prueba en ${labels(verification.declared)}. No es PASSED; falta sandbox/proveedor.`,
++            tone: "warn",
++          });
++        } else if (verification.level === "SIMULATED") {
++          const verb =
++            verification.simulated.length === 1
++              ? "quedó en modo simulación"
++              : "quedaron en modo simulación";
++          push({
++            role: "system",
++            text: `SIMULADO: ${labels(verification.simulated)} ${verb}. No es PASSED.`,
++            tone: "info",
++          });
++        }
+       }
+       const detail = await api<RunDetail>(`/api/v1/workflows/runs/${out.run_id}`, {
+         token: session.token,
+@@ -330,7 +378,11 @@ export function WorkflowTestPanel({
+             <p
+               key={idx}
+               className={`rounded-md border px-3 py-2 text-[11px] ${
+-                m.tone === "danger" ? "border-danger/40 bg-danger-soft text-danger" : "border-border bg-soft text-muted"
++                m.tone === "danger"
++                  ? "border-danger/40 bg-danger-soft text-danger"
++                  : m.tone === "warn"
++                    ? "border-warn/40 bg-warn-soft text-warn"
++                    : "border-border bg-soft text-muted"
+               }`}
+               data-testid="wf-chat-system"
+             >
+@@ -391,6 +443,11 @@ export function WorkflowTestPanel({
+             </button>
+           ))}
+         </fieldset>
++        {UNAVAILABLE_LEVELS[level] && (
++          <p className="text-[10px] text-warn" data-testid="wf-level-unavailable">
++            {UNAVAILABLE_LEVELS[level]}
++          </p>
++        )}
+         <div className="flex flex-wrap gap-1" data-testid="wf-role-examples">
+           {ROLE_EXAMPLES.map((role) => (
+             <button
+diff --git a/portal/src/lib/workflowGraph.test.ts b/portal/src/lib/workflowGraph.test.ts
+index 5fcd342..2088f9f 100644
+--- a/portal/src/lib/workflowGraph.test.ts
++++ b/portal/src/lib/workflowGraph.test.ts
+@@ -210,8 +210,17 @@ describe("graphIssues", () => {
+ 
+   it("effectNodes lista solo los nodos con efectos reales", () => {
+     const g = emptyGraph("webhook");
+-    g.nodes.push(makeNode("notify"), makeNode("kb_query"), makeNode("api_call"));
+-    expect(effectNodes(g).map((n) => n.type)).toEqual(["notify", "api_call"]);
++    g.nodes.push(
++      makeNode("notify"),
++      makeNode("kb_query"),
++      makeNode("api_call"),
++      makeNode("capability_call"),
++    );
++    expect(effectNodes(g).map((n) => n.type)).toEqual([
++      "notify",
++      "api_call",
++      "capability_call",
++    ]);
+   });
+ 
+   it("sin grafo no hay avisos", () => {
+diff --git a/portal/src/lib/workflowGraph.ts b/portal/src/lib/workflowGraph.ts
+index b3632df..ef7a4bb 100644
+--- a/portal/src/lib/workflowGraph.ts
++++ b/portal/src/lib/workflowGraph.ts
+@@ -754,16 +754,22 @@ export function findNodeByRef(ref: string, graph: WorkflowGraph): string | undef
+ // Validación y clasificación de nodos
+ // ---------------------------------------------------------------------------
+ 
++/** Efectos externos que exigen doble o proveedor real. */
++export const EXTERNAL_EFFECT_NODE_TYPES = [
++  "capability_call",
++  "marketplace_action",
++  "api_call",
++  "business_node",
++] as const;
++
+ /**
+  * Nodos con efectos de lado: el backend los simula en `Probar` y solo los
+  * ejecuta de verdad en `Ejecutar`.
+  */
+ export const EFFECT_NODE_TYPES = [
++  ...EXTERNAL_EFFECT_NODE_TYPES,
+   "notify",
+-  "api_call",
+-  "marketplace_action",
+   "human_approval",
+-  "business_node",
+   "business_result",
+ ] as const;
+ 
+diff --git a/src/platform/workflows/engine.py b/src/platform/workflows/engine.py
+index 93b77ff..be5560a 100644
+--- a/src/platform/workflows/engine.py
++++ b/src/platform/workflows/engine.py
+@@ -22,6 +22,7 @@ from sqlalchemy import text
+ 
+ from src.infrastructure.observability.logging_config import get_logger
+ from src.infrastructure.postgres.session import get_async_session
++from src.platform.workflows.effect_verification import classify_effects
+ from src.platform.workflows.narrative import run_story
+ 
+ logger = get_logger(__name__)
+@@ -601,6 +602,7 @@ async def run_workflow(
+         preload_ports=preload_ports or None,
+     )
+ 
++    effect_verification = classify_effects(result.node_executions, graph)
+     duration = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+     if simulate and result.status == "succeeded":
+         final_status = "simulated"
+@@ -683,6 +685,7 @@ async def run_workflow(
+                 "duration_ms": duration,
+                 "error": result.error,
+                 "simulate": bool(simulate),
++                "effect_verification": effect_verification,
+             },
+         )
+     except Exception as exc:  # noqa: BLE001 — no romper la respuesta del run
+@@ -724,6 +727,7 @@ async def run_workflow(
+         "cost_ms": round(result.cost_ms, 4),
+         "simulate": bool(simulate),
+         "run_mode": run_mode,
++        "effect_verification": effect_verification,
+     }
+     if instance_id is not None:
+         body["instance_id"] = str(instance_id)
+@@ -1356,6 +1360,14 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
+         "events": events,
+         "chain_of_thought_exposed": False,
+     }
++    finished = next(
++        (event for event in reversed(events) if event.get("kind") == "run_finished"),
++        None,
++    )
++    if finished and isinstance(finished.get("payload"), dict):
++        verification = finished["payload"].get("effect_verification")
++        if verification:
++            payload_out["effect_verification"] = verification
+     payload_out["story"] = run_story(payload_out)
+     return payload_out
+ 
+diff --git a/src/platform/workflows/runtime.py b/src/platform/workflows/runtime.py
+index d655b2d..98c0f5e 100644
+--- a/src/platform/workflows/runtime.py
++++ b/src/platform/workflows/runtime.py
+@@ -338,6 +338,8 @@ async def execute_graph(
+             status=status,
+             output=output or {},
+             error=error,
++            simulated=bool(exec_.simulated) if exec_ is not None else False,
++            planned=dict(exec_.planned) if exec_ is not None and exec_.planned else {},
+             waiting=dict(exec_.waiting) if exec_ is not None and exec_.waiting else {},
+         )
+         resolved.add(node_id)
+diff --git a/src/platform/workflows/workflow_simulation.py b/src/platform/workflows/workflow_simulation.py
+index 6d49f7e..e37a3ed 100644
+--- a/src/platform/workflows/workflow_simulation.py
++++ b/src/platform/workflows/workflow_simulation.py
+@@ -24,6 +24,10 @@ from src.platform.workflows.architect_models import (
+     normalize_semantic_plan,
+ )
+ from src.platform.workflows.architect_validator import validate_semantic_plan
++from src.platform.workflows.effect_verification import (
++    EXTERNAL_EFFECT_NODE_TYPES,
++    EXTERNAL_READ_NODE_TYPES,
++)
+ from src.platform.workflows.ir import WorkflowGraph, validate_graph
+ from src.platform.workflows.runtime import ExecutionContext, execute_graph
+ 
+@@ -33,17 +37,7 @@ MODEL_CONFIG = ConfigDict(extra="forbid")
+ SIMULATION_SCHEMA = "zent.workflow.simulation/v1"
+ CERTIFICATION_SCHEMA = "zent.workflow.certification/v1"
+ 
+-_RISKY_NODE_TYPES = frozenset(
+-    {
+-        "capability_call",
+-        "marketplace_action",
+-        "api_call",
+-        "llm",
+-        "query_business_data",
+-        "kb_query",
+-        "business_node",
+-    }
+-)
++_RISKY_NODE_TYPES = EXTERNAL_EFFECT_NODE_TYPES | EXTERNAL_READ_NODE_TYPES
+ 
+ 
+ class ScenarioEvent(BaseModel):
+diff --git a/tests/test_workflow_graph.py b/tests/test_workflow_graph.py
+index c5598d4..ae0a09e 100644
+--- a/tests/test_workflow_graph.py
++++ b/tests/test_workflow_graph.py
+@@ -276,6 +276,9 @@ async def test_dry_run_simulates_side_effects(async_client: AsyncClient) -> None
+     assert body["status"] == "simulated"
+     assert body["simulate"] is True
+     assert len(body["planned_effects"]) >= 1
++    verification = body["effect_verification"]
++    assert verification["level"] == "SIMULATED"
++    assert verification["unverified"] == []
+ 
+     # Sin simulación real: no se creó la notificación de email.
+     detail = await async_client.get(f"/api/v1/workflows/runs/{body['run_id']}", headers=h)
+diff --git a/tests/test_workflow_partial_runs.py b/tests/test_workflow_partial_runs.py
+index ec2cba4..0cd8edc 100644
+--- a/tests/test_workflow_partial_runs.py
++++ b/tests/test_workflow_partial_runs.py
+@@ -31,6 +31,21 @@ def _chain_graph() -> dict:
+     )
+ 
+ 
++def _capability_graph() -> dict:
++    return _graph(
++        nodes=[
++            _node("t", "trigger_webhook"),
++            _node(
++                "pay",
++                "capability_call",
++                {"capability": "payments.checkout.create", "inputs": {"amount": 10}},
++            ),
++        ],
++        edges=[_edge("e1", "t", "pay")],
++        entrypoints=["t"],
++    )
++
++
+ async def _workflow(client: AsyncClient, org: dict, name: str, graph: dict) -> str:
+     created = await client.post(
+         "/api/v1/workflows",
+@@ -167,6 +182,7 @@ async def test_pinned_data_only_applies_to_simulation(async_client: AsyncClient)
+     n1 = _step(real_detail, "n1")
+     assert n1["output"]["sent"] is True
+     assert n1["output"].get("simulated") is not True
++    assert real_detail["effect_verification"]["level"] == "NONE"
+ 
+     removed = await async_client.delete(
+         f"/api/v1/workflows/{workflow_id}/pinned-data/n1",
+@@ -192,3 +208,41 @@ async def test_pinned_data_rejects_unknown_node_and_cross_tenant(async_client: A
+         f"/api/v1/workflows/{workflow_id}/pinned-data", headers=_headers(org_b)
+     )
+     assert cross.status_code == 404
++
++
++@pytest.mark.asyncio
++async def test_unpinned_capability_effect_is_unverified(async_client: AsyncClient) -> None:
++    org = await _org(async_client, "Effect Unverified")
++    workflow_id = await _workflow(async_client, org, "Cobro", _capability_graph())
++
++    out = await _run(async_client, org, workflow_id)
++    verification = out["effect_verification"]
++    assert verification["level"] == "UNVERIFIED"
++    assert [item["node_id"] for item in verification["unverified"]] == ["pay"]
++    assert verification["declared"] == []
++
++    detail = await _detail(async_client, org, out["run_id"])
++    assert detail["effect_verification"]["level"] == "UNVERIFIED"
++
++
++@pytest.mark.asyncio
++async def test_pinned_capability_effect_is_declared(async_client: AsyncClient) -> None:
++    org = await _org(async_client, "Effect Declared")
++    h = _headers(org)
++    workflow_id = await _workflow(async_client, org, "Cobro", _capability_graph())
++
++    pinned = await async_client.put(
++        f"/api/v1/workflows/{workflow_id}/pinned-data/pay",
++        headers={**h, "Idempotency-Key": f"pin-{uuid4().hex}"},
++        json={"output": {"checkout_id": "sim-1", "status": "pending"}},
++    )
++    assert pinned.status_code == 200, pinned.text
++
++    out = await _run(async_client, org, workflow_id)
++    verification = out["effect_verification"]
++    assert verification["level"] == "DECLARED"
++    assert verification["unverified"] == []
++    assert [item["node_id"] for item in verification["declared"]] == ["pay"]
++
++    detail = await _detail(async_client, org, out["run_id"])
++    assert detail["effect_verification"]["level"] == "DECLARED"

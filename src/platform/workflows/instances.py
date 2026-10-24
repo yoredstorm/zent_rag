@@ -27,6 +27,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
@@ -114,6 +115,9 @@ class InstanceRef:
     status: str
     conversation_id: UUID | None
     state: dict[str, Any] = field(default_factory=dict)
+    #: Roles congelados al iniciar la instancia (P05). Un cambio de rol en vivo
+    #: no amplía permisos de un proceso ya iniciado.
+    policy_snapshot: dict[str, Any] = field(default_factory=dict)
 
 
 def _now() -> datetime:
@@ -170,6 +174,7 @@ _INSTANCE_DDL: tuple[str, ...] = (
         completed_at TIMESTAMPTZ,
         expires_at TIMESTAMPTZ,
         correlation_id VARCHAR(128),
+        ingress_key VARCHAR(200),
         created_by UUID,
         error TEXT,
         status_reason VARCHAR(200)
@@ -197,6 +202,10 @@ _INSTANCE_DDL: tuple[str, ...] = (
     "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS instance_id UUID",
     "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS instance_seq INT",
     "ALTER TABLE workflow_run_events ADD COLUMN IF NOT EXISTS instance_id UUID",
+    "ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS ingress_key VARCHAR(200)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_wf_instances_ingress "
+    "ON workflow_instances(organization_id, workflow_id, ingress_key) "
+    "WHERE ingress_key IS NOT NULL",
 )
 
 
@@ -244,6 +253,7 @@ def _instance_row(row: Any) -> dict[str, Any]:
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "correlation_id": row.correlation_id,
+        "ingress_key": getattr(row, "ingress_key", None),
         "created_by": str(row.created_by) if row.created_by else None,
         "error": row.error,
         "status_reason": row.status_reason,
@@ -255,8 +265,8 @@ _INSTANCE_COLUMNS = (
     "definition_snapshot, status, conversation_id, participant_id, business_key, "
     "current_node_id, state, state_version, waiting_for, waiting_event_type, "
     "waiting_correlation_key, wait_deadline, wait_seq, last_run_id, run_seq, "
-    "started_at, updated_at, completed_at, expires_at, correlation_id, created_by, "
-    "error, status_reason"
+    "started_at, updated_at, completed_at, expires_at, correlation_id, "
+    "ingress_key, created_by, error, status_reason"
 )
 
 
@@ -267,8 +277,9 @@ async def load_instance_ref(organization_id: UUID, instance_id: UUID) -> Instanc
         row = (
             await session.execute(
                 text(
-                    "SELECT id, organization_id, workspace_id, status, conversation_id, state "
-                    "FROM workflow_instances WHERE id = :iid AND organization_id = :oid"
+                    "SELECT id, organization_id, workspace_id, status, conversation_id, state, "
+                    "definition_snapshot FROM workflow_instances "
+                    "WHERE id = :iid AND organization_id = :oid"
                 ),
                 {"iid": str(instance_id), "oid": str(organization_id)},
             )
@@ -277,6 +288,7 @@ async def load_instance_ref(organization_id: UUID, instance_id: UUID) -> Instanc
         await session.close()
     if row is None:
         return None
+    snapshot = row.definition_snapshot if isinstance(row.definition_snapshot, dict) else {}
     return InstanceRef(
         id=UUID(str(row.id)),
         organization_id=UUID(str(row.organization_id)),
@@ -284,21 +296,30 @@ async def load_instance_ref(organization_id: UUID, instance_id: UUID) -> Instanc
         status=str(row.status),
         conversation_id=_uid(row.conversation_id),
         state=dict(row.state or {}),
+        policy_snapshot=dict(snapshot.get("policy_snapshot") or {}),
     )
 
 
-async def get_instance(organization_id: UUID, instance_id: UUID) -> dict | None:
+async def get_instance(
+    organization_id: UUID,
+    instance_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
+) -> dict | None:
     session = await get_async_session()
     try:
-        row = (
-            await session.execute(
-                text(
-                    f"SELECT {_INSTANCE_COLUMNS} FROM workflow_instances "
-                    "WHERE id = :iid AND organization_id = :oid"
-                ),
-                {"iid": str(instance_id), "oid": str(organization_id)},
-            )
-        ).fetchone()
+        sql = (
+            f"SELECT {_INSTANCE_COLUMNS} FROM workflow_instances "
+            "WHERE id = :iid AND organization_id = :oid"
+        )
+        params: dict[str, Any] = {
+            "iid": str(instance_id),
+            "oid": str(organization_id),
+        }
+        if workspace_id is not None:
+            sql += " AND workspace_id = :ws"
+            params["ws"] = str(workspace_id)
+        row = (await session.execute(text(sql), params)).fetchone()
     finally:
         await session.close()
     return _instance_row(row) if row else None
@@ -311,6 +332,7 @@ async def list_instances(
     conversation_id: UUID | None = None,
     business_key: str | None = None,
     status: str | None = None,
+    workspace_id: UUID | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
@@ -328,6 +350,9 @@ async def list_instances(
     if status:
         filters.append("status = :st")
         params["st"] = status
+    if workspace_id is not None:
+        filters.append("workspace_id = :ws")
+        params["ws"] = str(workspace_id)
     where = " AND ".join(filters)
     session = await get_async_session()
     try:
@@ -497,6 +522,7 @@ async def start_workflow_instance(
     conversation_id: UUID | None = None,
     participant_id: str | None = None,
     business_key: str | None = None,
+    ingress_key: str | None = None,
     actor_type: str = "system",
     actor_id: UUID | None = None,
     permissions: frozenset[str] | None = None,
@@ -548,6 +574,15 @@ async def start_workflow_instance(
             wf.steps or [], str(wf.trigger_type or "webhook"), dict(wf.trigger_config or {})
         ).to_dict()
 
+    if ingress_key:
+        existing = await _find_by_ingress(org, workflow_id, ingress_key)
+        if existing is not None:
+            return {
+                "status": existing["status"],
+                "instance_id": existing["id"],
+                "reused": True,
+                "instance": existing,
+            }
     if business_key:
         active = await _find_active_by_business_key(org, business_key)
         if active is not None:
@@ -568,9 +603,15 @@ async def start_workflow_instance(
         "trigger_type": str(wf.trigger_type or "manual"),
         "trigger_config": dict(wf.trigger_config or {}),
         "editor_state": dict(wf.editor_state or {}),
+        "ingress": {
+            "trigger": trigger,
+            "ingress_key": ingress_key,
+            "business_key": business_key,
+        },
+        "policy_snapshot": await _build_policy_snapshot(org, graph),
     }
     instance_id = _new_uuid()
-    corr = (correlation_id or "").strip() or f"inst:{instance_id}"
+    corr = (correlation_id or "").strip() or ingress_key or f"inst:{instance_id}"
     session = await get_async_session()
     try:
         await session.execute(
@@ -578,9 +619,9 @@ async def start_workflow_instance(
                 "INSERT INTO workflow_instances "
                 "(id, organization_id, workspace_id, workflow_id, workflow_version, "
                 "definition_snapshot, status, conversation_id, participant_id, business_key, "
-                "expires_at, correlation_id, created_by) "
+                "expires_at, correlation_id, ingress_key, created_by) "
                 "VALUES (:iid, :oid, :ws, :wid, :ver, CAST(:snap AS jsonb), 'RUNNING', :cid, :pid, "
-                ":bkey, :expires, :corr, :uid)"
+                ":bkey, :expires, :corr, :ikey, :uid)"
             ),
             {
                 "iid": str(instance_id),
@@ -594,10 +635,32 @@ async def start_workflow_instance(
                 "bkey": business_key,
                 "expires": expires_at,
                 "corr": corr[:128],
+                "ikey": ingress_key,
                 "uid": str(actor_id) if actor_id else None,
             },
         )
         await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        if ingress_key:
+            existing = await _find_by_ingress(org, workflow_id, ingress_key)
+            if existing is not None:
+                return {
+                    "status": existing["status"],
+                    "instance_id": existing["id"],
+                    "reused": True,
+                    "instance": existing,
+                }
+        if business_key:
+            active = await _find_active_by_business_key(org, business_key)
+            if active is not None:
+                return {
+                    "status": active["status"],
+                    "instance_id": active["id"],
+                    "reused": True,
+                    "instance": active,
+                }
+        raise
     finally:
         await session.close()
 
@@ -639,6 +702,84 @@ def _new_uuid() -> UUID:
     import uuid as _uuid
 
     return _uuid.uuid4()
+
+
+async def _build_policy_snapshot(
+    organization_id: UUID, graph: dict[str, Any]
+) -> dict[str, Any]:
+    """Congela rol/versión de cada agente LLM al iniciar la instancia."""
+    agent_ids = sorted(
+        {
+            str((node.get("config") or {}).get("agent_id"))
+            for node in graph.get("nodes") or []
+            if isinstance(node, dict)
+            and node.get("type") == "llm"
+            and (node.get("config") or {}).get("agent_id")
+        }
+    )
+    if not agent_ids:
+        return {"agents": []}
+    from src.platform.studio.roles import get_role
+
+    agents: list[dict[str, Any]] = []
+    session = await get_async_session()
+    try:
+        for agent_id in agent_ids:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, role_profile_id, is_active FROM agents "
+                        "WHERE id = :aid AND organization_id = :oid"
+                    ),
+                    {"aid": agent_id, "oid": organization_id},
+                )
+            ).fetchone()
+            if row is None:
+                continue
+            role = (
+                await get_role(organization_id, UUID(str(row.role_profile_id)))
+                if row.role_profile_id
+                else None
+            )
+            agents.append(
+                {
+                    "agent_id": str(row.id),
+                    "is_active": bool(row.is_active),
+                    "role_profile_id": (
+                        str(row.role_profile_id) if row.role_profile_id else None
+                    ),
+                    "role": role,
+                }
+            )
+    finally:
+        await session.close()
+    return {"agents": agents}
+
+
+async def find_by_ingress(
+    organization_id: UUID, workflow_id: UUID, ingress_key: str
+) -> dict | None:
+    return await _find_by_ingress(organization_id, workflow_id, ingress_key)
+
+
+async def _find_by_ingress(
+    organization_id: UUID, workflow_id: UUID, ingress_key: str
+) -> dict | None:
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    f"SELECT {_INSTANCE_COLUMNS} FROM workflow_instances "
+                    "WHERE organization_id = :oid AND workflow_id = :wid "
+                    "AND ingress_key = :ikey LIMIT 1"
+                ),
+                {"oid": str(organization_id), "wid": str(workflow_id), "ikey": ingress_key},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    return _instance_row(row) if row else None
 
 
 async def _find_active_by_business_key(organization_id: UUID, business_key: str) -> dict | None:
@@ -1060,6 +1201,7 @@ async def signal_workflow_instance(
     source: str = "internal",
     instance_id: UUID | None = None,
     workflow_id: UUID | None = None,
+    workspace_id: UUID | None = None,
 ) -> dict:
     """Registra un evento y reanuda las instancias WAITING compatibles.
 
@@ -1068,6 +1210,10 @@ async def signal_workflow_instance(
     (cubre el caso webhook-antes-de-WAIT)."""
     await ensure_instance_tables()
     org = UUID(str(organization_id))
+    if instance_id is not None and workspace_id is not None:
+        scoped = await get_instance(org, instance_id, workspace_id=workspace_id)
+        if scoped is None:
+            return {"status": "not_found", "signal_id": None, "resumed": False}
     et = str(event_type)[:120]
     ck = correlation_key(correlation or {})
     session = await get_async_session()
@@ -1150,6 +1296,9 @@ async def signal_workflow_instance(
             if workflow_id is not None:
                 sql += "AND workflow_id = :wid "
                 params["wid"] = str(workflow_id)
+            if workspace_id is not None:
+                sql += "AND workspace_id = :ws "
+                params["ws"] = str(workspace_id)
             sql += "ORDER BY updated_at ASC LIMIT 10"
             rows = (await session.execute(text(sql), params)).fetchall()
         finally:

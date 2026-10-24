@@ -24,6 +24,10 @@ from src.platform.workflows.architect_models import (
     normalize_semantic_plan,
 )
 from src.platform.workflows.architect_validator import validate_semantic_plan
+from src.platform.workflows.effect_verification import (
+    EXTERNAL_EFFECT_NODE_TYPES,
+    EXTERNAL_READ_NODE_TYPES,
+)
 from src.platform.workflows.ir import WorkflowGraph, validate_graph
 from src.platform.workflows.runtime import ExecutionContext, execute_graph
 
@@ -33,17 +37,7 @@ MODEL_CONFIG = ConfigDict(extra="forbid")
 SIMULATION_SCHEMA = "zent.workflow.simulation/v1"
 CERTIFICATION_SCHEMA = "zent.workflow.certification/v1"
 
-_RISKY_NODE_TYPES = frozenset(
-    {
-        "capability_call",
-        "marketplace_action",
-        "api_call",
-        "llm",
-        "query_business_data",
-        "kb_query",
-        "business_node",
-    }
-)
+_RISKY_NODE_TYPES = EXTERNAL_EFFECT_NODE_TYPES | EXTERNAL_READ_NODE_TYPES
 
 
 class ScenarioEvent(BaseModel):

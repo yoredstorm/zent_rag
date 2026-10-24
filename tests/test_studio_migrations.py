@@ -38,13 +38,39 @@ def test_migration_163_is_aditive_and_chained() -> None:
     assert "CREATE TABLE IF NOT EXISTS assistants" not in source
 
 
-def test_latest_migration_is_163() -> None:
+def test_latest_migration_is_169() -> None:
     numbers = sorted(
         int(path.stem.split("_", 1)[0])
         for path in VERSIONS.glob("*.py")
         if path.stem.split("_", 1)[0].isdigit()
     )
-    assert numbers[-1] == 163
+    assert numbers[-1] == 169
+
+
+def test_migration_169_persists_test_reports_only() -> None:
+    module = _load_migration("169_workflow_test_reports.py")
+    assert module.revision == "169"
+    assert module.down_revision == "168"
+    source = (VERSIONS / "169_workflow_test_reports.py").read_text()
+    assert "CREATE TABLE IF NOT EXISTS workflow_test_reports" in source
+    assert "graph_hash" in source
+    assert "role_hash" in source
+    assert "binding_hash" in source
+    assert "CREATE TABLE IF NOT EXISTS workflow_certificates" not in source
+
+
+def test_migration_168_adds_memory_scope_without_recreating_tables() -> None:
+    module = _load_migration("168_memory_scope_consent.py")
+    assert module.revision == "168"
+    assert module.down_revision == "167"
+    source = (VERSIONS / "168_memory_scope_consent.py").read_text()
+    assert "ADD COLUMN IF NOT EXISTS workspace_id" in source
+    assert "ADD COLUMN IF NOT EXISTS subject_id" in source
+    assert "ADD COLUMN IF NOT EXISTS scope" in source
+    assert "ADD COLUMN IF NOT EXISTS consent_at" in source
+    assert "ADD COLUMN IF NOT EXISTS expires_at" in source
+    assert "ADD COLUMN IF NOT EXISTS deleted_at" in source
+    assert "CREATE TABLE IF NOT EXISTS memory_records" not in source
 
 
 def test_role_contract_json_roundtrip_has_no_tenant_or_secret_fields() -> None:

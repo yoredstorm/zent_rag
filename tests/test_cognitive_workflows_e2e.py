@@ -291,8 +291,9 @@ async def test_e2e_sales_over_threshold_with_approval(
     )
     assert run.status_code == 200, run.text
     body = run.json()
-    assert body["status"] == "pending_approval", body
-    run_id = body["run_id"]
+    assert body["status"] == "running", body
+    assert body["run"]["status"] == "pending_approval", body
+    run_id = body["run"]["run_id"]
 
     # El agente recibió contexto fusionado (datos + conocimiento).
     request = runtime.requests[0]
@@ -316,11 +317,24 @@ async def test_e2e_sales_over_threshold_with_approval(
 
     detail = await async_client.get(f"/api/v1/workflows/runs/{run_id}", headers=headers)
     inspector = detail.json()
-    assert inspector["status"] != "pending_approval", inspector["status"]
     story = " ".join(inspector["story"])
     assert "El agente analizó la situación: HIGH" in story
     assert "aprobación humana: Aprobar venta de alto monto" in story
     assert inspector["decisions"][0]["value"]["risk"] == "HIGH"
+
+    instance_id = decided.json()["instance_id"]
+    instance = await async_client.get(
+        f"/api/v1/workflows/instances/{instance_id}", headers=headers
+    )
+    assert instance.json()["status"] == "COMPLETED"
+    timeline = await async_client.get(
+        f"/api/v1/workflows/instances/{instance_id}/timeline", headers=headers
+    )
+    last_run = timeline.json()["runs"][-1]
+    resumed = await async_client.get(
+        f"/api/v1/workflows/runs/{last_run['run_id']}", headers=headers
+    )
+    assert resumed.json()["status"] == "succeeded"
 
 
 @pytest.mark.asyncio

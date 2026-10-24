@@ -1,0 +1,19 @@
+ M docs/architecture/ai-workflow-studio/14-workflow-simulation.md
+ M docs/architecture/universal-studio/03-gap-matrix.md
+ M docs/architecture/universal-studio/12-release-gold.md
+ M portal/src/components/WorkflowRunInspector.test.tsx
+ M portal/src/components/WorkflowRunInspector.tsx
+ M portal/src/components/workflowStudio/WorkflowTestPanel.test.tsx
+ M portal/src/components/workflowStudio/WorkflowTestPanel.tsx
+ M portal/src/lib/workflowGraph.test.ts
+ M portal/src/lib/workflowGraph.ts
+ M src/platform/workflows/engine.py
+ M src/platform/workflows/runtime.py
+ M src/platform/workflows/workflow_simulation.py
+ M tests/test_workflow_graph.py
+ M tests/test_workflow_partial_runs.py
+?? artifacts/certification/p00/
+?? portal/src/lib/workflowEffects.test.ts
+?? portal/src/lib/workflowEffects.ts
+?? src/platform/workflows/effect_verification.py
+?? tests/test_workflow_effect_verification.py

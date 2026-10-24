@@ -544,6 +544,13 @@ export default function RoleStudioPage() {
                   >
                     {saving ? "Guardando..." : draft.record_id ? "Guardar nueva versión" : "Guardar borrador"}
                   </Button>
+                  <ButtonLink
+                    to={`/solutions/new?brief=${encodeURIComponent(draft.mission || prompt)}`}
+                    variant="secondary"
+                    data-testid="prepare-solution"
+                  >
+                    Preparar solución completa
+                  </ButtonLink>
                   <span className="text-xs text-faint">
                     {draft.record_id ? `Versión ${draft.version}` : "Aún no guardado"}
                   </span>

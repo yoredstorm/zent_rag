@@ -444,6 +444,12 @@ async def test_publish_blocks_unreviewed_fallback_draft(async_client: AsyncClien
     )
     assert detail.json()["status"] == "draft"
 
+    certified = await async_client.post(
+        f"/api/v1/workflows/{workflow_id}/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"cert-{uuid4().hex}"},
+        json={"level": "design"},
+    )
+    assert certified.status_code == 200, certified.text
     confirmed = await async_client.post(
         f"/api/v1/workflows/{workflow_id}/publish",
         headers={**_headers(org), "Idempotency-Key": f"pubfc-{uuid4().hex}"},
@@ -467,6 +473,12 @@ async def test_publish_ready_architect_workflow_activates(async_client: AsyncCli
         json={"plan": body["plan"], "plan_hash": body["plan_hash"], "name": "Aviso listo"},
     )
     workflow_id = saved.json()["workflow_id"]
+    certified = await async_client.post(
+        f"/api/v1/workflows/{workflow_id}/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"cert-{uuid4().hex}"},
+        json={"level": "design"},
+    )
+    assert certified.status_code == 200, certified.text
     response = await async_client.post(
         f"/api/v1/workflows/{workflow_id}/publish",
         headers={**_headers(org), "Idempotency-Key": f"pubr-{uuid4().hex}"},

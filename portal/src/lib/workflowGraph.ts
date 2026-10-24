@@ -754,16 +754,22 @@ export function findNodeByRef(ref: string, graph: WorkflowGraph): string | undef
 // Validación y clasificación de nodos
 // ---------------------------------------------------------------------------
 
+/** Efectos externos que exigen doble o proveedor real. */
+export const EXTERNAL_EFFECT_NODE_TYPES = [
+  "capability_call",
+  "marketplace_action",
+  "api_call",
+  "business_node",
+] as const;
+
 /**
  * Nodos con efectos de lado: el backend los simula en `Probar` y solo los
  * ejecuta de verdad en `Ejecutar`.
  */
 export const EFFECT_NODE_TYPES = [
+  ...EXTERNAL_EFFECT_NODE_TYPES,
   "notify",
-  "api_call",
-  "marketplace_action",
   "human_approval",
-  "business_node",
   "business_result",
 ] as const;
 

@@ -31,6 +31,21 @@ def _chain_graph() -> dict:
     )
 
 
+def _capability_graph() -> dict:
+    return _graph(
+        nodes=[
+            _node("t", "trigger_webhook"),
+            _node(
+                "pay",
+                "capability_call",
+                {"capability": "payments.checkout.create", "inputs": {"amount": 10}},
+            ),
+        ],
+        edges=[_edge("e1", "t", "pay")],
+        entrypoints=["t"],
+    )
+
+
 async def _workflow(client: AsyncClient, org: dict, name: str, graph: dict) -> str:
     created = await client.post(
         "/api/v1/workflows",
@@ -167,6 +182,7 @@ async def test_pinned_data_only_applies_to_simulation(async_client: AsyncClient)
     n1 = _step(real_detail, "n1")
     assert n1["output"]["sent"] is True
     assert n1["output"].get("simulated") is not True
+    assert real_detail["effect_verification"]["level"] == "NONE"
 
     removed = await async_client.delete(
         f"/api/v1/workflows/{workflow_id}/pinned-data/n1",
@@ -192,3 +208,41 @@ async def test_pinned_data_rejects_unknown_node_and_cross_tenant(async_client: A
         f"/api/v1/workflows/{workflow_id}/pinned-data", headers=_headers(org_b)
     )
     assert cross.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_unpinned_capability_effect_is_unverified(async_client: AsyncClient) -> None:
+    org = await _org(async_client, "Effect Unverified")
+    workflow_id = await _workflow(async_client, org, "Cobro", _capability_graph())
+
+    out = await _run(async_client, org, workflow_id)
+    verification = out["effect_verification"]
+    assert verification["level"] == "UNVERIFIED"
+    assert [item["node_id"] for item in verification["unverified"]] == ["pay"]
+    assert verification["declared"] == []
+
+    detail = await _detail(async_client, org, out["run_id"])
+    assert detail["effect_verification"]["level"] == "UNVERIFIED"
+
+
+@pytest.mark.asyncio
+async def test_pinned_capability_effect_is_declared(async_client: AsyncClient) -> None:
+    org = await _org(async_client, "Effect Declared")
+    h = _headers(org)
+    workflow_id = await _workflow(async_client, org, "Cobro", _capability_graph())
+
+    pinned = await async_client.put(
+        f"/api/v1/workflows/{workflow_id}/pinned-data/pay",
+        headers={**h, "Idempotency-Key": f"pin-{uuid4().hex}"},
+        json={"output": {"checkout_id": "sim-1", "status": "pending"}},
+    )
+    assert pinned.status_code == 200, pinned.text
+
+    out = await _run(async_client, org, workflow_id)
+    verification = out["effect_verification"]
+    assert verification["level"] == "DECLARED"
+    assert verification["unverified"] == []
+    assert [item["node_id"] for item in verification["declared"]] == ["pay"]
+
+    detail = await _detail(async_client, org, out["run_id"])
+    assert detail["effect_verification"]["level"] == "DECLARED"

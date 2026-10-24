@@ -128,6 +128,13 @@ class MemoryRecord:
     activated_at: datetime | None = None
     created_from_conversation_id: UUID | None = None
     created_from_run_id: UUID | None = None
+    #: Ámbito explícito. ``tenant`` conserva las filas anteriores a P06.
+    workspace_id: UUID | None = None
+    subject_id: str | None = None
+    scope: str = "tenant"
+    consent_at: datetime | None = None
+    expires_at: datetime | None = None
+    deleted_at: datetime | None = None
     intent_family: str = ""
     source_type: str = ""
     retrieval_modality: str = ""
@@ -192,6 +199,12 @@ class MemoryRecord:
             "created_from_run_id": (
                 str(self.created_from_run_id) if self.created_from_run_id else None
             ),
+            "workspace_id": str(self.workspace_id) if self.workspace_id else None,
+            "subject_id": self.subject_id,
+            "scope": self.scope,
+            "consent_at": _iso(self.consent_at),
+            "expires_at": _iso(self.expires_at),
+            "deleted_at": _iso(self.deleted_at),
             "intent_family": self.intent_family,
             "source_type": self.source_type,
             "retrieval_modality": self.retrieval_modality,

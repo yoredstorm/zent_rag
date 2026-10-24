@@ -1,0 +1,10 @@
+artifacts/certification/p00/branch.txt
+artifacts/certification/p00/git-diff-stat.txt
+artifacts/certification/p00/git-status.txt
+artifacts/certification/p00/sha.txt
+artifacts/certification/p00/untracked.txt
+artifacts/certification/p00/worktree.diff
+portal/src/lib/workflowEffects.test.ts
+portal/src/lib/workflowEffects.ts
+src/platform/workflows/effect_verification.py
+tests/test_workflow_effect_verification.py

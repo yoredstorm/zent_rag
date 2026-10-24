@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 
-from tests.test_workflows import _create_org, _headers, _owner_session
+from tests.test_workflows import _certify, _create_org, _headers, _owner_session
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +276,9 @@ async def test_dry_run_simulates_side_effects(async_client: AsyncClient) -> None
     assert body["status"] == "simulated"
     assert body["simulate"] is True
     assert len(body["planned_effects"]) >= 1
+    verification = body["effect_verification"]
+    assert verification["level"] == "SIMULATED"
+    assert verification["unverified"] == []
 
     # Sin simulación real: no se creó la notificación de email.
     detail = await async_client.get(f"/api/v1/workflows/runs/{body['run_id']}", headers=h)
@@ -407,8 +410,9 @@ async def test_human_approval_flow(async_client: AsyncClient) -> None:
     )
     assert result.status_code == 200, result.text
     body = result.json()
-    assert body["status"] == "pending_approval", body
-    run_id = body["run_id"]
+    assert body["status"] == "running", body
+    assert body["run"]["status"] == "pending_approval", body
+    run_id = body["run"]["run_id"]
 
     appr = await async_client.get(f"/api/v1/workflows/runs/{run_id}/approvals", headers=h)
     approvals = appr.json()["approvals"]
@@ -447,8 +451,8 @@ async def test_human_approval_flow(async_client: AsyncClient) -> None:
         headers={**_headers(org), "Idempotency-Key": f"ap2-r-{uuid4().hex}"},
         json={"payload": {}},
     )
-    run2_id = run2.json()["run_id"]
-    assert run2.json()["status"] == "pending_approval"
+    run2_id = run2.json()["run"]["run_id"]
+    assert run2.json()["run"]["status"] == "pending_approval"
     appr2 = (
         await async_client.get(f"/api/v1/workflows/runs/{run2_id}/approvals", headers=h)
     ).json()["approvals"][0]
@@ -461,7 +465,16 @@ async def test_human_approval_flow(async_client: AsyncClient) -> None:
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "approved"
 
-    detail2 = await async_client.get(f"/api/v1/workflows/runs/{run2_id}", headers=h)
+    instance_id = approved.json()["instance_id"]
+    instance = await async_client.get(
+        f"/api/v1/workflows/instances/{instance_id}", headers=h
+    )
+    assert instance.json()["status"] == "COMPLETED", instance.text
+    timeline = await async_client.get(
+        f"/api/v1/workflows/instances/{instance_id}/timeline", headers=h
+    )
+    last_run_id = timeline.json()["runs"][-1]["run_id"]
+    detail2 = await async_client.get(f"/api/v1/workflows/runs/{last_run_id}", headers=h)
     assert detail2.json()["status"] == "succeeded"
     steps2 = {s["node_id"]: s for s in detail2.json()["steps"]}
     assert steps2["fin2"]["status"] == "succeeded"
@@ -488,6 +501,11 @@ async def test_event_trigger_dispatches_workflow(async_client: AsyncClient) -> N
         },
     )
     wid = created.json()["workflow_id"]
+    await _certify(async_client, org, wid)
+    activation = await async_client.post(
+        f"/api/v1/workflows/{wid}/activate", headers=_headers(org)
+    )
+    assert activation.status_code == 200, activation.text
     trig = await async_client.post(
         "/api/v1/workflows/triggers",
         headers={**_headers(org), "Idempotency-Key": f"ev-t-{uuid4().hex}"},
@@ -547,6 +565,11 @@ async def test_knowledge_event_trigger_dispatches_workflow(
     )
     assert created.status_code == 200, created.text
     wid = created.json()["workflow_id"]
+    await _certify(async_client, org, wid)
+    activation = await async_client.post(
+        f"/api/v1/workflows/{wid}/activate", headers=_headers(org)
+    )
+    assert activation.status_code == 200, activation.text
 
     # create_event_trigger acepta knowledge.new_rule (registro).
     trig = await async_client.post(
@@ -634,6 +657,11 @@ async def _create_event_workflow(
     )
     assert created.status_code == 200, created.text
     wid = created.json()["workflow_id"]
+    await _certify(async_client, org, wid)
+    activation = await async_client.post(
+        f"/api/v1/workflows/{wid}/activate", headers=_headers(org)
+    )
+    assert activation.status_code == 200, activation.text
     trig = await async_client.post(
         "/api/v1/workflows/triggers",
         headers={**_headers(org), "Idempotency-Key": f"kn-t-{uuid4().hex}"},
@@ -759,6 +787,12 @@ async def test_scheduler_daily_due(async_client: AsyncClient) -> None:
         },
     )
     wid = created.json()["workflow_id"]
+    certified = await async_client.post(
+        f"/api/v1/workflows/{wid}/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"cert-{uuid4().hex}"},
+        json={"level": "design"},
+    )
+    assert certified.status_code == 200, certified.text
     await async_client.post(f"/api/v1/workflows/{wid}/activate", headers={**_headers(org)})
 
     from datetime import datetime, timezone

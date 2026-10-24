@@ -22,6 +22,7 @@ from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
 from src.platform.workflows.context import WorkflowContext
 from src.platform.workflows.contributions import ContextMerger
+from src.platform.workflows.error_contract import error_contract, port_for_message
 
 logger = get_logger(__name__)
 
@@ -338,6 +339,8 @@ async def execute_graph(
             status=status,
             output=output or {},
             error=error,
+            simulated=bool(exec_.simulated) if exec_ is not None else False,
+            planned=dict(exec_.planned) if exec_ is not None and exec_.planned else {},
             waiting=dict(exec_.waiting) if exec_ is not None and exec_.waiting else {},
         )
         resolved.add(node_id)
@@ -401,7 +404,15 @@ async def execute_graph(
 
         virtual = bool((node.metadata or {}).get("virtual"))
         if node_def is None:
-            exec_ = NodeExecution(status="failed", error=f"tipo de nodo desconocido: {node.type}")
+            message = f"tipo de nodo desconocido: {node.type}"
+            exec_ = NodeExecution(
+                status="failed",
+                error=message,
+                output={
+                    "typed_port": "invalid_input",
+                    "error_contract": error_contract("contract_mismatch", message),
+                },
+            )
             await persist(node_id, node.type, node.config, exec_, virtual)
             node_outcome(node_id, "failed", exec_.output, exec_.error, exec_)
             run_status, run_error = "failed", exec_.error
@@ -489,20 +500,22 @@ async def execute_graph(
             run_status, run_error = "failed", exec_.error
             return
 
-        # Permisos por capability.
-        denied_perm = None
-        for cap in node_def.capabilities:
-            try:
-                from src.platform.workflows.nodes import capability_permission
+        # Policy Enforcement Point único para capacidades, RBAC y rol.
+        from src.platform.workflows.policy_enforcement import authorize_node
 
-                perm = capability_permission(cap)
-            except Exception:  # noqa: BLE001
-                perm = None
-            if perm and perm not in ctx.permissions:
-                denied_perm = perm
-                break
-        if denied_perm is not None:
-            exec_ = NodeExecution(status="denied", error=f"permiso insuficiente: {denied_perm}")
+        verdict = await authorize_node(rctx, node, node_def)
+        if not verdict.allowed:
+            message = "permiso insuficiente: " + "; ".join(verdict.reasons)
+            exec_ = NodeExecution(
+                status="denied",
+                error=message,
+                output={
+                    "typed_port": "unauthorized",
+                    "error_contract": error_contract(
+                        "unauthorized_tool", message, port="unauthorized"
+                    ),
+                },
+            )
             _emit_node_metric(node.type, "denied", 0)
             await persist(node_id, node.type, node.config, exec_, virtual)
             node_outcome(node_id, "denied", exec_.output, exec_.error, exec_)
@@ -551,7 +564,24 @@ async def execute_graph(
             if outcome is not None and outcome.error:
                 last_error = outcome.error
         if exec_ is None:
-            exec_ = NodeExecution(status="failed", error=last_error, retries=attempt - 1)
+            message = last_error or "error de nodo"
+            exec_ = NodeExecution(
+                status="failed",
+                error=message,
+                retries=attempt - 1,
+                output={
+                    "typed_port": port_for_message(message),
+                    "error_contract": error_contract(None, message),
+                },
+            )
+        if exec_.status in {"failed", "denied"}:
+            if exec_.output is None:
+                exec_.output = {}
+            exec_.output.setdefault("typed_port", port_for_message(exec_.error))
+            exec_.output.setdefault(
+                "error_contract",
+                error_contract(None, exec_.error or "", port=exec_.output["typed_port"]),
+            )
         # Semántica legacy: condición evaluada falsa → nodo "skipped".
         if (
             node.type == "condition"
@@ -948,7 +978,16 @@ async def _run_node_once(ctx: ExecutionContext, node_def, rctx, started: datetim
         if outcome is not None and outcome.error:
             last_error = outcome.error
     if outcome is None:
-        return NodeExecution(status="failed", error=last_error, retries=attempt - 1)
+        message = last_error or "error de nodo"
+        return NodeExecution(
+            status="failed",
+            error=message,
+            retries=attempt - 1,
+            output={
+                "typed_port": port_for_message(message),
+                "error_contract": error_contract(None, message),
+            },
+        )
     return NodeExecution(
         status="simulated" if outcome.simulated else "succeeded",
         output=dict(outcome.output or {}),

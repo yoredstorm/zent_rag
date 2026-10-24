@@ -41,6 +41,15 @@ def _headers(org: dict) -> dict:
     }
 
 
+async def _certify(client: AsyncClient, org: dict, workflow_id: str) -> None:
+    response = await client.post(
+        f"/api/v1/workflows/{workflow_id}/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"cert-{uuid4().hex}"},
+        json={"level": "design"},
+    )
+    assert response.status_code == 200, response.text
+
+
 async def _platform_admin(client: AsyncClient, email: str) -> dict:
     import hashlib as hl
 
@@ -128,9 +137,30 @@ async def test_crud_and_status(async_client: AsyncClient) -> None:
     detail2 = await async_client.get(f"/api/v1/workflows/{wid}", headers=h)
     assert detail2.json()["name"] == "Mi Flujo v2"
 
-    active = await async_client.post(f"/api/v1/workflows/{wid}/activate", headers={**_headers(org)})
+    activatable = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"wf-act-{uuid4().hex}"},
+        json={
+            "name": "Activable",
+            "trigger_type": "webhook",
+            "steps": [
+                {
+                    "type": "notify",
+                    "config": {"channel": "in_app", "title": "ok", "message": "ok"},
+                }
+            ],
+        },
+    )
+    assert activatable.status_code == 200, activatable.text
+    activatable_id = activatable.json()["workflow_id"]
+    await _certify(async_client, org, activatable_id)
+    active = await async_client.post(
+        f"/api/v1/workflows/{activatable_id}/activate", headers={**_headers(org)}
+    )
     assert active.json()["status"] == "active"
-    paused = await async_client.post(f"/api/v1/workflows/{wid}/pause", headers={**_headers(org)})
+    paused = await async_client.post(
+        f"/api/v1/workflows/{activatable_id}/pause", headers={**_headers(org)}
+    )
     assert paused.json()["status"] == "paused"
 
     listed = await async_client.get("/api/v1/workflows", headers=h)
@@ -613,6 +643,7 @@ async def test_public_hook_secret_and_scheduler(async_client: AsyncClient) -> No
     assert "hook_secret" not in detail.json()
     assert detail.json()["has_hook_secret"] is True
 
+    await _certify(async_client, org, wid)
     await async_client.post(f"/api/v1/workflows/{wid}/activate", headers={**_headers(org)})
 
     denied = await async_client.post(
@@ -641,6 +672,7 @@ async def test_public_hook_secret_and_scheduler(async_client: AsyncClient) -> No
         },
     )
     swid = sched.json()["workflow_id"]
+    await _certify(async_client, org, swid)
     await async_client.post(f"/api/v1/workflows/{swid}/activate", headers={**_headers(org)})
 
     from src.platform.workflows.engine import run_due_scheduled_workflows

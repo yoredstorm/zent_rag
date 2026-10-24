@@ -195,7 +195,13 @@ async def create_version(
 
 
 async def promote_version(
-    organization_id: UUID, workflow_id: UUID, version_id: UUID, status: str
+    organization_id: UUID,
+    workflow_id: UUID,
+    version_id: UUID,
+    status: str,
+    *,
+    workspace_id: UUID | None = None,
+    permissions: frozenset[str] | None = None,
 ) -> dict | None:
     """Mueve una versión en el ciclo de vida. None = versión inexistente."""
     if status not in VERSION_STATUSES:
@@ -206,7 +212,7 @@ async def promote_version(
         current = (
             await session.execute(
                 text(
-                    "SELECT status FROM workflow_versions WHERE id = :vid "
+                    "SELECT status, config_snapshot FROM workflow_versions WHERE id = :vid "
                     "AND workflow_id = :wid AND organization_id = :oid"
                 ),
                 {"vid": version_id, "wid": workflow_id, "oid": organization_id},
@@ -218,6 +224,34 @@ async def promote_version(
             raise ValueError(
                 f"transición inválida: {current.status} → {status}"
             )
+        if status == "production":
+            from src.platform.workflows.release_policy import (
+                ReleaseDenied,
+                ensure_release_tables,
+                target_graph_decision,
+            )
+
+            await ensure_release_tables()
+            snapshot = current.config_snapshot if isinstance(current.config_snapshot, dict) else {}
+            graph = snapshot.get("graph")
+            if not graph:
+                from src.platform.workflows.ir import LegacyWorkflowAdapter
+
+                graph = LegacyWorkflowAdapter.steps_to_graph(
+                    snapshot.get("steps") or [],
+                    snapshot.get("trigger_type") or "webhook",
+                    snapshot.get("trigger_config") or {},
+                ).to_dict()
+            decision = await target_graph_decision(
+                organization_id,
+                workflow_id,
+                graph,
+                action="promote",
+                workspace_id=workspace_id,
+                permissions=permissions,
+            )
+            if not decision.allowed:
+                raise ReleaseDenied(decision.to_dict())
         row = (
             await session.execute(
                 text(
@@ -239,12 +273,17 @@ async def promote_version(
 
 
 async def restore_version(
-    organization_id: UUID, workflow_id: UUID, version_id: UUID
+    organization_id: UUID,
+    workflow_id: UUID,
+    version_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
+    permissions: frozenset[str] | None = None,
 ) -> dict | None:
     """Rollback: copia el snapshot a la fila viva. None = versión inexistente.
 
-    El grafo legacy (graph_source='legacy') se restaura desde `steps` para que
-    el adapter regenere el grafo y no promueva el workflow a IR v2.
+    Un workflow activo no cambia de grafo sin un certificado vigente del
+    snapshot destino. El grafo legacy se restaura desde `steps`.
     """
     await ensure_workflow_versions_table()
     session = await get_async_session()
@@ -264,7 +303,36 @@ async def restore_version(
         return None
     snapshot = row.config_snapshot if isinstance(row.config_snapshot, dict) else {}
 
-    from src.platform.workflows.engine import update_workflow
+    from src.platform.workflows.engine import get_workflow, update_workflow
+
+    live = await get_workflow(organization_id, workflow_id)
+    if live is not None and str(live.get("status") or "") == "active":
+        from src.platform.workflows.release_policy import (
+            ReleaseDenied,
+            ensure_release_tables,
+            target_graph_decision,
+        )
+
+        await ensure_release_tables()
+        target_graph = snapshot.get("graph")
+        if not target_graph:
+            from src.platform.workflows.ir import LegacyWorkflowAdapter
+
+            target_graph = LegacyWorkflowAdapter.steps_to_graph(
+                snapshot.get("steps") or [],
+                snapshot.get("trigger_type") or "webhook",
+                snapshot.get("trigger_config") or {},
+            ).to_dict()
+        decision = await target_graph_decision(
+            organization_id,
+            workflow_id,
+            target_graph,
+            action="restore",
+            workspace_id=workspace_id,
+            permissions=permissions,
+        )
+        if not decision.allowed:
+            raise ReleaseDenied(decision.to_dict())
 
     legacy = str(snapshot.get("graph_source") or "graph") == "legacy"
     updated = await update_workflow(
@@ -434,59 +502,125 @@ async def publish_workflow(
     created_by: UUID | None = None,
     confirm_architect_draft: bool = False,
     permissions: frozenset[str] | None = None,
+    workspace_id: UUID | None = None,
 ) -> dict | None:
     """Publicar = snapshot en production + workflow activo (webhook/schedule).
 
-    Gate de portabilidad: un workflow importado (package) no se publica con
-    requisitos críticos pendientes (capabilities sin binding, credenciales,
-    permisos). Gate del Architect: re-valida grafo, agente y dependencias
-    actuales; un borrador marcado para revisión exige confirmación explícita.
+    Un solo gate de release decide con el certificado persistido. La fila del
+    workflow se bloquea (FOR UPDATE) durante el chequeo y la escritura para
+    evitar TOCTOU entre edición y publicación.
     """
-    from src.platform.workflows.engine import get_workflow, set_workflow_status
+    from src.platform.workflows.engine import get_workflow
     from src.platform.workflows.packages import publication_blockers
-
-    blockers = await publication_blockers(organization_id, workflow_id)
-    if blockers:
-        raise ValueError(
-            "requisitos sin resolver: "
-            + "; ".join(f"{b['ref']} ({b['status']})" for b in blockers[:5])
-        )
-
-    workflow = await get_workflow(organization_id, workflow_id)
-    if workflow is None:
-        return None
-    architect_metadata = ((workflow.get("graph") or {}).get("metadata") or {})
-    if architect_metadata.get("architect"):
-        state = str(architect_metadata.get("architect_state") or "")
-        architect_source = str(architect_metadata.get("architect_source") or "")
-        if architect_source == "heuristics" and not confirm_architect_draft:
-            raise ValueError(
-                "el borrador se generó por reglas (el modelo no estuvo disponible); "
-                "revísalo y confirma la publicación con confirm_architect_draft=true"
-            )
-        if state and state != "DRAFT_READY" and not confirm_architect_draft:
-            raise ValueError(
-                f"el borrador quedó en {state}; revísalo y confirma la publicación "
-                "con confirm_architect_draft=true"
-            )
-        problems = await _architect_publication_problems(
-            organization_id, workflow_id, permissions=permissions
-        )
-        if problems:
-            raise ValueError("requisitos sin resolver: " + "; ".join(problems[:5]))
-
-    version = await create_version(
-        organization_id,
-        workflow_id,
-        notes=notes,
-        created_by=created_by,
-        status="production",
+    from src.platform.workflows.release_policy import (
+        ReleaseDenied,
+        ensure_release_tables,
+        evaluate_release,
     )
-    if version is None:
-        return None
-    status = await set_workflow_status(organization_id, workflow_id, "active")
+
+    await ensure_release_tables()
+    lock_session = await get_async_session()
+    try:
+        locked = (
+            await lock_session.execute(
+                text(
+                    "SELECT id FROM workflows WHERE id = :wid AND organization_id = :oid "
+                    "FOR UPDATE"
+                ),
+                {"wid": workflow_id, "oid": organization_id},
+            )
+        ).fetchone()
+        if locked is None:
+            await lock_session.rollback()
+            return None
+        workflow = await get_workflow(organization_id, workflow_id)
+        if workflow is None:
+            await lock_session.rollback()
+            return None
+        blockers = await publication_blockers(organization_id, workflow_id)
+        if blockers:
+            await lock_session.rollback()
+            raise ValueError(
+                "requisitos sin resolver: "
+                + "; ".join(f"{b['ref']} ({b['status']})" for b in blockers[:5])
+            )
+        architect_metadata = ((workflow.get("graph") or {}).get("metadata") or {})
+        if architect_metadata.get("architect"):
+            state = str(architect_metadata.get("architect_state") or "")
+            architect_source = str(architect_metadata.get("architect_source") or "")
+            if architect_source == "heuristics" and not confirm_architect_draft:
+                await lock_session.rollback()
+                raise ValueError(
+                    "el borrador se generó por reglas (el modelo no estuvo disponible); "
+                    "revísalo y confirma la publicación con confirm_architect_draft=true"
+                )
+            if state and state != "DRAFT_READY" and not confirm_architect_draft:
+                await lock_session.rollback()
+                raise ValueError(
+                    f"el borrador quedó en {state}; revísalo y confirma la publicación "
+                    "con confirm_architect_draft=true"
+                )
+            problems = await _architect_publication_problems(
+                organization_id, workflow_id, permissions=permissions
+            )
+            if problems:
+                await lock_session.rollback()
+                raise ValueError("requisitos sin resolver: " + "; ".join(problems[:5]))
+
+        decision = await evaluate_release(
+            organization_id,
+            workflow_id,
+            action="publish",
+            workspace_id=workspace_id,
+            permissions=permissions,
+        )
+        if not decision.allowed:
+            await lock_session.rollback()
+            raise ReleaseDenied(decision.to_dict())
+
+        snapshot = snapshot_workflow(workflow)
+        certificate_id = (decision.certificate or {}).get("id")
+        row = (
+            await lock_session.execute(
+                text(
+                    "INSERT INTO workflow_versions (organization_id, workflow_id, "
+                    "version_number, status, config_snapshot, notes, created_by, "
+                    "certificate_id) "
+                    "SELECT :oid, :wid, COALESCE(MAX(version_number), 0) + 1, "
+                    "'production', CAST(:snapshot AS jsonb), :notes, :by, :cert "
+                    "FROM workflow_versions WHERE workflow_id = :wid "
+                    "RETURNING id, workflow_id, version_number, status, "
+                    "config_snapshot, notes, created_by, created_at"
+                ),
+                {
+                    "oid": organization_id,
+                    "wid": workflow_id,
+                    "snapshot": json.dumps(snapshot),
+                    "notes": notes,
+                    "by": created_by,
+                    "cert": certificate_id,
+                },
+            )
+        ).fetchone()
+        await _demote_other_productions(
+            lock_session, organization_id, workflow_id, row.id
+        )
+        await lock_session.execute(
+            text(
+                "UPDATE workflows SET status = 'active', updated_at = NOW() "
+                "WHERE id = :wid AND organization_id = :oid"
+            ),
+            {"wid": workflow_id, "oid": organization_id},
+        )
+        await lock_session.commit()
+    except Exception:
+        await lock_session.rollback()
+        raise
+    finally:
+        await lock_session.close()
     return {
         "workflow_id": str(workflow_id),
-        "status": (status or {}).get("status", "active"),
-        "version": version,
+        "status": "active",
+        "version": _version_response(row),
+        "release": decision.to_dict(),
     }

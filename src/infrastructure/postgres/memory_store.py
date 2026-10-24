@@ -75,6 +75,12 @@ def _record(row: Any) -> MemoryRecord:
         activated_at=row["activated_at"],
         created_from_conversation_id=row["created_from_conversation_id"],
         created_from_run_id=row["created_from_run_id"],
+        workspace_id=row.get("workspace_id"),
+        subject_id=row.get("subject_id"),
+        scope=row.get("scope") or "tenant",
+        consent_at=row.get("consent_at"),
+        expires_at=row.get("expires_at"),
+        deleted_at=row.get("deleted_at"),
         intent_family=row["intent_family"] or "",
         source_type=row["source_type"] or "",
         retrieval_modality=row["retrieval_modality"] or "",
@@ -177,38 +183,37 @@ class PostgresMemoryRepository(MemoryRepository):
         organization_id: UUID,
         memory_type: MemoryType,
         pattern_signature: str,
+        *,
+        workspace_id: UUID | None = None,
+        subject_id: str | None = None,
     ) -> MemoryRecord | None:
-        sql = """
-            SELECT * FROM memory_records
-            WHERE organization_id = :oid
-              AND memory_type = :memory_type
-              AND pattern_signature = :signature
-              AND visibility = 'tenant'
-              AND status NOT IN ('rejected', 'expired', 'superseded')
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """
-        if _tx.get() is not None:
-            sql = """
-            SELECT * FROM memory_records
-            WHERE organization_id = :oid
-              AND memory_type = :memory_type
-              AND pattern_signature = :signature
-              AND visibility = 'tenant'
-              AND status NOT IN ('rejected', 'expired', 'superseded')
-            ORDER BY updated_at DESC
-            LIMIT 1
-            FOR UPDATE
-            """
-        row = await self._run(
-            sql,
-            {
-                "oid": organization_id,
-                "memory_type": memory_type.value,
-                "signature": pattern_signature,
-            },
-            fetch="one",
+        clauses = [
+            "organization_id = :oid",
+            "memory_type = :memory_type",
+            "pattern_signature = :signature",
+            "visibility = 'tenant'",
+            "status NOT IN ('rejected', 'expired', 'superseded')",
+            "deleted_at IS NULL",
+        ]
+        params: dict[str, Any] = {
+            "oid": organization_id,
+            "memory_type": memory_type.value,
+            "signature": pattern_signature,
+        }
+        if workspace_id is not None:
+            clauses.append("workspace_id = :ws")
+            params["ws"] = workspace_id
+        if subject_id is not None:
+            clauses.append("subject_id = :subject_id")
+            params["subject_id"] = subject_id
+        lock = " FOR UPDATE" if _tx.get() is not None else ""
+        sql = (
+            "SELECT * FROM memory_records WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY updated_at DESC LIMIT 1"
+            + lock
         )
+        row = await self._run(sql, params, fetch="one")
         return _record(row) if row else None
 
     async def insert(self, record: MemoryRecord) -> MemoryRecord:
@@ -223,6 +228,7 @@ class PostgresMemoryRepository(MemoryRepository):
                 validated_at, activated_at, created_from_conversation_id, created_from_run_id,
                 intent_family, source_type, retrieval_modality, tool_family, failure_category,
                 success_signal, source_component, agent_id, workflow_id, metadata, version,
+                workspace_id, subject_id, scope, consent_at, expires_at, deleted_at,
                 created_at, updated_at
             ) VALUES (
                 :id, :organization_id, :visibility, :memory_type, :title, :description,
@@ -231,7 +237,9 @@ class PostgresMemoryRepository(MemoryRepository):
                 :validated_at, :activated_at, :created_from_conversation_id, :created_from_run_id,
                 :intent_family, :source_type, :retrieval_modality, :tool_family, :failure_category,
                 :success_signal, :source_component, :agent_id, :workflow_id,
-                CAST(:metadata AS jsonb), :version, :created_at, :updated_at
+                CAST(:metadata AS jsonb), :version,
+                :workspace_id, :subject_id, :scope, :consent_at, :expires_at, :deleted_at,
+                :created_at, :updated_at
             )
             """,
             _record_params(record),
@@ -260,6 +268,12 @@ class PostgresMemoryRepository(MemoryRepository):
                 success_signal = :success_signal,
                 metadata = CAST(:metadata AS jsonb),
                 version = :version,
+                workspace_id = :workspace_id,
+                subject_id = :subject_id,
+                scope = :scope,
+                consent_at = :consent_at,
+                expires_at = :expires_at,
+                deleted_at = :deleted_at,
                 updated_at = :updated_at
             WHERE id = :id
               AND organization_id = :organization_id
@@ -359,6 +373,9 @@ class PostgresMemoryRepository(MemoryRepository):
         memory_type: str | None = None,
         status: str | None = None,
         agent_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        subject_id: str | None = None,
+        scope: str | None = None,
         source_component: str | None = None,
         pattern: str | None = None,
         confidence_min: float | None = None,
@@ -372,6 +389,7 @@ class PostgresMemoryRepository(MemoryRepository):
         clauses = [
             "organization_id = :oid",
             "visibility = 'tenant'",
+            "deleted_at IS NULL",
         ]
         params: dict[str, Any] = {
             "oid": organization_id,
@@ -387,6 +405,15 @@ class PostgresMemoryRepository(MemoryRepository):
         if agent_id:
             clauses.append("agent_id = :agent_id")
             params["agent_id"] = agent_id
+        if workspace_id is not None:
+            clauses.append("(workspace_id = :workspace_id OR workspace_id IS NULL)")
+            params["workspace_id"] = workspace_id
+        if subject_id is not None:
+            clauses.append("subject_id = :subject_id")
+            params["subject_id"] = subject_id
+        if scope is not None:
+            clauses.append("scope = :scope")
+            params["scope"] = scope
         if source_component:
             clauses.append("source_component = :source_component")
             params["source_component"] = source_component
@@ -685,6 +712,12 @@ def _record_params(record: MemoryRecord) -> dict[str, Any]:
         "source_component": record.source_component,
         "agent_id": record.agent_id,
         "workflow_id": record.workflow_id,
+        "workspace_id": record.workspace_id,
+        "subject_id": record.subject_id,
+        "scope": record.scope,
+        "consent_at": record.consent_at,
+        "expires_at": record.expires_at,
+        "deleted_at": record.deleted_at,
         "metadata": _dumps(record.metadata),
         "version": record.version,
         "created_at": record.created_at,

@@ -50,7 +50,7 @@ No se rellenan con estimaciones. Una celda vacía es “no medido”.
 2. Entrar a `/workflows/new`. Los tres caminos abren el mismo lienzo.
 3. Para mentor: `/workflows/new/manual?plantilla=mentor`. Revisar la ficha. No activar.
 4. Para ventas con LLM real, usar el architect solo en staging y guardar el JSON de la sesión. No marcar PASSED si el estado no es `DRAFT_READY` o si `workflow_id` sigue vacío.
-5. Simular con el nivel “Simulación determinista”. Si hay efecto sin doble, la UI dice `UNVERIFIED`.
+5. Simular con el nivel “Simulación determinista”. Un efecto externo sin doble da `UNVERIFIED`. Un efecto fijado da `DECLARED`. Ninguno es PASSED.
 6. Certificación con proveedor solo cuenta si el proveedor respondió. Si no, queda `UNVERIFIED`.
 7. Activar un flujo con ficha de misión debe responder 409 mientras el flag esté apagado.
 8. Portabilidad: exportar el paquete con `export_workflow_package`, inspeccionar en otro tenant, resolver capacidades en `/marketplace`, no copiar secretos ni `organization_id`. Este corte no ejecutó Tenant A contra Tenant B.

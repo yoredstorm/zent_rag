@@ -174,6 +174,12 @@ declararlo explícitamente.
 Hoy `READY_TO_PUBLISH` puede alcanzarse con respuestas inventadas por el
 usuario. Eso viola la regla “nunca READY con efectos externos no verificados”.
 
+**Avance parcial (2026-10-23).** El run de prueba ya devuelve
+`effect_verification` con `NONE`, `SIMULATED`, `DECLARED` o `UNVERIFIED`:
+distingue pinned, interno simulado y externo sin doble. Siguen abiertos
+`SANDBOX`, `PROVIDER`, `AWAITING_EFFECT_VERIFICATION` y el puente certificación
+a publicación.
+
 **Archivo responsable**
 
 - `src/platform/workflows/workflow_simulation.py`

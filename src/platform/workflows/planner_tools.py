@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Awaitable, Callable
 from uuid import UUID
@@ -122,6 +122,8 @@ class PlannerToolContext:
     workspace_id: UUID | None
     snapshot: CapabilitySnapshot
     permissions: frozenset[str] = frozenset()
+    cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    cache_hits: int = 0
 
     def index(self):
         return self.snapshot.index()
@@ -505,6 +507,14 @@ async def dispatch_tool(
         raise PlannerToolError(
             "tool_invalid_arguments", f"argumentos inválidos: {str(exc)[:240]}"
         ) from exc
+    cache_key = (
+        f"{ctx.snapshot.snapshot_hash}:{name}:"
+        f"{canonical_hash(parsed.model_dump(mode='json'))}"
+    )
+    cached = ctx.cache.get(cache_key)
+    if cached is not None:
+        ctx.cache_hits += 1
+        return format_observation({**cached, "cached": True})
     started = time.monotonic()
     try:
         result = await spec.handler(ctx, parsed)
@@ -538,7 +548,9 @@ async def dispatch_tool(
         "data": result,
         "snapshot_hash": ctx.snapshot.snapshot_hash,
         "result_hash": canonical_hash(_truncate(result))[:16],
+        "cached": False,
     }
+    ctx.cache[cache_key] = payload
     logger.info(
         "planner tool completed",
         session_id=session_id,

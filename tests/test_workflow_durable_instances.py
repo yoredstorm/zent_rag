@@ -33,6 +33,15 @@ async def _workflow(client: AsyncClient, org: dict, name: str, graph: dict) -> s
     return created.json()["workflow_id"]
 
 
+async def _certify(client: AsyncClient, org: dict, workflow_id: str) -> None:
+    response = await client.post(
+        f"/api/v1/workflows/{workflow_id}/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"cert-{uuid4().hex}"},
+        json={"level": "design"},
+    )
+    assert response.status_code == 200, response.text
+
+
 def _wait_node(nid: str, config: dict | None = None, **extra) -> dict:
     node = _node(nid, "wait_event", config or {"preset": "message"}, **extra)
     node["output_ports"] = [
@@ -660,6 +669,7 @@ async def test_portable_package_export_inspect_import(async_client: AsyncClient)
     assert imported.json()["status"] == "draft"
 
     # Publicar: sin bloqueos tras resolver el binding.
+    await _certify(async_client, org_b, imported_workflow)
     published = await async_client.post(
         f"/api/v1/workflows/{imported_workflow}/publish",
         headers={**_headers(org_b), "Idempotency-Key": f"p-{uuid4().hex}"},
@@ -720,9 +730,18 @@ async def test_durable_run_from_scheduler_sweep_is_idempotent(async_client: Asyn
 
 @pytest.mark.asyncio
 async def test_standing_run_contract_unchanged_without_instance(async_client: AsyncClient) -> None:
-    """Runs sin instancia conservan el contrato exacto de siempre."""
+    """Un grafo sin WAIT conserva el contrato efímero de siempre."""
     org = await _org(async_client, "Durable Compat")
-    workflow_id = await _workflow(async_client, org, "Compat", _durable_graph())
+    graph = _graph(
+        nodes=[
+            _node("t", "trigger_webhook"),
+            _node("n", "notify", {"channel": "in_app", "title": "ok", "message": "ok"}),
+            _node("end", "end"),
+        ],
+        edges=[_edge("e1", "t", "n"), _edge("e2", "n", "end")],
+        entrypoints=["t"],
+    )
+    workflow_id = await _workflow(async_client, org, "Compat", graph)
     resp = await async_client.post(
         f"/api/v1/workflows/{workflow_id}/run",
         headers={**_headers(org), "Idempotency-Key": f"r-{uuid4().hex}"},
@@ -747,6 +766,7 @@ async def _rotated_secret(async_client: AsyncClient, org: dict, workflow_id: str
 
 
 async def _publish(async_client: AsyncClient, org: dict, workflow_id: str) -> None:
+    await _certify(async_client, org, workflow_id)
     resp = await async_client.post(
         f"/api/v1/workflows/{workflow_id}/publish",
         headers={**_headers(org), "Idempotency-Key": f"pub-{uuid4().hex}"},

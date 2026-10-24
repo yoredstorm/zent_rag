@@ -1,0 +1,15 @@
+ .../ai-workflow-studio/14-workflow-simulation.md   | 18 +++++
+ .../architecture/universal-studio/03-gap-matrix.md |  6 ++
+ .../universal-studio/12-release-gold.md            |  2 +-
+ .../src/components/WorkflowRunInspector.test.tsx   | 35 +++++++++
+ portal/src/components/WorkflowRunInspector.tsx     | 66 +++++++++++++---
+ .../workflowStudio/WorkflowTestPanel.test.tsx      | 91 +++++++++++++++++++++-
+ .../workflowStudio/WorkflowTestPanel.tsx           | 91 ++++++++++++++++++----
+ portal/src/lib/workflowGraph.test.ts               | 13 +++-
+ portal/src/lib/workflowGraph.ts                    | 12 ++-
+ src/platform/workflows/engine.py                   | 12 +++
+ src/platform/workflows/runtime.py                  |  2 +
+ src/platform/workflows/workflow_simulation.py      | 16 ++--
+ tests/test_workflow_graph.py                       |  3 +
+ tests/test_workflow_partial_runs.py                | 54 +++++++++++++
+ 14 files changed, 374 insertions(+), 47 deletions(-)

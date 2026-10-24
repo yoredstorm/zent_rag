@@ -269,6 +269,100 @@ async def canvas_context(
     }
 
 
+async def discover_capabilities(
+    organization_id: UUID,
+    workspace_id: UUID | None = None,
+    *,
+    query: str = "",
+    limit: int = 50,
+) -> dict:
+    """Capacidades disponibles e instaladas desde el catálogo único.
+
+    No crea otro catálogo: proyecta `canvas_context` (manifests + productos) a
+    entradas buscables. Una capacidad no instalada solo enlaza al Marketplace;
+    no se instala desde el canvas.
+    """
+    context = await canvas_context(organization_id, workspace_id)
+    needle = str(query or "").strip().lower()
+    items: list[dict] = []
+
+    def add(
+        action: dict,
+        integration: dict,
+        *,
+        installed: bool,
+        install_id: str | None = None,
+        state_status: str | None = None,
+    ) -> None:
+        action_id = str(action.get("action_id") or "")
+        if not action_id:
+            return
+        product = integration.get("product") if isinstance(integration.get("product"), dict) else {}
+        lifecycle = str(product.get("status") or ("LEGACY" if integration.get("legacy") else "AVAILABLE"))
+        haystack = " ".join(
+            [
+                action_id,
+                str(action.get("display_name") or ""),
+                str(integration.get("slug") or ""),
+                str(integration.get("name") or ""),
+                str(product.get("slug") or ""),
+                str(product.get("name") or ""),
+            ]
+        ).lower()
+        if needle and needle not in haystack:
+            return
+        items.append(
+            {
+                "capability_ref": action_id,
+                "action_id": action_id,
+                "display_name": str(action.get("display_name") or action_id),
+                "description": str(action.get("description") or ""),
+                "integration_slug": str(integration.get("slug") or ""),
+                "integration_name": str(integration.get("name") or ""),
+                "installed": installed,
+                "install_id": install_id,
+                "status": state_status or ("installed" if installed else "available"),
+                "lifecycle": lifecycle,
+                "legacy": bool(integration.get("legacy")),
+                "requires_credentials": bool(integration.get("requires_credentials")),
+                "requires_purpose": bool(integration.get("requires_purpose")),
+                "read_only": bool(action.get("read_only")),
+                "requires_approval": bool(action.get("requires_approval")),
+                "risk_level": action.get("risk_level"),
+                "cost": action.get("cost") or {},
+                "input_schema": action.get("input_schema") or {},
+                "output_schema": action.get("output_schema") or {},
+                "product_slug": product.get("slug"),
+                "marketplace_required": not installed,
+            }
+        )
+
+    for state in context.get("installed") or []:
+        integration = state.get("integration") or {}
+        for action in state.get("actions") or []:
+            add(
+                action,
+                integration,
+                installed=True,
+                install_id=state.get("install_id"),
+                state_status=str(state.get("status") or "installed"),
+            )
+    for integration in context.get("available") or []:
+        for action in integration.get("actions") or []:
+            add(action, integration, installed=False)
+
+    items.sort(key=lambda item: (not item["installed"], item["display_name"].lower(), item["capability_ref"]))
+    bounded = max(1, min(int(limit or 50), 200))
+    return {
+        "items": items[:bounded],
+        "total": len(items),
+        "limit": bounded,
+        "query": query,
+        "source": "canvas_context",
+        "duplicate_catalog": False,
+    }
+
+
 async def recommend_for_graph(
     organization_id: UUID,
     graph: dict,

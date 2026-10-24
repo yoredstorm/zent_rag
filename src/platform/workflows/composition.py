@@ -9,14 +9,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any
+
+from src.platform.workflows.error_contract import TYPED_PORTS, typed_port_for_decision
 
 CONTRACT = "subworkflow.call/v1"
 CONTRACT_VERSION = 1
 MAX_DEPTH_HARD = 8
 DEFAULT_MAX_DEPTH = 3
 MAX_RETRIES_HARD = 5
+MAX_FANOUT_HARD = 20
 DEFAULT_CONFIDENCE_MIN = 0.6
+SUBFLOW_STATES: tuple[str, ...] = ("draft", "published", "deprecated")
 
 STAGES: tuple[str, ...] = (
     "intent_understanding",
@@ -174,6 +179,9 @@ def freeze_snapshot(
     version: int,
     *,
     workflow_ref: str,
+    status: str = "published",
+    output_ports: tuple[str, ...] | list[str] | None = None,
+    input_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     frozen = json.loads(json.dumps(graph, default=str))
     digest = canonical_snapshot_hash(frozen, int(version))
@@ -181,8 +189,11 @@ def freeze_snapshot(
         "contract": CONTRACT,
         "workflow_ref": workflow_ref,
         "version": int(version),
+        "status": status,
         "graph": frozen,
         "snapshot_hash": digest,
+        "output_ports": list(output_ports or TYPED_PORTS),
+        "input_schema": input_schema or {"type": "object"},
     }
 
 
@@ -320,6 +331,13 @@ def prepare_subworkflow_call(
     snapshot = config.get("snapshot")
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("graph"), dict):
         raise CompositionError("contract_mismatch", "subworkflow.call exige snapshot congelado")
+    status = str(snapshot.get("status") or "published")
+    if status not in SUBFLOW_STATES:
+        raise CompositionError("contract_mismatch", f"estado de subflujo inválido: {status}")
+    if status != "published":
+        raise CompositionError(
+            "contract_mismatch", f"subflujo {status}; solo se ejecuta published"
+        )
     try:
         version = int(snapshot.get("version", config.get("version")))
     except (TypeError, ValueError):
@@ -346,6 +364,12 @@ def prepare_subworkflow_call(
         raise CompositionError("contract_mismatch", "profundidad máxima")
     if max_retries < 1 or max_retries > MAX_RETRIES_HARD:
         raise CompositionError("contract_mismatch", "reintentos fuera de rango")
+    try:
+        max_fanout = int(config.get("max_fanout") or 10)
+    except (TypeError, ValueError):
+        raise CompositionError("contract_mismatch", "fan-out inválido") from None
+    if max_fanout < 1 or max_fanout > MAX_FANOUT_HARD:
+        raise CompositionError("contract_mismatch", "fan-out supera el límite")
     blockers = durable_nodes(graph)
     if blockers:
         raise CompositionError(
@@ -392,7 +416,16 @@ def prepare_subworkflow_call(
         "version": version,
         "workflow_ref": ref,
         "snapshot_hash": actual,
-        "snapshot": {"version": version, "graph": graph, "snapshot_hash": actual, "workflow_ref": ref},
+        "snapshot": {
+            "version": version,
+            "status": status,
+            "graph": graph,
+            "snapshot_hash": actual,
+            "workflow_ref": ref,
+            "output_ports": list(snapshot.get("output_ports") or TYPED_PORTS),
+        },
+        "status": status,
+        "output_ports": list(snapshot.get("output_ports") or TYPED_PORTS),
         "inputs": inputs,
         "output_schema": (
             config.get("output_schema")
@@ -406,6 +439,7 @@ def prepare_subworkflow_call(
         "stack": trail + [ref],
         "timeout_seconds": timeout_seconds,
         "max_retries": max_retries,
+        "max_fanout": max_fanout,
         "idempotency_key": idempotency_key,
         "budget": {
             "max_duration_seconds": timeout_seconds,
@@ -491,6 +525,7 @@ def _blank_decision() -> dict[str, Any]:
         "failure_mode": None,
         "decision": "halt",
         "port": "halt",
+        "typed_port": "needs_human",
         "control": None,
         "causal": None,
         "handoff": None,
@@ -511,6 +546,11 @@ def _finish(decision: dict[str, Any]) -> dict[str, Any]:
         decision["port"] = "halt"
     decision["execute_capability"] = kind in {"transition", "compensation"} and bool(
         decision.get("capability_ref")
+    )
+    decision["typed_port"] = typed_port_for_decision(
+        kind,
+        failure_mode=decision.get("failure_mode"),
+        control=decision.get("control"),
     )
     return decision
 
@@ -1322,6 +1362,121 @@ def portable_subflow(name: str) -> dict[str, Any]:
             ],
         )
     raise CompositionError("contract_mismatch", f"subflujo desconocido: {name}")
+
+
+@dataclass(frozen=True)
+class SubflowDefinition:
+    """Definición publicada de un subflujo. No es un segundo workflow store."""
+
+    name: str
+    version: int
+    status: str
+    graph: dict[str, Any]
+    output_ports: tuple[str, ...] = TYPED_PORTS
+    durable: bool = False
+
+    @property
+    def capability_ref(self) -> str:
+        return subflow_capability_ref(self.name)
+
+    def snapshot(self) -> dict[str, Any]:
+        return freeze_snapshot(
+            self.graph,
+            self.version,
+            workflow_ref=self.name,
+            status=self.status,
+            output_ports=self.output_ports,
+        )
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "version": self.version,
+            "status": self.status,
+            "capability_ref": self.capability_ref,
+            "durable": self.durable,
+            "runnable_inline": not self.durable,
+            "output_ports": list(self.output_ports),
+            "node_config": self.node_config(),
+        }
+
+    def node_config(self) -> dict[str, Any]:
+        return {
+            "workflow_ref": self.name,
+            "version": self.version,
+            "snapshot": self.snapshot(),
+            "registry_refs": capability_refs_in_graph(self.graph),
+            "idempotency_key": "{{trigger.idempotency_key}}",
+            "max_depth": DEFAULT_MAX_DEPTH,
+            "max_retries": 1,
+            "max_fanout": 10,
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+        }
+
+
+def subflow_definition(
+    name: str,
+    version: int = 1,
+    *,
+    status: str = "published",
+) -> SubflowDefinition:
+    if name not in PORTABLE_SUBFLOWS:
+        raise CompositionError("contract_mismatch", f"subflujo desconocido: {name}")
+    if status not in SUBFLOW_STATES:
+        raise CompositionError("contract_mismatch", f"estado de subflujo inválido: {status}")
+    graph = portable_subflow(name)
+    return SubflowDefinition(
+        name=name,
+        version=max(1, int(version)),
+        status=status,
+        graph=graph,
+        durable=bool(durable_nodes(graph)),
+    )
+
+
+def subflow_library() -> list[dict[str, Any]]:
+    return [subflow_definition(name).public() for name in PORTABLE_SUBFLOWS]
+
+
+def fanout_plan(items: list[Any], *, max_fanout: int = 10) -> dict[str, Any]:
+    """Un fan-out nunca crece por encima del contrato congelado."""
+    try:
+        limit = int(max_fanout)
+    except (TypeError, ValueError):
+        raise CompositionError("contract_mismatch", "fan-out inválido") from None
+    if limit < 1 or limit > MAX_FANOUT_HARD:
+        raise CompositionError("contract_mismatch", "fan-out supera el límite")
+    body = list(items or [])
+    return {
+        "items": body[:limit],
+        "requested": len(body),
+        "dropped": max(0, len(body) - limit),
+        "truncated": len(body) > limit,
+        "max_fanout": limit,
+    }
+
+
+def saga_compensation_plan(effects: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compensaciones en orden inverso, con claves idempotentes propias."""
+    steps: list[dict[str, Any]] = []
+    for index, effect in enumerate(reversed([item for item in effects if isinstance(item, dict)])):
+        ref = str(effect.get("capability_ref") or effect.get("action") or "").strip()
+        if not ref:
+            raise CompositionError("contract_mismatch", "compensación sin capacidad")
+        business_id = str(effect.get("business_id") or effect.get("order_id") or "")
+        key = str(effect.get("effect_key") or "").strip() or (
+            business_effect_key(ref, business_id) if business_id else f"{ref}:{index}"
+        )
+        steps.append(
+            {
+                "capability_ref": ref,
+                "effect_key": key,
+                "idempotency_key": f"compensate:{effect_digest(key)}:{index}",
+                "output": effect.get("output"),
+            }
+        )
+    return {"steps": steps, "typed_port": "compensated", "compensated": len(steps) > 0}
 
 
 def is_nestable(name: str) -> bool:

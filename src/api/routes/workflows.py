@@ -80,6 +80,25 @@ async def tenant_workflows_create(body: WorkflowIn, request: Request):
 
     ctx = require_permission(request, "workflows:create")
     ws_id = await _workspace_id(request) if not body.workspace_id else UUID(body.workspace_id)
+    if ws_id is not None:
+        from sqlalchemy import text
+
+        from src.infrastructure.postgres.session import get_async_session
+
+        session = await get_async_session()
+        try:
+            owned = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM workspaces WHERE id = :ws AND organization_id = :oid"
+                    ),
+                    {"ws": str(ws_id), "oid": str(ctx.organization_id)},
+                )
+            ).fetchone()
+        finally:
+            await session.close()
+        if owned is None:
+            raise HTTPException(403, "workspace no pertenece a la organización")
     try:
         return await create_workflow(
             ctx.organization_id,
@@ -288,12 +307,17 @@ async def tenant_workflow_architect_agentic_plan(
                 )
         result = task.result()
     except PlannerBudgetExceeded as exc:
+        from src.platform.workflows.planner_diagnostics import budget_diagnostic
+
+        diagnostic = budget_diagnostic(exc.reason)
         return JSONResponse(
             status_code=429,
             content={
                 "error_code": "PLANNER_BUDGET_EXCEEDED",
                 "reason": exc.reason,
-                "message": str(exc),
+                "message": diagnostic["message"],
+                "action": diagnostic["action"],
+                "diagnostic": diagnostic,
                 "usage": exc.usage.as_dict(),
             },
         )
@@ -453,12 +477,17 @@ async def tenant_workflow_architect_session_create(
     try:
         proposal = await planner.run(body.prompt.strip())
     except PlannerBudgetExceeded as exc:
+        from src.platform.workflows.planner_diagnostics import budget_diagnostic
+
+        diagnostic = budget_diagnostic(exc.reason)
         return JSONResponse(
             status_code=429,
             content={
                 "error_code": "PLANNER_BUDGET_EXCEEDED",
                 "reason": exc.reason,
-                "message": str(exc),
+                "message": diagnostic["message"],
+                "action": diagnostic["action"],
+                "diagnostic": diagnostic,
                 "design_session_id": design["id"],
                 "usage": exc.usage.as_dict(),
             },
@@ -648,12 +677,17 @@ async def tenant_workflow_architect_session_message(
             kind = "plan"
             diff = {"summary": "Nuevo plan desde conversación"}
     except PlannerBudgetExceeded as exc:
+        from src.platform.workflows.planner_diagnostics import budget_diagnostic
+
+        diagnostic = budget_diagnostic(exc.reason)
         return JSONResponse(
             status_code=429,
             content={
                 "error_code": "PLANNER_BUDGET_EXCEEDED",
                 "reason": exc.reason,
-                "message": str(exc),
+                "message": diagnostic["message"],
+                "action": diagnostic["action"],
+                "diagnostic": diagnostic,
                 "design_session_id": design_session_id,
                 "usage": exc.usage.as_dict(),
             },
@@ -1435,7 +1469,11 @@ async def tenant_workflow_run_approvals(run_id: str, request: Request):
     from src.platform.workflows.engine import list_approvals
 
     ctx = require_permission(request, "workflow_runs:read")
-    return await list_approvals(ctx.organization_id, UUID(run_id))
+    return await list_approvals(
+        ctx.organization_id,
+        UUID(run_id),
+        workspace_id=await _workspace_id(request),
+    )
 
 
 @router.post(
@@ -1455,11 +1493,21 @@ async def tenant_workflow_approval_decide(
             body.decision,
             ctx.user_id,
             body.comment,
+            workspace_id=await _workspace_id(request),
+            allow_owner_self_approval=ctx.is_organization_admin(),
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if result is None:
         raise HTTPException(404, "Approval not found")
+    if result.get("status") == "forbidden" and result.get("error") == "self_approval":
+        raise HTTPException(
+            403,
+            detail={
+                "error_code": "self_approval_forbidden",
+                "message": "Quien solicitó la aprobación no puede aprobarla.",
+            },
+        )
     return result
 
 
@@ -1504,6 +1552,7 @@ async def tenant_workflow_instances_list(
         conversation_id=UUID(conversation_id) if conversation_id else None,
         business_key=business_key,
         status=status,
+        workspace_id=await _workspace_id(request),
         limit=limit,
         offset=offset,
     )
@@ -1518,7 +1567,11 @@ async def tenant_workflow_instance_detail(instance_id: str, request: Request):
     from src.platform.workflows.instances import get_instance
 
     ctx = require_permission(request, "workflow_runs:read")
-    result = await get_instance(ctx.organization_id, UUID(instance_id))
+    result = await get_instance(
+        ctx.organization_id,
+        UUID(instance_id),
+        workspace_id=await _workspace_id(request),
+    )
     if result is None:
         raise HTTPException(404, "Instance not found")
     # El estado durable es visible (sin secretos: nunca se guardan aquí).
@@ -1531,7 +1584,11 @@ async def tenant_workflow_instance_timeline(instance_id: str, request: Request):
     from src.platform.workflows.instances import get_instance, instance_timeline
 
     ctx = require_permission(request, "workflow_runs:read")
-    instance = await get_instance(ctx.organization_id, UUID(instance_id))
+    instance = await get_instance(
+        ctx.organization_id,
+        UUID(instance_id),
+        workspace_id=await _workspace_id(request),
+    )
     if instance is None:
         raise HTTPException(404, "Instance not found")
     timeline = await instance_timeline(ctx.organization_id, UUID(instance_id))
@@ -1555,11 +1612,17 @@ async def tenant_workflow_instance_signal(
     ctx = require_permission(request, "workflows:run")
     from src.platform.workflows.instances import get_instance
 
-    if await get_instance(ctx.organization_id, UUID(instance_id)) is None:
-        # Una instancia de otro tenant no existe para este caller: la señal no
-        # se acepta (nunca se encola para un proceso ajeno).
+    workspace_id = await _workspace_id(request)
+    if (
+        await get_instance(
+            ctx.organization_id, UUID(instance_id), workspace_id=workspace_id
+        )
+        is None
+    ):
+        # Una instancia de otro tenant/workspace no existe para este caller:
+        # la señal no se acepta (nunca se encola para un proceso ajeno).
         raise HTTPException(404, "instancia no encontrada")
-    return await signal_workflow_instance(
+    result = await signal_workflow_instance(
         organization_id=ctx.organization_id,
         event_type=body.event_type,
         correlation=body.correlation,
@@ -1568,7 +1631,11 @@ async def tenant_workflow_instance_signal(
         idempotency_key=body.idempotency_key,
         source="api",
         instance_id=UUID(instance_id),
+        workspace_id=workspace_id,
     )
+    if result.get("status") == "not_found":
+        raise HTTPException(404, "instancia no encontrada")
+    return result
 
 
 @router.post("/instances/{instance_id}/cancel", summary="Cancelar la instancia")
@@ -1577,6 +1644,17 @@ async def tenant_workflow_instance_cancel(instance_id: str, request: Request):
     from src.platform.workflows.instances import cancel_instance
 
     ctx = require_permission(request, "workflows:run")
+    from src.platform.workflows.instances import get_instance
+
+    if (
+        await get_instance(
+            ctx.organization_id,
+            UUID(instance_id),
+            workspace_id=await _workspace_id(request),
+        )
+        is None
+    ):
+        raise HTTPException(404, "instancia no encontrada")
     return await cancel_instance(ctx.organization_id, UUID(instance_id), reason="api")
 
 
@@ -1586,6 +1664,17 @@ async def tenant_workflow_instance_suspend(instance_id: str, request: Request):
     from src.platform.workflows.instances import suspend_instance
 
     ctx = require_permission(request, "workflows:run")
+    from src.platform.workflows.instances import get_instance
+
+    if (
+        await get_instance(
+            ctx.organization_id,
+            UUID(instance_id),
+            workspace_id=await _workspace_id(request),
+        )
+        is None
+    ):
+        raise HTTPException(404, "instancia no encontrada")
     return await suspend_instance(ctx.organization_id, UUID(instance_id))
 
 
@@ -1595,6 +1684,17 @@ async def tenant_workflow_instance_resume(instance_id: str, request: Request):
     from src.platform.workflows.instances import resume_suspended_instance
 
     ctx = require_permission(request, "workflows:run")
+    from src.platform.workflows.instances import get_instance
+
+    if (
+        await get_instance(
+            ctx.organization_id,
+            UUID(instance_id),
+            workspace_id=await _workspace_id(request),
+        )
+        is None
+    ):
+        raise HTTPException(404, "instancia no encontrada")
     return await resume_suspended_instance(ctx.organization_id, UUID(instance_id))
 
 
@@ -1698,6 +1798,126 @@ async def tenant_workflow_import(body: PackageIn, request: Request):
 # ---------------------------------------------------------------------------
 # Rutas con parámetro workflow_id
 # ---------------------------------------------------------------------------
+class WorkflowTestIn(BaseModel):
+    requested_level: str = Field(default="simulation", max_length=20)
+    scenario: dict = Field(default_factory=dict)
+
+
+@router.post(
+    "/{workflow_id}/test",
+    summary="Workflow Test Studio: nivel decidido por el servidor y reporte persistido",
+)
+async def tenant_workflow_test(
+    workflow_id: str, body: WorkflowTestIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import get_workflow
+    from src.platform.workflows.test_studio import execute_workflow_test
+
+    ctx = require_permission(request, "workflows:run")
+    workflow = await get_workflow(ctx.organization_id, UUID(workflow_id))
+    if workflow is None:
+        raise HTTPException(404, "Workflow not found")
+    request_ws = await _workspace_id(request)
+    workflow_ws = workflow.get("workspace_id")
+    if request_ws is not None and workflow_ws and str(workflow_ws) != str(request_ws):
+        raise HTTPException(404, "Workflow not found")
+    try:
+        return await execute_workflow_test(
+            organization_id=ctx.organization_id,
+            workspace_id=request_ws,
+            workflow=workflow,
+            workflow_id=UUID(workflow_id),
+            requested_level=body.requested_level,
+            scenario_draft=body.scenario,
+            permissions=ctx.permissions,
+            created_by=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get(
+    "/{workflow_id}/test-reports",
+    summary="Reportes del Workflow Test Studio",
+)
+async def tenant_workflow_test_reports(
+    workflow_id: str, request: Request, limit: int = 50
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.test_studio import list_test_reports
+
+    ctx = require_permission(request, "workflow_runs:read")
+    return await list_test_reports(
+        ctx.organization_id,
+        UUID(workflow_id),
+        workspace_id=await _workspace_id(request),
+        limit=limit,
+    )
+
+
+@router.get(
+    "/capabilities/discover",
+    summary="Descubrir capacidades disponibles e instaladas (catálogo único)",
+)
+async def tenant_workflow_capabilities_discover(
+    request: Request,
+    q: str | None = None,
+    limit: int = 50,
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.capabilities import discover_capabilities
+
+    ctx = require_permission(request, "workflows:read")
+    return await discover_capabilities(
+        ctx.organization_id,
+        await _workspace_id(request),
+        query=q or "",
+        limit=limit,
+    )
+
+
+@router.get(
+    "/subflows/library",
+    summary="Biblioteca de subflujos publicados (definición versionada)",
+)
+async def tenant_subflow_library(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.composition import subflow_library
+
+    require_permission(request, "workflows:read")
+    return {"subflows": subflow_library(), "executor": "execute_graph"}
+
+
+@router.get(
+    "/{workflow_id}/data-mapping",
+    summary="Plano de datos y mapeo declarativo del workflow",
+)
+async def tenant_workflow_data_mapping(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_mapper import (
+        data_plane_inventory,
+        mapping_errors,
+    )
+    from src.platform.workflows.engine import get_workflow
+
+    ctx = require_permission(request, "workflows:read")
+    result = await get_workflow(ctx.organization_id, UUID(workflow_id))
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    request_ws = await _workspace_id(request)
+    if request_ws is not None and result.get("workspace_id") not in (None, str(request_ws)):
+        raise HTTPException(404, "Workflow not found")
+    graph = result.get("graph") if isinstance(result.get("graph"), dict) else {}
+    mapping = ((graph.get("metadata") or {}).get("data_mapping")) or {}
+    return {
+        "workflow_id": str(workflow_id),
+        "inventory": data_plane_inventory(),
+        "mapping": mapping,
+        "errors": mapping_errors(mapping) if mapping else [],
+    }
+
+
 @router.get("/{workflow_id}", summary="Detalle del workflow")
 async def tenant_workflow_detail(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
@@ -1750,16 +1970,22 @@ async def tenant_workflow_delete(workflow_id: str, request: Request):
 @router.post("/{workflow_id}/activate", summary="Activar workflow")
 async def tenant_workflow_activate(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.engine import set_workflow_status
+    from src.platform.workflows.release_policy import ReleaseDenied, activate_workflow
 
     ctx = require_permission(request, "workflows:activate")
-    from src.platform.workflows.test_report import activation_blockers
-
-    blockers = await activation_blockers(ctx.organization_id, UUID(workflow_id))
-    if blockers:
-        raise HTTPException(409, blockers[0]["message"])
-    result = await set_workflow_status(ctx.organization_id, UUID(workflow_id), "active")
-    if result is None:
+    try:
+        result = await activate_workflow(
+            ctx.organization_id,
+            UUID(workflow_id),
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+        )
+    except ReleaseDenied as exc:
+        raise HTTPException(
+            409,
+            {"code": "release_blocked", "message": str(exc), **exc.decision},
+        ) from exc
+    if not result:
         raise HTTPException(404, "Workflow not found")
     return result
 
@@ -1779,26 +2005,45 @@ async def tenant_workflow_pause(workflow_id: str, request: Request):
 @router.post("/{workflow_id}/run", summary="Ejecutar workflow (también dry-run y parcial)")
 async def tenant_workflow_run(workflow_id: str, body: RunIn, request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.engine import WorkflowAccessError, run_workflow
+    from src.platform.workflows.ingress import route_ingress
 
     ctx = require_permission(request, "workflows:run")
-    try:
-        result = await run_workflow(
-            UUID(workflow_id),
-            body.payload,
-            trigger="manual",
+    if body.simulate or body.run_mode != "full":
+        from src.platform.workflows.engine import WorkflowAccessError, run_workflow
+
+        try:
+            result = await run_workflow(
+                UUID(workflow_id),
+                body.payload,
+                trigger="manual",
+                organization_id=ctx.organization_id,
+                workspace_id=await _workspace_id(request),
+                actor_type="user",
+                actor_id=ctx.user_id,
+                permissions=ctx.permissions,
+                simulate=True,
+                run_mode=body.run_mode,
+                target_node_id=body.target_node_id,
+                source_run_id=UUID(body.source_run_id) if body.source_run_id else None,
+            )
+        except WorkflowAccessError as exc:
+            raise HTTPException(403, str(exc)) from exc
+    else:
+        result = await route_ingress(
+            workflow_id=UUID(workflow_id),
             organization_id=ctx.organization_id,
+            trigger="manual",
+            payload=body.payload or {},
             workspace_id=await _workspace_id(request),
             actor_type="user",
             actor_id=ctx.user_id,
             permissions=ctx.permissions,
-            simulate=bool(body.simulate),
-            run_mode=body.run_mode,
-            target_node_id=body.target_node_id,
-            source_run_id=UUID(body.source_run_id) if body.source_run_id else None,
+            require_active=False,
         )
-    except WorkflowAccessError as exc:
-        raise HTTPException(403, str(exc)) from exc
+        if result.get("error") == "not_found":
+            raise HTTPException(404, "Workflow not found")
+        if result.get("status_code") == 403:
+            raise HTTPException(403, result.get("error") or "forbidden")
     if result is None:
         raise HTTPException(404, "Workflow not found")
     return result
@@ -1833,6 +2078,7 @@ async def tenant_workflow_instance_start(workflow_id: str, body: InstanceStartIn
             conversation_id=body.conversation_id,
             participant_id=body.participant_id,
             business_key=body.business_key,
+            ingress_key=request.headers.get("idempotency-key"),
             actor_type="user",
             actor_id=ctx.user_id,
             permissions=ctx.permissions,
@@ -2027,13 +2273,24 @@ async def tenant_workflow_version_promote(
     workflow_id: str, version_id: str, body: PromoteIn, request: Request
 ):
     from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.release_policy import ReleaseDenied
     from src.platform.workflows.versions import promote_version
 
     ctx = require_permission(request, "workflows:activate")
     try:
         result = await promote_version(
-            ctx.organization_id, UUID(workflow_id), UUID(version_id), body.status
+            ctx.organization_id,
+            UUID(workflow_id),
+            UUID(version_id),
+            body.status,
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
         )
+    except ReleaseDenied as exc:
+        raise HTTPException(
+            409,
+            {"code": "release_blocked", "message": str(exc), **exc.decision},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if result is None:
@@ -2048,13 +2305,23 @@ async def tenant_workflow_version_restore(
     workflow_id: str, version_id: str, request: Request
 ):
     from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.release_policy import ReleaseDenied
     from src.platform.workflows.versions import restore_version
 
     ctx = require_permission(request, "workflows:update")
     try:
         result = await restore_version(
-            ctx.organization_id, UUID(workflow_id), UUID(version_id)
+            ctx.organization_id,
+            UUID(workflow_id),
+            UUID(version_id),
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
         )
+    except ReleaseDenied as exc:
+        raise HTTPException(
+            409,
+            {"code": "release_blocked", "message": str(exc), **exc.decision},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if result is None:
@@ -2067,6 +2334,7 @@ async def tenant_workflow_publish(
     workflow_id: str, request: Request, body: VersionIn | None = None
 ):
     from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.release_policy import ReleaseDenied
     from src.platform.workflows.versions import publish_workflow
 
     ctx = require_permission(request, "workflows:activate")
@@ -2078,12 +2346,75 @@ async def tenant_workflow_publish(
             created_by=ctx.user_id,
             confirm_architect_draft=bool(body.confirm_architect_draft) if body else False,
             permissions=ctx.permissions,
+            workspace_id=await _workspace_id(request),
         )
+    except ReleaseDenied as exc:
+        raise HTTPException(
+            409,
+            {"code": "release_blocked", "message": str(exc), **exc.decision},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if result is None:
         raise HTTPException(404, "Workflow not found")
     return result
+
+
+@router.get("/{workflow_id}/release-gate", summary="Estado del gate de release")
+async def tenant_workflow_release_gate(
+    workflow_id: str, request: Request, action: str = "publish"
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.release_policy import evaluate_release
+
+    ctx = require_permission(request, "workflows:read")
+    if action not in ("publish", "activate", "promote", "restore"):
+        raise HTTPException(400, "acción inválida")
+    decision = await evaluate_release(
+        ctx.organization_id,
+        UUID(workflow_id),
+        action=action,
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+    )
+    return decision.to_dict()
+
+
+@router.post("/{workflow_id}/certifications", summary="Emitir certificado de release")
+async def tenant_workflow_certify(
+    workflow_id: str, request: Request, body: CertificationIn | None = None
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.release_policy import (
+        CertificateError,
+        issue_certificate,
+    )
+
+    ctx = require_permission(request, "workflows:activate")
+    payload = body or CertificationIn()
+    try:
+        certificate = await issue_certificate(
+            ctx.organization_id,
+            UUID(workflow_id),
+            level=payload.level,
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+            scenarios=payload.scenarios,
+            issued_by=ctx.user_id,
+            expires_in_days=payload.expires_in_days,
+        )
+    except CertificateError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return certificate
+
+
+@router.get("/{workflow_id}/certifications", summary="Certificados del workflow")
+async def tenant_workflow_certificates(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.release_policy import list_certificates
+
+    ctx = require_permission(request, "workflows:read")
+    return await list_certificates(ctx.organization_id, UUID(workflow_id))
 
 
 class WorkflowIn(BaseModel):
@@ -2124,6 +2455,12 @@ class PinnedDataIn(BaseModel):
 class VersionIn(BaseModel):
     notes: str | None = Field(default=None, max_length=500)
     confirm_architect_draft: bool = False
+
+
+class CertificationIn(BaseModel):
+    level: str = Field(default="design", pattern="^(design|simulation)$")
+    scenarios: list[dict] = Field(default_factory=list, max_length=20)
+    expires_in_days: int = Field(default=7, ge=1, le=90)
 
 
 class PromoteIn(BaseModel):
@@ -2427,8 +2764,23 @@ async def public_workflow_hook(workflow_id: str, request: Request):
     if not isinstance(body, dict):
         body = {}
     payload = body.get("payload") if isinstance(body.get("payload"), dict) else body
+    idempotency_key = (
+        request.headers.get("idempotency-key")
+        or request.headers.get("x-zent-event-id")
+        or (str(body.get("event_id")) if body.get("event_id") else None)
+    )
+    external_event_id = (
+        request.headers.get("x-zent-event-id")
+        or (str(body.get("event_id")) if body.get("event_id") else None)
+    )
     try:
-        result = await run_workflow_from_hook(UUID(workflow_id), secret, payload)
+        result = await run_workflow_from_hook(
+            UUID(workflow_id),
+            secret,
+            payload,
+            idempotency_key=idempotency_key,
+            external_event_id=external_event_id,
+        )
     except ValueError:
         raise HTTPException(404, "Workflow not found") from None
     if result.get("error") == "not_found":

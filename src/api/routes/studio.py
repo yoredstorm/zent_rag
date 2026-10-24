@@ -86,6 +86,19 @@ class SessionResolveIn(BaseModel):
     kind: Literal["conversation", "design", "workflow_instance"]
 
 
+class SolutionCompileIn(BaseModel):
+    brief: str = Field(min_length=3, max_length=6000)
+    template_id: str | None = Field(default=None, max_length=80)
+    source_refs: list[str] = Field(default_factory=list, max_length=20)
+    existing_agent_id: str | None = Field(default=None, max_length=80)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class SolutionMaterializeIn(SolutionCompileIn):
+    confirm: bool = False
+    idempotency_key: str | None = Field(default=None, max_length=200)
+
+
 def _permission(request: Request, permission: str):
     from src.platform.rbac.policy import require_permission
 
@@ -359,6 +372,55 @@ async def post_validate_solution(request: Request, body: dict[str, Any]):
     return validate_solution(body)
 
 
+@router.post("/solutions/compile", summary="Compilar misión sin escribir recursos")
+async def post_compile_solution(request: Request, body: SolutionCompileIn):
+    from src.platform.studio.solution_compiler import CompilationError, compile_solution
+
+    ctx = _permission(request, "workflows:read")
+    workspace = await _workspace(request)
+    try:
+        return await compile_solution(
+            ctx.organization_id,
+            brief=body.brief,
+            workspace_id=workspace.id,
+            template_id=body.template_id,
+            source_refs=body.source_refs,
+            existing_agent_id=body.existing_agent_id,
+            options=body.options,
+        )
+    except CompilationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/solutions/materialize", summary="Materializar solución confirmada")
+async def post_materialize_solution(request: Request, body: SolutionMaterializeIn):
+    from src.platform.studio.solution_compiler import (
+        CompilationError,
+        MaterializationConflict,
+        materialize_solution,
+    )
+
+    ctx = _permission(request, "workflows:create")
+    workspace = await _workspace(request)
+    try:
+        return await materialize_solution(
+            ctx.organization_id,
+            brief=body.brief,
+            workspace_id=workspace.id,
+            template_id=body.template_id,
+            source_refs=body.source_refs,
+            existing_agent_id=body.existing_agent_id,
+            options=body.options,
+            idempotency_key=body.idempotency_key,
+            confirm=body.confirm,
+            user_id=ctx.user_id,
+        )
+    except MaterializationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CompilationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/solutions/import", status_code=201, summary="Importar solución portable")
 async def post_import_solution(request: Request, body: dict[str, Any]):
     ctx = _permission(request, "workflows:create")
@@ -388,6 +450,37 @@ async def get_one_solution(request: Request, solution_id: UUID):
         "solution": solution,
         "validation": validate_solution(solution),
     }
+
+
+@router.get(
+    "/solutions/{solution_id}/materialization",
+    summary="Estado de materialización de la solución",
+)
+async def get_materialization(request: Request, solution_id: UUID):
+    from src.platform.studio.solution_compiler import get_solution_materialization
+
+    ctx = _permission(request, "workflows:read")
+    result = await get_solution_materialization(ctx.organization_id, solution_id)
+    if result is None:
+        raise HTTPException(404, "la solución no tiene materialización")
+    return result
+
+
+@router.post(
+    "/solutions/{solution_id}/materialization/rollback",
+    summary="Deshacer recursos nuevos y no usados",
+)
+async def rollback_solution_materialization(request: Request, solution_id: UUID):
+    from src.platform.studio.solution_compiler import (
+        CompilationError,
+        rollback_materialization,
+    )
+
+    ctx = _permission(request, "workflows:create")
+    try:
+        return await rollback_materialization(ctx.organization_id, solution_id)
+    except CompilationError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.put("/solutions/{solution_id}", summary="Editar solución (nueva versión)")

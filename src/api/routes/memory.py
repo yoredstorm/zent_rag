@@ -19,6 +19,22 @@ from src.platform.rbac.policy import require_organization_admin, require_permiss
 
 router = APIRouter(prefix="/api/v1/memory", tags=["Memory"])
 
+
+def _request_workspace(request: Request) -> UUID | None:
+    raw = (request.headers.get("X-Workspace-Id") or "").strip()
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        raise HTTPException(400, "X-Workspace-Id inválido") from None
+
+
+def _visible_in_workspace(record, workspace_id: UUID | None) -> bool:
+    if workspace_id is None or record.workspace_id is None:
+        return True
+    return str(record.workspace_id) == str(workspace_id)
+
 _TYPES = {item.value for item in MemoryType}
 _STATUSES = {
     "observed",
@@ -92,6 +108,9 @@ async def list_memories(
     memory_type: str | None = None,
     status: str | None = None,
     agent_id: UUID | None = None,
+    workspace_id: UUID | None = None,
+    subject_id: str | None = Query(default=None, max_length=160),
+    scope: str | None = Query(default=None, max_length=32),
     source: str | None = Query(default=None, max_length=80),
     pattern: str | None = Query(default=None, max_length=80),
     confidence_min: float | None = Query(default=None, ge=0, le=1),
@@ -105,11 +124,18 @@ async def list_memories(
         raise HTTPException(status_code=400, detail={"error_code": "invalid_type", "message": "Invalid memory type"})
     if status and status not in _STATUSES:
         raise HTTPException(status_code=400, detail={"error_code": "invalid_status", "message": "Invalid status"})
+    header_workspace = _request_workspace(request)
+    if header_workspace is not None and workspace_id is not None and header_workspace != workspace_id:
+        raise HTTPException(403, "workspace fuera del contexto de la petición")
+    effective_workspace = header_workspace or workspace_id
     rows = await _service().list_memories(
         ctx.organization_id,
         memory_type=memory_type,
         status=status,
         agent_id=agent_id,
+        workspace_id=effective_workspace,
+        subject_id=subject_id,
+        scope=scope,
         source_component=source,
         pattern=pattern,
         confidence_min=confidence_min,
@@ -118,7 +144,16 @@ async def list_memories(
         limit=limit,
         offset=offset,
     )
-    return {"items": [row.to_public_dict() for row in rows], "limit": limit, "offset": offset}
+    return {
+        "items": [
+            row.to_public_dict()
+            for row in rows
+            if _visible_in_workspace(row, header_workspace)
+        ],
+        "limit": limit,
+        "offset": offset,
+        "workspace_id": str(header_workspace) if header_workspace else None,
+    }
 
 
 @router.get("/runs/{run_id}/impact", summary="Memoria usada, creada, reforzada o contradicha en un run")
@@ -263,6 +298,43 @@ async def replay_query(query_id: str, body: ReplayIn, request: Request):
     return result
 
 
+@router.get(
+    "/agents/{agent_id}/context",
+    summary="Qué memoria puede ver este agente (política del rol)",
+)
+async def agent_memory_context(
+    agent_id: UUID,
+    request: Request,
+    conversation_id: UUID | None = None,
+    subject_id: str | None = Query(default=None, max_length=160),
+    limit: int = Query(default=8, ge=1, le=20),
+):
+    from src.platform.studio.roles import get_agent_role
+    from src.platform.workflows.context_service import assemble_memory_context
+
+    ctx = require_permission(request, "knowledge:read")
+    role = await get_agent_role(ctx.organization_id, agent_id)
+    if role is None:
+        raise HTTPException(404, "Agent not found")
+    result = await assemble_memory_context(
+        organization_id=ctx.organization_id,
+        workspace_id=_request_workspace(request),
+        role=role,
+        agent_id=agent_id,
+        conversation_id=conversation_id,
+        subject_id=subject_id,
+        limit=limit,
+        record_usage=False,
+        service=_service(),
+    )
+    return {
+        "agent_id": str(agent_id),
+        **result.summary(),
+        "items": result.payload,
+        "omitted": list(result.omitted),
+    }
+
+
 @router.get("/{memory_id}", summary="Ver una memoria")
 async def get_memory(memory_id: UUID, request: Request):
     ctx = require_permission(request, "knowledge:read")
@@ -270,6 +342,8 @@ async def get_memory(memory_id: UUID, request: Request):
         record = await _service().get(ctx.organization_id, memory_id)
     except MemoryNotFound as exc:
         raise _http(exc) from exc
+    if not _visible_in_workspace(record, _request_workspace(request)):
+        raise HTTPException(404, "Memory not found")
     return record.to_public_dict()
 
 
@@ -412,3 +486,43 @@ async def restore_memory(
         return await _service().restore(organization_id, memory_id, actor_id=actor_id)
 
     return await _admin(request, memory_id, "memory.restore", runner)
+
+
+@router.post(
+    "/{memory_id}/consent/revoke",
+    summary="Revocar consentimiento y sacar la memoria de recall",
+)
+async def revoke_memory_consent(
+    memory_id: UUID, request: Request, body: AdminReason | None = Body(default=None)
+):
+    reason = (body.reason if body else "") or ""
+
+    async def runner(organization_id, actor_id):
+        record = await _service().get(organization_id, memory_id)
+        if not _visible_in_workspace(record, _request_workspace(request)):
+            raise MemoryNotFound(str(memory_id))
+        return await _service().revoke_consent(
+            organization_id, memory_id, actor_id=actor_id, reason=reason
+        )
+
+    return await _admin(request, memory_id, "memory.consent.revoke", runner)
+
+
+@router.delete(
+    "/{memory_id}",
+    summary="Borrar el contenido de una memoria y bloquear recall",
+)
+async def delete_memory(
+    memory_id: UUID, request: Request, body: AdminReason | None = Body(default=None)
+):
+    reason = (body.reason if body else "") or ""
+
+    async def runner(organization_id, actor_id):
+        record = await _service().get(organization_id, memory_id)
+        if not _visible_in_workspace(record, _request_workspace(request)):
+            raise MemoryNotFound(str(memory_id))
+        return await _service().erase(
+            organization_id, memory_id, actor_id=actor_id, reason=reason
+        )
+
+    return await _admin(request, memory_id, "memory.erase", runner)

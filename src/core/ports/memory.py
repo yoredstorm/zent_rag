@@ -27,6 +27,9 @@ class MemoryRepository(ABC):
         organization_id: UUID,
         memory_type: MemoryType,
         pattern_signature: str,
+        *,
+        workspace_id: UUID | None = None,
+        subject_id: str | None = None,
     ) -> MemoryRecord | None:
         ...
 
@@ -60,6 +63,9 @@ class MemoryRepository(ABC):
         memory_type: str | None = None,
         status: str | None = None,
         agent_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        subject_id: str | None = None,
+        scope: str | None = None,
         source_component: str | None = None,
         pattern: str | None = None,
         confidence_min: float | None = None,

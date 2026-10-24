@@ -33,6 +33,16 @@ async def _workflow(client: AsyncClient, org: dict, name: str = "Studio WF") -> 
     return created.json()
 
 
+async def _certify(client: AsyncClient, org: dict, workflow_id: str) -> dict:
+    response = await client.post(
+        f"/api/v1/workflows/{workflow_id}/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"cert-{uuid4().hex}"},
+        json={"level": "design"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 # ---------------------------------------------------------------------------
 # Secret inbound
 # ---------------------------------------------------------------------------
@@ -42,6 +52,7 @@ async def test_rotate_hook_secret_invalidates_previous(async_client: AsyncClient
     wf = await _workflow(async_client, org)
     wid = wf["workflow_id"]
     old_secret = wf["hook_secret"]
+    await _certify(async_client, org, wid)
 
     activate = await async_client.post(
         f"/api/v1/workflows/{wid}/activate", headers=_headers(org)
@@ -84,6 +95,7 @@ async def test_public_hook_rejects_secret_in_query_string(async_client: AsyncCli
     wf = await _workflow(async_client, org)
     wid = wf["workflow_id"]
     secret = wf["hook_secret"]
+    await _certify(async_client, org, wid)
     activate = await async_client.post(
         f"/api/v1/workflows/{wid}/activate", headers=_headers(org)
     )
@@ -160,6 +172,7 @@ async def test_version_snapshot_lifecycle(async_client: AsyncClient) -> None:
     )
     assert ready.status_code == 200, ready.text
     assert ready.json()["status"] == "ready"
+    await _certify(async_client, org, wid)
 
     prod = await async_client.post(
         f"/api/v1/workflows/{wid}/versions/{vid}/promote",
@@ -189,6 +202,7 @@ async def test_version_snapshot_lifecycle(async_client: AsyncClient) -> None:
 async def test_publish_activates_and_pins_production(async_client: AsyncClient) -> None:
     org = await _org(async_client, "WF Studio Publish")
     wid = (await _workflow(async_client, org))["workflow_id"]
+    await _certify(async_client, org, wid)
 
     published = await async_client.post(
         f"/api/v1/workflows/{wid}/publish",

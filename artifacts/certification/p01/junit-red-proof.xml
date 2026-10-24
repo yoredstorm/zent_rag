@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="6" time="67.173" timestamp="2026-10-23T11:09:38.571285-05:00" hostname="LAP-PPIMENTEL"><testcase classname="tests.red.test_p00_durable_triggers_red" name="test_manual_run_of_wait_graph_creates_durable_instance" time="19.890"><failure message="AssertionError: state.append requiere una instancia durable&#10;assert None&#10; +  where None = &lt;built-in method get of dict object at 0x00000245E21CCC00&gt;('instance_id')&#10; +    where &lt;built-in method get of dict object at 0x00000245E21CCC00&gt; = {'run_id': 'efda7383-389c-f7ab-b117-e672e3440360', 'workflow_id': '0d6f2ed7-161e-497d-98b2-057942122892', 'status': 'failed', 'duration_ms': 990, ...}.get">async_client = &lt;httpx.AsyncClient object at 0x00000245BBBCA810&gt;
+
+    @pytest.mark.asyncio
+    async def test_manual_run_of_wait_graph_creates_durable_instance(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P00 Durable Manual")
+        wid = await _workflow(async_client, org, name="WAIT manual")
+    
+        run = await async_client.post(
+            f"/api/v1/workflows/{wid}/run",
+            headers=_headers(org),
+            json={"payload": {"message": "hola"}},
+        )
+    
+        assert run.status_code == 200, run.text
+        body = run.json()
+&gt;       assert body.get("instance_id"), body.get("error") or body
+E       AssertionError: state.append requiere una instancia durable
+E       assert None
+E        +  where None = &lt;built-in method get of dict object at 0x00000245E21CCC00&gt;('instance_id')
+E        +    where &lt;built-in method get of dict object at 0x00000245E21CCC00&gt; = {'run_id': 'efda7383-389c-f7ab-b117-e672e3440360', 'workflow_id': '0d6f2ed7-161e-497d-98b2-057942122892', 'status': 'failed', 'duration_ms': 990, ...}.get
+
+tests\red\test_p00_durable_triggers_red.py:70: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_durable_triggers_red" name="test_schedule_due_of_wait_graph_creates_durable_instance" time="6.071"><failure message="AssertionError: {&quot;error_code&quot;:&quot;HTTP_409&quot;,&quot;message&quot;:&quot;release gate DENY&quot;,&quot;query_id&quot;:null,&quot;details&quot;:{&quot;code&quot;:&quot;release_blocked&quot;,&quot;schema&quot;:&quot;zent.workflow.release_certificate/v1&quot;,&quot;allowed&quot;:&quot;False&quot;,&quot;state&quot;:&quot;BLOCKED&quot;,&quot;action&quot;:&quot;activate&quot;,&quot;risk_class&quot;:&quot;internal&quot;,&quot;required_level&quot;:&quot;DESIGN_VALID&quot;,&quot;graph_hash&quot;:&quot;40fc16d02ccb46bce13f962418caffadbdde15e847bb3616069dea0ed207c20a&quot;,&quot;semantic_plan_hash&quot;:&quot;&quot;,&quot;capability_snapshot_hash&quot;:&quot;&quot;,&quot;blockers&quot;:&quot;[{'code': 'certification_required', 'message': 'Falta un certificado emitido por el backend.', 'mitigation': 'Certifica el workflow antes de publicar o activar.'}]&quot;,&quot;mitigations&quot;:&quot;[]&quot;,&quot;legacy&quot;:&quot;False&quot;}}&#10;assert 409 == 200&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">async_client = &lt;httpx.AsyncClient object at 0x00000245E369A110&gt;
+
+    @pytest.mark.asyncio
+    async def test_schedule_due_of_wait_graph_creates_durable_instance(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P00 Durable Schedule")
+        wid = await _workflow(
+            async_client,
+            org,
+            name="WAIT schedule",
+            trigger_type="schedule",
+            trigger_config={"every_minutes": 1},
+        )
+        activated = await async_client.post(
+            f"/api/v1/workflows/{wid}/activate", headers=_headers(org)
+        )
+&gt;       assert activated.status_code == 200, activated.text
+E       AssertionError: {"error_code":"HTTP_409","message":"release gate DENY","query_id":null,"details":{"code":"release_blocked","schema":"zent.workflow.release_certificate/v1","allowed":"False","state":"BLOCKED","action":"activate","risk_class":"internal","required_level":"DESIGN_VALID","graph_hash":"40fc16d02ccb46bce13f962418caffadbdde15e847bb3616069dea0ed207c20a","semantic_plan_hash":"","capability_snapshot_hash":"","blockers":"[{'code': 'certification_required', 'message': 'Falta un certificado emitido por el backend.', 'mitigation': 'Certifica el workflow antes de publicar o activar.'}]","mitigations":"[]","legacy":"False"}}
+E       assert 409 == 200
+E        +  where 409 = &lt;Response [409 Conflict]&gt;.status_code
+
+tests\red\test_p00_durable_triggers_red.py:93: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_policy_red" name="test_notify_node_is_denied_without_permission" time="0.292"><failure message="AssertionError: NodeExecution(status='simulated', output={'simulated': True, 'channel': 'in_app', 'title': 'P00 policy'}, error=None, ...tion', 'channel': 'in_app', 'title': 'P00 policy'}, control=None, cost_ms=0.0, contribution={}, looping={}, waiting={})&#10;assert 'simulated' == 'denied'&#10;  &#10;  - denied&#10;  + simulated">@pytest.mark.asyncio
+    async def test_notify_node_is_denied_without_permission() -&gt; None:
+        graph = _graph(
+            nodes=[
+                _notify_node("n", "P00 policy"),
+                {"id": "end", "type": "end", "label": "Fin"},
+            ],
+            edges=[_edge("e1", "n", "end")],
+            entrypoints=["n"],
+        )
+        ctx = ExecutionContext(
+            organization_id=uuid4(),
+            workflow_id=uuid4(),
+            run_id=uuid4(),
+            actor_type="user",
+            trigger_type="manual",
+            permissions=frozenset(),
+            simulate=True,
+        )
+    
+        result = await execute_graph(
+            WorkflowGraph.from_dict(graph), ctx, {}, persist_execution=False
+        )
+    
+&gt;       assert result.node_executions["n"].status == "denied", result.node_executions["n"]
+E       AssertionError: NodeExecution(status='simulated', output={'simulated': True, 'channel': 'in_app', 'title': 'P00 policy'}, error=None, ...tion', 'channel': 'in_app', 'title': 'P00 policy'}, control=None, cost_ms=0.0, contribution={}, looping={}, waiting={})
+E       assert 'simulated' == 'denied'
+E         
+E         - denied
+E         + simulated
+
+tests\red\test_p00_policy_red.py:49: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_policy_red" name="test_wellness_capability_decision_is_wired_into_workflow_runtime" time="0.195"><failure message="AssertionError: assert 'capability_decision' in '# =============================================================================\n# Phase 32A — WorkflowNodeHandler re...ict(outcome.planned or {}),\n        control=outcome.control,\n        cost_ms=float(outcome.cost_ms or 0.0),\n    )\n'">def test_wellness_capability_decision_is_wired_into_workflow_runtime() -&gt; None:
+        """La autonomía del rol (answer_only/propose_actions) debe ser consultada por
+        el runtime de workflows, no solo por el endpoint de agentes. Hoy
+        `src/platform/studio/policy.py` no tiene ningún caller de producción."""
+        from src.platform.workflows import nodes, runtime
+    
+        source = inspect.getsource(nodes) + inspect.getsource(runtime)
+&gt;       assert "capability_decision" in source
+E       AssertionError: assert 'capability_decision' in '# =============================================================================\n# Phase 32A — WorkflowNodeHandler re...ict(outcome.planned or {}),\n        control=outcome.control,\n        cost_ms=float(outcome.cost_ms or 0.0),\n    )\n'
+
+tests\red\test_p00_policy_red.py:59: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_workspace_isolation_red" name="test_instance_list_does_not_leak_across_workspaces" time="16.316"><failure message="AssertionError: una instancia de A no puede verse desde B&#10;assert '15e6a7c6-8e94-41b2-af9d-e6aca542a3fa' not in {'15e6a7c6-8e94-41b2-af9d-e6aca542a3fa'}">async_client = &lt;httpx.AsyncClient object at 0x00000245E3923F50&gt;
+
+    @pytest.mark.asyncio
+    async def test_instance_list_does_not_leak_across_workspaces(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P00 WS List")
+        ws_a = await _default_workspace(async_client, org)
+        created = await async_client.post(
+            "/api/v1/workspaces", headers=_headers(org), json={"name": "Workspace B"}
+        )
+        assert created.status_code == 201, created.text
+        ws_b = created.json()
+    
+        workflow = await async_client.post(
+            "/api/v1/workflows",
+            headers=_ws_headers(org, ws_a["id"]),
+            json={
+                "name": "WAIT en A",
+                "trigger_type": "webhook",
+                "workspace_id": ws_a["id"],
+                "graph": _durable_graph(),
+                "workflow_version": 2,
+            },
+        )
+        assert workflow.status_code == 200, workflow.text
+        wid = workflow.json()["workflow_id"]
+    
+        started = await async_client.post(
+            f"/api/v1/workflows/{wid}/instances",
+            headers={**_ws_headers(org, ws_a["id"]), "Idempotency-Key": f"p00-{uuid4().hex}"},
+            json={"payload": {"message": "hola"}},
+        )
+        assert started.status_code == 200, started.text
+        instance_id = started.json()["instance_id"]
+    
+        listed = await async_client.get(
+            "/api/v1/workflows/instances", headers=_ws_headers(org, ws_b["id"])
+        )
+        assert listed.status_code == 200, listed.text
+        ids = {item["id"] for item in listed.json().get("instances", [])}
+&gt;       assert instance_id not in ids, "una instancia de A no puede verse desde B"
+E       AssertionError: una instancia de A no puede verse desde B
+E       assert '15e6a7c6-8e94-41b2-af9d-e6aca542a3fa' not in {'15e6a7c6-8e94-41b2-af9d-e6aca542a3fa'}
+
+tests\red\test_p00_workspace_isolation_red.py:77: AssertionError</failure></testcase><testcase classname="tests.red.test_p00_workspace_isolation_red" name="test_signal_from_other_workspace_is_denied" time="22.023"><failure message="AssertionError: {&quot;status&quot;:&quot;resumed&quot;,&quot;signal_id&quot;:&quot;dd9dca61-81bb-4365-bdd8-2a6d02496bcf&quot;,&quot;resumed&quot;:true,&quot;results&quot;:[{&quot;instance_id&quot;:&quot;03b79882-921b-4d8b-81d1-c616bdbf18cd&quot;,&quot;claimed&quot;:true,&quot;status&quot;:&quot;COMPLETED&quot;,&quot;run&quot;:{&quot;run_id&quot;:&quot;084da297-dbac-7392-e072-94b9b12267ca&quot;,&quot;workflow_id&quot;:&quot;ffb15410-f10c-4e14-8298-ebfb04c09d28&quot;,&quot;status&quot;:&quot;succeeded&quot;,&quot;duration_ms&quot;:909,&quot;error&quot;:null,&quot;nodes&quot;:6,&quot;correlation_id&quot;:&quot;inst:03b79882-921b-4d8b-81d1-c616bdbf18cd:r2&quot;,&quot;cost_ms&quot;:0.0,&quot;simulate&quot;:false,&quot;run_mode&quot;:&quot;full&quot;,&quot;effect_verification&quot;:{&quot;level&quot;:&quot;NONE&quot;,&quot;unverified&quot;:[],&quot;declared&quot;:[],&quot;simulated&quot;:[]},&quot;instance_id&quot;:&quot;03b79882-921b-4d8b-81d1-c616bdbf18cd&quot;,&quot;instance_seq&quot;:2,&quot;result&quot;:{&quot;summary&quot;:[],&quot;structured_output&quot;:{&quot;nodes&quot;:{&quot;t&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;end&quot;:true}},&quot;n1&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;value&quot;:&quot;amigo&quot;,&quot;variable&quot;:&quot;greeting&quot;}},&quot;n2&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;state&quot;:{&quot;op&quot;:&quot;append&quot;,&quot;path&quot;:&quot;cart.items&quot;,&quot;value&quot;:[{&quot;sku&quot;:&quot;ARZ-1&quot;}]}}},&quot;w1&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;port&quot;:&quot;out&quot;,&quot;message&quot;:&quot;desde B&quot;,&quot;waiting&quot;:true,&quot;event_type&quot;:&quot;conversation.message&quot;,&quot;correlation&quot;:{},&quot;signal_received&quot;:true,&quot;timeout_seconds&quot;:null}},&quot;n3&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;state&quot;:{&quot;op&quot;:&quot;set&quot;,&quot;path&quot;:&quot;echo&quot;,&quot;value&quot;:&quot;amigo&quot;}}},&quot;end&quot;:{&quot;status&quot;:&quot;succeeded&quot;,&quot;output&quot;:{&quot;end&quot;:true}}}},&quot;context&quot;:{&quot;identity&quot;:{&quot;organization_id&quot;:&quot;3a220c72-875e-4611-b09d-8b24334e099e&quot;,&quot;workflow_id&quot;:&quot;ffb15410-f10c-4e14-8298-ebfb04c09d28&quot;,&quot;run_id&quot;:&quot;084da297-dbac-7392-e072-94b9b12267ca&quot;,&quot;actor_type&quot;:&quot;signal&quot;,&quot;actor_id&quot;:null,&quot;workspace_id&quot;:&quot;6370b3ce-6cb5-4b8d-bb2b-1b3edc88d902&quot;,&quot;correlation_id&quot;:&quot;inst:03b79882-921b-4d8b-81d1-c616bdbf18cd:r2&quot;},&quot;trigger&quot;:{&quot;source&quot;:&quot;signal&quot;,&quot;event_type&quot;:&quot;signal&quot;,&quot;payload&quot;:{&quot;message&quot;:&quot;desde B&quot;},&quot;occurred_at&quot;:&quot;2026-10-23T16:10:43.680347+00:00&quot;},&quot;data&quot;:{},&quot;knowledge&quot;:{},&quot;evidence_refs&quot;:[],&quot;claim_refs&quot;:[],&quot;entity_refs&quot;:[],&quot;findings&quot;:[],&quot;decisions&quot;:[],&quot;artifacts&quot;:[],&quot;variables&quot;:{},&quot;execution&quot;:{&quot;nodes&quot;:{&quot;n3&quot;:{&quot;node_type&quot;:&quot;state_set&quot;,&quot;status&quot;:&quot;succeeded&quot;,&quot;error&quot;:null,&quot;duration_ms&quot;:237,&quot;simulated&quot;:false},&quot;end&quot;:{&quot;node_type&quot;:&quot;end&quot;,&quot;status&quot;:&quot;succeeded&quot;,&quot;error&quot;:null,&quot;duration_ms&quot;:0,&quot;simulated&quot;:false}}}},&quot;evidence&quot;:[],&quot;notifications&quot;:[],&quot;errors&quot;:[],&quot;cost_ms&quot;:0.0,&quot;duration_ms&quot;:909}}}]}&#10;assert 200 in (403, 404)&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">async_client = &lt;httpx.AsyncClient object at 0x00000245E3977A50&gt;
+
+    @pytest.mark.asyncio
+    async def test_signal_from_other_workspace_is_denied(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P00 WS Signal")
+        ws_a = await _default_workspace(async_client, org)
+        created = await async_client.post(
+            "/api/v1/workspaces", headers=_headers(org), json={"name": "Workspace B2"}
+        )
+        assert created.status_code == 201, created.text
+        ws_b = created.json()
+    
+        workflow = await async_client.post(
+            "/api/v1/workflows",
+            headers=_ws_headers(org, ws_a["id"]),
+            json={
+                "name": "WAIT señal A",
+                "trigger_type": "webhook",
+                "workspace_id": ws_a["id"],
+                "graph": _durable_graph(),
+                "workflow_version": 2,
+            },
+        )
+        assert workflow.status_code == 200, workflow.text
+        wid = workflow.json()["workflow_id"]
+    
+        started = await async_client.post(
+            f"/api/v1/workflows/{wid}/instances",
+            headers={**_ws_headers(org, ws_a["id"]), "Idempotency-Key": f"p00-{uuid4().hex}"},
+            json={"payload": {"message": "hola"}},
+        )
+        assert started.status_code == 200, started.text
+        instance_id = started.json()["instance_id"]
+    
+        detail = await async_client.get(
+            f"/api/v1/workflows/instances/{instance_id}", headers=_ws_headers(org, ws_a["id"])
+        )
+        assert detail.status_code == 200, detail.text
+        event_type = detail.json().get("waiting_event_type")
+        assert event_type, detail.text
+    
+        signaled = await async_client.post(
+            f"/api/v1/workflows/instances/{instance_id}/signal",
+            headers=_ws_headers(org, ws_b["id"]),
+            json={"event_type": event_type, "payload": {"message": "desde B"}},
+        )
+&gt;       assert signaled.status_code in (403, 404), signaled.text
+E       AssertionError: {"status":"resumed","signal_id":"dd9dca61-81bb-4365-bdd8-2a6d02496bcf","resumed":true,"results":[{"instance_id":"03b79882-921b-4d8b-81d1-c616bdbf18cd","claimed":true,"status":"COMPLETED","run":{"run_id":"084da297-dbac-7392-e072-94b9b12267ca","workflow_id":"ffb15410-f10c-4e14-8298-ebfb04c09d28","status":"succeeded","duration_ms":909,"error":null,"nodes":6,"correlation_id":"inst:03b79882-921b-4d8b-81d1-c616bdbf18cd:r2","cost_ms":0.0,"simulate":false,"run_mode":"full","effect_verification":{"level":"NONE","unverified":[],"declared":[],"simulated":[]},"instance_id":"03b79882-921b-4d8b-81d1-c616bdbf18cd","instance_seq":2,"result":{"summary":[],"structured_output":{"nodes":{"t":{"status":"succeeded","output":{"end":true}},"n1":{"status":"succeeded","output":{"value":"amigo","variable":"greeting"}},"n2":{"status":"succeeded","output":{"state":{"op":"append","path":"cart.items","value":[{"sku":"ARZ-1"}]}}},"w1":{"status":"succeeded","output":{"port":"out","message":"desde B","waiting":true,"event_type":"conversation.message","correlation":{},"signal_received":true,"timeout_seconds":null}},"n3":{"status":"succeeded","output":{"state":{"op":"set","path":"echo","value":"amigo"}}},"end":{"status":"succeeded","output":{"end":true}}}},"context":{"identity":{"organization_id":"3a220c72-875e-4611-b09d-8b24334e099e","workflow_id":"ffb15410-f10c-4e14-8298-ebfb04c09d28","run_id":"084da297-dbac-7392-e072-94b9b12267ca","actor_type":"signal","actor_id":null,"workspace_id":"6370b3ce-6cb5-4b8d-bb2b-1b3edc88d902","correlation_id":"inst:03b79882-921b-4d8b-81d1-c616bdbf18cd:r2"},"trigger":{"source":"signal","event_type":"signal","payload":{"message":"desde B"},"occurred_at":"2026-10-23T16:10:43.680347+00:00"},"data":{},"knowledge":{},"evidence_refs":[],"claim_refs":[],"entity_refs":[],"findings":[],"decisions":[],"artifacts":[],"variables":{},"execution":{"nodes":{"n3":{"node_type":"state_set","status":"succeeded","error":null,"duration_ms":237,"simulated":false},"end":{"node_type":"end","status":"succeeded","error":null,"duration_ms":0,"simulated":false}}}},"evidence":[],"notifications":[],"errors":[],"cost_ms":0.0,"duration_ms":909}}}]}
+E       assert 200 in (403, 404)
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\red\test_p00_workspace_isolation_red.py:126: AssertionError</failure></testcase></testsuite></testsuites>

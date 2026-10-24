@@ -41,6 +41,8 @@ from src.platform.workflows.capability_registry import (
     CapabilitySnapshot,
     build_capability_snapshot,
 )
+from src.platform.workflows.planner_budget import preflight_budget
+from src.platform.workflows.planner_diagnostics import user_diagnostic
 from src.platform.workflows.planner_tools import (
     PlannerToolContext,
     PlannerToolError,
@@ -151,6 +153,7 @@ class PlannerToolCall(BaseModel):
     duration_ms: int = 0
     result_hash: str | None = None
     result_summary: str | None = None
+    cached: bool = False
 
 
 class PlannerStage(BaseModel):
@@ -531,6 +534,8 @@ class _SessionRuntime:
     llm_responses: list[dict[str, Any]] = field(default_factory=list)
     last_response: Any | None = None
     last_action_error: dict[str, Any] | None = None
+    budget_estimate: dict[str, Any] | None = None
+    deterministic_repairs: list[dict[str, Any]] = field(default_factory=list)
 
 
 UNDERSTAND_SYSTEM_PROMPT = """Eres el analista de procesos de Zent.
@@ -881,6 +886,7 @@ class WorkflowPlanningSession:
         self._search_seen: dict[str, list[str]] = {}
         self._inspected_refs: set[str] = set()
         self._tool_signatures: set[str] = set()
+        self._tool_cache: dict[str, dict[str, Any]] = {}
         self._force_plan_next = False
         self._resource_resolution: dict[str, Any] | None = None
 
@@ -989,6 +995,7 @@ class WorkflowPlanningSession:
         return result
 
     async def _run(self, prompt: str) -> dict[str, Any]:
+        discovery_started = time.monotonic()
         if self.snapshot is None:
             self.snapshot = await build_capability_snapshot(
                 self.organization_id,
@@ -1007,6 +1014,20 @@ class WorkflowPlanningSession:
         # "no hay contratos" and asks for refs it already has.
         capabilities["_descriptor_models"] = list(self.snapshot.capabilities)
         capability_context = capability_digest(capabilities, query=prompt, max_items=16)
+        estimate = preflight_budget(
+            self.budget,
+            prompt=prompt,
+            system_prompt=capability_context,
+            catalog_chars=len(capability_context),
+            max_steps=self.budget.max_steps,
+            expecting_repairs=self.budget.max_repair_attempts > 0,
+        )
+        self.runtime.budget_estimate = estimate.as_dict()
+        self._stage(
+            "DISCOVERY",
+            discovery_started,
+            f"{len(self.snapshot.capabilities)} capacidades, snapshot {self.snapshot.snapshot_hash[:12]}",
+        )
         spec_started = time.monotonic()
         try:
             self._specification = await self._understand(prompt)
@@ -1151,6 +1172,7 @@ class WorkflowPlanningSession:
                                 workspace_id=self.workspace_id,
                                 permissions=self.permissions,
                                 snapshot=self.snapshot,
+                                cache=self._tool_cache,
                             ),
                             session_id=self.session_id,
                         )
@@ -1162,6 +1184,9 @@ class WorkflowPlanningSession:
                                 duration_ms=elapsed_ms(tool_started),
                                 result_hash=str(observation.get("observation", {}).get("result_hash") or ""),
                                 result_summary=_observation_summary(observation),
+                                cached=bool(
+                                    observation.get("observation", {}).get("cached")
+                                ),
                             )
                         )
                         if tool_name == "capability.search":
@@ -1237,6 +1262,14 @@ class WorkflowPlanningSession:
                         plan, capabilities
                     )
                     normalization_notes.extend(semantic_notes)
+                    self.runtime.deterministic_repairs.extend(
+                        {
+                            "code": "repair.semantic",
+                            "message": note,
+                            "step_id": None,
+                        }
+                        for note in semantic_notes
+                    )
                     matches = [
                         CapabilityMatch.model_validate(item)
                         for item in _normalize_matches(action.get("matches") or [])
@@ -1354,6 +1387,7 @@ class WorkflowPlanningSession:
         graph = None
         steps_map: dict[str, str] = {}
         errors = [issue for issue in issues if issue.severity == "error"]
+        compile_started = time.monotonic()
         if not errors:
             from src.platform.workflows.architect import _compile_validated
 
@@ -1365,6 +1399,11 @@ class WorkflowPlanningSession:
                 issue.severity == "error" for issue in compile_issues
             ):
                 graph = None
+        self._stage(
+            "COMPILE",
+            compile_started,
+            "graph ok" if graph is not None else "sin graph",
+        )
 
         from src.platform.workflows.architect import (
             _readiness,
@@ -1375,6 +1414,7 @@ class WorkflowPlanningSession:
         from src.platform.workflows.architect_clarifications import (
             build_clarifications,
             build_requirements,
+            clarification_payload,
         )
 
         clarifications = build_clarifications(plan, issues)
@@ -1385,27 +1425,32 @@ class WorkflowPlanningSession:
             for question in planner_clarifications:
                 if not any(item.get("question") == question for item in clarifications):
                     clarifications.append(
-                        {
-                            "question": question,
-                            "impact": "medium",
-                            "code": "planner.clarification",
-                            "step_id": None,
-                        }
+                        clarification_payload(
+                            question,
+                            code="planner.clarification",
+                            impact="medium",
+                        )
                     )
             if self._specification is not None:
                 for item in self._specification.missing_information:
                     if not any(entry.get("question") == item for entry in clarifications):
                         clarifications.append(
-                            {
-                                "question": item,
-                                "impact": "high",
-                                "code": "spec.missing_information",
-                                "step_id": None,
-                            }
+                            clarification_payload(
+                                item,
+                                code="spec.missing_information",
+                                impact="high",
+                            )
                         )
         requirements = build_requirements(issues)
+        readiness_started = time.monotonic()
         readiness = _readiness(graph, capabilities) if graph is not None else None
+        self._stage(
+            "READINESS",
+            readiness_started,
+            "ok" if readiness is None or readiness.get("ready") else "con bloqueos",
+        )
         cost = None
+        cost_started = time.monotonic()
         if graph is not None and self.estimate_cost:
             try:
                 from src.platform.workflows.capabilities import cost_estimate
@@ -1415,6 +1460,7 @@ class WorkflowPlanningSession:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("agentic planner cost failed", error=str(exc)[:160])
+        self._stage("COST", cost_started, "estimado" if cost else "no estimado")
         state = design_state(
             graph=graph,
             issues=issues,
@@ -1449,7 +1495,9 @@ class WorkflowPlanningSession:
                 "source": "llm",
                 **provider_info(self._provider_resolved, self.model),
                 "diagnostics": list(self.runtime.llm_responses),
+                "budget_estimate": self.runtime.budget_estimate,
             },
+            "budget_estimate": self.runtime.budget_estimate,
             "specification": (
                 self._specification.model_dump(mode="json")
                 if self._specification is not None
@@ -1477,6 +1525,7 @@ class WorkflowPlanningSession:
             "usage": self.runtime.usage.as_dict(),
             "clarification_history": self.clarification_history,
             "notes": normalization_notes,
+            "deterministic_repairs": list(self.runtime.deterministic_repairs),
         }
         log_design(
             "planner.agentic.completed",
@@ -1941,13 +1990,14 @@ class WorkflowPlanningSession:
         questions = questions or [
             "Necesito más información para elegir la fuente o el proveedor correcto."
         ]
+        from src.platform.workflows.architect_clarifications import clarification_payload
+
         clarifications = [
-            {
-                "question": question,
-                "impact": "high",
-                "code": "planner.clarification",
-                "step_id": None,
-            }
+            clarification_payload(
+                question,
+                code="planner.clarification",
+                impact="high",
+            )
             for question in questions[:5]
         ]
         return {
@@ -1961,7 +2011,9 @@ class WorkflowPlanningSession:
                 "source": "llm",
                 **provider_info(self._provider_resolved, self.model),
                 "diagnostics": list(self.runtime.llm_responses),
+                "budget_estimate": self.runtime.budget_estimate,
             },
+            "budget_estimate": self.runtime.budget_estimate,
             "specification": (
                 self._specification.model_dump(mode="json")
                 if self._specification is not None
@@ -2040,7 +2092,10 @@ class WorkflowPlanningSession:
                 "source": "llm",
                 **provider_info(self._provider_resolved, self.model),
                 "diagnostics": list(self.runtime.llm_responses),
+                "budget_estimate": self.runtime.budget_estimate,
             },
+            "budget_estimate": self.runtime.budget_estimate,
+            "diagnostic": user_diagnostic(code),
             "specification": (
                 self._specification.model_dump(mode="json")
                 if self._specification is not None
@@ -2150,7 +2205,13 @@ class WorkflowPlanningSession:
                     total_tokens=usage.total_tokens,
                     tool_calls=usage.tool_calls,
                     latency_ms=float(usage.duration_ms),
-                    status="completed" if status != STATE_BLOCKED else "failed",
+                    status=(
+                        "failed"
+                        if status in (STATE_BLOCKED, "budget_exceeded", "cancelled")
+                        else "clarification"
+                        if status == STATE_NEEDS_CLARIFICATION
+                        else "completed"
+                    ),
                     estimated_cost=usage.estimated_cost_usd,
                     cost_tags={"session_id": self.session_id, "planner": "agentic"},
                     routing={

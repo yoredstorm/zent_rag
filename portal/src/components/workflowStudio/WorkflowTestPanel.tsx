@@ -2,9 +2,15 @@ import { ArrowUp, Lightning, MagicWand, Warning } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
-import type { WorkflowGraph } from "../../lib/workflowGraph";
+import { effectNodes, nodeMeta } from "../../lib/workflowGraph";
+import type { GraphIssue, WorkflowGraph } from "../../lib/workflowGraph";
+import {
+  classifyPlannedEffects,
+  effectLabel,
+  type EffectVerification,
+  type EffectVerificationItem,
+} from "../../lib/workflowEffects";
 import { humanizeWorkflowError } from "../../lib/workflowErrors";
-import type { GraphIssue } from "../../lib/workflowGraph";
 import { Button, ErrorInline, StatusBadge, Textarea } from "../ui";
 import { WorkflowRunInspector, type RunDetail } from "../WorkflowRunInspector";
 import { answerFromSteps, normalizeTestPayload, type WorkflowRun } from "./types";
@@ -36,7 +42,23 @@ type RunOut = {
   run_id: string;
   status: string;
   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
+  effect_verification?: EffectVerification;
   result?: unknown;
+};
+
+type TestReportOut = {
+  test_report_id?: string;
+  requested_level: string;
+  effective_level: string;
+  capped_reason?: string | null;
+  provider_verified: boolean;
+  result: string;
+  state?: string;
+  why?: string;
+  hashes?: Record<string, string>;
+  timeline?: unknown[];
+  executed_nodes?: unknown[];
+  report_id?: string;
 };
 
 const TEST_LEVELS = [
@@ -47,6 +69,11 @@ const TEST_LEVELS = [
 ] as const;
 
 type TestLevel = (typeof TEST_LEVELS)[number]["id"];
+
+const UNAVAILABLE_LEVELS: Partial<Record<TestLevel, string>> = {
+  sandbox: "Sandbox real no está conectado en este panel. No simulo un pase.",
+  provider: "Certificación con proveedor real no está conectada. No simulo un pase.",
+};
 
 const ROLE_EXAMPLES: { id: string; label: string; message: string }[] = [
   { id: "ventas", label: "Ventas", message: "Quiero un kilo de arroz" },
@@ -60,7 +87,7 @@ const ROLE_EXAMPLES: { id: string; label: string; message: string }[] = [
 type Message =
   | { role: "user"; text: string }
   | { role: "agent"; text: string; echo: boolean; node_id: string | null }
-  | { role: "system"; text: string; tone: "info" | "danger" };
+  | { role: "system"; text: string; tone: "info" | "warn" | "danger" };
 
 export function WorkflowTestPanel({
   workflowId,
@@ -83,6 +110,7 @@ export function WorkflowTestPanel({
   const [messages, setMessages] = useState<Message[]>([]);
   const [run, setRun] = useState<RunDetail | null>(null);
   const [planned, setPlanned] = useState<RunOut["planned_effects"]>(undefined);
+  const [testReport, setTestReport] = useState<TestReportOut | null>(null);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const feedRef = useRef<HTMLDivElement>(null);
 
@@ -104,6 +132,7 @@ export function WorkflowTestPanel({
   useEffect(() => {
     setRun(null);
     setPlanned(undefined);
+    setTestReport(null);
     setMessages([]);
     void loadRuns();
   }, [loadRuns]);
@@ -147,8 +176,111 @@ export function WorkflowTestPanel({
     }
   }
 
+  async function executeTest() {
+    if (!session || busy) return;
+    const asked = raw.trim();
+    setBusy("test");
+    setError("");
+    setTestReport(null);
+    if (asked) push({ role: "user", text: asked });
+    try {
+      if (dirty && onSaveBeforeRun) {
+        const saved = await onSaveBeforeRun();
+        if (!saved) {
+          push({
+            role: "system",
+            text: "No pude guardar el grafo, así que no ejecuto: correría una versión vieja.",
+            tone: "danger",
+          });
+          return;
+        }
+      }
+      const report = await api<TestReportOut>(`/api/v1/workflows/${workflowId}/test`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({
+          requested_level: level,
+          scenario: {
+            scenario_id: "studio",
+            messages: asked ? [asked] : [],
+            max_segments: 8,
+          },
+        }),
+      });
+      setTestReport(report);
+      const steps = (report.executed_nodes ?? []).map((raw, index) => {
+        const item = (raw ?? {}) as Record<string, unknown>;
+        return {
+          step_index: index,
+          step_type: String(item.type ?? item.node_type ?? "node"),
+          node_id: item.node_id ? String(item.node_id) : null,
+          node_type: item.node_type ? String(item.node_type) : null,
+          status: String(item.status ?? "simulated"),
+          output: (item.output as Record<string, unknown> | undefined) ?? {},
+          error: item.error ? String(item.error) : null,
+        };
+      });
+      onRun({
+        id: report.test_report_id ?? report.report_id ?? "test-report",
+        status: report.result.toLowerCase(),
+        steps,
+        result: {},
+      });
+      const requested = report.requested_level;
+      const effective = report.effective_level;
+      const result = report.result;
+      if (result === "PREVIEW") {
+        const plannedLabels = graph
+          ? effectNodes(graph).map((node) => node.label || nodeMeta(node.type).label)
+          : [];
+        push({
+          role: "system",
+          text:
+            plannedLabels.length > 0
+              ? `Preview teórico. No ejecuta efectos y no es un pase. Efectos previstos: ${plannedLabels.join(", ")}.`
+              : "Preview teórico. No ejecuta efectos y no es un pase.",
+          tone: "info",
+        });
+      } else if (requested !== effective) {
+        push({
+          role: "system",
+          text: `Nivel ${requested} no está conectado (${report.capped_reason ?? "sin adaptador"}). El servidor ejecutó ${effective}; no acredita proveedor real.`,
+          tone: "danger",
+        });
+      } else if (result === "UNVERIFIED") {
+        push({
+          role: "system",
+          text: report.why || "UNVERIFIED: falta un doble o proveedor real. No es PASSED.",
+          tone: "danger",
+        });
+      } else if (result === "PASSED") {
+        push({
+          role: "system",
+          text: `PASSED en ${effective} determinista. No certifica proveedor real ni publica solo.`,
+          tone: "info",
+        });
+      } else {
+        push({
+          role: "system",
+          text: report.why || `El test terminó en ${result} en nivel ${effective}.`,
+          tone: result === "FAILED" || result === "BLOCKED" ? "danger" : "warn",
+        });
+      }
+      await loadRuns();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function execute(simulate: boolean) {
     if (!session || busy) return;
+    if (simulate) {
+      await executeTest();
+      return;
+    }
     if (!simulate && effectLabels.length > 0) {
       const ok = window.confirm(
         `Ejecutar de verdad va a disparar ${effectLabels.length} nodo(s) con efectos reales: ` +
@@ -179,19 +311,34 @@ export function WorkflowTestPanel({
         body: JSON.stringify({ payload: normalized.payload, simulate }),
       });
       setPlanned(simulate ? out.planned_effects : undefined);
-      const unverified = simulate && (out.planned_effects?.length ?? 0) > 0;
-      if (level === "preview") {
-        push({
-          role: "system",
-          text: "Preview teórico. No ejecuta efectos y no es un pase.",
-          tone: "info",
-        });
-      } else if (unverified) {
-        push({
-          role: "system",
-          text: "UNVERIFIED: hay un efecto externo sin doble. No es PASSED.",
-          tone: "danger",
-        });
+      if (simulate) {
+        const verification =
+          out.effect_verification ?? classifyPlannedEffects(out.planned_effects);
+        const labels = (items: EffectVerificationItem[]) =>
+          items.map((item) => effectLabel(item)).join(", ");
+        if (verification.level === "UNVERIFIED") {
+          push({
+            role: "system",
+            text: `UNVERIFIED: efecto externo sin doble en ${labels(verification.unverified)}. Fija la salida (doble declarado) o usa proveedor real. No es PASSED.`,
+            tone: "danger",
+          });
+        } else if (verification.level === "DECLARED") {
+          push({
+            role: "system",
+            text: `DECLARED: efecto fijado con datos de prueba en ${labels(verification.declared)}. No es PASSED; falta sandbox/proveedor.`,
+            tone: "warn",
+          });
+        } else if (verification.level === "SIMULATED") {
+          const verb =
+            verification.simulated.length === 1
+              ? "quedó en modo simulación"
+              : "quedaron en modo simulación";
+          push({
+            role: "system",
+            text: `SIMULADO: ${labels(verification.simulated)} ${verb}. No es PASSED.`,
+            tone: "info",
+          });
+        }
       }
       const detail = await api<RunDetail>(`/api/v1/workflows/runs/${out.run_id}`, {
         token: session.token,
@@ -330,7 +477,11 @@ export function WorkflowTestPanel({
             <p
               key={idx}
               className={`rounded-md border px-3 py-2 text-[11px] ${
-                m.tone === "danger" ? "border-danger/40 bg-danger-soft text-danger" : "border-border bg-soft text-muted"
+                m.tone === "danger"
+                  ? "border-danger/40 bg-danger-soft text-danger"
+                  : m.tone === "warn"
+                    ? "border-warn/40 bg-warn-soft text-warn"
+                    : "border-border bg-soft text-muted"
               }`}
               data-testid="wf-chat-system"
             >
@@ -346,6 +497,32 @@ export function WorkflowTestPanel({
             </summary>
             <div className="mt-2">
               <WorkflowRunInspector run={run} plannedEffects={planned} onSelectNode={onSelectNode} />
+            </div>
+          </details>
+        )}
+
+        {testReport && (
+          <details className="rounded-md border border-border bg-soft/60 px-2 py-1.5" open data-testid="wf-test-report">
+            <summary className="cursor-pointer text-[11px] font-medium text-muted">
+              Reporte del test · {testReport.effective_level} · {testReport.result}
+            </summary>
+            <div className="mt-2 space-y-1 text-[10px] text-muted">
+              <p>
+                Solicitado: {testReport.requested_level}. Ejecutado: {testReport.effective_level}.
+                {testReport.capped_reason ? ` Motivo: ${testReport.capped_reason}.` : ""}
+              </p>
+              <p>
+                Nodos ejecutados: {testReport.executed_nodes?.length ?? 0}. Timeline:{" "}
+                {testReport.timeline?.length ?? 0}.
+              </p>
+              {testReport.hashes && (
+                <p className="break-all font-mono">
+                  graph {testReport.hashes.graph_hash?.slice(0, 12)} · plan{" "}
+                  {testReport.hashes.plan_hash?.slice(0, 12)} · rol{" "}
+                  {testReport.hashes.role_hash?.slice(0, 12)} · binding{" "}
+                  {testReport.hashes.binding_hash?.slice(0, 12)}
+                </p>
+              )}
             </div>
           </details>
         )}
@@ -391,6 +568,11 @@ export function WorkflowTestPanel({
             </button>
           ))}
         </fieldset>
+        {UNAVAILABLE_LEVELS[level] && (
+          <p className="text-[10px] text-warn" data-testid="wf-level-unavailable">
+            {UNAVAILABLE_LEVELS[level]}
+          </p>
+        )}
         <div className="flex flex-wrap gap-1" data-testid="wf-role-examples">
           {ROLE_EXAMPLES.map((role) => (
             <button
