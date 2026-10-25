@@ -87,6 +87,17 @@ class WorkflowAccessError(PermissionError):
     """Denegación de acceso cross-tenant / cross-workspace al ejecutar."""
 
 
+class WorkflowRevisionConflict(RuntimeError):
+    """PATCH sobre una revisión de borrador que ya no es la vigente."""
+
+    def __init__(self, expected: int, current: int):
+        self.expected = expected
+        self.current = current
+        super().__init__(
+            f"revisión del borrador desactualizada: esperada {expected}, actual {current}"
+        )
+
+
 def _hash_hook_secret(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -328,6 +339,8 @@ async def run_workflow(
     instance_seq: int | None = None,
     preload_ports: dict[str, str] | None = None,
     preload_scope: list[str] | None = None,
+    definition_source: str | None = None,
+    effective_policy_snapshot: dict | None = None,
 ) -> dict:
     """Ejecuta el workflow bajo un ExecutionContext explícito.
 
@@ -392,6 +405,98 @@ async def run_workflow(
     eff_ws = UUID(str(row_ws)) if row_ws else (workspace_id or None)
     corr = (correlation_id or "").strip() or f"wf:{workflow_id}"
 
+    from src.platform.workflows.definition import (
+        DEFINITION_SOURCES,
+        PublishedDefinitionError,
+        resolve_definition,
+    )
+
+    source = definition_source
+    if source is None:
+        if graph_override is not None:
+            source = "instance" if instance_id is not None else "draft"
+        elif simulate:
+            source = "draft"
+        elif str(wf.status) == "active":
+            source = "published"
+        else:
+            source = "draft"
+    if source not in DEFINITION_SOURCES:
+        return {
+            "status": "failed",
+            "error": f"definition_source inválido: {source}",
+            "code": "definition_source_invalid",
+            "status_code": 400,
+        }
+    try:
+        if source == "instance":
+            if graph_override is None:
+                return {
+                    "status": "failed",
+                    "error": "definition_source=instance requiere graph_override",
+                    "code": "instance_required",
+                    "status_code": 400,
+                }
+            from src.platform.workflows.release_policy import graph_fingerprint
+
+            definition = {
+                "workflow_id": str(workflow_id),
+                "organization_id": str(eff_org),
+                "workspace_id": str(eff_ws) if eff_ws else None,
+                "name": wf.name,
+                "description": None,
+                "status": str(wf.status),
+                "version_id": None,
+                "version_number": None,
+                "certificate_id": None,
+                "definition_source": "instance",
+                "graph": dict(graph_override),
+                "steps": list(wf.steps or []),
+                "trigger_type": str(wf.trigger_type or "manual"),
+                "trigger_config": dict(wf.trigger_config or {}),
+                "workflow_version": (
+                    int(workflow_version_override)
+                    if workflow_version_override is not None
+                    else int(wf.workflow_version or 1)
+                ),
+                "policy_version": "v1",
+                "deployment_generation": 0,
+                "graph_hash": graph_fingerprint(graph_override),
+                "trigger_hash": "",
+                "legacy_baseline": False,
+                "draft_revision": 0,
+                "policy_snapshot": effective_policy_snapshot or {},
+            }
+        else:
+            definition = await resolve_definition(
+                eff_org,
+                workflow_id,
+                source=source,
+                workspace_id=eff_ws,
+            )
+    except PublishedDefinitionError as exc:
+        return {
+            "run_id": str(run_id) if run_id else None,
+            "workflow_id": str(workflow_id),
+            "status": "failed",
+            "error": exc.message,
+            "code": exc.code,
+            "status_code": exc.status_code,
+        }
+
+    from src.platform.workflows.effective_policy import resolve_effective_policy
+
+    effective_policy = await resolve_effective_policy(
+        organization_id=eff_org,
+        workspace_id=eff_ws,
+        workflow_id=workflow_id,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        permissions=frozenset(permissions or ()),
+        definition=definition,
+        instance_policy=definition.get("policy_snapshot") if source == "instance" else None,
+    )
+
     if resume:
         if run_id is None:
             return {
@@ -402,6 +507,18 @@ async def run_workflow(
     else:
         run_id = UUID(secrets.token_hex(16))
         corr = corr or f"wf:{workflow_id}:{run_id}"
+        published_version_id = None
+        if source == "published" and definition.get("version_id"):
+            try:
+                published_version_id = UUID(str(definition["version_id"]))
+            except (TypeError, ValueError):
+                published_version_id = None
+        certificate_id = None
+        if definition.get("certificate_id"):
+            try:
+                certificate_id = UUID(str(definition["certificate_id"]))
+            except (TypeError, ValueError):
+                certificate_id = None
         session = await get_async_session()
         try:
             await session.execute(
@@ -409,9 +526,14 @@ async def run_workflow(
                     "INSERT INTO workflow_runs "
                     "(id, workflow_id, organization_id, workspace_id, trigger, "
                     "trigger_payload, correlation_id, actor_type, actor_id, simulate, "
-                    "run_mode, target_node_id, source_run_id, instance_id, instance_seq) "
+                    "run_mode, target_node_id, source_run_id, instance_id, instance_seq, "
+                    "published_version_id, certificate_id, graph_hash, policy_version, "
+                    "deployment_generation, definition_source, effective_policy, "
+                    "effective_scope_hash) "
                     "VALUES (:rid, :wid, :oid, :ws, :trig, CAST(:payload AS jsonb), "
-                    ":corr, :atype, :aid, :sim, :rmode, :target, :source_run, :iid, :iseq)"
+                    ":corr, :atype, :aid, :sim, :rmode, :target, :source_run, :iid, :iseq, "
+                    ":pubvid, :certid, :ghash, :pver, :dgen, :dsrc, "
+                    "CAST(:policy AS jsonb), :policy_hash)"
                 ),
                 {
                     "rid": run_id,
@@ -429,6 +551,14 @@ async def run_workflow(
                     "source_run": source_run_id,
                     "iid": str(instance_id) if instance_id else None,
                     "iseq": int(instance_seq) if instance_seq is not None else None,
+                    "pubvid": published_version_id,
+                    "certid": certificate_id,
+                    "ghash": definition.get("graph_hash"),
+                    "pver": definition.get("policy_version"),
+                    "dgen": definition.get("deployment_generation"),
+                    "dsrc": definition.get("definition_source"),
+                    "policy": json.dumps(effective_policy.to_dict(), default=str),
+                    "policy_hash": effective_policy.policy_hash,
                 },
             )
             await session.commit()
@@ -437,19 +567,14 @@ async def run_workflow(
 
     # IR: graph nativo (v2) o adaptación del legacy steps[] (v1).
     from src.platform.workflows.context import WorkflowContext
-    from src.platform.workflows.ir import LegacyWorkflowAdapter, WorkflowGraph
+    from src.platform.workflows.ir import WorkflowGraph
     from src.platform.workflows.runtime import ExecutionContext, execute_graph
 
-    if wf.graph:
-        graph_dict: dict | None = dict(wf.graph)
-    else:
-        graph_dict = None
-    if graph_override is not None:
-        graph_dict = dict(graph_override)
-    workflow_version = (
-        int(workflow_version_override)
+    graph_dict: dict | None = dict(definition["graph"])
+    workflow_version = int(
+        workflow_version_override
         if workflow_version_override is not None
-        else int(wf.workflow_version or 1)
+        else definition.get("workflow_version") or 1
     )
     if graph_dict:
         try:
@@ -462,8 +587,11 @@ async def run_workflow(
                 "error": f"grafo inválido: {str(exc)[:200]}",
             }
     else:
+        from src.platform.workflows.ir import LegacyWorkflowAdapter
+
         graph = LegacyWorkflowAdapter.steps_to_graph(
-            wf.steps or [], wf.trigger_type, wf.trigger_config
+            definition.get("steps") or [], definition.get("trigger_type") or "webhook",
+            definition.get("trigger_config") or {},
         )
 
     # --- Ejecución parcial (Fase 3) + pinned data de pruebas (Fase 4) -------
@@ -553,6 +681,7 @@ async def run_workflow(
         correlation_id=corr,
         simulate=bool(simulate),
         instance_id=UUID(str(instance_id)) if instance_id else None,
+        effective_policy=effective_policy,
     )
 
     started = datetime.now(timezone.utc)
@@ -930,7 +1059,11 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
                     "SELECT id, name, description, trigger_type, trigger_config, steps, "
                     "status, created_at, updated_at, editor_state, graph, "
                     "workspace_id, workflow_version, graph_source, package, "
-                    "release_policy, release_policy_reason, release_policy_at "
+                    "release_policy, release_policy_reason, release_policy_at, "
+                    "published_version_id, published_certificate_id, published_graph_hash, "
+                    "published_at, deployment_generation, draft_revision, "
+                    "(SELECT version_number FROM workflow_versions v "
+                    " WHERE v.id = workflows.published_version_id) AS published_version_number "
                     "FROM workflows WHERE id = :wid AND organization_id = :oid"
                 ),
                 {"wid": workflow_id, "oid": organization_id},
@@ -966,7 +1099,43 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
             if getattr(row, "release_policy_at", None)
             else None
         ),
+        "published_version_id": (
+            str(row.published_version_id) if getattr(row, "published_version_id", None) else None
+        ),
+        "published_version_number": (
+            int(row.published_version_number)
+            if getattr(row, "published_version_number", None) is not None
+            else None
+        ),
+        "published_certificate_id": (
+            str(row.published_certificate_id)
+            if getattr(row, "published_certificate_id", None)
+            else None
+        ),
+        "published_graph_hash": getattr(row, "published_graph_hash", None),
+        "published_at": (
+            row.published_at.isoformat() if getattr(row, "published_at", None) else None
+        ),
+        "deployment_generation": int(getattr(row, "deployment_generation", 0) or 0),
+        "draft_revision": int(getattr(row, "draft_revision", 0) or 0),
+        "draft_changed": _draft_changed(row),
     }
+
+
+def _draft_changed(row) -> bool:
+    published_hash = str(getattr(row, "published_graph_hash", None) or "")
+    if not published_hash:
+        return False
+    from src.platform.workflows.release_policy import graph_fingerprint
+
+    graph = dict(row.graph) if getattr(row, "graph", None) else None
+    if graph is None:
+        from src.platform.workflows.ir import LegacyWorkflowAdapter
+
+        graph = LegacyWorkflowAdapter.steps_to_graph(
+            row.steps or [], str(row.trigger_type or "webhook"), dict(row.trigger_config or {})
+        ).to_dict()
+    return graph_fingerprint(graph) != published_hash
 
 
 async def update_workflow(
@@ -981,6 +1150,7 @@ async def update_workflow(
     graph: dict | None = None,
     workflow_version: int | None = None,
     trigger_type: str | None = None,
+    expected_revision: int | None = None,
 ) -> dict | None:
     if trigger_type is not None and trigger_type not in TRIGGER_TYPES:
         raise ValueError(f"trigger_type debe ser uno de {TRIGGER_TYPES}")
@@ -988,14 +1158,21 @@ async def update_workflow(
     try:
         exists = (
             await session.execute(
-                text("SELECT id FROM workflows WHERE id = :wid AND organization_id = :oid"),
+                text(
+                    "SELECT id, draft_revision FROM workflows "
+                    "WHERE id = :wid AND organization_id = :oid FOR UPDATE"
+                ),
                 {"wid": workflow_id, "oid": organization_id},
             )
         ).fetchone()
         if exists is None:
             await session.commit()
             return None
-        sets = ["updated_at = NOW()"]
+        current_revision = int(getattr(exists, "draft_revision", 0) or 0)
+        if expected_revision is not None and int(expected_revision) != current_revision:
+            await session.rollback()
+            raise WorkflowRevisionConflict(int(expected_revision), current_revision)
+        sets = ["updated_at = NOW()", "draft_revision = draft_revision + 1"]
         params: dict = {"wid": workflow_id}
         if name is not None:
             sets.append("name = :name")
@@ -1062,14 +1239,23 @@ async def update_workflow(
             sets.append("graph_source = 'legacy'")
             sets.append("workflow_version = 1")
             params["graph"] = json.dumps(adapted.to_dict())
-        await session.execute(
-            text(f"UPDATE workflows SET {', '.join(sets)} WHERE id = :wid"),
-            params,
-        )
+        updated = (
+            await session.execute(
+                text(
+                    f"UPDATE workflows SET {', '.join(sets)} "
+                    "WHERE id = :wid AND organization_id = :oid "
+                    "RETURNING draft_revision"
+                ),
+                {**params, "oid": organization_id},
+            )
+        ).fetchone()
         await session.commit()
     finally:
         await session.close()
-    return {"updated": True}
+    return {
+        "updated": True,
+        "draft_revision": int(updated.draft_revision) if updated else None,
+    }
 
 
 async def delete_workflow(organization_id: UUID, workflow_id: UUID) -> bool:
@@ -1544,12 +1730,17 @@ async def run_due_scheduled_workflows(
     session = await get_async_session()
     try:
         sql = (
-            "SELECT id, organization_id, workspace_id, trigger_config, last_run_at "
-            "FROM workflows WHERE status = 'active' AND trigger_type = 'schedule'"
+            "SELECT w.id, w.organization_id, w.workspace_id, "
+            "COALESCE(v.config_snapshot->'trigger_config', w.trigger_config) AS trigger_config, "
+            "w.last_run_at, w.created_at AS workflow_created_at, v.id AS published_version_id "
+            "FROM workflows w "
+            "LEFT JOIN workflow_versions v ON v.id = w.published_version_id "
+            "WHERE w.status = 'active' "
+            "AND COALESCE(v.config_snapshot->>'trigger_type', w.trigger_type) = 'schedule'"
         )
         params: dict = {}
         if organization_id is not None:
-            sql += " AND organization_id = :oid"
+            sql += " AND w.organization_id = :oid"
             params["oid"] = organization_id
         rows = (await session.execute(text(sql), params)).fetchall()
     finally:
@@ -1570,12 +1761,17 @@ async def run_due_scheduled_workflows(
                 continue
             if last is not None and now - last < timedelta(minutes=every):
                 continue
+            # Ocurrencia determinista: no depende del reloj de la réplica.
+            occurrence = (last or getattr(row, "workflow_created_at", None) or now)
             due = True
         else:
-            nxt = next_trigger_at(cfg, last or (now - timedelta(seconds=1)))
-            due = nxt is not None and nxt <= now
+            occurrence = next_trigger_at(
+                cfg, last or getattr(row, "workflow_created_at", None) or (now - timedelta(seconds=1))
+            )
+            due = occurrence is not None and occurrence <= now
         if not due:
             continue
+        occurrence_key = (occurrence or now).astimezone(timezone.utc).isoformat()
 
         try:
             from src.platform.workflows.ingress import route_ingress
@@ -1586,13 +1782,14 @@ async def run_due_scheduled_workflows(
                 trigger="schedule",
                 payload={
                     "scheduled_at": now.isoformat(),
+                    "occurrence_at": occurrence_key,
                     "next_trigger_at": _iso(next_trigger_at(cfg, now)),
                 },
                 workspace_id=row.workspace_id,
-                idempotency_key=f"sched:{row.id}:{int(now.timestamp())}",
+                idempotency_key=f"sched:{row.id}:{occurrence_key}",
                 actor_type="scheduler",
                 system_context=True,
-                correlation_id=f"sched:{row.id}:{int(now.timestamp())}",
+                correlation_id=f"sched:{row.id}:{occurrence_key}",
                 require_active=True,
             )
             if result.get("error") in ("inactive", "not_found", "paused"):
@@ -1627,12 +1824,23 @@ async def workflow_v2_scheduler_loop() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Workflow v2 scheduler iteration failed", error=str(exc)[:200])
         try:
-            from src.platform.workflows.ingress import sweep_ingress_events
+            from src.platform.workflows.ingress import (
+                drain_ingress_events,
+                sweep_ingress_events,
+            )
             from src.platform.workflows.instances import sweep_waiting_instances
 
             ingress_stats = await sweep_ingress_events()
             if ingress_stats.get("requeued"):
                 logger.info("workflow ingress reclaimed", **ingress_stats)
+            drained = await drain_ingress_events(limit=50)
+            if drained.get("processed") or drained.get("failed"):
+                logger.info("workflow ingress drained", **drained)
+            from src.platform.workflows.outbox import dispatch_pending
+
+            outbox_stats = await dispatch_pending(limit=50)
+            if outbox_stats.get("delivered") or outbox_stats.get("failed"):
+                logger.info("workflow outbox dispatched", **outbox_stats)
             stats = await sweep_waiting_instances()
             if stats.get("waits_timed_out") or stats.get("instances_expired"):
                 logger.info("workflow durable sweep", **stats)

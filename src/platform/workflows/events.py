@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 
@@ -237,19 +237,12 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
         if not _filters_match(row.filters, payload):
             continue
         try:
-            event_id = payload.get("event_id") or payload.get("ts") or fingerprint
-            dedupe_key = f"mkt:wfevt:{row.workflow_id}:{fingerprint}"
-            deduped = await _mark_event_processed(organization_id, dedupe_key)
-            if deduped:
-                logger.info("workflow event dedupe", event_type=event_type, workflow_id=str(row.workflow_id))
-                if obs is not None:
-                    try:
-                        counter = obs.workflow_event_deduplicated_total
-                        if counter is not None:
-                            counter.inc()
-                    except Exception:  # noqa: BLE001
-                        pass
-                continue
+            # La identidad la persiste el inbox Postgres. Redis no es autoridad.
+            event_id = (
+                payload.get("event_id")
+                or payload.get("dedupe_key")
+                or f"generated-{uuid4().hex}"
+            )
             child_payload = {k: v for k, v in payload.items() if not k.startswith("_")}
             child_payload["_wf_chain"] = chain + [str(row.workflow_id)]
             from src.platform.workflows.ingress import route_ingress

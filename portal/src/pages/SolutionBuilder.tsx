@@ -20,6 +20,7 @@ type Compilation = {
   compilation_hash: string;
   status: string;
   can_materialize: boolean;
+  mode?: string;
   template_id: string;
   plan: {
     role: { name: string; action: string };
@@ -47,6 +48,7 @@ export default function SolutionBuilderPage() {
   const [params] = useSearchParams();
   const [brief, setBrief] = useState(params.get("brief") || "");
   const [templateId, setTemplateId] = useState("");
+  const [mode, setMode] = useState("auto");
   const [compiled, setCompiled] = useState<Compilation | null>(null);
   const [materialized, setMaterialized] = useState<Materialization | null>(null);
   const [reviewed, setReviewed] = useState(false);
@@ -61,6 +63,7 @@ export default function SolutionBuilderPage() {
   const payload = {
     brief: brief.trim(),
     template_id: templateId || null,
+    mode,
   };
 
   async function compile() {
@@ -136,6 +139,22 @@ export default function SolutionBuilderPage() {
               data-testid="solution-brief"
             />
           </Field>
+          <Field
+            label="Modo de composición"
+            hint="Automático usa una plantilla si cubre la misión; Composición crea un flujo nuevo con el Architect."
+          >
+            <select
+              className="min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm"
+              value={mode}
+              onChange={(event) => setMode(event.target.value)}
+              data-testid="solution-mode"
+            >
+              <option value="auto">Automático</option>
+              <option value="hybrid">Híbrido</option>
+              <option value="compose">Composición nueva</option>
+              <option value="template">Solo plantilla</option>
+            </select>
+          </Field>
           <Field label="Plantilla (opcional)" hint="Si no eliges, ZENT infiere la función.">
             <select
               className="min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm"
@@ -176,6 +195,11 @@ export default function SolutionBuilderPage() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone={compiled.can_materialize ? "ok" : "warn"}>
                 {compiled.can_materialize ? "Lista para preparar" : "Faltan dependencias"}
+              </Badge>
+              <Badge tone="info">
+                {compiled.template_id === "composed"
+                  ? "Composición nueva"
+                  : `Plantilla: ${compiled.template_id}`}
               </Badge>
               <span className="text-xs text-faint">
                 {compiled.scenarios.length} escenario(s) de prueba preparados

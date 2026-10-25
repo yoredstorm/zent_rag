@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="0" tests="7" time="34.705" timestamp="2026-10-25T04:55:40.769154-05:00" hostname="LAP-PPIMENTEL"><testcase classname="tests.red.p13.test_p01_snapshot_red" name="test_edit_active_workflow_keeps_published_execution" time="13.182"><failure message="AssertionError: assert 'B' == 'A'&#10;  &#10;  - A&#10;  + B">async_client = &lt;httpx.AsyncClient object at 0x0000020BFBDC13D0&gt;
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="P13-P0-01: PATCH activo cambia el grafo que ejecuta el hook",
+    )
+    @pytest.mark.asyncio
+    async def test_edit_active_workflow_keeps_published_execution(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P13 P01 Edit Active")
+        workflow_id, secret = await _create(async_client, org, _marker_graph("A"))
+        await _certify_and_publish(async_client, org, workflow_id)
+    
+        patched = await async_client.patch(
+            f"/api/v1/workflows/{workflow_id}",
+            headers={**_headers(org), "Idempotency-Key": f"patch-{uuid4().hex}"},
+            json={"graph": _marker_graph("B"), "workflow_version": 2},
+        )
+        assert patched.status_code == 200, patched.text
+    
+        hook = await async_client.post(
+            f"/api/v1/public/workflows/{workflow_id}/hook",
+            headers={"X-Zent-Workflow-Secret": secret},
+            json={"message": "same"},
+        )
+        assert hook.status_code == 200, hook.text
+        run_id = hook.json().get("run_id")
+        assert run_id, hook.text
+&gt;       assert await _marker_value(async_client, org, run_id) == "A"
+E       AssertionError: assert 'B' == 'A'
+E         
+E         - A
+E         + B
+
+tests\red\p13\test_p01_snapshot_red.py:99: AssertionError</failure></testcase><testcase classname="tests.red.p13.test_p01_snapshot_red" name="test_schedule_uses_published_snapshot" time="6.766"><failure message="AssertionError: assert 'B' == 'A'&#10;  &#10;  - A&#10;  + B">async_client = &lt;httpx.AsyncClient object at 0x0000020BA49A6110&gt;
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="P13-P0-01: el schedule ejecuta la fila viva, no la versión publicada",
+    )
+    @pytest.mark.asyncio
+    async def test_schedule_uses_published_snapshot(async_client: AsyncClient) -&gt; None:
+        from datetime import datetime, timezone
+        from uuid import UUID
+    
+        from src.platform.workflows.engine import run_due_scheduled_workflows
+    
+        org = await _org(async_client, "P13 P01 Schedule")
+        created = await async_client.post(
+            "/api/v1/workflows",
+            headers={**_headers(org), "Idempotency-Key": f"p13-sched-{uuid4().hex}"},
+            json={
+                "name": "P13 schedule",
+                "trigger_type": "schedule",
+                "trigger_config": {"every_minutes": 5},
+                "graph": _marker_graph("A"),
+                "workflow_version": 2,
+            },
+        )
+        assert created.status_code == 200, created.text
+        workflow_id = created.json()["workflow_id"]
+        await _certify_and_publish(async_client, org, workflow_id)
+    
+        patched = await async_client.patch(
+            f"/api/v1/workflows/{workflow_id}",
+            headers={**_headers(org), "Idempotency-Key": f"patch-{uuid4().hex}"},
+            json={"graph": _marker_graph("B"), "workflow_version": 2},
+        )
+        assert patched.status_code == 200, patched.text
+    
+        fired = await run_due_scheduled_workflows(
+            now=datetime.now(timezone.utc),
+            organization_id=UUID(org["organization_id"]),
+        )
+        assert fired &gt;= 1
+    
+        from sqlalchemy import text
+    
+        from src.infrastructure.postgres.session import get_async_session
+    
+        session = await get_async_session()
+        try:
+            run = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM workflow_runs WHERE workflow_id = :wid "
+                        "ORDER BY started_at DESC LIMIT 1"
+                    ),
+                    {"wid": UUID(workflow_id)},
+                )
+            ).fetchone()
+        finally:
+            await session.close()
+        assert run is not None
+&gt;       assert await _marker_value(async_client, org, str(run.id)) == "A"
+E       AssertionError: assert 'B' == 'A'
+E         
+E         - A
+E         + B
+
+tests\red\p13\test_p01_snapshot_red.py:160: AssertionError</failure></testcase><testcase classname="tests.red.p13.test_p02_event_identity_red" name="test_two_legit_identical_payloads_create_two_operations" time="7.220"><failure message="assert 1 == 2">async_client = &lt;httpx.AsyncClient object at 0x0000020BA4A40D50&gt;
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="P13-P0-02: dos webhooks legítimos con payload idéntico se deduplican por hash",
+    )
+    @pytest.mark.asyncio
+    async def test_two_legit_identical_payloads_create_two_operations(
+        async_client: AsyncClient,
+    ) -&gt; None:
+        org = await _org(async_client, "P13 P02 Identical")
+        workflow_id, secret = await _published_workflow(async_client, org)
+    
+        for payload in ({"message": "same"}, {"message": "same"}):
+            response = await async_client.post(
+                f"/api/v1/public/workflows/{workflow_id}/hook",
+                headers={"X-Zent-Workflow-Secret": secret},
+                json=payload,
+            )
+            assert response.status_code == 200, response.text
+    
+&gt;       assert await _instance_count(workflow_id) == 2
+E       assert 1 == 2
+
+tests\red\p13\test_p02_event_identity_red.py:103: AssertionError</failure></testcase><testcase classname="tests.red.p13.test_p02_event_identity_red" name="test_same_key_different_payload_conflicts" time="5.856"><failure message="AssertionError: {&quot;status&quot;:&quot;duplicate&quot;,&quot;duplicate&quot;:true,&quot;ingress_key&quot;:&quot;evt-conflict-1&quot;,&quot;ingress_event&quot;:{&quot;event_id&quot;:&quot;40828b9d-fb67-45e5-9081-9177ca857474&quot;,&quot;status&quot;:&quot;processed&quot;,&quot;instance_id&quot;:&quot;cdaa02dd-c77c-4f80-8b54-1a31794d27f1&quot;,&quot;ingress_key&quot;:&quot;evt-conflict-1&quot;,&quot;attempts&quot;:1,&quot;last_error&quot;:null},&quot;instance_id&quot;:&quot;cdaa02dd-c77c-4f80-8b54-1a31794d27f1&quot;,&quot;instance&quot;:{&quot;id&quot;:&quot;cdaa02dd-c77c-4f80-8b54-1a31794d27f1&quot;,&quot;organization_id&quot;:&quot;49b0358d-9f5e-4b0b-b940-3f931d8c746a&quot;,&quot;workspace_id&quot;:&quot;14cdd37f-3cad-4c33-b6cb-b4b171815942&quot;,&quot;workflow_id&quot;:&quot;d5d50f61-d559-4f61-badc-d5a775015a38&quot;,&quot;workflow_version&quot;:2,&quot;definition_snapshot&quot;:{&quot;name&quot;:&quot;P13 ingress&quot;,&quot;graph&quot;:{&quot;edges&quot;:[{&quot;id&quot;:&quot;e1&quot;,&quot;to_node&quot;:&quot;w1&quot;,&quot;to_port&quot;:&quot;in&quot;,&quot;condition&quot;:null,&quot;from_node&quot;:&quot;t&quot;,&quot;from_port&quot;:&quot;out&quot;},{&quot;id&quot;:&quot;e2&quot;,&quot;to_node&quot;:&quot;end&quot;,&quot;to_port&quot;:&quot;in&quot;,&quot;condition&quot;:null,&quot;from_node&quot;:&quot;w1&quot;,&quot;from_port&quot;:&quot;out&quot;}],&quot;nodes&quot;:[{&quot;id&quot;:&quot;t&quot;,&quot;type&quot;:&quot;trigger_webhook&quot;,&quot;label&quot;:&quot;trigger_webhook&quot;,&quot;config&quot;:{},&quot;version&quot;:1,&quot;metadata&quot;:{},&quot;position&quot;:{},&quot;timeout_ms&quot;:60000,&quot;input_ports&quot;:[{&quot;name&quot;:&quot;in&quot;,&quot;type&quot;:&quot;json&quot;,&quot;required&quot;:true}],&quot;error_policy&quot;:&quot;fail&quot;,&quot;output_ports&quot;:[{&quot;name&quot;:&quot;out&quot;,&quot;type&quot;:&quot;json&quot;}],&quot;retry_policy&quot;:{&quot;max_attempts&quot;:1}},{&quot;id&quot;:&quot;w1&quot;,&quot;type&quot;:&quot;wait_event&quot;,&quot;label&quot;:&quot;wait_event&quot;,&quot;config&quot;:{&quot;preset&quot;:&quot;message&quot;},&quot;version&quot;:1,&quot;metadata&quot;:{},&quot;position&quot;:{},&quot;timeout_ms&quot;:60000,&quot;input_ports&quot;:[{&quot;name&quot;:&quot;in&quot;,&quot;type&quot;:&quot;json&quot;,&quot;required&quot;:true}],&quot;error_policy&quot;:&quot;fail&quot;,&quot;output_ports&quot;:[{&quot;name&quot;:&quot;out&quot;,&quot;type&quot;:&quot;json&quot;},{&quot;name&quot;:&quot;timeout&quot;,&quot;type&quot;:&quot;json&quot;}],&quot;retry_policy&quot;:{&quot;max_attempts&quot;:1}},{&quot;id&quot;:&quot;end&quot;,&quot;type&quot;:&quot;end&quot;,&quot;label&quot;:&quot;end&quot;,&quot;config&quot;:{},&quot;version&quot;:1,&quot;metadata&quot;:{},&quot;position&quot;:{},&quot;timeout_ms&quot;:60000,&quot;input_ports&quot;:[{&quot;name&quot;:&quot;in&quot;,&quot;type&quot;:&quot;json&quot;,&quot;required&quot;:true}],&quot;error_policy&quot;:&quot;fail&quot;,&quot;output_ports&quot;:[{&quot;name&quot;:&quot;out&quot;,&quot;type&quot;:&quot;json&quot;}],&quot;retry_policy&quot;:{&quot;max_attempts&quot;:1}}],&quot;metadata&quot;:{},&quot;variables&quot;:{},&quot;entrypoints&quot;:[&quot;t&quot;],&quot;workflow_version&quot;:2},&quot;steps&quot;:[],&quot;ingress&quot;:{&quot;trigger&quot;:&quot;webhook&quot;,&quot;ingress_key&quot;:&quot;evt-conflict-1&quot;,&quot;business_key&quot;:null},&quot;description&quot;:null,&quot;editor_state&quot;:{},&quot;graph_source&quot;:&quot;graph&quot;,&quot;trigger_type&quot;:&quot;webhook&quot;,&quot;trigger_config&quot;:{&quot;hook_secret_hash&quot;:&quot;476282fcf0ba4496f2065ddec0490bdd864d33bad16c04b72e4fd9ca13c1e8db&quot;},&quot;policy_snapshot&quot;:{&quot;agents&quot;:[]},&quot;workflow_version&quot;:2},&quot;status&quot;:&quot;WAITING&quot;,&quot;conversation_id&quot;:null,&quot;participant_id&quot;:null,&quot;business_key&quot;:null,&quot;current_node_id&quot;:&quot;w1&quot;,&quot;state&quot;:{},&quot;state_version&quot;:0,&quot;waiting_for&quot;:{&quot;port&quot;:&quot;out&quot;,&quot;preset&quot;:&quot;message&quot;,&quot;event_type&quot;:&quot;conversation.message&quot;,&quot;on_timeout&quot;:null,&quot;correlation&quot;:{},&quot;timeout_seconds&quot;:null},&quot;waiting_event_type&quot;:&quot;conversation.message&quot;,&quot;waiting_correlation_key&quot;:null,&quot;wait_deadline&quot;:null,&quot;wait_seq&quot;:1,&quot;last_run_id&quot;:&quot;d7ce81f3-6b0a-0a09-d403-e4d7d3230399&quot;,&quot;run_seq&quot;:1,&quot;started_at&quot;:&quot;2026-10-25T09:56:13.352343+00:00&quot;,&quot;updated_at&quot;:&quot;2026-10-25T09:56:14.311867+00:00&quot;,&quot;completed_at&quot;:null,&quot;expires_at&quot;:null,&quot;correlation_id&quot;:&quot;hook:d5d50f61-d559-4f61-badc-d5a775015a38&quot;,&quot;ingress_key&quot;:&quot;evt-conflict-1&quot;,&quot;created_by&quot;:null,&quot;error&quot;:null,&quot;status_reason&quot;:null},&quot;durable&quot;:true}&#10;assert 200 == 409&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">async_client = &lt;httpx.AsyncClient object at 0x0000020BA4808CD0&gt;
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="P13-P0-02: misma clave con payload distinto devuelve duplicate 200 en vez de 409",
+    )
+    @pytest.mark.asyncio
+    async def test_same_key_different_payload_conflicts(async_client: AsyncClient) -&gt; None:
+        org = await _org(async_client, "P13 P02 Conflict")
+        workflow_id, secret = await _published_workflow(async_client, org)
+    
+        first = await async_client.post(
+            f"/api/v1/public/workflows/{workflow_id}/hook",
+            headers={
+                "X-Zent-Workflow-Secret": secret,
+                "X-Zent-Event-Id": "evt-conflict-1",
+            },
+            json={"message": "one"},
+        )
+        assert first.status_code == 200, first.text
+    
+        second = await async_client.post(
+            f"/api/v1/public/workflows/{workflow_id}/hook",
+            headers={
+                "X-Zent-Workflow-Secret": secret,
+                "X-Zent-Event-Id": "evt-conflict-1",
+            },
+            json={"message": "two"},
+        )
+&gt;       assert second.status_code == 409, second.text
+E       AssertionError: {"status":"duplicate","duplicate":true,"ingress_key":"evt-conflict-1","ingress_event":{"event_id":"40828b9d-fb67-45e5-9081-9177ca857474","status":"processed","instance_id":"cdaa02dd-c77c-4f80-8b54-1a31794d27f1","ingress_key":"evt-conflict-1","attempts":1,"last_error":null},"instance_id":"cdaa02dd-c77c-4f80-8b54-1a31794d27f1","instance":{"id":"cdaa02dd-c77c-4f80-8b54-1a31794d27f1","organization_id":"49b0358d-9f5e-4b0b-b940-3f931d8c746a","workspace_id":"14cdd37f-3cad-4c33-b6cb-b4b171815942","workflow_id":"d5d50f61-d559-4f61-badc-d5a775015a38","workflow_version":2,"definition_snapshot":{"name":"P13 ingress","graph":{"edges":[{"id":"e1","to_node":"w1","to_port":"in","condition":null,"from_node":"t","from_port":"out"},{"id":"e2","to_node":"end","to_port":"in","condition":null,"from_node":"w1","from_port":"out"}],"nodes":[{"id":"t","type":"trigger_webhook","label":"trigger_webhook","config":{},"version":1,"metadata":{},"position":{},"timeout_ms":60000,"input_ports":[{"name":"in","type":"json","required":true}],"error_policy":"fail","output_ports":[{"name":"out","type":"json"}],"retry_policy":{"max_attempts":1}},{"id":"w1","type":"wait_event","label":"wait_event","config":{"preset":"message"},"version":1,"metadata":{},"position":{},"timeout_ms":60000,"input_ports":[{"name":"in","type":"json","required":true}],"error_policy":"fail","output_ports":[{"name":"out","type":"json"},{"name":"timeout","type":"json"}],"retry_policy":{"max_attempts":1}},{"id":"end","type":"end","label":"end","config":{},"version":1,"metadata":{},"position":{},"timeout_ms":60000,"input_ports":[{"name":"in","type":"json","required":true}],"error_policy":"fail","output_ports":[{"name":"out","type":"json"}],"retry_policy":{"max_attempts":1}}],"metadata":{},"variables":{},"entrypoints":["t"],"workflow_version":2},"steps":[],"ingress":{"trigger":"webhook","ingress_key":"evt-conflict-1","business_key":null},"description":null,"editor_state":{},"graph_source":"graph","trigger_type":"webhook","trigger_config":{"hook_secret_hash":"476282fcf0ba4496f2065ddec0490bdd864d33bad16c04b72e4fd9ca13c1e8db"},"policy_snapshot":{"agents":[]},"workflow_version":2},"status":"WAITING","conversation_id":null,"participant_id":null,"business_key":null,"current_node_id":"w1","state":{},"state_version":0,"waiting_for":{"port":"out","preset":"message","event_type":"conversation.message","on_timeout":null,"correlation":{},"timeout_seconds":null},"waiting_event_type":"conversation.message","waiting_correlation_key":null,"wait_deadline":null,"wait_seq":1,"last_run_id":"d7ce81f3-6b0a-0a09-d403-e4d7d3230399","run_seq":1,"started_at":"2026-10-25T09:56:13.352343+00:00","updated_at":"2026-10-25T09:56:14.311867+00:00","completed_at":null,"expires_at":null,"correlation_id":"hook:d5d50f61-d559-4f61-badc-d5a775015a38","ingress_key":"evt-conflict-1","created_by":null,"error":null,"status_reason":null},"durable":true}
+E       assert 200 == 409
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests\red\p13\test_p02_event_identity_red.py:133: AssertionError</failure></testcase><testcase classname="tests.red.p13.test_p02_event_identity_red" name="test_outbox_exists_and_drains" time="0.137"><failure message="ModuleNotFoundError: No module named 'src.platform.workflows.outbox'">@pytest.mark.xfail(
+        strict=True,
+        reason="P13-P0-02: no existe outbox transaccional ni worker de inbox",
+    )
+    @pytest.mark.asyncio
+    async def test_outbox_exists_and_drains() -&gt; None:
+&gt;       from src.platform.workflows.outbox import dispatch_pending  # noqa: F401
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ModuleNotFoundError: No module named 'src.platform.workflows.outbox'
+
+tests\red\p13\test_p02_event_identity_red.py:144: ModuleNotFoundError</failure></testcase><testcase classname="tests.red.p13.test_p03_effective_policy_red" name="test_capability_call_without_agent_denied_by_workflow_scope" time="0.145"><failure message="ModuleNotFoundError: No module named 'src.platform.workflows.effective_policy'">@pytest.mark.xfail(
+        strict=True,
+        reason="P13-P0-03: capability_call sin agent_id evade el scope del workflow",
+    )
+    @pytest.mark.asyncio
+    async def test_capability_call_without_agent_denied_by_workflow_scope() -&gt; None:
+        from src.platform.workflows.policy_enforcement import authorize_node
+    
+&gt;       policy = _policy(scope={"catalog.products.search"})
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\red\p13\test_p03_effective_policy_red.py:66: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = {'catalog.products.search'}, safety_profile = 'standard'
+
+    def _policy(*, scope: set[str], safety_profile: str = "standard"):
+&gt;       from src.platform.workflows.effective_policy import EffectiveExecutionPolicy
+E       ModuleNotFoundError: No module named 'src.platform.workflows.effective_policy'
+
+tests\red\p13\test_p03_effective_policy_red.py:40: ModuleNotFoundError</failure></testcase><testcase classname="tests.red.p13.test_p03_effective_policy_red" name="test_wellness_without_agent_denied" time="0.112"><failure message="ModuleNotFoundError: No module named 'src.platform.workflows.effective_policy'">@pytest.mark.xfail(
+        strict=True,
+        reason="P13-P0-03: wellness sin agent_id no aplica guardrail clínico",
+    )
+    @pytest.mark.asyncio
+    async def test_wellness_without_agent_denied() -&gt; None:
+        from src.platform.workflows.policy_enforcement import authorize_node
+    
+&gt;       policy = _policy(
+            scope={"clinical.diagnose"}, safety_profile="wellness"
+        )
+
+tests\red\p13\test_p03_effective_policy_red.py:85: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = {'clinical.diagnose'}, safety_profile = 'wellness'
+
+    def _policy(*, scope: set[str], safety_profile: str = "standard"):
+&gt;       from src.platform.workflows.effective_policy import EffectiveExecutionPolicy
+E       ModuleNotFoundError: No module named 'src.platform.workflows.effective_policy'
+
+tests\red\p13\test_p03_effective_policy_red.py:40: ModuleNotFoundError</failure></testcase></testsuite></testsuites>

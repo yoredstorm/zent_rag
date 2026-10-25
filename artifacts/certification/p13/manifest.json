@@ -1,0 +1,41 @@
+{
+  "phase": "P13-P00-P03",
+  "date": "2026-10-25",
+  "sha_before": "b31b01402a2e10008eb09b77c148e48120af6004",
+  "sha_after": "b31b01402a2e10008eb09b77c148e48120af6004",
+  "note": "Cambios en worktree sin commit; el SHA no cambia hasta commit.",
+  "migrations": ["170_workflow_published_pointer", "171_workflow_event_identity", "172_workflow_effective_policy", "173_workflow_verification_evidence"],
+  "environment": {
+    "ZENT_GOLD_RELEASE_ENABLED": false,
+    "provider_verified": false,
+    "production_activated": false
+  },
+  "results": {
+    "p13_core": {"command": "pytest tests/test_workflow_published_snapshot.py tests/test_workflow_event_identity.py tests/test_workflow_effective_policy.py tests/test_workflow_p13_migrations.py", "status": "PASS", "passed": 23, "junit": "artifacts/certification/p13/junit-p13-core.xml"},
+    "p04_composer": {"command": "pytest tests/test_solution_composer.py", "status": "PASS", "passed": 4},
+    "p05_verification": {"command": "pytest tests/test_workflow_verification.py", "status": "PASS", "passed": 6},
+    "p13_p04_p05_joint": {"command": "pytest selected P13+P04+P05+action_plane", "status": "PASS", "passed": 44, "junit": "artifacts/certification/p13/junit-p13-p05.xml"},
+    "publication_gate": {"command": "pytest tests/test_workflow_publication_gate.py", "status": "PASS", "passed": 10},
+    "workflow_studio": {"command": "pytest tests/test_workflow_studio.py", "status": "PASS", "passed": 12},
+    "workflows": {"command": "pytest tests/test_workflows.py", "status": "PASS", "passed": 10},
+    "graph_composition_policy_workspace": {"command": "pytest tests/test_workflow_graph.py tests/test_workflow_composition.py tests/test_policy_enforcement.py tests/test_workflow_workspace_isolation.py", "status": "PASS", "passed": 39},
+    "solutions_studio_gate": {"command": "pytest tests/test_solution_compiler.py tests/test_workflow_studio.py tests/test_workflow_publication_gate.py tests/test_workflows.py tests/test_workflow_test_studio.py", "status": "PASS", "passed": 47},
+    "durable": {"command": "pytest tests/test_workflow_durable_instances.py tests/test_workflow_durable_ingress.py", "status": "PASS", "passed": 34},
+    "portal_unit": {"command": "vitest WorkflowVersionsPanel.test.tsx", "status": "PASS", "passed": 2},
+    "portal_typecheck": {"command": "npm run typecheck", "status": "PASS"},
+    "portal_lint_p13": {"command": "npx eslint ...", "status": "PASS", "errors": 0, "warnings": 1},
+    "portal_build": {"command": "npm run build", "status": "PASS"},
+    "ruff": {"command": "ruff check src/platform/workflows scripts tests", "status": "PASS"},
+    "migration_roundtrip": {"command": "alembic upgrade head through 173; downgrade 169 && upgrade head", "status": "PASS"},
+    "pointer_audit": {"command": "python scripts/workflow_p13_audit.py", "status": "PASS", "active_missing_pointer": 0, "duplicate_production": 0, "published_hash_mismatch": 0, "legacy_baselines": 368}
+  },
+  "not_verified": [
+    "suite backend completa local: sin JUnit por timeout de proceso; CI decide",
+    "Playwright workflow-publication.spec.ts contra staging",
+    "caos real de Redis/PostgreSQL/bus",
+    "proveedor/pago real",
+    "LLM real masivo",
+    "estudio de usabilidad con 5 usuarios",
+    "downgrade de producción (solo probado en base local)"
+  ]
+}

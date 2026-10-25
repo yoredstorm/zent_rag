@@ -45,6 +45,13 @@ export type WorkflowDetail = {
   updated_at?: string;
   hook_url?: string;
   has_hook_secret?: boolean;
+  published_version_id?: string | null;
+  published_version_number?: number | null;
+  published_graph_hash?: string | null;
+  published_at?: string | null;
+  deployment_generation?: number;
+  draft_revision?: number;
+  draft_changed?: boolean;
 };
 
 export type WorkflowRun = {
@@ -66,6 +73,11 @@ export type WorkflowVersion = {
   notes: string | null;
   created_at: string;
   config_snapshot?: Record<string, unknown>;
+  graph_hash?: string;
+  trigger_hash?: string;
+  certificate_id?: string | null;
+  legacy_baseline?: boolean;
+  published_at?: string | null;
 };
 
 export type KbOption = { id: string; name: string };

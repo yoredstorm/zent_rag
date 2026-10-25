@@ -281,8 +281,7 @@ async def test_versions_isolated_per_organization(async_client: AsyncClient) -> 
     leaked = await async_client.get(
         f"/api/v1/workflows/{wid}/versions", headers=_headers(other)
     )
-    assert leaked.status_code == 200
-    assert leaked.json()["count"] == 0
+    assert leaked.status_code == 404
 
     denied = await async_client.post(
         f"/api/v1/workflows/{wid}/versions", headers=_headers(other), json={}
@@ -473,8 +472,8 @@ async def test_unknown_agent_fails_with_clear_message(async_client: AsyncClient)
         async_client, org, {"agent_id": str(uuid4()), "prompt": "{{trigger.message}}"}
     )
     steps = await _run_steps(async_client, org, wid, simulate=True)
-    assert steps["ask"]["status"] == "failed"
-    assert "no está disponible" in (steps["ask"]["error"] or "")
+    assert steps["ask"]["status"] == "denied"
+    assert "agente" in (steps["ask"]["error"] or "").lower()
 
 
 @pytest.mark.asyncio

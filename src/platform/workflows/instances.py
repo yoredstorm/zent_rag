@@ -529,6 +529,7 @@ async def start_workflow_instance(
     system_context: bool = False,
     correlation_id: str | None = None,
     expires_at: datetime | None = None,
+    definition: dict | None = None,
 ) -> dict:
     """Crea la instancia (definición congelada) y ejecuta el primer segmento.
 
@@ -566,13 +567,29 @@ async def start_workflow_instance(
 
     org = UUID(str(wf.organization_id))
     ws = _uid(wf.workspace_id) or _uid(workspace_id)
-    graph = dict(wf.graph) if wf.graph else None
-    if graph is None:
-        from src.platform.workflows.ir import LegacyWorkflowAdapter
+    if definition is None:
+        from src.platform.workflows.definition import (
+            PublishedDefinitionError,
+            resolve_definition,
+        )
 
-        graph = LegacyWorkflowAdapter.steps_to_graph(
-            wf.steps or [], str(wf.trigger_type or "webhook"), dict(wf.trigger_config or {})
-        ).to_dict()
+        source = "published" if str(wf.status) == "active" else "draft"
+        try:
+            definition = await resolve_definition(
+                org,
+                workflow_id,
+                source=source,
+                workspace_id=ws,
+            )
+        except PublishedDefinitionError as exc:
+            return {
+                "status": "failed",
+                "error": exc.message,
+                "code": exc.code,
+                "status_code": exc.status_code,
+            }
+    graph = dict(definition.get("graph") or {})
+    workflow_version = int(definition.get("workflow_version") or wf.workflow_version or 1)
 
     if ingress_key:
         existing = await _find_by_ingress(org, workflow_id, ingress_key)
@@ -593,22 +610,44 @@ async def start_workflow_instance(
                 "instance": active,
             }
 
+    from src.platform.workflows.effective_policy import resolve_effective_policy
+
+    effective_policy = await resolve_effective_policy(
+        organization_id=org,
+        workspace_id=ws,
+        workflow_id=workflow_id,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        permissions=frozenset(permissions or ()),
+        definition=definition,
+    )
     snapshot = {
-        "name": wf.name,
-        "description": wf.description,
+        "name": definition.get("name") or wf.name,
+        "description": definition.get("description")
+        if definition.get("description") is not None
+        else wf.description,
         "graph": graph,
-        "workflow_version": int(wf.workflow_version or 1),
-        "graph_source": str(wf.graph_source or "graph"),
-        "steps": list(wf.steps or []),
-        "trigger_type": str(wf.trigger_type or "manual"),
-        "trigger_config": dict(wf.trigger_config or {}),
+        "workflow_version": workflow_version,
+        "graph_source": str(definition.get("graph_source") or wf.graph_source or "graph"),
+        "steps": list(definition.get("steps") or []),
+        "trigger_type": str(definition.get("trigger_type") or "manual"),
+        "trigger_config": dict(definition.get("trigger_config") or {}),
         "editor_state": dict(wf.editor_state or {}),
+        "definition_source": definition.get("definition_source"),
+        "published_version_id": definition.get("version_id"),
+        "certificate_id": definition.get("certificate_id"),
+        "graph_hash": definition.get("graph_hash"),
+        "policy_version": definition.get("policy_version"),
+        "deployment_generation": definition.get("deployment_generation"),
         "ingress": {
             "trigger": trigger,
             "ingress_key": ingress_key,
             "business_key": business_key,
         },
-        "policy_snapshot": await _build_policy_snapshot(org, graph),
+        "policy_snapshot": {
+            **effective_policy.to_dict(),
+            "agents": (await _build_policy_snapshot(org, graph)).get("agents", []),
+        },
     }
     instance_id = _new_uuid()
     corr = (correlation_id or "").strip() or ingress_key or f"inst:{instance_id}"
@@ -619,16 +658,18 @@ async def start_workflow_instance(
                 "INSERT INTO workflow_instances "
                 "(id, organization_id, workspace_id, workflow_id, workflow_version, "
                 "definition_snapshot, status, conversation_id, participant_id, business_key, "
-                "expires_at, correlation_id, ingress_key, created_by) "
+                "expires_at, correlation_id, ingress_key, created_by, published_version_id, "
+                "certificate_id, graph_hash, deployment_generation, policy_hash) "
                 "VALUES (:iid, :oid, :ws, :wid, :ver, CAST(:snap AS jsonb), 'RUNNING', :cid, :pid, "
-                ":bkey, :expires, :corr, :ikey, :uid)"
+                ":bkey, :expires, :corr, :ikey, :uid, :pubvid, :certid, :ghash, :dgen, "
+                ":policy_hash)"
             ),
             {
                 "iid": str(instance_id),
                 "oid": str(org),
                 "ws": str(ws) if ws else None,
                 "wid": str(wf.id),
-                "ver": int(wf.workflow_version or 1),
+                "ver": workflow_version,
                 "snap": json.dumps(snapshot, ensure_ascii=False, default=str),
                 "cid": str(conversation_id) if conversation_id else None,
                 "pid": participant_id,
@@ -637,6 +678,13 @@ async def start_workflow_instance(
                 "corr": corr[:128],
                 "ikey": ingress_key,
                 "uid": str(actor_id) if actor_id else None,
+                "pubvid": definition.get("version_id")
+                if definition.get("definition_source") == "published"
+                else None,
+                "certid": definition.get("certificate_id"),
+                "ghash": definition.get("graph_hash"),
+                "dgen": definition.get("deployment_generation"),
+                "policy_hash": effective_policy.policy_hash,
             },
         )
         await session.commit()
@@ -856,6 +904,11 @@ async def _run_instance_segment(
         workflow_version_override=int(instance.get("workflow_version") or 1),
         instance_id=iid,
         instance_seq=seq,
+        definition_source="instance",
+        effective_policy_snapshot=(
+            instance.get("definition_snapshot") or {}
+        ).get("policy_snapshot")
+        or {},
         preload_ports=preload_ports,
         preload_scope=preload_scope,
     )

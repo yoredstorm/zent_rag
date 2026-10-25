@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS workflow_certificates (
     agent_versions JSONB NOT NULL DEFAULT '{}'::jsonb,
     role_versions JSONB NOT NULL DEFAULT '{}'::jsonb,
     policy_version VARCHAR(40) NOT NULL DEFAULT 'v1',
+    verification_id UUID,
+    environment VARCHAR(40) NOT NULL DEFAULT 'design',
     scenarios JSONB NOT NULL DEFAULT '[]'::jsonb,
     results JSONB NOT NULL DEFAULT '{}'::jsonb,
     provider_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -285,6 +287,13 @@ async def ensure_release_tables() -> None:
                 "ALTER TABLE workflow_versions ADD COLUMN IF NOT EXISTS certificate_id UUID"
             )
         )
+        await session.execute(
+            text(
+                "ALTER TABLE workflow_certificates "
+                "ADD COLUMN IF NOT EXISTS verification_id UUID, "
+                "ADD COLUMN IF NOT EXISTS environment VARCHAR(40) NOT NULL DEFAULT 'design'"
+            )
+        )
         await session.execute(text(_CERT_TABLE))
         await session.execute(
             text(
@@ -321,11 +330,19 @@ def _row_to_certificate(row: Any) -> dict[str, Any]:
         "state": row.state,
         "level_state": canonical_state(row.level, row.state),
         "graph_hash": row.graph_hash,
+        "trigger_hash": getattr(row, "trigger_hash", "") or "",
+        "binding_fingerprint": getattr(row, "binding_fingerprint", "") or "",
         "semantic_plan_hash": row.semantic_plan_hash or "",
         "capability_snapshot_hash": row.capability_snapshot_hash or "",
         "agent_versions": row.agent_versions or {},
         "role_versions": row.role_versions or {},
         "policy_version": row.policy_version,
+        "verification_id": (
+            str(getattr(row, "verification_id", None))
+            if getattr(row, "verification_id", None)
+            else None
+        ),
+        "environment": getattr(row, "environment", "design") or "design",
         "scenarios": row.scenarios or [],
         "results": row.results or {},
         "provider_refs": row.provider_refs or [],
@@ -339,7 +356,11 @@ def _row_to_certificate(row: Any) -> dict[str, Any]:
 
 
 async def list_certificates(
-    organization_id: UUID, workflow_id: UUID, *, limit: int = 20
+    organization_id: UUID,
+    workflow_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
+    limit: int = 20,
 ) -> dict[str, Any]:
     await ensure_release_tables()
     session = await get_async_session()
@@ -349,9 +370,15 @@ async def list_certificates(
                 text(
                     "SELECT * FROM workflow_certificates "
                     "WHERE organization_id = :oid AND workflow_id = :wid "
+                    "AND workspace_id IS NOT DISTINCT FROM :ws "
                     "ORDER BY issued_at DESC LIMIT :limit"
                 ),
-                {"oid": organization_id, "wid": workflow_id, "limit": max(1, min(limit, 100))},
+                {
+                    "oid": organization_id,
+                    "wid": workflow_id,
+                    "ws": workspace_id,
+                    "limit": max(1, min(limit, 100)),
+                },
             )
         ).fetchall()
     finally:
@@ -409,6 +436,100 @@ async def _design_hashes(organization_id: UUID, workflow_id: UUID) -> tuple[str,
     if row is None:
         return "", ""
     return str(row.plan_hash or ""), str(row.capability_snapshot_hash or "")
+
+
+async def _active_bindings_fingerprint(
+    organization_id: UUID, workspace_id: UUID | None
+) -> str:
+    """Hash de los bindings instalados relevantes. Nunca incluye secretos."""
+    try:
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT capability_ref, provider_kind, credential_ref, status, "
+                        "contract_input_schema, contract_output_schema, updated_at "
+                        "FROM workflow_capability_bindings "
+                        "WHERE organization_id = :oid AND status = 'active' "
+                        "AND workspace_id IS NOT DISTINCT FROM :ws "
+                        "ORDER BY capability_ref"
+                    ),
+                    {"oid": organization_id, "ws": workspace_id},
+                )
+            ).fetchall()
+        finally:
+            await session.close()
+    except Exception:  # noqa: BLE001 — instalaciones sin tabla de bindings
+        return ""
+    payload = [
+        {
+            "capability_ref": row.capability_ref,
+            "provider_kind": row.provider_kind,
+            "credential_ref": row.credential_ref or "",
+            "status": row.status,
+            "contract_input_schema": row.contract_input_schema or {},
+            "contract_output_schema": row.contract_output_schema or {},
+            "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+        }
+        for row in rows
+    ]
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+async def _published_baseline(organization_id: UUID, workflow_id: UUID) -> bool:
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT v.legacy_baseline FROM workflows w "
+                    "JOIN workflow_versions v ON v.id = w.published_version_id "
+                    "WHERE w.id = :wid AND w.organization_id = :oid"
+                ),
+                {"wid": workflow_id, "oid": organization_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    return bool(row and row.legacy_baseline)
+
+
+async def _target_is_legacy_baseline(
+    organization_id: UUID, workflow_id: UUID, graph: dict[str, Any]
+) -> bool:
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT v.legacy_baseline, v.graph_hash, v.config_snapshot "
+                    "FROM workflows w JOIN workflow_versions v "
+                    "ON v.id = w.published_version_id "
+                    "WHERE w.id = :wid AND w.organization_id = :oid"
+                ),
+                {"wid": workflow_id, "oid": organization_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if row is None or not bool(row.legacy_baseline):
+        return False
+    stored = str(row.graph_hash or "")
+    if stored:
+        return stored == graph_fingerprint(graph)
+    snapshot = row.config_snapshot if isinstance(row.config_snapshot, dict) else {}
+    baseline_graph = snapshot.get("graph")
+    if not isinstance(baseline_graph, dict) or not baseline_graph:
+        from src.platform.workflows.ir import LegacyWorkflowAdapter
+
+        baseline_graph = LegacyWorkflowAdapter.steps_to_graph(
+            snapshot.get("steps") or [],
+            snapshot.get("trigger_type") or "webhook",
+            snapshot.get("trigger_config") or {},
+        ).to_dict()
+    return graph_fingerprint(baseline_graph) == graph_fingerprint(graph)
 
 
 async def _agent_fingerprint(organization_id: UUID, graph: dict[str, Any]) -> tuple[dict, dict, list[str]]:
@@ -528,6 +649,8 @@ async def _evaluate_graph(
     capabilities: dict[str, Any] | None,
     checks: list[dict[str, Any]] | None = None,
     permissions: frozenset[str] | None = None,
+    trigger_hash: str = "",
+    binding_fingerprint: str = "",
 ) -> ReleaseDecision:
     organization_id = UUID(str(workflow["organization_id"])) if workflow.get("organization_id") else None
     if organization_id is None:
@@ -581,11 +704,11 @@ async def _evaluate_graph(
                         "Elige un agente activo; el eco no es una ejecución real.",
                     )
                 )
-    mission = bool(((graph.get("metadata") or {}).get("mission")))
     from src.core.config import get_settings
 
     production_enabled = bool(getattr(get_settings(), "ZENT_GOLD_RELEASE_ENABLED", False))
-    if mission and not production_enabled:
+    # La flag se decide por el riesgo real del grafo, nunca por metadata del cliente.
+    if str(risk["risk_class"]) in ("external_write", "regulated") and not production_enabled:
         blockers.append(
             _blocker(
                 "production_disabled",
@@ -637,6 +760,30 @@ async def _evaluate_graph(
                     "Vuelve a certificar con los roles actuales.",
                 )
             )
+        if (
+            trigger_hash
+            and certificate.get("trigger_hash")
+            and certificate["trigger_hash"] != trigger_hash
+        ):
+            blockers.append(
+                _blocker(
+                    "trigger_stale",
+                    "El trigger cambió desde la certificación.",
+                    "Vuelve a certificar el trigger actual.",
+                )
+            )
+        if (
+            binding_fingerprint
+            and certificate.get("binding_fingerprint")
+            and certificate["binding_fingerprint"] != binding_fingerprint
+        ):
+            blockers.append(
+                _blocker(
+                    "bindings_stale",
+                    "Los bindings de capacidades cambiaron desde la certificación.",
+                    "Revisa Integraciones y vuelve a certificar.",
+                )
+            )
         problem = _certificate_problem(certificate, required)
         if problem:
             blockers.append(problem)
@@ -666,6 +813,8 @@ async def _evaluate_graph(
         "snapshot_stale",
         "agents_stale",
         "roles_stale",
+        "trigger_stale",
+        "bindings_stale",
     }
     if any(item["code"] in stale_codes for item in blockers):
         state = "STALE"
@@ -728,7 +877,13 @@ async def evaluate_release(
             blockers=[_blocker("workspace_mismatch", "El workflow pertenece a otro workspace.")],
             message="release gate DENY",
         )
-    if str(workflow.get("release_policy") or "standard") == _LEGACY_POLICY:
+    # La exención legacy nunca autoriza publicar un grafo nuevo: solo activar
+    # el baseline exacto ya congelado y auditado.
+    if (
+        str(workflow.get("release_policy") or "standard") == _LEGACY_POLICY
+        and action == "activate"
+        and await _published_baseline(organization_id, workflow_id)
+    ):
         return ReleaseDecision(
             True,
             "LEGACY_EXEMPT",
@@ -738,10 +893,10 @@ async def evaluate_release(
             graph_fingerprint(graph_override or workflow.get("graph") or {}),
             legacy=True,
             mitigations=[
-                "Política legacy registrada en base; no hay bypass por metadata ausente.",
-                "Los workflows nuevos usan el gate estándar.",
+                "Baseline legacy congelado y auditado; no hay bypass por metadata.",
+                "Cualquier publicación nueva exige certificado estándar.",
             ],
-            message="release gate ALLOW (legacy)",
+            message="release gate ALLOW (legacy baseline)",
         )
     graph = graph_override or workflow.get("graph")
     if not graph:
@@ -753,6 +908,8 @@ async def evaluate_release(
             workflow.get("trigger_config") or {},
         ).to_dict()
     capabilities = await load_capabilities(organization_id, workspace_id)
+    from src.platform.workflows.definition import trigger_fingerprint
+
     return await _evaluate_graph(
         workflow,
         graph,
@@ -761,6 +918,12 @@ async def evaluate_release(
         capabilities=capabilities,
         checks=checks,
         permissions=permissions,
+        trigger_hash=trigger_fingerprint(
+            workflow.get("trigger_type"), workflow.get("trigger_config")
+        ),
+        binding_fingerprint=await _active_bindings_fingerprint(
+            organization_id, workspace_id
+        ),
     )
 
 
@@ -771,27 +934,94 @@ async def activate_workflow(
     workspace_id: UUID | None = None,
     permissions: frozenset[str] | None = None,
 ) -> dict[str, Any]:
-    """Activa bajo lock de fila y gate único. No publica una versión."""
+    """Activa bajo lock de fila y gate único. Requiere versión publicada.
+
+    Compatibilidad: si el workflow aún no tiene puntero, la primera activación
+    crea el snapshot mediante `publish_workflow` y pasa el mismo gate. No existe
+    una activación que ejecute la fila viva sin congelarla.
+    """
     await ensure_release_tables()
+    preflight = await get_async_session()
+    try:
+        current = (
+            await preflight.execute(
+                text(
+                    "SELECT published_version_id FROM workflows "
+                    "WHERE id = :wid AND organization_id = :oid"
+                ),
+                {"wid": workflow_id, "oid": organization_id},
+            )
+        ).fetchone()
+    finally:
+        await preflight.close()
+    if current is None:
+        return {}
+    if current.published_version_id is None:
+        from src.platform.workflows.versions import publish_workflow
+
+        published = await publish_workflow(
+            organization_id,
+            workflow_id,
+            notes="activación inicial: snapshot publicado",
+            permissions=permissions,
+            workspace_id=workspace_id,
+        )
+        if published is None:
+            return {}
+        published["bootstrap_published"] = True
+        return published
     session = await get_async_session()
     try:
         row = (
             await session.execute(
                 text(
-                    "SELECT id FROM workflows WHERE id = :wid AND organization_id = :oid "
-                    "FOR UPDATE"
+                    "SELECT w.id, w.status, w.workspace_id, w.published_version_id, "
+                    "v.config_snapshot, v.certificate_id, v.legacy_baseline "
+                    "FROM workflows w LEFT JOIN workflow_versions v "
+                    "ON v.id = w.published_version_id "
+                    "WHERE w.id = :wid AND w.organization_id = :oid "
+                    "FOR UPDATE OF w"
                 ),
                 {"wid": workflow_id, "oid": organization_id},
             )
         ).fetchone()
         if row is None:
             return {}
+        if row.published_version_id is None or not isinstance(row.config_snapshot, dict):
+            decision = ReleaseDecision(
+                False,
+                "BLOCKED",
+                "activate",
+                "read_only",
+                "DESIGN_VALID",
+                "",
+                blockers=[
+                    _blocker(
+                        "published_version_required",
+                        "El workflow no tiene versión publicada.",
+                        "Publica una versión certificada antes de activar.",
+                    )
+                ],
+            )
+            await session.rollback()
+            raise ReleaseDenied(decision.to_dict())
+        snapshot = row.config_snapshot or {}
+        graph = snapshot.get("graph")
+        if not graph:
+            from src.platform.workflows.ir import LegacyWorkflowAdapter
+
+            graph = LegacyWorkflowAdapter.steps_to_graph(
+                snapshot.get("steps") or [],
+                snapshot.get("trigger_type") or "webhook",
+                snapshot.get("trigger_config") or {},
+            ).to_dict()
         decision = await evaluate_release(
             organization_id,
             workflow_id,
             action="activate",
             workspace_id=workspace_id,
             permissions=permissions,
+            graph_override=graph,
         )
         if not decision.allowed:
             await session.rollback()
@@ -812,6 +1042,7 @@ async def activate_workflow(
     return {
         "workflow_id": str(workflow_id),
         "status": "active",
+        "published_version_id": str(row.published_version_id),
         "release": decision.to_dict(),
     }
 
@@ -837,10 +1068,8 @@ async def issue_certificate(
 
     await ensure_release_tables()
     level = str(level or "").strip().lower()
-    if level not in ("design", "simulation"):
-        raise CertificateError(
-            "sandbox/provider no están conectados en P01; no se emite un pase externo."
-        )
+    if level not in ("design", "simulation", "sandbox", "provider"):
+        raise CertificateError("nivel de certificación inválido")
     workflow = await get_workflow(organization_id, workflow_id)
     if workflow is None:
         raise CertificateError("workflow no encontrado")
@@ -886,6 +1115,8 @@ async def issue_certificate(
         or design_snapshot_hash
         or ""
     )
+    from src.platform.workflows.definition import trigger_fingerprint
+
     results: dict[str, Any] = {}
     scenario_payloads: list[dict[str, Any]] = []
     state = LEVEL_STATE[level]
@@ -928,6 +1159,32 @@ async def issue_certificate(
             "total": len(reports),
         }
         state = "SIMULATION_PASSED"
+    verification: dict[str, Any] | None = None
+    if level in ("sandbox", "provider"):
+        from src.platform.workflows.verification import (
+            VerificationError,
+            run_verification,
+        )
+
+        try:
+            verification = await run_verification(
+                organization_id,
+                workflow_id,
+                graph,
+                level=level,
+                workspace_id=workspace_id,
+                scenarios=scenarios or [],
+                issued_by=issued_by,
+                expires_in_days=expires_in_days,
+            )
+        except VerificationError as exc:
+            details = "; ".join(exc.details[:4])
+            raise CertificateError(
+                f"{exc.code}: {exc}" + (f" ({details})" if details else "")
+            ) from exc
+        state = str(verification["state"])
+        results = {"verification": verification}
+        scenario_payloads = list(verification.get("scenarios") or [])
     certificate = {
         "schema": CERTIFICATE_SCHEMA,
         "organization_id": str(organization_id),
@@ -938,14 +1195,25 @@ async def issue_certificate(
         "level": level,
         "state": state,
         "graph_hash": graph_fingerprint(graph),
+        "trigger_hash": trigger_fingerprint(
+            workflow.get("trigger_type"), workflow.get("trigger_config")
+        ),
+        "binding_fingerprint": await _active_bindings_fingerprint(
+            organization_id, workspace_id
+        ),
         "semantic_plan_hash": plan_hash,
         "capability_snapshot_hash": snapshot_hash,
         "agent_versions": agent_versions,
         "role_versions": role_versions,
         "policy_version": POLICY_VERSION,
-        "scenarios": [item.get("scenario_id") for item in scenario_payloads],
+        "verification_id": (verification or {}).get("id"),
+        "environment": (verification or {}).get("environment")
+        or ("simulation" if level == "simulation" else "design"),
+        "scenarios": [
+            item.get("scenario_id") or "verification" for item in scenario_payloads
+        ],
         "results": results,
-        "provider_refs": [],
+        "provider_refs": (verification or {}).get("provider_refs") or [],
         "approvals": [],
         "issued_by": str(issued_by) if issued_by else None,
     }
@@ -956,13 +1224,16 @@ async def issue_certificate(
                 text(
                     "INSERT INTO workflow_certificates "
                     "(organization_id, workspace_id, workflow_id, workflow_version, "
-                    "risk_class, level, state, graph_hash, semantic_plan_hash, "
+                    "risk_class, level, state, graph_hash, trigger_hash, "
+                    "binding_fingerprint, semantic_plan_hash, "
                     "capability_snapshot_hash, agent_versions, role_versions, "
-                    "policy_version, scenarios, results, provider_refs, approvals, "
-                    "issued_by, expires_at) "
+                    "policy_version, verification_id, environment, scenarios, results, "
+                    "provider_refs, approvals, issued_by, expires_at) "
                     "VALUES (:oid, :ws, :wid, :wver, :risk, :level, :state, :ghash, "
-                    ":phash, :shash, CAST(:agents AS jsonb), CAST(:roles AS jsonb), "
-                    ":pver, CAST(:scenarios AS jsonb), CAST(:results AS jsonb), "
+                    ":thash, :bhash, :phash, :shash, CAST(:agents AS jsonb), "
+                    "CAST(:roles AS jsonb), "
+                    ":pver, :verification, :environment, CAST(:scenarios AS jsonb), "
+                    "CAST(:results AS jsonb), "
                     "CAST(:providers AS jsonb), CAST(:approvals AS jsonb), :by, :expires) "
                     "RETURNING *"
                 ),
@@ -975,14 +1246,18 @@ async def issue_certificate(
                     "level": level,
                     "state": state,
                     "ghash": certificate["graph_hash"],
+                    "thash": certificate["trigger_hash"],
+                    "bhash": certificate["binding_fingerprint"],
                     "phash": plan_hash,
                     "shash": snapshot_hash,
                     "agents": json.dumps(agent_versions),
                     "roles": json.dumps(role_versions),
                     "pver": POLICY_VERSION,
+                    "verification": certificate["verification_id"],
+                    "environment": certificate["environment"],
                     "scenarios": json.dumps(certificate["scenarios"]),
                     "results": json.dumps(results, default=str),
-                    "providers": json.dumps([]),
+                    "providers": json.dumps(certificate["provider_refs"]),
                     "approvals": json.dumps([]),
                     "by": issued_by,
                     "expires": datetime.now(timezone.utc) + timedelta(days=max(1, min(expires_in_days, 90))),
@@ -1003,6 +1278,8 @@ async def target_graph_decision(
     action: str,
     workspace_id: UUID | None = None,
     permissions: frozenset[str] | None = None,
+    trigger_type: str | None = None,
+    trigger_config: dict[str, Any] | None = None,
 ) -> ReleaseDecision:
     """Gate para promote/restore: evalúa el snapshot destino, no la fila viva."""
     from src.platform.workflows.engine import get_workflow
@@ -1032,7 +1309,10 @@ async def target_graph_decision(
             "",
             blockers=[_blocker("workspace_mismatch", "El workflow pertenece a otro workspace.")],
         )
-    if str(workflow.get("release_policy") or "standard") == _LEGACY_POLICY:
+    if (
+        str(workflow.get("release_policy") or "standard") == _LEGACY_POLICY
+        and await _target_is_legacy_baseline(organization_id, workflow_id, graph)
+    ):
         return ReleaseDecision(
             True,
             "LEGACY_EXEMPT",
@@ -1041,9 +1321,11 @@ async def target_graph_decision(
             "DESIGN_VALID",
             graph_fingerprint(graph),
             legacy=True,
-            mitigations=["Política legacy registrada."],
+            mitigations=["Baseline legacy congelado y auditado."],
         )
     capabilities = await load_capabilities(organization_id, workspace_id)
+    from src.platform.workflows.definition import trigger_fingerprint
+
     return await _evaluate_graph(
         workflow,
         graph,
@@ -1051,6 +1333,15 @@ async def target_graph_decision(
         workspace_id=workspace_id,
         capabilities=capabilities,
         permissions=permissions,
+        trigger_hash=trigger_fingerprint(
+            trigger_type if trigger_type is not None else workflow.get("trigger_type"),
+            trigger_config
+            if trigger_config is not None
+            else workflow.get("trigger_config"),
+        ),
+        binding_fingerprint=await _active_bindings_fingerprint(
+            organization_id, workspace_id
+        ),
     )
 
 

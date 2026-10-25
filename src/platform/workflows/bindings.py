@@ -322,6 +322,82 @@ async def execute_binding(
         raise BindingError("CONTRACT_INVALID", "; ".join(errors[:5]))
 
     kind = binding["provider_kind"]
+    ledger_eid: str | None = None
+    if kind in ("rest_api", "marketplace_action") and workflow_id and node_id:
+        from src.platform.workflows.effect_ledger import begin_effect
+
+        ledger_eid, confirmed = await begin_effect(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            workflow_id=workflow_id,
+            instance_id=instance_id,
+            run_id=run_id,
+            node_id=node_id,
+            capability_ref=capability_ref,
+            inputs=payload,
+        )
+        if confirmed is not None:
+            return {
+                "capability": capability_ref,
+                "provider_kind": kind,
+                "output": confirmed,
+                "effect_replayed": True,
+            }
+    try:
+        out = await _dispatch_binding(
+            organization_id,
+            capability_ref,
+            binding,
+            payload,
+            kind=kind,
+            workspace_id=workspace_id,
+            source=source,
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            instance_id=instance_id,
+            node_id=node_id,
+        )
+        if ledger_eid is not None:
+            from src.platform.workflows.effect_ledger import confirm_effect
+
+            await confirm_effect(
+                organization_id=organization_id,
+                eid=ledger_eid,
+                response=dict(out or {}),
+                external_id=str((out or {}).get("id") or (out or {}).get("reference") or ""),
+            )
+    except Exception as exc:
+        if ledger_eid is not None:
+            from src.platform.workflows.effect_ledger import fail_effect
+
+            await fail_effect(
+                organization_id=organization_id,
+                eid=ledger_eid,
+                error=str(exc)[:400],
+            )
+        raise
+    output_errors = validate_contract(dict(out or {}), binding.get("contract_output_schema"))
+    if output_errors:
+        raise BindingError("CONTRACT_INVALID", "salida: " + "; ".join(output_errors[:5]))
+    return {"capability": capability_ref, "provider_kind": kind, "output": out}
+
+
+async def _dispatch_binding(
+    organization_id: UUID,
+    capability_ref: str,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    kind: str,
+    workspace_id: UUID | None,
+    source: str,
+    actor_id: UUID | None,
+    workflow_id: UUID | None,
+    run_id: UUID | None,
+    instance_id: UUID | None,
+    node_id: str | None,
+) -> dict[str, Any]:
     if kind == "marketplace_action":
         out = await _execute_marketplace_action(
             organization_id, binding, payload, workspace_id=workspace_id, source=source,
@@ -363,10 +439,7 @@ async def execute_binding(
             "PROVIDER_NOT_IMPLEMENTED",
             f"provider_kind {kind} registrado sin executor en esta versión",
         )
-    output_errors = validate_contract(dict(out or {}), binding.get("contract_output_schema"))
-    if output_errors:
-        raise BindingError("CONTRACT_INVALID", "salida: " + "; ".join(output_errors[:5]))
-    return {"capability": capability_ref, "provider_kind": kind, "output": out}
+    return out
 
 
 def _business_error(exc: Exception) -> BindingError:

@@ -815,8 +815,9 @@ export default function WorkflowStudioPage() {
             disabled={!name.trim()}
             onClick={() => void save()}
             data-testid="wf-save"
+            title="Guardar cambios en el borrador; no publica ni despliega."
           >
-            Guardar
+            Guardar borrador
           </Button>
         </div>
       </header>

@@ -49,6 +49,8 @@ class ExecutionContext:
     simulation_state: dict[str, Any] | None = None
     #: Contadores de LOOP exclusivos de simulación.
     simulation_loops: dict[str, int] | None = None
+    #: EffectiveExecutionPolicy resuelta en servidor para esta ejecución.
+    effective_policy: Any = None
 
 
 @dataclass
@@ -514,6 +516,10 @@ async def execute_graph(
                     "error_contract": error_contract(
                         "unauthorized_tool", message, port="unauthorized"
                     ),
+                    "policy_code": verdict.code,
+                    "policy_version": verdict.policy_version,
+                    "effective_scope_hash": verdict.effective_scope_hash,
+                    "approval_required": verdict.approval_required,
                 },
             )
             _emit_node_metric(node.type, "denied", 0)
@@ -948,6 +954,25 @@ def _ready_check(
 
 async def _run_node_once(ctx: ExecutionContext, node_def, rctx, started: datetime) -> NodeExecution:
     """Ejecución simple (sin persistencia) para subgrafos de for_each."""
+    from src.platform.workflows.policy_enforcement import authorize_node
+
+    verdict = await authorize_node(
+        rctx, rctx.node, node_def, policy=getattr(ctx, "effective_policy", None)
+    )
+    if not verdict.allowed:
+        message = "permiso insuficiente: " + "; ".join(verdict.reasons)
+        return NodeExecution(
+            status="denied",
+            error=message,
+            output={
+                "typed_port": "unauthorized",
+                "error_contract": error_contract(
+                    "unauthorized_tool", message, port="unauthorized"
+                ),
+                "policy_code": verdict.code,
+                "policy_version": verdict.policy_version,
+            },
+        )
     handler = node_def.execute
     node = rctx.node
     max_attempts = max(1, int((node.retry_policy or {}).get("max_attempts", 1) or 1))

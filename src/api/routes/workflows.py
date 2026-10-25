@@ -14,19 +14,21 @@ import asyncio
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/api/v1/workflows", tags=["Workflows"])
 
 
 async def _workspace_id(request: Request) -> UUID | None:
-    """Workspace del request (header > activo). None = tenant legacy sin
-    workspace (aislamiento se aplica cuando existe workspace)."""
+    """Workspace del request, validado contra la organización.
+
+    Header > membership.active. Un header ajeno devuelve 404 sin revelar
+    existencia; un UUID inválido devuelve 400.
+    """
     from src.platform.workspaces.context import (
         get_active_workspace_id,
         workspace_header_or_none,
@@ -35,8 +37,18 @@ async def _workspace_id(request: Request) -> UUID | None:
     ctx = getattr(request.state, "tenant_context", None)
     if ctx is None:
         return None
-    header = workspace_header_or_none(request)
+    try:
+        header = workspace_header_or_none(request)
+    except ValueError as exc:
+        raise HTTPException(400, "X-Workspace-Id must be a valid UUID") from exc
     if header is not None:
+        from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
+
+        ws = await PostgresWorkspaceRepository().get_workspace(
+            ctx.organization_id, header
+        )
+        if ws is None:
+            raise HTTPException(404, "Workspace not found")
         return header
     try:
         active = await get_active_workspace_id(ctx.organization_id, ctx.user_id)
@@ -45,6 +57,44 @@ async def _workspace_id(request: Request) -> UUID | None:
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+async def _validate_workflow_workspace(request: Request) -> None:
+    """Defensa central para todo path con workflow_id."""
+    workflow_id = request.path_params.get("workflow_id")
+    if not workflow_id:
+        return
+    ctx = getattr(request.state, "tenant_context", None)
+    if ctx is None:
+        return
+    try:
+        wid = UUID(str(workflow_id))
+    except (TypeError, ValueError):
+        return
+    ws = await _workspace_id(request)
+    from src.platform.workflows.engine import get_workflow
+
+    detail = await get_workflow(ctx.organization_id, wid)
+    if detail is None:
+        raise HTTPException(404, "Workflow not found")
+    wf_ws = detail.get("workspace_id")
+    if wf_ws and ws is None:
+        raise HTTPException(
+            400,
+            {
+                "code": "workspace_required",
+                "message": "X-Workspace-Id requerido para este workflow.",
+            },
+        )
+    if wf_ws and str(wf_ws) != str(ws):
+        raise HTTPException(404, "Workflow not found")
+
+
+router = APIRouter(
+    prefix="/api/v1/workflows",
+    tags=["Workflows"],
+    dependencies=[Depends(_validate_workflow_workspace)],
+)
 
 
 #: Fecha de retirada anunciada del camino Copilot legacy.
@@ -1952,6 +2002,18 @@ async def tenant_workflow_update(workflow_id: str, body: WorkflowUpdateIn, reque
     from src.platform.workflows.engine import update_workflow
 
     ctx = require_permission(request, "workflows:update")
+    from src.platform.workflows.engine import WorkflowRevisionConflict
+
+    expected_revision = body.expected_revision
+    if_match = request.headers.get("if-match")
+    if if_match and expected_revision is None:
+        raw = if_match.strip().strip('"')
+        if raw.lower().startswith("rev-"):
+            raw = raw[4:]
+        try:
+            expected_revision = int(raw)
+        except ValueError:
+            raise HTTPException(400, "If-Match inválido; usa \"rev-N\"") from None
     try:
         result = await update_workflow(
             ctx.organization_id,
@@ -1964,7 +2026,18 @@ async def tenant_workflow_update(workflow_id: str, body: WorkflowUpdateIn, reque
             graph=body.graph,
             workflow_version=body.workflow_version,
             trigger_type=body.trigger_type,
+            expected_revision=expected_revision,
         )
+    except WorkflowRevisionConflict as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "workflow_revision_conflict",
+                "message": str(exc),
+                "expected_revision": exc.expected,
+                "current_revision": exc.current,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if result is None:
@@ -2024,6 +2097,11 @@ async def tenant_workflow_run(workflow_id: str, body: RunIn, request: Request):
     from src.platform.workflows.ingress import route_ingress
 
     ctx = require_permission(request, "workflows:run")
+    from src.platform.workflows.engine import get_workflow
+
+    live = await get_workflow(ctx.organization_id, UUID(workflow_id))
+    if live is None:
+        raise HTTPException(404, "Workflow not found")
     if body.simulate or body.run_mode != "full":
         from src.platform.workflows.engine import WorkflowAccessError, run_workflow
 
@@ -2430,7 +2508,11 @@ async def tenant_workflow_certificates(workflow_id: str, request: Request):
     from src.platform.workflows.release_policy import list_certificates
 
     ctx = require_permission(request, "workflows:read")
-    return await list_certificates(ctx.organization_id, UUID(workflow_id))
+    return await list_certificates(
+        ctx.organization_id,
+        UUID(workflow_id),
+        workspace_id=await _workspace_id(request),
+    )
 
 
 class WorkflowIn(BaseModel):
@@ -2454,6 +2536,7 @@ class WorkflowUpdateIn(BaseModel):
     editor_state: dict | None = None
     graph: dict | None = None
     workflow_version: int | None = None
+    expected_revision: int | None = None
 
 
 class RunIn(BaseModel):
@@ -2474,7 +2557,9 @@ class VersionIn(BaseModel):
 
 
 class CertificationIn(BaseModel):
-    level: str = Field(default="design", pattern="^(design|simulation)$")
+    level: str = Field(
+        default="design", pattern="^(design|simulation|sandbox|provider)$"
+    )
     scenarios: list[dict] = Field(default_factory=list, max_length=20)
     expires_in_days: int = Field(default=7, ge=1, le=90)
 
@@ -2816,6 +2901,14 @@ async def public_workflow_hook(workflow_id: str, request: Request):
         raise HTTPException(401, "Invalid workflow secret")
     if result.get("error") == "inactive":
         raise HTTPException(409, "Workflow is not active")
+    if result.get("status_code") in (400, 403, 404, 409):
+        raise HTTPException(
+            int(result["status_code"]),
+            {
+                "code": result.get("error") or "workflow_error",
+                "message": result.get("message") or result.get("error"),
+            },
+        )
     return result
 
 

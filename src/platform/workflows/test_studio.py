@@ -249,10 +249,17 @@ async def execute_workflow_test(
         report.update(persisted)
         return report
 
+    from src.platform.workflows.verification import (
+        VerificationError,
+        resolve_readiness,
+        run_verification,
+    )
+
+    readiness = await resolve_readiness(organization_id, workspace_id, graph)
     decision = decide_test_level(
         requested_level,
-        sandbox_ready=bool((workflow.get("metadata") or {}).get("sandbox_ready")),
-        provider_ready=False,
+        sandbox_ready=readiness.sandbox_ready,
+        provider_ready=readiness.provider_ready,
     )
     hashes = report_hashes(workflow, graph)
     if decision.effective == "preview":
@@ -274,25 +281,45 @@ async def execute_workflow_test(
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
     else:
-        scenario = draft_to_scenario(
-            {
-                **scenario_draft,
-                "scenario_id": str(scenario_draft.get("scenario_id") or uuid4().hex[:12]),
-            }
-        )
-        runner = WorkflowSimulationRunner(
-            graph,
-            capabilities={},
-            steps_map={},
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            permissions=permissions,
-            workflow_version=int(graph.get("workflow_version") or 2),
-        )
-        simulation = await runner.run_scenario(scenario)
-        result = simulation.result
-        if decision.requested == "provider" and decision.effective != "provider":
-            result = "UNVERIFIED"
+        verification: dict[str, Any] | None = None
+        if decision.effective in ("sandbox", "provider"):
+            try:
+                verification = await run_verification(
+                    organization_id,
+                    workflow_id,
+                    graph,
+                    level=decision.effective,
+                    workspace_id=workspace_id,
+                    scenarios=[scenario_draft],
+                    issued_by=created_by,
+                )
+                result = "PASSED"
+                state = verification["state"]
+            except VerificationError as exc:
+                result = "UNVERIFIED"
+                state = "UNVERIFIED"
+                verification = {"error": exc.code, "details": exc.details}
+        else:
+            scenario = draft_to_scenario(
+                {
+                    **scenario_draft,
+                    "scenario_id": str(scenario_draft.get("scenario_id") or uuid4().hex[:12]),
+                }
+            )
+            runner = WorkflowSimulationRunner(
+                graph,
+                capabilities={},
+                steps_map={},
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                permissions=permissions,
+                workflow_version=int(graph.get("workflow_version") or 2),
+            )
+            simulation = await runner.run_scenario(scenario)
+            result = simulation.result
+            state = simulation.result
+            if decision.requested == "provider" and decision.effective != "provider":
+                result = "UNVERIFIED"
         report = {
             "schema": TEST_REPORT_SCHEMA,
             "test_report_id": f"test_{uuid4().hex}",
@@ -300,20 +327,46 @@ async def execute_workflow_test(
             "requested_level": decision.requested,
             "effective_level": decision.effective,
             "capped_reason": decision.capped_reason,
-            "provider_verified": False,
+            "provider_verified": bool(
+                decision.effective == "provider"
+                and verification
+                and verification.get("state") == "PROVIDER_VERIFIED"
+            ),
             "result": result,
-            "state": simulation.result,
+            "state": state,
             "hashes": hashes,
             "scenario": mask_value(scenario_draft),
-            "simulation": simulation.model_dump(mode="json"),
-            "timeline": list(simulation.timeline or []),
-            "executed_nodes": list(simulation.executed_nodes or []),
+            "verification": verification,
+            "readiness": {
+                "sandbox_ready": readiness.sandbox_ready,
+                "provider_ready": readiness.provider_ready,
+                "reasons": readiness.reasons,
+                "provider_refs": readiness.provider_refs,
+            },
+            "simulation": simulation.model_dump(mode="json")
+            if decision.effective not in ("sandbox", "provider")
+            else None,
+            "timeline": list(simulation.timeline or [])
+            if decision.effective not in ("sandbox", "provider")
+            else [],
+            "executed_nodes": list(simulation.executed_nodes or [])
+            if decision.effective not in ("sandbox", "provider")
+            else [],
             "explain": explain_report(
                 level=decision.effective,
                 result=result,
-                unverified=list(simulation.unverified_nodes or []),
-                failed=[str(item.get("node_id")) for item in simulation.failed_nodes or []],
-                duration_ms=int((simulation.trace or {}).get("duration_ms") or 0),
+                unverified=list(getattr(simulation, "unverified_nodes", []) or [])
+                if decision.effective not in ("sandbox", "provider")
+                else [],
+                failed=[
+                    str(item.get("node_id"))
+                    for item in getattr(simulation, "failed_nodes", []) or []
+                ]
+                if decision.effective not in ("sandbox", "provider")
+                else [],
+                duration_ms=int((getattr(simulation, "trace", {}) or {}).get("duration_ms") or 0)
+                if decision.effective not in ("sandbox", "provider")
+                else int((verification or {}).get("duration_ms") or 0),
             ),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }

@@ -4,7 +4,7 @@ import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { fmtDateTime } from "../../lib/format";
 import { Button, ConfirmDialog, ErrorInline, Field, Input, StatusBadge, SuccessInline } from "../ui";
-import { type WorkflowVersion } from "./types";
+import { type WorkflowDetail, type WorkflowVersion } from "./types";
 
 type GateBlocker = { code: string; message: string; mitigation?: string };
 
@@ -42,6 +42,25 @@ const NEXT_STATUS: Record<string, { status: string; label: string }[]> = {
   archived: [],
 };
 
+function graphNodeIds(graph: unknown): Set<string> {
+  const nodes = (graph as { nodes?: Array<{ id?: string }> } | null | undefined)?.nodes;
+  return new Set(
+    (nodes || [])
+      .map((node) => String(node?.id || ""))
+      .filter((id) => id.length > 0),
+  );
+}
+
+function nodeDiff(detail: WorkflowDetail | null, published: WorkflowVersion | undefined) {
+  if (!detail || !published) return { added: [] as string[], removed: [] as string[] };
+  const live = graphNodeIds(detail.graph);
+  const frozen = graphNodeIds(published.config_snapshot?.graph);
+  return {
+    added: [...live].filter((id) => !frozen.has(id)).sort(),
+    removed: [...frozen].filter((id) => !live.has(id)).sort(),
+  };
+}
+
 export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) {
   const { session } = useAuth();
   const [versions, setVersions] = useState<WorkflowVersion[]>([]);
@@ -51,6 +70,7 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
   const [msg, setMsg] = useState("");
   const [restoreTarget, setRestoreTarget] = useState<WorkflowVersion | null>(null);
   const [gate, setGate] = useState<ReleaseGate | null>(null);
+  const [detail, setDetail] = useState<WorkflowDetail | null>(null);
 
   const loadGate = useCallback(async () => {
     if (!session) return;
@@ -69,11 +89,18 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
   const load = useCallback(async () => {
     if (!session) return;
     try {
-      const d = await api<{ versions: WorkflowVersion[] }>(
-        `/api/v1/workflows/${workflowId}/versions`,
-        { token: session.token, organizationId: session.organizationId },
-      );
+      const [d, wf] = await Promise.all([
+        api<{ versions: WorkflowVersion[] }>(
+          `/api/v1/workflows/${workflowId}/versions`,
+          { token: session.token, organizationId: session.organizationId },
+        ),
+        api<WorkflowDetail>(`/api/v1/workflows/${workflowId}`, {
+          token: session.token,
+          organizationId: session.organizationId,
+        }),
+      ]);
       setVersions(d.versions || []);
+      setDetail(wf);
       await loadGate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -135,6 +162,11 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
     }
   }
 
+  const publishedVersion = versions.find(
+    (version) => version.id === detail?.published_version_id,
+  );
+  const diff = nodeDiff(detail, publishedVersion);
+
   return (
     <div className="space-y-4" data-testid="wf-advanced-panel">
       <section className="panel space-y-3 p-4">
@@ -145,6 +177,38 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
             activa el workflow; restaurar devuelve el grafo vivo a esa versión.
           </p>
         </div>
+        {detail && (
+          <div
+            className="rounded-md border border-border bg-soft/40 p-3 text-[12px] leading-relaxed"
+            data-testid="wf-published-banner"
+          >
+            <p className="font-medium text-text">
+              {detail.published_version_number
+                ? `Versión activa v${detail.published_version_number}`
+                : "Sin versión publicada"}
+              <span className="font-normal text-muted">
+                {detail.draft_changed
+                  ? " · Edición borrador con cambios sin publicar"
+                  : " · Borrador sin cambios pendientes"}
+              </span>
+            </p>
+            {detail.published_version_number && (
+              <p className="mt-1 text-[11px] text-faint">
+                Generación {detail.deployment_generation ?? 1} · borrador rev{" "}
+                {detail.draft_revision ?? 0}
+                {diff.added.length > 0 ? ` · +${diff.added.length} nodos` : ""}
+                {diff.removed.length > 0 ? ` · -${diff.removed.length} nodos` : ""}
+              </p>
+            )}
+            {detail.draft_changed && (diff.added.length > 0 || diff.removed.length > 0) && (
+              <p className="mt-1 font-mono text-[11px] text-muted" data-testid="wf-draft-diff">
+                {diff.added.length > 0 ? `añadidos: ${diff.added.join(", ")}` : ""}
+                {diff.added.length > 0 && diff.removed.length > 0 ? " · " : ""}
+                {diff.removed.length > 0 ? `quitados: ${diff.removed.join(", ")}` : ""}
+              </p>
+            )}
+          </div>
+        )}
         <Field label="Nota de la versión (opcional)" hint="Ayuda a reconocerla en el historial.">
           <Input
             placeholder="añade el nodo de notificación…"

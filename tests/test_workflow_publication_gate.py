@@ -243,15 +243,25 @@ async def test_certificate_from_other_workspace_is_denied(
     response = await async_client.post(
         f"/api/v1/workflows/{wid}/publish", headers=headers_b, json={}
     )
-    assert response.status_code in (403, 409), response.text
-    assert "workspace_mismatch" in response.text or "certification" in response.text
+    assert response.status_code in (403, 404, 409), response.text
+    assert (
+        "workspace_mismatch" in response.text
+        or "certification" in response.text
+        or "not found" in response.text.lower()
+    )
 
 
 @pytest.mark.asyncio
 async def test_legacy_policy_is_explicit_and_auditable(async_client: AsyncClient) -> None:
     org = await _org(async_client, "P01 Legacy")
     wid = await _create(async_client, org, name="Histórico")
+    await _certify(async_client, org, wid)
+    first = await async_client.post(
+        f"/api/v1/workflows/{wid}/publish", headers=_headers(org), json={}
+    )
+    assert first.status_code == 200, first.text
 
+    # Simula el baseline congelado por migración 170 y la marca legacy.
     from sqlalchemy import text
 
     from src.infrastructure.postgres.session import get_async_session
@@ -261,25 +271,53 @@ async def test_legacy_policy_is_explicit_and_auditable(async_client: AsyncClient
         await session.execute(
             text(
                 "UPDATE workflows SET release_policy = 'legacy', "
-                "release_policy_reason = 'prueba P01', release_policy_at = NOW() "
+                "release_policy_reason = 'prueba P13', release_policy_at = NOW() "
                 "WHERE id = :wid AND organization_id = :oid"
             ),
             {"wid": UUID(wid), "oid": UUID(org["organization_id"])},
+        )
+        await session.execute(
+            text(
+                "UPDATE workflow_versions SET legacy_baseline = true "
+                "WHERE id = (SELECT published_version_id FROM workflows WHERE id = :wid)"
+            ),
+            {"wid": UUID(wid)},
         )
         await session.commit()
     finally:
         await session.close()
 
     gate = await async_client.get(
-        f"/api/v1/workflows/{wid}/release-gate", headers=_headers(org)
+        f"/api/v1/workflows/{wid}/release-gate?action=activate", headers=_headers(org)
     )
     assert gate.status_code == 200, gate.text
     assert gate.json()["allowed"] is True
     assert gate.json()["legacy"] is True
-    published = await async_client.post(
+    activated = await async_client.post(
+        f"/api/v1/workflows/{wid}/activate", headers=_headers(org)
+    )
+    assert activated.status_code == 200, activated.text
+
+    # La exención no autoriza publicar un grafo nuevo sin certificado.
+    changed = _graph(
+        nodes=[
+            _node("t", "trigger_webhook"),
+            _node("n", "set_variable", {"name": "legacy", "value": 1}),
+            _node("end", "end"),
+        ],
+        edges=[_edge("e1", "t", "n"), _edge("e2", "n", "end")],
+        entrypoints=["t"],
+    )
+    await async_client.patch(
+        f"/api/v1/workflows/{wid}",
+        headers=_headers(org),
+        json={"graph": changed, "workflow_version": 2},
+    )
+    denied = await async_client.post(
         f"/api/v1/workflows/{wid}/publish", headers=_headers(org), json={}
     )
-    assert published.status_code == 200, published.text
+    assert denied.status_code == 409, denied.text
+    assert "certificate" in denied.text or "stale" in denied.text
 
 
 @pytest.mark.asyncio

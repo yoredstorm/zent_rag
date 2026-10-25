@@ -7,6 +7,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -17,7 +18,7 @@ from sqlalchemy import text
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
-from src.platform.studio.contracts import SolutionV1
+from src.platform.studio.contracts import RoleProfileV1, SolutionV1
 from src.platform.studio.roles import create_role, link_agent_role, list_roles
 from src.platform.studio.solutions import (
     SolutionConflict,
@@ -413,6 +414,434 @@ async def _resolve_sources(
     return candidates, available, blockers
 
 
+def _scope_refs_from_graph(graph: dict[str, Any] | None) -> list[str]:
+    refs: set[str] = set()
+    for node in (graph or {}).get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_type = str(node.get("type") or "")
+        if node_type not in {
+            "capability_call",
+            "marketplace_action",
+            "api_call",
+            "business_node",
+        }:
+            continue
+        config = node.get("config") or {}
+        ref = (
+            config.get("capability")
+            or config.get("capability_ref")
+            or config.get("action_id")
+            or node_type
+        )
+        if ref:
+            refs.add(str(ref))
+    return sorted(refs)
+
+
+def _bind_agent_to_graph(
+    graph: dict[str, Any], *, agent_id: str, agent_ref: str
+) -> dict[str, Any]:
+    data = copy.deepcopy(graph)
+    for node in data.get("nodes") or []:
+        if not isinstance(node, dict) or str(node.get("type")) != "llm":
+            continue
+        config = node.setdefault("config", {})
+        if not str(config.get("agent_id") or "").strip():
+            config["agent_id"] = agent_id
+        config.pop("agent_ref", None)
+    return data
+
+
+class _UnavailablePlannerProvider:
+    """Fuerza el fallback determinista del Architect cuando no hay proveedor."""
+
+    async def generate(self, **_kwargs):
+        raise RuntimeError("planner provider unavailable in this environment")
+
+
+_EXTERNAL_TASK_MARKERS = (
+    "erp",
+    "pago",
+    "payment",
+    "factura",
+    "inventario",
+    "stock",
+    "sql",
+    "base de datos",
+    "crm",
+    "correo",
+    "email",
+    "stripe",
+    "checkout",
+)
+
+
+def _conservative_graph(
+    text_brief: str, *, agent_ref: str, agent_id: str | None, solution_ref: str
+) -> dict[str, Any]:
+    """Grafo mínimo sin conectores inventados, para misiones sin integración."""
+    llm_config: dict[str, Any] = {
+        "prompt": (
+            f"Analiza la solicitud y prepara una respuesta para: {text_brief[:500]}. "
+            "No inventes datos. Mensaje: {{trigger.message}}"
+        )
+    }
+    if agent_id:
+        llm_config["agent_id"] = agent_id
+    else:
+        llm_config["agent_ref"] = agent_ref
+    nodes = [
+        _node("t", "trigger_webhook", {}),
+        _node("analyze", "llm", llm_config, label="Analizar"),
+        _node(
+            "approval",
+            "human_approval",
+            {
+                "action": "Revisar la respuesta propuesta",
+                "summary": text_brief[:240],
+            },
+        ),
+        _node(
+            "notify",
+            "notify",
+            {
+                "channel": "in_app",
+                "title": "Misión compuesta",
+                "message": "Respuesta revisada y lista.",
+            },
+        ),
+        _node("end", "end", {}),
+    ]
+    edges = [
+        _edge("e1", "t", "analyze"),
+        _edge("e2", "analyze", "approval"),
+        _edge("e3", "approval", "notify"),
+        _edge("e4", "notify", "end"),
+    ]
+    return _graph(
+        nodes,
+        edges,
+        entrypoints=["t"],
+        solution_ref=solution_ref,
+    )
+
+
+async def _compile_composed(
+    organization_id: UUID,
+    *,
+    text_brief: str,
+    workspace_id: UUID | None,
+    source_refs: list[str] | None,
+    existing_agent_id: str | None,
+    options: dict[str, Any] | None,
+    mode: str,
+    forced_agent_id: str | None = None,
+) -> dict[str, Any]:
+    """Composición real reutilizando plan_workflow + Architect validator."""
+    from src.platform.studio.mission_contracts import (
+        MissionSpec,
+        validate_materialization_graph,
+    )
+    from src.platform.workflows.architect import plan_workflow
+    from src.platform.workflows.ir import WorkflowGraph, validate_graph
+
+    mission = MissionSpec(
+        brief=text_brief,
+        mode=mode if mode in ("auto", "template", "compose", "hybrid") else "auto",
+        language=str((options or {}).get("language") or "es"),
+        capabilities=list(source_refs or []),
+    )
+    architect = await plan_workflow(
+        organization_id,
+        text_brief,
+        workspace_id=workspace_id,
+        provider=_UnavailablePlannerProvider(),
+        preferred_agent_id=existing_agent_id,
+    )
+    graph = architect.get("graph")
+    validated = validate_materialization_graph(graph)
+    if graph is not None:
+        try:
+            validate_graph(WorkflowGraph.from_dict(graph))
+        except Exception as exc:  # noqa: BLE001
+            graph = None
+            validated = validate_materialization_graph(None)
+            validated.errors.append(str(exc)[:200])
+
+    capabilities = await load_capabilities(organization_id, workspace_id)
+    bindings = (await list_bindings(organization_id, workspace_id)).get("bindings") or []
+    bound_refs = {str(item.get("capability_ref")) for item in bindings}
+    action_refs = set((capabilities.get("actions") or {}).keys())
+    refs = _scope_refs_from_graph(graph)
+    requirements: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    for ref in refs:
+        available = ref in bound_refs or ref in action_refs
+        requirements.append(
+            {
+                "capability_ref": ref,
+                "status": "available" if available else "missing",
+                "required": True,
+            }
+        )
+        if not available:
+            blockers.append(
+                {
+                    "code": "capability_missing",
+                    "message": f"La capacidad {ref} no está instalada ni tiene binding.",
+                    "action": "Instala o configura el binding real en Marketplace/Integraciones.",
+                }
+            )
+    for item in architect.get("requirements") or []:
+        if isinstance(item, dict):
+            blockers.append(
+                {
+                    "code": str(item.get("code") or "architect_requirement"),
+                    "message": str(item.get("message") or item.get("requirement") or "Requisito pendiente."),
+                    "action": str(item.get("action") or "Resuelve el requisito y recompila."),
+                }
+            )
+    for item in architect.get("blockers") or []:
+        if isinstance(item, dict):
+            code = str(item.get("code") or "")
+            if code and not any(existing.get("code") == code for existing in blockers):
+                blockers.append(
+                    {
+                        "code": code,
+                        "message": str(item.get("message") or code),
+                        "action": str(item.get("action") or "Revisa el bloqueo."),
+                    }
+                )
+    if graph is None and not blockers:
+        blockers.append(
+            {
+                "code": "composition_incomplete",
+                "message": "El Architect no pudo producir un grafo ejecutable para esta misión.",
+                "action": "Añade datos, capacidades o agentes; revisa las clarificaciones.",
+            }
+        )
+
+    agent_selection = "create"
+    existing_agent: dict[str, Any] | None = None
+    if existing_agent_id:
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, name, is_active, workspace_id FROM agents "
+                        "WHERE id = :aid AND organization_id = :oid"
+                    ),
+                    {"aid": existing_agent_id, "oid": organization_id},
+                )
+            ).fetchone()
+        finally:
+            await session.close()
+        if row is None or not bool(row.is_active):
+            blockers.append(
+                {
+                    "code": "agent_unavailable",
+                    "message": "El agente seleccionado no existe o está inactivo.",
+                    "action": "Elige un agente activo o deja que ZENT cree uno.",
+                }
+            )
+        elif workspace_id and row.workspace_id and UUID(str(row.workspace_id)) != workspace_id:
+            blockers.append(
+                {
+                    "code": "workspace_mismatch",
+                    "message": "El agente pertenece a otro workspace.",
+                    "action": "Elige un agente de este workspace.",
+                }
+            )
+        else:
+            agent_selection = "reuse"
+            existing_agent = {"id": str(row.id), "name": row.name}
+
+    digest = _fingerprint({"brief": text_brief, "mode": mode, "workspace": str(workspace_id or "")})
+    composed_slug = f"composed_{_slug(text_brief, 40)}_{digest[:8]}"[:80]
+    role_id = f"composed_{_slug(text_brief, 30)}_{digest[:8]}"[:80]
+    role = RoleProfileV1(
+        role_id=role_id,
+        name=text_brief[:150],
+        description=text_brief[:1200],
+        mission=text_brief[:1200],
+        allowed_capabilities=refs,
+        allowed_tools=[],
+        autonomy_level="propose_actions",
+        risk_class="medium",
+        expected_outcomes=[
+            {"name": "resultado de la misión", "metric": "completion", "target": "> 0"}
+        ],
+        safety={"no_automatic_irreversible_action": True},
+    )
+    agent_ref = f"composed_agent_{digest[:8]}"
+    workflow_ref = f"composed_flow_{digest[:8]}"
+    solution_slug = composed_slug
+    fallback_composition = False
+    if graph is None and not any(
+        marker in text_brief.lower() for marker in _EXTERNAL_TASK_MARKERS
+    ):
+        graph = _conservative_graph(
+            text_brief,
+            agent_ref=agent_ref,
+            agent_id=(existing_agent or {}).get("id") or forced_agent_id,
+            solution_ref=solution_slug,
+        )
+        validated = validate_materialization_graph(graph)
+        blockers = [
+            item
+            for item in blockers
+            if item.get("code")
+            not in ("missing.managed_db", "missing.agents", "composition_incomplete")
+        ]
+        fallback_composition = True
+    blueprint = {
+        "schema": "zent.solution/v1",
+        "solution_id": solution_slug,
+        "version": "1.0.0",
+        "status": "draft",
+        "name": text_brief[:150],
+        "description": text_brief[:1200],
+        "roles": [{"role_ref": role.role_id, "version": role.version, "required": True}],
+        "agents": [
+            {
+                "agent_ref": agent_ref,
+                "role_ref": role.role_id,
+                "name": (existing_agent or {}).get("name") or f"Agente compuesto {digest[:6]}",
+                "workflow_refs": [workflow_ref],
+                "capability_refs": refs,
+            }
+        ],
+        "workflows": [
+            {
+                "workflow_ref": workflow_ref,
+                "name": f"Proceso compuesto: {text_brief[:80]}",
+                "role_refs": [role.role_id],
+                "agent_refs": [agent_ref],
+                "capability_refs": refs,
+                "trigger": {"type": "webhook"},
+                "requirements": refs,
+            }
+        ],
+        "capabilities": [
+            {
+                "capability_ref": ref,
+                "required": True,
+                "purpose": "Operación compuesta por el Architect",
+            }
+            for ref in refs
+        ],
+        "knowledge": [],
+        "channels": ["webhook"],
+        "requirements": [
+            "Revisar el plan semántico y las clarificaciones",
+            "Configurar capacidades y bindings reales",
+            "Certificar antes de publicar",
+        ],
+        "installation": [
+            {
+                "order": 1,
+                "action": "create_or_reuse_role",
+                "module": "roles",
+                "description": "Crear o reutilizar el rol compuesto.",
+                "required": True,
+            },
+            {
+                "order": 2,
+                "action": "create_or_link_agent",
+                "module": "agents",
+                "description": "Crear o vincular un agente activo.",
+                "required": True,
+            },
+            {
+                "order": 3,
+                "action": "create_draft_workflow",
+                "module": "workflows",
+                "description": "Persistir el grafo compilado como borrador.",
+                "required": True,
+            },
+        ],
+        "expected_outcomes": [
+            item.model_dump(mode="json") for item in role.expected_outcomes
+        ],
+        "risk_class": role.risk_class,
+        "compliance_tags": role.compliance_tags,
+        "locales": role.locales,
+    }
+    try:
+        SolutionV1.model_validate(blueprint)
+    except Exception as exc:  # noqa: BLE001
+        raise CompilationError(f"blueprint compuesto inválido: {str(exc)[:300]}") from exc
+
+    status = "READY_TO_MATERIALIZE" if graph is not None and not blockers else "NEEDS_CONFIGURATION"
+    return {
+        "schema": COMPILATION_SCHEMA,
+        "compilation_hash": digest,
+        "status": status,
+        "can_materialize": status == "READY_TO_MATERIALIZE",
+        "mode": "compose",
+        "template_id": "composed",
+        "mission": mission.model_dump(mode="json", by_alias=True),
+        "brief": {
+            "text": text_brief,
+            "language": mission.language,
+            "audience": role.audience,
+            "outcomes": [item.name for item in role.expected_outcomes],
+            "risk_class": role.risk_class,
+            "memory": role.memory_policy.model_dump(mode="json"),
+            "autonomy": role.autonomy_level,
+        },
+        "role": role.model_dump(by_alias=True),
+        "blueprint": blueprint,
+        "plan": {
+            "role": {"logical_ref": role.role_id, "name": role.name, "action": "create"},
+            "agent": {
+                "logical_ref": agent_ref,
+                "name": (existing_agent or {}).get("name") or f"Agente compuesto {digest[:6]}",
+                "action": agent_selection,
+                "existing_agent_id": (existing_agent or {}).get("id"),
+            },
+            "workflow": {
+                "logical_ref": workflow_ref,
+                "name": f"Proceso compuesto: {text_brief[:80]}",
+                "action": "create_draft",
+                "will_create": status == "READY_TO_MATERIALIZE",
+            },
+            "sources": [],
+            "bindings": sorted(bound_refs),
+        },
+        "requirements": requirements,
+        "blockers": blockers,
+        "available_sources": sorted((capabilities.get("knowledge_bases") or {}).values()),
+        "scenarios": [
+            {
+                "scenario_id": "composed_default",
+                "messages": [text_brief[:200]],
+                "max_segments": 10,
+                "budget_ms": 60_000,
+            }
+        ],
+        "graph": graph,
+        "graph_preview": graph,
+        "architect": {
+            "state": architect.get("state"),
+            "source": architect.get("source"),
+            "plan_hash": architect.get("plan_hash"),
+            "clarifications": architect.get("clarifications") or [],
+            "readiness": architect.get("readiness"),
+            "fallback_composition": fallback_composition,
+            "validated": validated.model_dump(mode="json", by_alias=True),
+        },
+        "next_actions": [
+            "Revisar el plan y las clarificaciones",
+            "Resolver capacidades/bindings pendientes",
+            "Materializar el borrador",
+            "Probar y certificar antes de publicar",
+        ],
+    }
+
+
 async def compile_solution(
     organization_id: UUID,
     *,
@@ -422,14 +851,31 @@ async def compile_solution(
     source_refs: list[str] | None = None,
     existing_agent_id: str | None = None,
     options: dict[str, Any] | None = None,
+    mode: str = "auto",
 ) -> dict[str, Any]:
     """Compila sin escribir. Devuelve blueprint portable + plan + bloqueos."""
     text_brief = _brief_text(brief).strip()
     if not text_brief:
         raise CompilationError("La misión no puede estar vacía.")
+    normalized_mode = str(mode or "auto").strip().lower()
+    if normalized_mode not in ("auto", "template", "compose", "hybrid"):
+        raise CompilationError(f"mode inválido: {mode}")
+    matched_template, match_score = match_role_template(text_brief)
+    if normalized_mode == "compose" or (
+        normalized_mode in ("auto", "hybrid") and match_score <= 0
+    ):
+        return await _compile_composed(
+            organization_id,
+            text_brief=text_brief,
+            workspace_id=workspace_id,
+            source_refs=source_refs,
+            existing_agent_id=existing_agent_id,
+            options=options,
+            mode=normalized_mode,
+        )
     chosen_template = str(template_id or "").strip()
     if not chosen_template:
-        chosen_template, _score = match_role_template(text_brief)
+        chosen_template = matched_template
     role = role_template(chosen_template)
     if role is None:
         raise CompilationError(f"Plantilla de rol desconocida: {chosen_template}")
@@ -638,6 +1084,7 @@ async def compile_solution(
         "compilation_hash": compilation_hash,
         "status": status,
         "can_materialize": not blockers,
+        "mode": normalized_mode,
         "template_id": chosen_template,
         "brief": {
             "text": text_brief,
@@ -962,6 +1409,7 @@ async def materialize_solution(
     idempotency_key: str | None = None,
     confirm: bool = False,
     user_id: UUID | None = None,
+    mode: str = "auto",
 ) -> dict[str, Any]:
     if not confirm:
         raise CompilationError("La materialización requiere confirmación explícita.")
@@ -973,6 +1421,7 @@ async def materialize_solution(
         source_refs=source_refs,
         existing_agent_id=existing_agent_id,
         options=options,
+        mode=mode,
     )
     key = (idempotency_key or compilation["compilation_hash"])[:200]
     blueprint = compilation["blueprint"]
@@ -1047,13 +1496,21 @@ async def materialize_solution(
             from src.platform.workflows.engine import create_workflow
             from src.platform.workflows.ir import WorkflowGraph, validate_graph
 
-            graph = _build_graph(
-                compilation["template_id"],
-                agent_id=agent["id"],
-                agent_ref=compilation["plan"]["agent"]["logical_ref"],
-                sources=[item["physical_id"] for item in compilation["plan"]["sources"]],
-                solution_ref=solution_ref,
-            )
+            compiled_graph = compilation.get("graph")
+            if isinstance(compiled_graph, dict) and compiled_graph:
+                graph = _bind_agent_to_graph(
+                    compiled_graph,
+                    agent_id=agent["id"],
+                    agent_ref=compilation["plan"]["agent"]["logical_ref"],
+                )
+            else:
+                graph = _build_graph(
+                    compilation["template_id"],
+                    agent_id=agent["id"],
+                    agent_ref=compilation["plan"]["agent"]["logical_ref"],
+                    sources=[item["physical_id"] for item in compilation["plan"]["sources"]],
+                    solution_ref=solution_ref,
+                )
             validate_graph(WorkflowGraph.from_dict(graph))
             await _validate_workflow_agents(organization_id, graph)
             workflow = await create_workflow(
@@ -1070,6 +1527,38 @@ async def materialize_solution(
                 workflow_version=2,
             )
             artifacts["workflow"] = {"id": workflow["workflow_id"], "created": True}
+        scope = sorted(
+            {
+                str(item.get("capability_ref"))
+                for item in blueprint.get("capabilities") or []
+                if isinstance(item, dict) and item.get("capability_ref")
+            }
+        )
+        safety_profile = (
+            "wellness"
+            if str((role or {}).get("role_id") or "").startswith("wellness")
+            else "standard"
+        )
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE workflows SET solution_id = :sid, "
+                    "capability_scope = CAST(:scope AS jsonb), "
+                    "capability_scope_source = 'solution', safety_profile = :safety "
+                    "WHERE id = :wid AND organization_id = :oid"
+                ),
+                {
+                    "sid": UUID(str(solution["record_id"])) if solution.get("record_id") else None,
+                    "scope": json.dumps(scope),
+                    "safety": safety_profile,
+                    "wid": UUID(str(artifacts["workflow"]["id"])),
+                    "oid": organization_id,
+                },
+            )
+            await session.commit()
+        finally:
+            await session.close()
         artifacts["sources"] = compilation["plan"]["sources"]
         artifacts["bindings"] = compilation["plan"]["bindings"]
         await _update_materialization(

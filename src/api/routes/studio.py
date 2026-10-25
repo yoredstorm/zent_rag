@@ -92,6 +92,7 @@ class SolutionCompileIn(BaseModel):
     source_refs: list[str] = Field(default_factory=list, max_length=20)
     existing_agent_id: str | None = Field(default=None, max_length=80)
     options: dict[str, Any] = Field(default_factory=dict)
+    mode: Literal["auto", "template", "compose", "hybrid"] = "auto"
 
 
 class SolutionMaterializeIn(SolutionCompileIn):
@@ -387,6 +388,7 @@ async def post_compile_solution(request: Request, body: SolutionCompileIn):
             source_refs=body.source_refs,
             existing_agent_id=body.existing_agent_id,
             options=body.options,
+            mode=body.mode,
         )
     except CompilationError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -414,6 +416,7 @@ async def post_materialize_solution(request: Request, body: SolutionMaterializeI
             idempotency_key=body.idempotency_key,
             confirm=body.confirm,
             user_id=ctx.user_id,
+            mode=body.mode,
         )
     except MaterializationConflict as exc:
         raise HTTPException(409, str(exc)) from exc
