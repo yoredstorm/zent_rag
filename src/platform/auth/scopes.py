@@ -154,3 +154,11 @@ def api_key_environment(prefix_or_token: str) -> str:
     if value.startswith("zent_sk_test_") or value.startswith("rag_test_"):
         return "test"
     return "live"
+
+
+def api_key_environment_allows(key_environment: str, deployment_environment: str) -> bool:
+    """Una key de desarrollo nunca consulta un deployment productivo."""
+    return not (
+        str(key_environment or "live") == "test"
+        and str(deployment_environment or "") == "production"
+    )

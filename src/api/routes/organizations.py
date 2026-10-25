@@ -734,7 +734,15 @@ async def create_api_key(
         "name": body.name,
         "scopes": body.scopes,
         "environment": body.environment,
-        "message": "Save this token now — it will not be shown again.",
+        "expires_at": (
+            key_row.expires_at.isoformat() if key_row and key_row.expires_at else None
+        ),
+        "message": (
+            "Save this token now — it will not be shown again. "
+            "Development keys expire after 1 day."
+            if body.environment == "test"
+            else "Save this token now — it will not be shown again."
+        ),
     }
 
 

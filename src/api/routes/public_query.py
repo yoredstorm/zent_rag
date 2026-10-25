@@ -177,6 +177,20 @@ async def deployment_query(
     )
     if deployment is None:
         return await _respond(404, error="Deployment not found")
+    if getattr(request.state, "api_key_environment", "live") == "test":
+        from src.platform.auth.scopes import api_key_environment_allows
+
+        environment = await deployment_repo.get_environment(
+            organization_id, deployment.environment_id
+        )
+        if environment is not None and not api_key_environment_allows(
+            "test", environment.slug
+        ):
+            return await _respond(
+                403,
+                error="Development key cannot access a production deployment",
+                deployment_id=deployment.id,
+            )
     if deployment.status.value != "healthy":
         return await _respond(
             409,

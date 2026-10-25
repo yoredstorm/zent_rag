@@ -146,6 +146,7 @@ class ApiKeyRepository(ABC):
         name: str = "Default",
         scopes: list[str] | None = None,
         created_by: UUID | None = None,
+        expires_at: datetime | None = None,
     ) -> ApiKey: ...
 
     @abstractmethod

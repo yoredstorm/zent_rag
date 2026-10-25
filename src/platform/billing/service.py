@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from src.core.config import get_settings
@@ -252,6 +253,7 @@ class BillingService:
         scopes: list[str] | None = None,
         created_by: UUID | None = None,
         environment: str = "live",
+        expires_at: datetime | None = None,
     ) -> str:
         from src.platform.auth.scopes import (
             DEFAULT_API_KEY_SCOPES,
@@ -261,8 +263,15 @@ class BillingService:
         prefix = "zent_sk_test" if environment == "test" else "zent_sk_live"
         token = generate_api_token(prefix)
         resolved = canonicalize_scopes(scopes or DEFAULT_API_KEY_SCOPES)
+        if environment == "test" and expires_at is None:
+            expires_at = datetime.now(timezone.utc) + timedelta(days=1)
         await self._api_keys.create_key(
-            organization_id, token, name=name, scopes=resolved, created_by=created_by
+            organization_id,
+            token,
+            name=name,
+            scopes=resolved,
+            created_by=created_by,
+            expires_at=expires_at,
         )
         return token
 

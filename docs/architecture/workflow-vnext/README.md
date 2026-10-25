@@ -24,6 +24,7 @@ de runtime.
 | `12-p10-marketplace.md` | P10: catálogo único, discovery y retorno seguro |
 | `13-p11-operations.md` | P11: cola de operación, timeline y runbook |
 | `14-p12-certification.md` | P12: certificación horizontal y gates |
+| `15-development-keys.md` | Keys development de 1 día y exposición temporal |
 
 ## Autoridades que este programa NO reemplaza
 

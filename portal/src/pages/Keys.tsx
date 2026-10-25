@@ -69,6 +69,7 @@ type ApiKeyInfo = {
   scopes: string[];
   is_active: boolean;
   last_used_at: string | null;
+  expires_at?: string | null;
   created_at: string;
 };
 
@@ -215,7 +216,14 @@ export default function KeysPage() {
       header: "Entorno",
       width: "1%",
       render: (key) => (
-        <Badge tone="neutral">{keyEnvironment(key) === "live" ? "Production" : "Development"}</Badge>
+        <span className="grid gap-1">
+          <Badge tone="neutral">{keyEnvironment(key) === "live" ? "Production" : "Development"}</Badge>
+          {key.expires_at && (
+            <span className="text-[10px] text-warn" data-testid={`key-expiry-${key.id}`}>
+              expira {fmtDateTime(key.expires_at)}
+            </span>
+          )}
+        </span>
       ),
     },
     {
@@ -359,7 +367,7 @@ export default function KeysPage() {
             </p>
             <span className="flex-1" aria-hidden />
             <span className="text-xs text-faint">
-              Production y Development comparten los mismos datos; test tiene cuota más baja.
+              Development expira en 1 día y no puede consultar deployments de producción.
             </span>
             <Button variant="primary" leadingIcon={Plus} onClick={() => setShowCreate(true)}>
               Nueva clave
@@ -449,7 +457,7 @@ export default function KeysPage() {
           <Field label="Entorno" hint="Live: 100 req/min y 10.000/día. Test: 30 req/min y 1.000/día.">
             <Select value={environment} onChange={(e) => setEnvironment(e.target.value as "live" | "test")}>
               <option value="live">Production (zent_sk_live_)</option>
-              <option value="test">Development (zent_sk_test_)</option>
+              <option value="test">Development (zent_sk_test_, expira en 1 día)</option>
             </Select>
           </Field>
 
