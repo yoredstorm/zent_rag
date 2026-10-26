@@ -15,6 +15,7 @@ import {
   DEFAULT_MODEL_ROUTE,
   RECOMMENDED_LIMITS,
   RECOMMENDED_RETRIEVAL,
+  applyPresetToProfile,
   capabilityLabels,
   matchResponsePreset,
   recommendAgentConfiguration,
@@ -26,7 +27,6 @@ import type { ChatTurn } from "./AgentTestChat";
 import { hasDbSources, sourceTypesForSelection } from "./toolApplicability";
 import {
   DEFAULT_RESPONSE_PROFILE,
-  RESPONSE_PROFILE_PRESETS,
   buildAgentPayload,
   defaultConfig,
   resolveStudioView,
@@ -42,6 +42,8 @@ import {
   type IngestionJob,
   type KnowledgeSource,
   type ResponseProfile,
+  type ResponseProfileCatalog,
+  type ResponseProfilePreset,
 } from "./types";
 
 type Readiness = {
@@ -116,6 +118,12 @@ export function useAgentStudio() {
   const [leaveOpen, setLeaveOpen] = useState(false);
   /** Detalle del perfil de respuesta en el panel (Nivel 2). Estado de UI puro. */
   const [profileCustomOpen, setProfileCustomOpen] = useState(false);
+  /** Catálogo canónico de perfiles (backend); la UI no define presets. */
+  const [profilePresets, setProfilePresets] = useState<ResponseProfilePreset[]>([]);
+  const [profileDefaults, setProfileDefaults] = useState<ResponseProfile>(
+    DEFAULT_RESPONSE_PROFILE,
+  );
+  const [profileCatalogLoading, setProfileCatalogLoading] = useState(true);
   /** Panel de recomendación automática: sólo visible cuando el usuario lo pide. */
   const [aiSuggestionOpen, setAiSuggestionOpen] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
@@ -124,8 +132,17 @@ export function useAgentStudio() {
   const pendingRun = useRef<string | null>(null);
 
   const profile = useMemo<ResponseProfile>(
-    () => ({ ...DEFAULT_RESPONSE_PROFILE, ...(config.response_profile ?? {}) }),
-    [config.response_profile],
+    () => ({
+      ...profileDefaults,
+      ...(config.response_profile ?? {}),
+      profile_id:
+        config.response_profile?.profile_id ??
+        config.response_profile?.preset ??
+        profileDefaults.profile_id,
+      profile_version:
+        config.response_profile?.profile_version ?? profileDefaults.profile_version,
+    }),
+    [config.response_profile, profileDefaults],
   );
   const capabilities = useMemo<CapabilityFlags>(
     () => ({ knowledge: semantic, data: sql, integrations: apiCalls }),
@@ -293,6 +310,24 @@ export function useAgentStudio() {
 
   useEffect(() => {
     if (!session) return;
+    setProfileCatalogLoading(true);
+    api<ResponseProfileCatalog>("/api/v1/agents/response-profile/catalog", {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then((catalog) => {
+        setProfilePresets(Array.isArray(catalog.presets) ? catalog.presets : []);
+        if (catalog.defaults) setProfileDefaults(catalog.defaults);
+      })
+      .catch(() => {
+        // Sin catálogo la UI no inventa presets: muestra el perfil guardado.
+        setProfilePresets([]);
+      })
+      .finally(() => setProfileCatalogLoading(false));
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
     api<{ routes: { name: string; description: string }[] }>("/api/v1/gateway/routes", {
       token: session.token,
       organizationId: session.organizationId,
@@ -415,16 +450,22 @@ export function useAgentStudio() {
   }
 
   function applyResponseProfile(next: ResponseProfile) {
-    setConfig((prev) => ({ ...prev, response_profile: { ...next, preset: next.preset } }));
+    setConfig((prev) => ({ ...prev, response_profile: next }));
   }
 
-  function applyPreset(presetId: string) {
-    const preset = PRESET_LOOKUP(presetId);
+  function applyPreset(presetId: string, keepCustomInstructions = false) {
+    const preset = profilePresets.find((item) => item.id === presetId);
     if (!preset) return;
-    setConfig((prev) => ({
-      ...prev,
-      response_profile: { ...DEFAULT_RESPONSE_PROFILE, ...preset.profile, preset: preset.id },
-    }));
+    setConfig((prev) => {
+      const current = prev.response_profile;
+      return {
+        ...prev,
+        response_profile: applyPresetToProfile(preset, {
+          current: current ?? undefined,
+          keepCustomInstructions,
+        }),
+      };
+    });
   }
 
   function restoreRetrievalRecommended() {
@@ -450,10 +491,14 @@ export function useAgentStudio() {
         purpose: config.purpose || "",
         sourceTypes,
         sourceKindLabels: selectedSources.map((source) => source.type),
+        presets: profilePresets,
       }),
-    [config.purpose, sourceTypes, selectedSources],
+    [config.purpose, sourceTypes, selectedSources, profilePresets],
   );
-  const profilePresetId = useMemo(() => matchResponsePreset(config.response_profile), [config.response_profile]);
+  const profilePresetId = useMemo(
+    () => matchResponsePreset(config.response_profile, profilePresets),
+    [config.response_profile, profilePresets],
+  );
   const isProfileCustom = profilePresetId === CUSTOM_PROFILE;
 
   function applyRecommendation() {
@@ -485,15 +530,19 @@ export function useAgentStudio() {
       );
       const draft = data.draft as Partial<ResponseProfile>;
       setConfig((prev) => {
-        const current = { ...DEFAULT_RESPONSE_PROFILE, ...(prev.response_profile ?? {}) };
-        return {
-          ...prev,
-          response_profile: {
-            ...current,
-            ...draft,
-            preset: typeof draft.preset === "string" ? draft.preset : current.preset,
-          } as ResponseProfile,
-        };
+        const current = { ...profileDefaults, ...(prev.response_profile ?? {}) };
+        const next = {
+          ...current,
+          ...draft,
+          profile_id:
+            typeof draft.profile_id === "string"
+              ? draft.profile_id
+              : typeof draft.preset === "string"
+                ? draft.preset
+                : CUSTOM_PROFILE,
+        } as ResponseProfile;
+        next.preset = next.profile_id;
+        return { ...prev, response_profile: next };
       });
       setAiNotice("Perfil propuesto a partir de datos reales del agente. Revisalo antes de guardar.");
     } catch (err) {
@@ -953,6 +1002,9 @@ export function useAgentStudio() {
     config,
     setConfig,
     profile,
+    profileDefaults,
+    profilePresets,
+    profileCatalogLoading,
     applyResponseProfile,
     applyPreset,
     profilePresetId,
@@ -1055,6 +1107,3 @@ export function useAgentStudio() {
   };
 }
 
-function PRESET_LOOKUP(presetId: string) {
-  return RESPONSE_PROFILE_PRESETS.find((preset) => preset.id === presetId) ?? null;
-}

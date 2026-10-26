@@ -9,10 +9,11 @@ import { ChatCircle, Sparkle } from "@phosphor-icons/react";
 import { Badge, Button } from "../ui";
 import { AgentOptionCard } from "./AgentField";
 import { CUSTOM_PROFILE } from "./agentModes";
-import { RESPONSE_PROFILE_PRESETS } from "./types";
+import type { ResponseProfilePreset } from "./types";
 
 export function AgentBehaviorPresetSection({
   presetId,
+  presets,
   summary,
   onPreset,
   onCustomize,
@@ -21,6 +22,8 @@ export function AgentBehaviorPresetSection({
 }: {
   /** Id del preset que coincide, o `custom`. */
   presetId: string;
+  /** Catálogo canónico del backend. */
+  presets: ResponseProfilePreset[];
   /** Resumen del perfil cuando es personalizado. */
   summary?: string;
   onPreset: (presetId: string) => void;
@@ -74,10 +77,10 @@ export function AgentBehaviorPresetSection({
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2" aria-label="Comportamiento del agente" role="group">
-        {RESPONSE_PROFILE_PRESETS.map((preset) => (
+        {presets.map((preset) => (
           <AgentOptionCard
             key={preset.id}
-            id={`response-preset-${preset.id}`}
+            id={`behavior-preset-${preset.id}`}
             label={preset.label}
             hint={preset.hint}
             selected={presetId === preset.id}

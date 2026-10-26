@@ -69,6 +69,15 @@ class ResponseProfileConfig(BaseModel):
     preserve_domain_terms: bool | None = None
     preferred_blueprints: list[str] | None = Field(default=None, max_length=6)
     custom_instructions: str | None = Field(default=None, max_length=800)
+    profile_id: str | None = Field(default=None, max_length=40)
+    communication_strategy: str | None = Field(default=None, max_length=40)
+    detail_budget: str | None = Field(default=None, max_length=20)
+    structure_policy: str | None = Field(default=None, max_length=60)
+    example_policy: str | None = Field(default=None, max_length=30)
+    analysis_depth: str | None = Field(default=None, max_length=40)
+    terminology_policy: str | None = Field(default=None, max_length=40)
+    source_presentation_policy: str | None = Field(default=None, max_length=30)
+    audience_assumptions: str | None = Field(default=None, max_length=240)
 
 
 class AgentConfig(BaseModel):
@@ -142,6 +151,13 @@ def parse_agent_config(raw: dict | None) -> dict:
 
 
 def _agent_response(agent, *, warnings: list[str] | None = None) -> dict:
+    config = parse_agent_config(agent.config_json)
+    # El perfil se devuelve ya resuelto (preset + estrategia + defaults), no
+    # como el delta crudo que mandó el cliente: la UI y el runtime ven lo mismo.
+    if config.get("response_profile"):
+        from src.intelligence.response.profile import profile_from_config
+
+        config["response_profile"] = profile_from_config(config).to_public_dict()
     payload = {
         "id": str(agent.id),
         "name": agent.name,
@@ -157,7 +173,7 @@ def _agent_response(agent, *, warnings: list[str] | None = None) -> dict:
         "identity": f"agent://{agent.organization_id}/{agent.id}",
         "created_by": str(agent.created_by) if agent.created_by else None,
         "created_at": agent.created_at.isoformat(),
-        "config": parse_agent_config(agent.config_json),
+        "config": config,
     }
     if warnings:
         payload["warnings"] = list(warnings)
@@ -444,13 +460,15 @@ async def delete_agent(
 @router.get("/response-profile/catalog", summary="Presets de respuesta y formas de explicación")
 async def response_profile_catalog(request: Request):
     """Catálogo para Agent Studio: presets + blueprints (§29, §51)."""
+    from src.core.domain.response import ResponseProfile
     from src.intelligence.response.blueprints import public_blueprints
     from src.intelligence.response.profile import public_presets
 
     return {
+        "schema": "zent.response_profile_catalog/v2",
         "presets": public_presets(),
         "blueprints": public_blueprints(),
-        "defaults": ResponseProfileConfig().model_dump(),
+        "defaults": ResponseProfile().to_public_dict(),
     }
 
 
@@ -465,6 +483,14 @@ class GenerateProfileRequest(BaseModel):
 
 class PreviewRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
+    mock_evidence: str | None = Field(default=None, max_length=4000)
+    #: Perfil temporal del preview. Si falta, se usa el guardado del agente.
+    profile: ResponseProfileConfig | None = None
+
+
+class CompareRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+    profile_ids: list[str] = Field(min_length=2, max_length=4)
     mock_evidence: str | None = Field(default=None, max_length=4000)
 
 
@@ -503,7 +529,9 @@ async def _agent_config_context(request: Request, ctx, agent) -> object:
     )
 
 
-async def _generate_text(prompt: str, *, max_tokens: int = 400) -> str:
+async def _generate_text(
+    prompt: str, *, max_tokens: int = 400, temperature: float = 0.2
+) -> str:
     """Generación corta para el configurador. Fail-soft: sin LLM, sin draft."""
     from src.api.deps import get_llm_provider
     from src.core.config import get_settings
@@ -512,7 +540,10 @@ async def _generate_text(prompt: str, *, max_tokens: int = 400) -> str:
     provider = get_llm_provider()
     model = getattr(settings, "LITELLM_DEFAULT_MODEL", None)
     response = await provider.generate(
-        prompt=prompt, model=model, max_tokens=max_tokens, temperature=0.2
+        prompt=prompt,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
     )
     return str(getattr(response, "content", "") or "")
 
@@ -602,6 +633,40 @@ async def generate_response_profile(
     return {"draft": suggestion, "saved": False}
 
 
+class SaveProfileRequest(BaseModel):
+    profile: ResponseProfileConfig
+
+
+@router.put(
+    "/{agent_id}/config/response-profile",
+    summary="Guardar sólo el perfil de respuesta, sin tocar el resto del config",
+)
+async def save_response_profile(agent_id: str, body: SaveProfileRequest, request: Request):
+    from src.intelligence.response.profile import profile_from_config
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    agent = await _get_owned_agent(ctx, agent_id)
+    resolved = profile_from_config(
+        {"response_profile": body.profile.model_dump(exclude_none=True)}
+    )
+    config = dict(agent.config_json or {})
+    config["response_profile"] = resolved.to_public_dict()
+    from src.api.deps import get_agent_repo
+
+    updated = await get_agent_repo().update_agent(
+        ctx.organization_id, agent.id, config_json=config
+    )
+    await _audit().write(
+        ctx,
+        "agent.response_profile.updated",
+        "agent",
+        agent.id,
+        metadata={"profile_id": resolved.profile_id, "version": resolved.profile_version},
+    )
+    return _agent_response(updated)
+
+
 @router.post(
     "/{agent_id}/config/preview",
     summary="Preview de respuesta con conocimiento simulado (§34)",
@@ -609,14 +674,23 @@ async def generate_response_profile(
 async def preview_agent_response(agent_id: str, body: PreviewRequest, request: Request):
     """Muestra cómo respondería el agente. No ejecuta tools reales."""
     from src.intelligence.response.contract import prompt_block
+    from src.intelligence.response.profile import profile_from_config
     from src.intelligence.response.wiring import compose_for_request
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "agents:write")
     agent = await _get_owned_agent(ctx, agent_id)
+    temporary_profile = (
+        profile_from_config(
+            {"response_profile": body.profile.model_dump(exclude_none=True)}
+        )
+        if body.profile is not None
+        else None
+    )
     plan = await compose_for_request(
         question=body.question,
         config_json=agent.config_json,
+        profile=temporary_profile,
         mode="rules",
         request_id=None,
         organization_id=ctx.organization_id,
@@ -626,7 +700,11 @@ async def preview_agent_response(agent_id: str, body: PreviewRequest, request: R
         or "[MOCK] Sin evidencia real: el preview muestra únicamente la forma y el estilo "
         "configurados. No hay hechos de dominio en esta respuesta."
     )
-    shape = prompt_block(plan.contract) if plan.contract is not None else ""
+    shape = (
+        prompt_block(plan.contract, profile=plan.profile)
+        if plan.contract is not None
+        else ""
+    )
     prompt = (
         f"PREGUNTA DEL USUARIO:\n{body.question}\n\n"
         f"EVIDENCIA DISPONIBLE (simulada, no son hechos reales):\n{mock}\n\n"
@@ -642,9 +720,100 @@ async def preview_agent_response(agent_id: str, body: PreviewRequest, request: R
     return {
         "preview": draft,
         "simulated_evidence": True,
+        "tools_executed": False,
+        "profile_source": "temporary" if temporary_profile is not None else "saved",
+        "profile": plan.profile.to_public_dict() if plan.profile is not None else None,
         "response_contract": plan.contract.to_public_dict() if plan.contract is not None else None,
+        "validation": {
+            "contract_present": plan.contract is not None,
+            "style_degraded": bool(plan.style_degraded),
+            "style_degradation_reason": plan.style_degradation_reason,
+        },
         "mode": plan.mode,
         "source": plan.source,
+    }
+
+
+@router.post(
+    "/{agent_id}/config/compare",
+    summary="Comparar perfiles de respuesta con la misma pregunta y evidencia",
+)
+async def compare_agent_profiles(agent_id: str, body: CompareRequest, request: Request):
+    """A/B simulado: mismo modelo, pregunta y evidencia; sin herramientas reales."""
+    import asyncio
+
+    from src.intelligence.response.contract import prompt_block
+    from src.intelligence.response.profile import RESPONSE_PROFILE_PRESETS
+    from src.intelligence.response.wiring import compose_for_request
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    agent = await _get_owned_agent(ctx, agent_id)
+    unknown = [item for item in body.profile_ids if item not in RESPONSE_PROFILE_PRESETS]
+    if unknown:
+        raise HTTPException(400, {"error_code": "unknown_profile", "profiles": unknown})
+    mock = (
+        str(body.mock_evidence or "").strip()
+        or "[MOCK] Misma evidencia simulada para todas las variantes. "
+        "No hay hechos de dominio ni ejecución de herramientas."
+    )
+
+    async def run_one(profile_id: str) -> dict[str, Any]:
+        profile = RESPONSE_PROFILE_PRESETS[profile_id]
+        plan = await compose_for_request(
+            question=body.question,
+            config_json=agent.config_json,
+            profile=profile,
+            mode="rules",
+            request_id=None,
+            organization_id=ctx.organization_id,
+        )
+        shape = (
+            prompt_block(plan.contract, profile=plan.profile)
+            if plan.contract is not None
+            else ""
+        )
+        prompt = (
+            f"PREGUNTA DEL USUARIO:\n{body.question}\n\n"
+            f"EVIDENCIA DISPONIBLE (simulada, no son hechos reales):\n{mock}\n\n"
+            "Responde siguiendo la forma y el estilo indicados. "
+            "Si la evidencia no alcanza, dilo."
+        )
+        try:
+            answer = await _generate_text(
+                f"{shape}\n\n{prompt}" if shape else prompt,
+                max_tokens=600,
+                temperature=0.0,
+            )
+            error = ""
+        except Exception as exc:  # noqa: BLE001 — una variante no tumba la comparación
+            answer = ""
+            error = str(exc)[:200]
+        contract = plan.contract
+        return {
+            "profile_id": profile_id,
+            "profile": plan.profile.to_public_dict() if plan.profile is not None else None,
+            "answer": answer,
+            "error": error,
+            "chars": len(answer),
+            "sections": list(contract.sections) if contract is not None else [],
+            "formatting": dict(contract.formatting) if contract is not None else {},
+            "evidence": dict(contract.evidence) if contract is not None else {},
+            "response_contract": contract.to_public_dict() if contract is not None else None,
+            "validation": {
+                "contract_present": contract is not None,
+                "style_degraded": bool(plan.style_degraded),
+                "style_degradation_reason": plan.style_degradation_reason,
+            },
+        }
+
+    results = await asyncio.gather(*(run_one(item) for item in body.profile_ids))
+    return {
+        "question": body.question,
+        "simulated_evidence": True,
+        "tools_executed": False,
+        "same_evidence": True,
+        "results": results,
     }
 
 

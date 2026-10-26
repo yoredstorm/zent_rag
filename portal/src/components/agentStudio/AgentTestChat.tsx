@@ -20,6 +20,45 @@ import { EvalCaseDialog } from "../evaluation/EvalCaseDialog";
 import { Badge, Button, IconButton, LoadingDots, Panel, PanelHeader, Textarea } from "../ui";
 import { SUGGESTED_QUESTIONS, type KnowledgeSource } from "./types";
 
+/** Traza compacta: perfil solicitado, aplicado y validación del turno real. */
+function profileTrace(flow: Record<string, unknown> | null | undefined) {
+  const contract = flow?.response_contract;
+  if (contract && typeof contract === "object") {
+    const applied = contract as Record<string, unknown>;
+    const response = flow?.response;
+    const requested =
+      response && typeof response === "object"
+        ? ((response as Record<string, unknown>).profile as Record<string, unknown> | undefined)
+            ?.profile_id
+        : undefined;
+    return {
+      requested: String(requested ?? applied.profile_id ?? "?"),
+      applied: String(applied.profile_id ?? "?"),
+      strategy: String(applied.communication_strategy ?? "sin estrategia"),
+      degraded: Boolean(applied.style_degraded),
+    };
+  }
+  // Fast path determinista: el compositor aplica el perfil aunque no haya
+  // contrato de forma. Se muestra igual, sin inventar una validación.
+  const fast = flow?.fast_path;
+  const composer =
+    fast && typeof fast === "object"
+      ? (fast as Record<string, unknown>).response_composer
+      : undefined;
+  const personality =
+    composer && typeof composer === "object"
+      ? (composer as Record<string, unknown>).personality
+      : undefined;
+  if (!personality || typeof personality !== "object") return null;
+  const applied = personality as Record<string, unknown>;
+  return {
+    requested: String(applied.profile_id ?? "?"),
+    applied: String(applied.profile_id ?? "?"),
+    strategy: String(applied.communication_strategy ?? "sin estrategia"),
+    degraded: applied.applied !== true,
+  };
+}
+
 export type ChatTurn = {
   role: "user" | "assistant";
   text: string;
@@ -237,6 +276,17 @@ export function AgentTestChat({
             {turn.error && <p className="mt-2 text-xs text-danger">{turn.error}</p>}
             {turn.role === "assistant" && (turn.flow || turn.text) && (
               <div className="mt-2 flex flex-wrap items-center gap-2">
+                {profileTrace(turn.flow) ? (
+                  <span
+                    className="text-[10.5px] text-faint"
+                    data-testid="agent-profile-trace"
+                  >
+                    Perfil {profileTrace(turn.flow)?.requested} → {profileTrace(turn.flow)?.applied}
+                    {" · "}
+                    {profileTrace(turn.flow)?.strategy}
+                    {profileTrace(turn.flow)?.degraded ? " · estilo parcial" : " · validado"}
+                  </span>
+                ) : null}
                 {turn.flow && (
                   <Button
                     variant="ghost"

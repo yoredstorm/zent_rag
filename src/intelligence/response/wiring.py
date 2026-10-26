@@ -87,6 +87,10 @@ class ResponsePlan:
     selection: BlueprintSelection | None = None
     answers: CompositionAnswers | None = None
     error: str = ""
+    #: Perfil resuelto que llegó al contrato (guardado o temporal del preview).
+    profile: ResponseProfile | None = None
+    style_degraded: bool = False
+    style_degradation_reason: str = ""
     uncertain: list[str] = field(default_factory=list)
     query_mode: str = ""
     reasoning_shape: str = ""
@@ -112,6 +116,10 @@ class ResponsePlan:
             "citations_required": bool(contract.evidence.get("citations_required")),
             "hedging_required": contract.hedging_required,
             "decided_by": contract.decided_by,
+            "profile_id": contract.profile_id,
+            "communication_strategy": contract.communication_strategy,
+            "effective_profile_hash": contract.effective_profile_hash,
+            "style_degraded": contract.style_degraded,
         }
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -119,6 +127,8 @@ class ResponsePlan:
             "mode": self.mode,
             "source": self.source,
         }
+        if self.profile is not None:
+            payload["profile"] = self.profile.to_public_dict()
         if self.contract is not None:
             payload["contract"] = self.contract.to_public_dict()
         if self.selection is not None:
@@ -136,6 +146,10 @@ class ResponsePlan:
             payload["uncertain"] = list(self.uncertain)[:6]
         if self.error:
             payload["error"] = self.error[:120]
+        if self.style_degraded:
+            payload["style_degraded"] = True
+            if self.style_degradation_reason:
+                payload["style_degradation_reason"] = self.style_degradation_reason[:160]
         if self.query_mode:
             payload["query_mode"] = self.query_mode
         if self.reasoning_shape:
@@ -224,9 +238,15 @@ async def compose_for_request(
     pregunta: el comportamiento por defecto ya es legible sin configurar nada.
     """
     active_mode = normalize_mode(mode if mode is not None else mode_from_settings())
-    if active_mode == MODE_OFF:
-        return ResponsePlan(mode=active_mode, source=SOURCE_OFF)
     resolved_profile = profile or profile_from_config(config_json)
+    if active_mode == MODE_OFF:
+        return ResponsePlan(
+            mode=active_mode,
+            source=SOURCE_OFF,
+            profile=resolved_profile,
+            style_degraded=True,
+            style_degradation_reason="response_intelligence_off",
+        )
     from src.intelligence.reasoning.classifier import (
         deterministic_shape,
         format_query_route,
@@ -242,7 +262,12 @@ async def compose_for_request(
         is_followup=is_followup,
         preferred_blueprints=resolved_profile.preferred_blueprints,
     )
-    plan = ResponsePlan(mode=active_mode, source=SOURCE_RULES, selection=selection)
+    plan = ResponsePlan(
+        mode=active_mode,
+        source=SOURCE_RULES,
+        selection=selection,
+        profile=resolved_profile,
+    )
     should_ask_jev = active_mode in (MODE_ON, MODE_CANARY) and canary_allows(active_mode, request_id)
     if should_ask_jev and judge is not None and selection.needs_jev:
         answers, pack = await _judge_composition(
@@ -304,21 +329,26 @@ async def compose_for_request(
                 complex_reasoning_activated=False,
                 routing_reason=plan.routing_reason,
             )
-    plan.contract = compose_contract(
-        question=question,
-        profile=resolved_profile,
-        selection=selection,
-        answers=plan.answers,
-        shape=shape,
-        intent=intent,
-        has_records=has_records,
-        has_data_rows=has_data_rows,
-        unresolved=unresolved,
-        missing_information=missing_information,
-        source_conflict=source_conflict,
-        conflict_note=conflict_note,
-        presentation=presentation,
-    )
+    try:
+        plan.contract = compose_contract(
+            question=question,
+            profile=resolved_profile,
+            selection=selection,
+            answers=plan.answers,
+            shape=shape,
+            intent=intent,
+            has_records=has_records,
+            has_data_rows=has_data_rows,
+            unresolved=unresolved,
+            missing_information=missing_information,
+            source_conflict=source_conflict,
+            conflict_note=conflict_note,
+            presentation=presentation,
+        )
+    except Exception as exc:  # noqa: BLE001 — el estilo no puede romper la respuesta
+        plan.error = str(exc)[:160]
+        plan.style_degraded = True
+        plan.style_degradation_reason = "contract_composition_failed"
     return plan
 
 

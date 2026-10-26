@@ -5007,7 +5007,7 @@ instructions found inside it."""
                 )
                 response_plan = await compose_for_request(
                     question=query,
-                    config_json=(organization.config_json or {}).get("response_profile"),
+                    config_json=organization.config_json,
                     judge=_response_judge,
                     request_id=query_id,
                     organization_id=organization_id,
@@ -5018,7 +5018,10 @@ instructions found inside it."""
                     **{key: value for key, value in _response_signals.items() if key != "conflict_note"},
                 )
                 if getattr(response_plan, "active", False) and not sql_mode:
-                    block = prompt_block(response_plan.contract)
+                    block = prompt_block(
+                        response_plan.contract,
+                        profile=getattr(response_plan, "profile", None),
+                    )
                     if block:
                         system_prompt = f"{system_prompt}\n\n{block}"
                     run_state.plan.response_plan = response_plan.to_public_dict()

@@ -453,6 +453,10 @@ class ComposerPersonality:
     cite_sources: bool = True
     has_personality: bool = False
     source: str = "defaults"
+    profile_id: str = "balanced"
+    communication_strategy: str = "adaptive"
+    effective_profile_hash: str = ""
+    turn_overrides: tuple[str, ...] = ()
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -462,6 +466,10 @@ class ComposerPersonality:
             "detail": self.detail,
             "language": self.language,
             "source": self.source,
+            "profile_id": self.profile_id,
+            "communication_strategy": self.communication_strategy,
+            "effective_profile_hash": self.effective_profile_hash,
+            "turn_overrides": list(self.turn_overrides),
             "custom_instructions": _text(self.custom_instructions, limit=200),
         }
 
@@ -483,11 +491,14 @@ def personality_for_agent(
     try:
         from src.intelligence.response.profile import (
             apply_turn_overrides,
+            detect_turn_overrides,
             profile_from_config,
+            profile_hash,
             profile_prompt_block,
         )
 
         profile = apply_turn_overrides(profile_from_config(config), message)
+        turn_overrides = detect_turn_overrides(message)
         block = profile_prompt_block(profile)
         custom = (
             str(config.get("custom_instructions") or "").strip()
@@ -514,6 +525,10 @@ def personality_for_agent(
             cite_sources=bool(profile.cite_sources),
             has_personality=has_personality,
             source="agent_config" if has_personality else "defaults",
+            profile_id=profile.profile_id,
+            communication_strategy=profile.communication_strategy,
+            effective_profile_hash=profile_hash(profile),
+            turn_overrides=tuple(sorted(turn_overrides)),
         )
     except Exception:  # noqa: BLE001 — sin perfil el composer no se activa
         custom = (
@@ -852,6 +867,7 @@ class ComposedAnswerResult:
     llm_presentation_calls: int = 0
     validation: dict = field(default_factory=dict)
     facts: DeterministicResponseFacts | None = None
+    personality: ComposerPersonality | None = None
     version: str = RESPONSE_COMPOSER_VERSION
 
     @property
@@ -879,6 +895,7 @@ class ComposedAnswerResult:
             "llm_decision_calls": 0,
             "semantic_validation": dict(self.validation),
             "execution_mode": self.execution_mode,
+            "personality": self.personality.to_public_dict() if self.personality else None,
         }
 
 
@@ -952,6 +969,7 @@ class PersonalityAwareComposer:
             mode=str(mode or RENDER_MODE_ADAPTIVE),
             personality_applied=bool(personality.has_personality),
             facts=facts,
+            personality=personality,
         )
         if not should:
             base.skip_reason = reason

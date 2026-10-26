@@ -8,10 +8,10 @@
 // =============================================================================
 import {
   DEFAULT_RESPONSE_PROFILE,
-  RESPONSE_PROFILE_PRESETS,
   type AgentConfig,
   type AgentTone,
   type ResponseProfile,
+  type ResponseProfilePreset,
 } from "./types";
 
 /** Ruta del gateway recomendada: Zent elige el motor real. */
@@ -150,23 +150,72 @@ const PROFILE_KEYS = [
   "show_uncertainty",
   "show_practical_implications",
   "preserve_domain_terms",
+  "communication_strategy",
+  "detail_budget",
+  "structure_policy",
+  "example_policy",
+  "analysis_depth",
+  "terminology_policy",
+  "source_presentation_policy",
 ] as const;
 
 export const CUSTOM_PROFILE = "custom";
 
+/** Etiquetas de respaldo sólo para recomendaciones; no definen perfiles. */
+const PRESET_LABELS: Record<string, string> = {
+  balanced: "Equilibrado",
+  precise: "Preciso",
+  clear_didactic: "Claro y didáctico",
+  technical_detailed: "Experto técnico",
+  executive: "Ejecutivo",
+  concise: "Conciso",
+  analytical: "Analítico",
+  evidence_first: "Con evidencia",
+};
+
 /**
- * Compara el perfil guardado contra cada preset resuelto. Devuelve el id del
- * preset sólo si son indistinguibles; si no, `custom`. Un agente guardado con
- * `preset: "executive"` pero con el tono editado vuelve como `custom`, que es
- * justo lo que hay que mostrar sin tocarle los valores.
+ * Aplica un preset completo del catálogo. Sustituye el perfil entero: ningún
+ * campo exclusivo del preset anterior sobrevive. `custom_instructions` sólo se
+ * conserva si el llamador lo pide explícitamente.
  */
-export function matchResponsePreset(profile: ResponseProfile | null | undefined): string {
+export function applyPresetToProfile(
+  preset: ResponseProfilePreset,
+  options: { current?: ResponseProfile; keepCustomInstructions?: boolean } = {},
+): ResponseProfile {
+  const keep = Boolean(options.keepCustomInstructions && options.current?.custom_instructions);
+  return {
+    ...DEFAULT_RESPONSE_PROFILE,
+    ...preset.profile,
+    profile_id: keep ? CUSTOM_PROFILE : preset.id,
+    preset: keep ? CUSTOM_PROFILE : preset.id,
+    custom_instructions: keep
+      ? (options.current?.custom_instructions ?? "")
+      : (preset.profile.custom_instructions ?? ""),
+  };
+}
+
+/** Cualquier edición manual deja de ser un preset exacto. */
+export function markProfileCustom(profile: ResponseProfile): ResponseProfile {
+  return { ...profile, profile_id: CUSTOM_PROFILE, preset: CUSTOM_PROFILE };
+}
+
+/**
+ * Compara el perfil guardado contra los presets del catálogo del backend.
+ * Devuelve el id del preset sólo si son indistinguibles; si no, `custom`.
+ */
+export function matchResponsePreset(
+  profile: ResponseProfile | null | undefined,
+  presets: ResponseProfilePreset[],
+): string {
   const resolved: ResponseProfile = { ...DEFAULT_RESPONSE_PROFILE, ...(profile ?? {}) };
   if ((resolved.custom_instructions ?? "").trim()) return CUSTOM_PROFILE;
   const preferred = resolved.preferred_blueprints ?? [];
   if (preferred.length) return CUSTOM_PROFILE;
-  for (const preset of RESPONSE_PROFILE_PRESETS) {
-    const candidate: ResponseProfile = { ...DEFAULT_RESPONSE_PROFILE, ...preset.profile };
+  for (const preset of presets) {
+    const candidate: ResponseProfile = {
+      ...DEFAULT_RESPONSE_PROFILE,
+      ...preset.profile,
+    };
     const same = PROFILE_KEYS.every(
       (key) => String(resolved[key]) === String(candidate[key]),
     );
@@ -175,10 +224,13 @@ export function matchResponsePreset(profile: ResponseProfile | null | undefined)
   return CUSTOM_PROFILE;
 }
 
-export function responseProfileSummary(profile: ResponseProfile | null | undefined): string {
-  const presetId = matchResponsePreset(profile);
+export function responseProfileSummary(
+  profile: ResponseProfile | null | undefined,
+  presets: ResponseProfilePreset[],
+): string {
+  const presetId = matchResponsePreset(profile, presets);
   if (presetId !== CUSTOM_PROFILE) {
-    return RESPONSE_PROFILE_PRESETS.find((preset) => preset.id === presetId)?.label ?? "Preset";
+    return presets.find((preset) => preset.id === presetId)?.label ?? "Preset";
   }
   const resolved: ResponseProfile = { ...DEFAULT_RESPONSE_PROFILE, ...(profile ?? {}) };
   const tone: Record<string, string> = {
@@ -332,6 +384,7 @@ export function recommendAgentConfiguration(input: {
   purpose: string;
   sourceTypes: string[] | null;
   sourceKindLabels?: string[];
+  presets?: ResponseProfilePreset[];
 }): AgentRecommendation {
   const purpose = String(input.purpose || "");
   const reasons: string[] = [];
@@ -360,7 +413,9 @@ export function recommendAgentConfiguration(input: {
   if (capabilities.data) reasons.push("Hay fuentes de base de datos: la consulta de datos queda disponible.");
 
   const presetLabel =
-    RESPONSE_PROFILE_PRESETS.find((preset) => preset.id === presetId)?.label ?? "Equilibrado";
+    input.presets?.find((preset) => preset.id === presetId)?.label ??
+    PRESET_LABELS[presetId] ??
+    "Equilibrado";
 
   const decisions = [
     presetLabel,

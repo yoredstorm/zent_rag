@@ -50,6 +50,8 @@ from src.intelligence.response.presentation import (
 )
 from src.intelligence.response.profile import (
     apply_turn_overrides,
+    detect_turn_overrides,
+    profile_hash,
     profile_prompt_block,
 )
 from src.intelligence.response.questions import CompositionAnswers
@@ -95,9 +97,15 @@ def compose_contract(
     source_conflict: bool = False,
     conflict_note: str = "",
     presentation: PresentationPolicy | None = None,
+    style_degraded: bool = False,
+    style_degradation_reason: str = "",
 ) -> ResponseContract:
     """Compone el contrato de respuesta. Fail-soft y determinista."""
-    base_profile = apply_turn_overrides(profile or ResponseProfile(), question)
+    saved_profile = profile or ResponseProfile()
+    turn_overrides = detect_turn_overrides(question)
+    base_profile = apply_turn_overrides(saved_profile, question)
+    effective_profile_hash = profile_hash(base_profile)
+    override_origin = "turn_override" if turn_overrides else saved_profile.override_origin
     chosen = selection or select_blueprint(
         question=question,
         intent=intent,
@@ -154,11 +162,11 @@ def compose_contract(
             formatting[key] = False
 
     evidence = dict(blueprint.evidence)
+    # Una cita obligatoria del blueprint o del pack no se apaga por elegir
+    # Conciso/Ejecutivo. El perfil controla CÓMO presentarla, no si existe.
     evidence["citations_required"] = bool(
-        evidence.get("citations_required") and (base_profile.cite_sources or pack.needs_flag("needs_citations"))
+        evidence.get("citations_required") or pack.needs_flag("needs_citations")
     )
-    if pack.needs_flag("needs_citations"):
-        evidence["citations_required"] = True
 
     hedging = bool(unresolved_list)
     if hedging or missing_list:
@@ -224,6 +232,21 @@ def compose_contract(
         layers=policy.layers,
         presentation=policy.to_public_dict(),
         show_limitations=show_limitations,
+        profile_id=base_profile.profile_id,
+        profile_version=base_profile.profile_version,
+        communication_strategy=base_profile.communication_strategy,
+        detail_budget=base_profile.detail_budget,
+        structure_policy=base_profile.structure_policy,
+        example_policy=base_profile.example_policy,
+        analysis_depth=base_profile.analysis_depth,
+        terminology_policy=base_profile.terminology_policy,
+        source_presentation_policy=base_profile.source_presentation_policy,
+        audience_assumptions=base_profile.audience_assumptions,
+        override_origin=override_origin,
+        effective_profile_hash=effective_profile_hash,
+        turn_overrides=tuple(sorted(turn_overrides)),
+        style_degraded=style_degraded,
+        style_degradation_reason=style_degradation_reason[:200],
     )
 
 
@@ -337,6 +360,20 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     lines: list[str] = ["## FORMA DE LA RESPUESTA (cómo explicarlo, no qué decir)"]
     lines.append(f"- forma: {blueprint.label.lower()} — {blueprint.purpose}")
     lines.append(f"- nivel de detalle: {contract.detail} — {DETAIL_GUIDANCE.get(contract.detail, '')}")
+    lines.append(f"- perfil aplicado: {contract.profile_id} v{contract.profile_version}")
+    lines.append(f"- estrategia de comunicación: {contract.communication_strategy}")
+    lines.append(f"- presupuesto de detalle: {contract.detail_budget}")
+    lines.append(f"- política de estructura: {contract.structure_policy}")
+    lines.append(f"- política de ejemplos: {contract.example_policy}")
+    lines.append(f"- profundidad de análisis: {contract.analysis_depth}")
+    lines.append(f"- política de terminología: {contract.terminology_policy}")
+    lines.append(f"- presentación de fuentes: {contract.source_presentation_policy}")
+    if contract.audience_assumptions:
+        lines.append(f"- supuestos de audiencia: {contract.audience_assumptions}")
+    if contract.turn_overrides:
+        lines.append(
+            "- ajustes explícitos del turno: " + ", ".join(list(contract.turn_overrides)[:6])
+        )
     if contract.conclusion_first:
         lines.append("- empieza por la conclusión; el contexto va después de la respuesta")
     prose = _sections_prose(contract.sections)
@@ -591,22 +628,65 @@ def normalize_answer_text(
 
 
 def contract_from_public(payload: Mapping[str, Any] | None) -> ResponseContract | None:
-    """Reconstruye un contrato desde el flujo (lectura defensiva)."""
+    """Reconstruye un contrato desde el flujo (lectura defensiva, no lossy)."""
     if not isinstance(payload, Mapping) or not payload.get("blueprint"):
         return None
     sections = payload.get("sections")
     formatting = payload.get("formatting")
     evidence = payload.get("evidence")
+    presentation = payload.get("presentation")
+
+    def _str_tuple(value: Any) -> tuple[str, ...]:
+        return tuple(str(item) for item in (value or ()) if isinstance(item, str))
+
+    def _bool_map(value: Any) -> dict[str, bool]:
+        if not isinstance(value, Mapping):
+            return {}
+        return {str(k): bool(v) for k, v in value.items()}
+
     return ResponseContract(
         blueprint=str(payload.get("blueprint")),
         detail=str(payload.get("detail") or DETAIL_NORMAL),
         conclusion_first=bool(payload.get("conclusion_first", True)),
-        sections=tuple(str(item) for item in (sections or ()) if isinstance(item, str)),
-        formatting={str(k): bool(v) for k, v in (formatting or {}).items()} if isinstance(formatting, Mapping) else {},
-        evidence={str(k): bool(v) for k, v in (evidence or {}).items()} if isinstance(evidence, Mapping) else {},
+        sections=_str_tuple(sections),
+        formatting=_bool_map(formatting),
+        evidence=_bool_map(evidence),
         language=str(payload.get("language") or "es"),
         tone=str(payload.get("tone") or "professional"),
+        technical_level=str(payload.get("technical_level") or "intermediate"),
+        audience=str(payload.get("audience") or "technical"),
+        preserve_domain_terms=bool(payload.get("preserve_domain_terms", True)),
+        custom_instructions=str(payload.get("custom_instructions") or ""),
         decided_by=str(payload.get("decided_by") or "deterministic"),
+        confidence=(
+            float(payload["confidence"]) if isinstance(payload.get("confidence"), (int, float)) else None
+        ),
+        ambiguous=bool(payload.get("ambiguous", False)),
+        hedging_required=bool(payload.get("hedging_required", False)),
+        uncertainty_notes=_str_tuple(payload.get("uncertainty_notes")),
+        source_conflict=bool(payload.get("source_conflict", False)),
+        missing_information=_str_tuple(payload.get("missing_information")),
+        runner_up=str(payload.get("runner_up") or ""),
+        layers=_str_tuple(payload.get("layers")),
+        presentation=dict(presentation) if isinstance(presentation, Mapping) else {},
+        show_limitations=bool(payload.get("show_limitations", False)),
+        profile_id=str(payload.get("profile_id") or "balanced"),
+        profile_version=int(payload.get("profile_version") or 2),
+        communication_strategy=str(payload.get("communication_strategy") or "adaptive"),
+        detail_budget=str(payload.get("detail_budget") or "adaptive"),
+        structure_policy=str(payload.get("structure_policy") or "adaptive"),
+        example_policy=str(payload.get("example_policy") or "when_useful"),
+        analysis_depth=str(payload.get("analysis_depth") or "proportional"),
+        terminology_policy=str(payload.get("terminology_policy") or "domain_aware"),
+        source_presentation_policy=str(
+            payload.get("source_presentation_policy") or "inline_required"
+        ),
+        audience_assumptions=str(payload.get("audience_assumptions") or ""),
+        override_origin=str(payload.get("override_origin") or "agent_config"),
+        effective_profile_hash=str(payload.get("effective_profile_hash") or ""),
+        turn_overrides=_str_tuple(payload.get("turn_overrides")),
+        style_degraded=bool(payload.get("style_degraded", False)),
+        style_degradation_reason=str(payload.get("style_degradation_reason") or ""),
     )
 
 

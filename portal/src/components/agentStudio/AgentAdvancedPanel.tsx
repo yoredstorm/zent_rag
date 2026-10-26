@@ -95,9 +95,14 @@ export function AgentAdvancedPanel({
             </button>
           </div>
           {isOpen("response") && (
-            <div id="agent-group-response-detail" className="animate-rise">
+            <div
+              id="agent-group-response-detail"
+              data-testid="agent-group-response-detail"
+              className="animate-rise"
+            >
               <AgentResponseProfileSection
                 profile={studio.profile}
+                presets={studio.profilePresets}
                 onChange={studio.applyResponseProfile}
                 agentId={studio.isNew ? undefined : studio.id}
                 token={studio.session?.token}

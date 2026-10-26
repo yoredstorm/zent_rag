@@ -10,6 +10,7 @@ import {
   intelligenceSummary,
   limitsMode,
   limitsSummary,
+  applyPresetToProfile,
   matchResponsePreset,
   modelMode,
   modelSummary,
@@ -18,7 +19,54 @@ import {
   retrievalMode,
   retrievalSummary,
 } from "./agentModes";
-import { DEFAULT_RESPONSE_PROFILE, RESPONSE_PROFILE_PRESETS } from "./types";
+import {
+  DEFAULT_RESPONSE_PROFILE,
+  type ResponseProfilePreset,
+} from "./types";
+
+// Fixture de test: el catálogo real viene del backend.
+const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
+  {
+    id: "balanced",
+    label: "Equilibrado",
+    hint: "",
+    profile: { ...DEFAULT_RESPONSE_PROFILE, profile_id: "balanced" },
+  },
+  {
+    id: "analytical",
+    label: "Analítico",
+    hint: "",
+    profile: {
+      ...DEFAULT_RESPONSE_PROFILE,
+      profile_id: "analytical",
+      default_detail: "deep",
+      use_examples: true,
+      show_uncertainty: true,
+      analysis_depth: "hypothesis_and_tradeoffs",
+    },
+  },
+  {
+    id: "concise",
+    label: "Conciso",
+    hint: "",
+    profile: {
+      ...DEFAULT_RESPONSE_PROFILE,
+      profile_id: "concise",
+      default_detail: "brief",
+      use_examples: false,
+      use_tables: false,
+      use_headings: false,
+      show_practical_implications: false,
+      communication_strategy: "answer_only",
+      detail_budget: "minimal",
+      structure_policy: "answer_only",
+      example_policy: "never",
+      analysis_depth: "answer_only",
+      terminology_policy: "plain",
+      source_presentation_policy: "only_when_required",
+    },
+  },
+];
 
 describe("Auto vs Personalizado", () => {
   it("el modelo es Automático sólo con la ruta recomendada", () => {
@@ -87,35 +135,63 @@ describe("resúmenes de estado", () => {
 
 describe("presets de comportamiento", () => {
   it("un perfil ausente equivale al preset recomendado, no a Personalizado", () => {
-    expect(matchResponsePreset(null)).toBe("balanced");
-    expect(matchResponsePreset(undefined)).toBe("balanced");
+    expect(matchResponsePreset(null, RESPONSE_PROFILE_PRESETS)).toBe("balanced");
+    expect(matchResponsePreset(undefined, RESPONSE_PROFILE_PRESETS)).toBe("balanced");
   });
 
   it("reconoce cada preset resuelto", () => {
     for (const preset of RESPONSE_PROFILE_PRESETS) {
       const resolved = { ...DEFAULT_RESPONSE_PROFILE, ...preset.profile, preset: preset.id };
-      expect(matchResponsePreset(resolved)).toBe(preset.id);
+      expect(matchResponsePreset(resolved, RESPONSE_PROFILE_PRESETS)).toBe(preset.id);
     }
   });
 
   it("un perfil con valores propios es Personalizado y no se confunde con un preset", () => {
-    expect(matchResponsePreset({ ...DEFAULT_RESPONSE_PROFILE, tone: "executive" })).toBe(CUSTOM_PROFILE);
     expect(
-      matchResponsePreset({ ...DEFAULT_RESPONSE_PROFILE, custom_instructions: "Sé breve" }),
+      matchResponsePreset(
+        { ...DEFAULT_RESPONSE_PROFILE, tone: "executive" },
+        RESPONSE_PROFILE_PRESETS,
+      ),
     ).toBe(CUSTOM_PROFILE);
     expect(
-      matchResponsePreset({ ...DEFAULT_RESPONSE_PROFILE, preferred_blueprints: ["comparison"] }),
+      matchResponsePreset(
+        { ...DEFAULT_RESPONSE_PROFILE, custom_instructions: "Sé breve" },
+        RESPONSE_PROFILE_PRESETS,
+      ),
+    ).toBe(CUSTOM_PROFILE);
+    expect(
+      matchResponsePreset(
+        { ...DEFAULT_RESPONSE_PROFILE, preferred_blueprints: ["comparison"] },
+        RESPONSE_PROFILE_PRESETS,
+      ),
     ).toBe(CUSTOM_PROFILE);
   });
 
   it("el resumen del perfil personalizado describe el estilo, no el preset", () => {
-    const resumen = responseProfileSummary({
-      ...DEFAULT_RESPONSE_PROFILE,
-      tone: "didactic",
-      default_detail: "deep",
-      cite_sources: false,
-    });
+    const resumen = responseProfileSummary(
+      {
+        ...DEFAULT_RESPONSE_PROFILE,
+        tone: "didactic",
+        default_detail: "deep",
+        cite_sources: false,
+      },
+      RESPONSE_PROFILE_PRESETS,
+    );
     expect(resumen).toBe("Personalizado · didáctico · profundo · sin citas");
+  });
+
+  it("cambiar de Analítico a Conciso elimina los campos exclusivos del anterior", () => {
+    const analytical = RESPONSE_PROFILE_PRESETS[1];
+    const concise = RESPONSE_PROFILE_PRESETS[2];
+    const before = applyPresetToProfile(analytical);
+    expect(before.use_examples).toBe(true);
+    expect(before.analysis_depth).toBe("hypothesis_and_tradeoffs");
+    const after = applyPresetToProfile(concise);
+    expect(after.default_detail).toBe("brief");
+    expect(after.use_examples).toBe(false);
+    expect(after.use_tables).toBe(false);
+    expect(after.analysis_depth).toBe("answer_only");
+    expect(after.profile_id).toBe("concise");
   });
 });
 

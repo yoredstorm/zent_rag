@@ -169,7 +169,7 @@ def _response_shape_block(plan: object | None) -> str:
     try:
         from src.intelligence.response.contract import prompt_block
 
-        return prompt_block(contract)
+        return prompt_block(contract, profile=getattr(plan, "profile", None))
     except Exception:  # noqa: BLE001 — sin bloque, el prompt queda como antes
         return ""
 
@@ -201,8 +201,16 @@ def _response_planning_step(plan: object | None) -> dict | None:
         "routing_reason": routing_reason,
         "complex_reasoning_activated": complex_reasoning,
         "query_route": query_route,
+        "profile_id": contract.profile_id,
+        "profile_version": contract.profile_version,
+        "communication_strategy": contract.communication_strategy,
+        "effective_profile_hash": contract.effective_profile_hash,
+        "profile_origin": contract.override_origin,
+        "style_degraded": bool(contract.style_degraded),
         **facts,
     }
+    if contract.style_degradation_reason:
+        step["style_degradation_reason"] = contract.style_degradation_reason
     selection = getattr(plan, "selection", None)
     if selection is not None:
         step["candidates"] = list(getattr(selection, "candidates", ()) or ())[:4]

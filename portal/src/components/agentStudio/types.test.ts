@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   ADVANCED_GROUPS,
   DEFAULT_RESPONSE_PROFILE,
-  RESPONSE_PROFILE_PRESETS,
   isAdvancedGroup,
   legacyTabToGroup,
   resolveStudioView,
@@ -108,8 +107,10 @@ describe("perfil de respuesta por defecto", () => {
     });
   });
 
-  it("expone un preset equilibrado como estado recomendado", () => {
-    expect(RESPONSE_PROFILE_PRESETS[0].id).toBe("balanced");
-    expect(RESPONSE_PROFILE_PRESETS[0].profile).toEqual({ use_tables: true });
+  it("declara la estrategia V2 y no duplica presets en el portal", () => {
+    expect(DEFAULT_RESPONSE_PROFILE.profile_id).toBe("balanced");
+    expect(DEFAULT_RESPONSE_PROFILE.profile_version).toBe(2);
+    expect(DEFAULT_RESPONSE_PROFILE.communication_strategy).toBe("adaptive");
+    expect(DEFAULT_RESPONSE_PROFILE.source_presentation_policy).toBe("inline_required");
   });
 });

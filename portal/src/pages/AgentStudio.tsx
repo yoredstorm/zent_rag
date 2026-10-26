@@ -206,7 +206,11 @@ export default function AgentStudioPage() {
 
                   <AgentBehaviorPresetSection
                     presetId={studio.profilePresetId}
-                    summary={responseProfileSummary(studio.config.response_profile)}
+                    presets={studio.profilePresets}
+                    summary={responseProfileSummary(
+                      studio.config.response_profile,
+                      studio.profilePresets,
+                    )}
                     onPreset={studio.applyPreset}
                     onCustomize={() => {
                       studio.setProfileCustomOpen(!studio.profileCustomOpen);
@@ -219,6 +223,7 @@ export default function AgentStudioPage() {
                     <div id="agent-behavior-detail" className="animate-rise">
                       <AgentResponseProfileSection
                         profile={studio.profile}
+                        presets={studio.profilePresets}
                         onChange={studio.applyResponseProfile}
                         agentId={studio.isNew ? undefined : studio.id}
                         token={studio.session?.token}

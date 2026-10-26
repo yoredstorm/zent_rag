@@ -101,13 +101,12 @@ def context_from_agent(
     domain: str = "",
 ) -> AgentConfigContext:
     config = agent.config_json if isinstance(getattr(agent, "config_json", None), dict) else {}
+    resolved_profile = profile_from_config(config)
     return AgentConfigContext(
         name=str(getattr(agent, "name", "") or ""),
         description=str(getattr(agent, "description", "") or ""),
         purpose=str(config.get("purpose") or ""),
-        audience=str((config.get("response_profile") or {}).get("audience") or "")
-        if isinstance(config.get("response_profile"), Mapping)
-        else "",
+        audience=resolved_profile.audience,
         domain=domain,
         source_kinds=tuple(str(item) for item in source_kinds if item),
         source_titles=tuple(str(item) for item in source_titles if item),
@@ -219,6 +218,15 @@ _PROFILE_ALLOWED_KEYS = {
     "preserve_domain_terms",
     "custom_instructions",
     "preset",
+    "profile_id",
+    "communication_strategy",
+    "detail_budget",
+    "structure_policy",
+    "example_policy",
+    "analysis_depth",
+    "terminology_policy",
+    "source_presentation_policy",
+    "audience_assumptions",
 }
 
 

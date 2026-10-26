@@ -2,6 +2,9 @@ export type AgentTone = "professional" | "friendly" | "concise";
 
 /** Cómo debe explicar el agente (§28). Estructura, no prompt libre. */
 export type ResponseProfile = {
+  /** Identidad canónica del preset o `custom`. */
+  profile_id: string;
+  profile_version: number;
   preset?: string;
   language: string;
   tone: "professional" | "didactic" | "executive" | "neutral";
@@ -19,14 +22,40 @@ export type ResponseProfile = {
   preserve_domain_terms: boolean;
   preferred_blueprints?: string[];
   custom_instructions: string;
+  communication_strategy: string;
+  detail_budget: string;
+  structure_policy: string;
+  example_policy: string;
+  analysis_depth: string;
+  terminology_policy: string;
+  source_presentation_policy: string;
+  audience_assumptions: string;
+  override_origin?: string;
 };
 
 export type ResponseProfilePreset = {
   id: string;
   label: string;
   hint: string;
-  /** Delta sobre `DEFAULT_RESPONSE_PROFILE`. */
-  profile: Partial<ResponseProfile>;
+  /** Perfil completo resuelto por el backend; no un delta local. */
+  profile: ResponseProfile;
+};
+
+export type ResponseProfileCatalog = {
+  schema: string;
+  presets: ResponseProfilePreset[];
+  defaults: ResponseProfile;
+  blueprints?: unknown[];
+};
+
+export type ProfileTrace = {
+  requestedId: string;
+  appliedId: string;
+  strategy: string;
+  effectiveHash: string;
+  origin: string;
+  degraded: boolean;
+  degradationReason: string;
 };
 
 /** Preguntas de arranque del panel Probar: genéricas, sin datos de dominio. */
@@ -37,119 +66,12 @@ export const SUGGESTED_QUESTIONS: string[] = [
 ];
 
 /**
- * Presets de Agent Studio (§29). El backend guarda el resultado, no el preset:
- * cada delta se aplana sobre el perfil antes de persistir (§32).
- * `balanced` equivale a los defaults recomendados: es el estado "Auto".
- */
-export const BALANCED_PRESET = "balanced";
-
-export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
-  {
-    id: BALANCED_PRESET,
-    label: "Equilibrado",
-    hint: "Recomendado. Conciso, con evidencia y sin relleno.",
-    profile: { use_tables: true },
-  },
-  {
-    id: "precise",
-    label: "Preciso",
-    hint: "Terminología exacta y cero explicaciones de base.",
-    profile: {
-      tone: "professional",
-      technical_level: "advanced",
-      default_detail: "normal",
-      audience: "technical",
-      use_examples: false,
-      use_tables: true,
-      preserve_domain_terms: true,
-    },
-  },
-  {
-    id: "clear_didactic",
-    label: "Claro y didáctico",
-    hint: "Explica el porqué y usa ejemplos.",
-    profile: {
-      tone: "didactic",
-      technical_level: "intermediate",
-      default_detail: "detailed",
-      use_examples: true,
-      show_practical_implications: true,
-    },
-  },
-  {
-    id: "executive",
-    label: "Ejecutivo",
-    hint: "Conclusión e impacto, sin detalle técnico.",
-    profile: {
-      tone: "executive",
-      technical_level: "basic",
-      default_detail: "normal",
-      audience: "business",
-      use_examples: false,
-      cite_sources: false,
-      show_practical_implications: true,
-    },
-  },
-  {
-    id: "technical_detailed",
-    label: "Experto técnico",
-    hint: "Precisión técnica, sin explicar lo básico.",
-    profile: {
-      tone: "professional",
-      technical_level: "advanced",
-      default_detail: "detailed",
-      audience: "expert",
-      use_tables: true,
-      use_examples: true,
-      preserve_domain_terms: true,
-    },
-  },
-  {
-    id: "concise",
-    label: "Conciso",
-    hint: "Lo mínimo necesario para responder.",
-    profile: {
-      tone: "neutral",
-      default_detail: "brief",
-      use_examples: false,
-      show_practical_implications: false,
-      cite_sources: false,
-    },
-  },
-  {
-    id: "analytical",
-    label: "Analítico",
-    hint: "Profundidad y contraste de opciones.",
-    profile: {
-      tone: "professional",
-      technical_level: "advanced",
-      default_detail: "deep",
-      audience: "expert",
-      use_tables: true,
-      show_uncertainty: true,
-    },
-  },
-  {
-    id: "evidence_first",
-    label: "Con evidencia",
-    hint: "Cada afirmación con su fuente.",
-    profile: {
-      tone: "professional",
-      technical_level: "intermediate",
-      default_detail: "detailed",
-      cite_sources: true,
-      show_uncertainty: true,
-      show_practical_implications: true,
-    },
-  },
-];
-
-/**
- * Espejo de `ResponseProfile` del dominio (`src/core/domain/response.py:127`).
- * Si estos valores se desalinean, la UI muestra un perfil distinto del que
- * aplica el runtime en agentes sin `response_profile` guardado.
+ * Sólo es un fallback de primer render. La autoridad es
+ * `GET /api/v1/agents/response-profile/catalog`; no hay presets duplicados aquí.
  */
 export const DEFAULT_RESPONSE_PROFILE: ResponseProfile = {
+  profile_id: "balanced",
+  profile_version: 2,
   language: "es",
   tone: "professional",
   technical_level: "intermediate",
@@ -165,6 +87,14 @@ export const DEFAULT_RESPONSE_PROFILE: ResponseProfile = {
   show_practical_implications: true,
   preserve_domain_terms: true,
   custom_instructions: "",
+  communication_strategy: "adaptive",
+  detail_budget: "adaptive",
+  structure_policy: "adaptive",
+  example_policy: "when_useful",
+  analysis_depth: "proportional",
+  terminology_policy: "domain_aware",
+  source_presentation_policy: "inline_required",
+  audience_assumptions: "",
 };
 
 /** Campos que el usuario puede activar o desactivar (§28). */

@@ -12,14 +12,36 @@ import { useState } from "react";
 import { api } from "../../api";
 import { Badge, Button, Select, Textarea } from "../ui";
 import { AgentField, AgentOptionCard, AgentSection, AgentToggleGrid } from "./AgentField";
+import { AgentStyleComparator } from "./AgentStyleComparator";
 import {
-  RESPONSE_PROFILE_PRESETS,
+  CUSTOM_PROFILE,
+  applyPresetToProfile,
+  markProfileCustom,
+  matchResponsePreset,
+} from "./agentModes";
+import {
   RESPONSE_PROFILE_TOGGLES,
   type ResponseProfile,
+  type ResponseProfilePreset,
 } from "./types";
+
+type PreviewResult = {
+  preview: string;
+  response_contract: Record<string, unknown> | null;
+  profile: ResponseProfile | null;
+  profile_source: "temporary" | "saved";
+  simulated_evidence: boolean;
+  tools_executed: boolean;
+  validation: {
+    contract_present: boolean;
+    style_degraded: boolean;
+    style_degradation_reason?: string;
+  };
+};
 
 export function AgentResponseProfileSection({
   profile,
+  presets,
   onChange,
   agentId,
   token,
@@ -27,6 +49,8 @@ export function AgentResponseProfileSection({
   sourceTitles = [],
 }: {
   profile: ResponseProfile;
+  /** Catálogo canónico del backend. */
+  presets: ResponseProfilePreset[];
   onChange: (next: ResponseProfile) => void;
   /** Sin agente guardado no hay generación con IA: se avisa, no se simula. */
   agentId?: string;
@@ -37,16 +61,19 @@ export function AgentResponseProfileSection({
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [preview, setPreview] = useState("");
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewQuestion, setPreviewQuestion] = useState(
     "¿Qué significa el campo X cuando su valor es 2?",
   );
-  const [previewContract, setPreviewContract] = useState<Record<string, unknown> | null>(null);
 
-  const activePreset = profile.preset ?? "";
+  const activePreset = matchResponsePreset(profile, presets);
 
   function set<K extends keyof ResponseProfile>(key: K, value: ResponseProfile[K]) {
-    onChange({ ...profile, [key]: value });
+    onChange(markProfileCustom({ ...profile, [key]: value }));
+  }
+
+  function choosePreset(preset: ResponseProfilePreset) {
+    onChange(applyPresetToProfile(preset));
   }
 
   async function generateProfile() {
@@ -64,10 +91,17 @@ export function AgentResponseProfileSection({
         { method: "POST", token, organizationId, body: JSON.stringify({}) },
       );
       const draft = data.draft as Partial<ResponseProfile>;
+      const profileId =
+        typeof draft.profile_id === "string"
+          ? draft.profile_id
+          : typeof draft.preset === "string"
+            ? draft.preset
+            : CUSTOM_PROFILE;
       onChange({
         ...profile,
         ...draft,
-        preset: typeof draft.preset === "string" ? draft.preset : profile.preset,
+        profile_id: profileId,
+        preset: profileId,
       });
       setNotice("Perfil propuesto. Ajustá lo que quieras antes de guardar.");
     } catch (err) {
@@ -84,20 +118,18 @@ export function AgentResponseProfileSection({
     }
     setBusy("preview");
     setError("");
-    setPreview("");
-    setPreviewContract(null);
+    setPreview(null);
     try {
-      const data = await api<{
-        preview: string;
-        response_contract: Record<string, unknown> | null;
-      }>(`/api/v1/agents/${agentId}/config/preview`, {
-        method: "POST",
-        token,
-        organizationId,
-        body: JSON.stringify({ question: previewQuestion }),
-      });
-      setPreview(data.preview);
-      setPreviewContract(data.response_contract);
+      const data = await api<PreviewResult>(
+        `/api/v1/agents/${agentId}/config/preview`,
+        {
+          method: "POST",
+          token,
+          organizationId,
+          body: JSON.stringify({ question: previewQuestion, profile }),
+        },
+      );
+      setPreview(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo generar el preview");
     } finally {
@@ -125,19 +157,20 @@ export function AgentResponseProfileSection({
         <div>
           <p className="mb-2 flex items-center gap-2 text-xs text-muted">
             Estilo base
-            {activePreset && !RESPONSE_PROFILE_PRESETS.some((p) => p.id === activePreset) ? (
-              <Badge tone="neutral">Personalizado</Badge>
+            {activePreset === CUSTOM_PROFILE ? <Badge tone="neutral">Personalizado</Badge> : null}
+            {presets.length === 0 ? (
+              <span className="text-[11px] text-faint">Cargando catálogo del backend…</span>
             ) : null}
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
-            {RESPONSE_PROFILE_PRESETS.map((preset) => (
+            {presets.map((preset) => (
               <AgentOptionCard
                 key={preset.id}
                 id={`response-preset-${preset.id}`}
                 label={preset.label}
                 hint={preset.hint}
                 selected={activePreset === preset.id}
-                onSelect={() => onChange({ ...profile, ...preset.profile, preset: preset.id })}
+                onSelect={() => choosePreset(preset)}
               />
             ))}
           </div>
@@ -265,17 +298,45 @@ export function AgentResponseProfileSection({
         </div>
         {preview ? (
           <div className="rounded-md border border-border bg-surface/60 p-3">
-            {previewContract ? (
-              <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                <Badge tone="accent">{String(previewContract.blueprint)}</Badge>
-                <Badge tone="neutral">{String(previewContract.detail)}</Badge>
-                <Badge tone="neutral">{String(previewContract.decided_by)}</Badge>
-              </div>
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              <Badge tone="neutral">Solicitado: {profile.profile_id}</Badge>
+              <Badge tone="accent">
+                Aplicado: {String(preview.response_contract?.profile_id ?? "sin contrato")}
+              </Badge>
+              <Badge tone="neutral">
+                {String(preview.response_contract?.communication_strategy ?? "sin estrategia")}
+              </Badge>
+              <Badge tone={preview.validation.style_degraded ? "danger" : "ok"}>
+                {preview.validation.style_degraded
+                  ? `Estilo parcial: ${preview.validation.style_degradation_reason || "degradado"}`
+                  : "Contrato validado"}
+              </Badge>
+              <Badge tone="neutral">
+                {preview.profile_source === "temporary" ? "Perfil temporal" : "Perfil guardado"}
+              </Badge>
+            </div>
+            {preview.response_contract?.effective_profile_hash ? (
+              <p className="mb-2 font-mono text-[10.5px] text-faint">
+                hash {String(preview.response_contract.effective_profile_hash)}
+              </p>
             ) : null}
-            <p className="whitespace-pre-wrap text-[12.5px] text-text">{preview}</p>
+            <p className="mb-2 text-[11px] text-faint">
+              Evidencia simulada. No se ejecutaron herramientas reales.
+            </p>
+            <p className="whitespace-pre-wrap text-[12.5px] text-text">{preview.preview}</p>
           </div>
         ) : null}
       </AgentSection>
+
+      <AgentStyleComparator
+        presets={presets}
+        profile={profile}
+        agentId={agentId}
+        token={token}
+        organizationId={organizationId}
+        question={previewQuestion}
+        onUseProfile={onChange}
+      />
     </section>
   );
 }

@@ -51,6 +51,100 @@ const AGENT = {
   },
 };
 
+const BASE_PROFILE = {
+  profile_version: 2,
+  language: "es",
+  tone: "professional",
+  technical_level: "intermediate",
+  default_detail: "normal",
+  audience: "technical",
+  conclusion_first: true,
+  use_headings: true,
+  use_bold: true,
+  use_tables: true,
+  use_examples: true,
+  cite_sources: true,
+  show_uncertainty: true,
+  show_practical_implications: true,
+  preserve_domain_terms: true,
+  preferred_blueprints: [],
+  custom_instructions: "",
+  communication_strategy: "adaptive",
+  detail_budget: "adaptive",
+  structure_policy: "adaptive",
+  example_policy: "when_useful",
+  analysis_depth: "proportional",
+  terminology_policy: "domain_aware",
+  source_presentation_policy: "inline_required",
+  audience_assumptions: "",
+};
+
+function profilePreset(
+  id: string,
+  label: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id,
+    label,
+    hint: `${label} hint`,
+    profile: { ...BASE_PROFILE, ...overrides, profile_id: id },
+  };
+}
+
+const PROFILE_CATALOG = {
+  schema: "zent.response_profile_catalog/v2",
+  defaults: BASE_PROFILE,
+  presets: [
+    profilePreset("balanced", "Equilibrado"),
+    profilePreset("precise", "Preciso", {
+      technical_level: "advanced",
+      use_examples: false,
+      communication_strategy: "definition_scope",
+    }),
+    profilePreset("clear_didactic", "Claro y didáctico", {
+      tone: "didactic",
+      use_examples: true,
+      communication_strategy: "progressive",
+    }),
+    profilePreset("executive", "Ejecutivo", {
+      tone: "executive",
+      audience: "business",
+      use_examples: false,
+      use_tables: false,
+      communication_strategy: "decision_first",
+    }),
+    profilePreset("technical_detailed", "Experto técnico", {
+      technical_level: "advanced",
+      audience: "expert",
+      use_examples: false,
+      communication_strategy: "implementation_first",
+    }),
+    profilePreset("concise", "Conciso", {
+      tone: "neutral",
+      default_detail: "brief",
+      use_examples: false,
+      use_tables: false,
+      use_headings: false,
+      communication_strategy: "answer_only",
+      structure_policy: "answer_only",
+      example_policy: "never",
+      analysis_depth: "answer_only",
+    }),
+    profilePreset("analytical", "Analítico", {
+      default_detail: "deep",
+      use_examples: true,
+      communication_strategy: "decompose_compare",
+      analysis_depth: "hypothesis_and_tradeoffs",
+    }),
+    profilePreset("evidence_first", "Con evidencia", {
+      cite_sources: true,
+      communication_strategy: "claim_evidence",
+    }),
+  ],
+  blueprints: [],
+};
+
 const READINESS = {
   score: 80,
   items: [
@@ -116,6 +210,72 @@ function fetchRouter(
         }),
       );
     if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [SOURCE, SQL_SOURCE] }));
+    if (url.includes("/response-profile/catalog"))
+      return Promise.resolve(json(PROFILE_CATALOG));
+    if (url.includes("/config/compare"))
+      return Promise.resolve(
+        json({
+          question: "¿Qué conviene?",
+          simulated_evidence: true,
+          tools_executed: false,
+          same_evidence: true,
+          results: [
+            {
+              profile_id: "precise",
+              profile: { ...BASE_PROFILE, profile_id: "precise" },
+              answer: "Respuesta precisa.",
+              error: "",
+              chars: 17,
+              sections: ["direct_answer"],
+              formatting: {},
+              evidence: { citations_required: true },
+              response_contract: {
+                blueprint: "technical_explanation",
+                detail: "normal",
+                profile_id: "precise",
+                communication_strategy: "definition_scope",
+              },
+              validation: { contract_present: true, style_degraded: false },
+            },
+            {
+              profile_id: "concise",
+              profile: { ...BASE_PROFILE, profile_id: "concise" },
+              answer: "Respuesta breve.",
+              error: "",
+              chars: 15,
+              sections: ["direct_answer"],
+              formatting: {},
+              evidence: { citations_required: false },
+              response_contract: {
+                blueprint: "direct_fact",
+                detail: "brief",
+                profile_id: "concise",
+                communication_strategy: "answer_only",
+              },
+              validation: { contract_present: true, style_degraded: false },
+            },
+          ],
+        }),
+      );
+    if (url.includes("/config/preview"))
+      return Promise.resolve(
+        json({
+          preview: "Preview simulado.",
+          simulated_evidence: true,
+          tools_executed: false,
+          profile_source: "temporary",
+          profile: { ...BASE_PROFILE, profile_id: "precise" },
+          response_contract: {
+            blueprint: "technical_explanation",
+            detail: "normal",
+            decided_by: "deterministic",
+            profile_id: "precise",
+            communication_strategy: "definition_scope",
+            effective_profile_hash: "abc123",
+          },
+          validation: { contract_present: true, style_degraded: false },
+        }),
+      );
     if (url.includes("/api/v1/jobs")) return Promise.resolve(json({ jobs: [] }));
     if (url.includes("/readiness")) return Promise.resolve(json(getReadiness()));
     if (url.includes("/versions") && method === "POST") return Promise.resolve(json({ id: "v1" }));
@@ -486,6 +646,38 @@ describe("AgentStudio · comportamiento", () => {
     await user.click(screen.getByRole("button", { name: "Personalizar comportamiento" }));
     expect(screen.getByLabelText("Nivel de detalle")).toBeInTheDocument();
     expect(screen.getByLabelText("Instrucciones de estilo")).toBeInTheDocument();
+  });
+
+  it("el preview usa el perfil temporal y muestra solicitado → aplicado", async () => {
+    const { user, fetchMock } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: "Personalizar comportamiento" }));
+    fireEvent.change(screen.getByLabelText("Tono"), { target: { value: "didactic" } });
+    await user.click(screen.getByRole("button", { name: "Ver cómo respondería" }));
+    expect(await screen.findByText("Preview simulado.")).toBeInTheDocument();
+    const previewCall = fetchMock.mock.calls.find((entry) =>
+      String(entry[0]).includes("/config/preview"),
+    );
+    expect(previewCall).toBeTruthy();
+    const body = JSON.parse(String(previewCall?.[1]?.body || "{}"));
+    expect(body.profile.tone).toBe("didactic");
+    expect(body.profile.profile_id).toBe("custom");
+    expect(screen.getByText(/Solicitado:/)).toHaveTextContent("custom");
+    expect(screen.getByText(/Aplicado:/)).toHaveTextContent("precise");
+    expect(screen.getByText(/Perfil temporal/)).toBeInTheDocument();
+  });
+
+  it("el comparador A/B muestra variantes y aplica una sin guardar", async () => {
+    const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: "Personalizar comportamiento" }));
+    await user.click(screen.getByRole("button", { name: "Comparar" }));
+    expect(await screen.findByText("Respuesta precisa.")).toBeInTheDocument();
+    expect(screen.getByText("Respuesta breve.")).toBeInTheDocument();
+    const useButtons = screen.getAllByRole("button", { name: "Usar este estilo" });
+    await user.click(useButtons[0]);
+    expect(screen.getByText(/aplicado al borrador/)).toBeInTheDocument();
+    expect(screen.getByText(/No se guardó/)).toBeInTheDocument();
   });
 
   it("pide un borrador de estilo con IA y avisa que es un borrador", async () => {

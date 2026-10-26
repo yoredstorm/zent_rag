@@ -123,6 +123,81 @@ AUDIENCES: tuple[str, ...] = (
 )
 
 
+PROFILE_VERSION = 2
+
+#: Estrategias de comunicación V2. Son instrucciones operativas, no etiquetas:
+#: cada una se traduce a una línea concreta en el prompt del generador.
+STRATEGY_ADAPTIVE = "adaptive"
+STRATEGY_DEFINITION_SCOPE = "definition_scope"
+STRATEGY_PROGRESSIVE = "progressive"
+STRATEGY_IMPLEMENTATION_FIRST = "implementation_first"
+STRATEGY_DECISION_FIRST = "decision_first"
+STRATEGY_ANSWER_ONLY = "answer_only"
+STRATEGY_DECOMPOSE_COMPARE = "decompose_compare"
+STRATEGY_CLAIM_EVIDENCE = "claim_evidence"
+
+COMMUNICATION_STRATEGIES: tuple[str, ...] = (
+    STRATEGY_ADAPTIVE,
+    STRATEGY_DEFINITION_SCOPE,
+    STRATEGY_PROGRESSIVE,
+    STRATEGY_IMPLEMENTATION_FIRST,
+    STRATEGY_DECISION_FIRST,
+    STRATEGY_ANSWER_ONLY,
+    STRATEGY_DECOMPOSE_COMPARE,
+    STRATEGY_CLAIM_EVIDENCE,
+)
+
+DETAIL_BUDGET_ADAPTIVE = "adaptive"
+DETAIL_BUDGETS: tuple[str, ...] = (
+    "adaptive",
+    "tight",
+    "guided",
+    "deep",
+    "compact",
+    "minimal",
+    "standard",
+)
+
+STRUCTURE_POLICIES: tuple[str, ...] = (
+    "adaptive",
+    "definition_scope",
+    "progressive",
+    "implementation",
+    "decision_impact_next_action",
+    "answer_only",
+    "problem_alternatives_criteria_conclusion",
+    "claim_evidence_inference",
+)
+
+EXAMPLE_POLICIES: tuple[str, ...] = ("when_useful", "never", "minimal_supported", "minimal", "direct_only")
+
+ANALYSIS_DEPTHS: tuple[str, ...] = (
+    "proportional",
+    "surface_exact",
+    "progressive",
+    "implementation",
+    "impact_only",
+    "answer_only",
+    "hypothesis_and_tradeoffs",
+    "evidence_first",
+)
+
+TERMINOLOGY_POLICIES: tuple[str, ...] = (
+    "domain_aware",
+    "exact",
+    "plain_with_domain_terms",
+    "business",
+    "plain",
+)
+
+SOURCE_PRESENTATION_POLICIES: tuple[str, ...] = (
+    "inline_required",
+    "inline_when_used",
+    "on_request",
+    "only_when_required",
+)
+
+
 @dataclass(frozen=True)
 class ResponseProfile:
     """Cómo responde un agente. Estructura, no un system prompt gigante (§27)."""
@@ -145,15 +220,40 @@ class ResponseProfile:
     preserve_domain_terms: bool = True
     preferred_blueprints: tuple[str, ...] = ()
     custom_instructions: str = ""
+    #: V2: identidad y estrategia observable. Los defaults son `balanced`, de
+    #: modo que un perfil ausente sigue siendo idéntico a `ResponseProfile()`.
+    profile_id: str = "balanced"
+    profile_version: int = PROFILE_VERSION
+    communication_strategy: str = STRATEGY_ADAPTIVE
+    detail_budget: str = DETAIL_BUDGET_ADAPTIVE
+    structure_policy: str = "adaptive"
+    example_policy: str = "when_useful"
+    analysis_depth: str = "proportional"
+    terminology_policy: str = "domain_aware"
+    source_presentation_policy: str = "inline_required"
+    audience_assumptions: str = ""
+    override_origin: str = "agent_config"
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
+            "profile_id": self.profile_id,
+            "profile_version": self.profile_version,
+            "preset": self.profile_id,
             "language": self.language,
             "tone": self.tone,
             "technical_level": self.technical_level,
             "default_detail": self.default_detail,
             "audience": self.audience,
             "preferred_blueprints": list(self.preferred_blueprints),
+            "communication_strategy": self.communication_strategy,
+            "detail_budget": self.detail_budget,
+            "structure_policy": self.structure_policy,
+            "example_policy": self.example_policy,
+            "analysis_depth": self.analysis_depth,
+            "terminology_policy": self.terminology_policy,
+            "source_presentation_policy": self.source_presentation_policy,
+            "audience_assumptions": self.audience_assumptions,
+            "override_origin": self.override_origin,
         }
         for key in (
             "conclusion_first",
@@ -209,6 +309,22 @@ class ResponseContract:
     presentation: dict[str, Any] = field(default_factory=dict)
     #: Los límites se declaran sólo cuando son materialmente relevantes.
     show_limitations: bool = False
+    #: V2: perfil efectivo que produjo este contrato, con procedencia y hash.
+    profile_id: str = "balanced"
+    profile_version: int = PROFILE_VERSION
+    communication_strategy: str = STRATEGY_ADAPTIVE
+    detail_budget: str = DETAIL_BUDGET_ADAPTIVE
+    structure_policy: str = "adaptive"
+    example_policy: str = "when_useful"
+    analysis_depth: str = "proportional"
+    terminology_policy: str = "domain_aware"
+    source_presentation_policy: str = "inline_required"
+    audience_assumptions: str = ""
+    override_origin: str = "agent_config"
+    effective_profile_hash: str = ""
+    turn_overrides: tuple[str, ...] = ()
+    style_degraded: bool = False
+    style_degradation_reason: str = ""
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -223,7 +339,27 @@ class ResponseContract:
             "technical_level": self.technical_level,
             "audience": self.audience,
             "decided_by": self.decided_by,
+            "profile_id": self.profile_id,
+            "profile_version": self.profile_version,
+            "communication_strategy": self.communication_strategy,
+            "detail_budget": self.detail_budget,
+            "structure_policy": self.structure_policy,
+            "example_policy": self.example_policy,
+            "analysis_depth": self.analysis_depth,
+            "terminology_policy": self.terminology_policy,
+            "source_presentation_policy": self.source_presentation_policy,
+            "override_origin": self.override_origin,
         }
+        if self.audience_assumptions:
+            payload["audience_assumptions"] = self.audience_assumptions
+        if self.effective_profile_hash:
+            payload["effective_profile_hash"] = self.effective_profile_hash
+        if self.turn_overrides:
+            payload["turn_overrides"] = list(self.turn_overrides)
+        if self.style_degraded:
+            payload["style_degraded"] = True
+            if self.style_degradation_reason:
+                payload["style_degradation_reason"] = self.style_degradation_reason
         if self.layers:
             payload["layers"] = list(self.layers)
         if self.presentation:
@@ -252,18 +388,26 @@ class ResponseContract:
 
 
 __all__ = [
+    "ANALYSIS_DEPTHS",
     "AUDIENCES",
     "AUDIENCE_BEGINNER",
     "AUDIENCE_BUSINESS",
     "AUDIENCE_EXPERT",
     "AUDIENCE_TECHNICAL",
+    "COMMUNICATION_STRATEGIES",
     "DETAIL_BRIEF",
+    "DETAIL_BUDGETS",
     "DETAIL_DEEP",
     "DETAIL_DETAILED",
     "DETAIL_GUIDANCE",
     "DETAIL_NORMAL",
+    "EXAMPLE_POLICIES",
+    "PROFILE_VERSION",
     "ResponseContract",
     "ResponseProfile",
+    "SOURCE_PRESENTATION_POLICIES",
+    "STRUCTURE_POLICIES",
+    "TERMINOLOGY_POLICIES",
     "SECTION_CAUSE",
     "SECTION_COMPARISON",
     "SECTION_DATA_READING",
