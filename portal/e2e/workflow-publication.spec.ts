@@ -66,9 +66,6 @@ test.describe("Publicación inmutable P13", () => {
         workflow_version: 2,
       }),
     });
-    if (!created.ok()) {
-      console.log("create failed", created.status(), await created.text());
-    }
     expect(created.ok()).toBeTruthy();
     const workflow = (await created.json()) as {
       workflow_id: string;

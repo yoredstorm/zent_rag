@@ -367,6 +367,51 @@ async def test_binding_change_invalidates_certificate_for_publish(
 
 
 @pytest.mark.asyncio
+async def test_org_level_certificate_is_visible_from_workspace_context(
+    async_client: AsyncClient,
+) -> None:
+    from src.platform.workflows.release_policy import (
+        evaluate_release,
+        issue_certificate,
+        list_certificates,
+    )
+
+    org = await _org(async_client, "P13 Org Certificate")
+    workflow_id, _ = await _create(async_client, org)
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text("UPDATE workflows SET workspace_id = NULL WHERE id = :wid"),
+            {"wid": UUID(workflow_id)},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    listing = await async_client.get("/api/v1/workspaces", headers=_headers(org))
+    workspace_id = listing.json()["workspaces"][0]["id"]
+    certificate = await issue_certificate(
+        UUID(org["organization_id"]),
+        UUID(workflow_id),
+        level="design",
+        workspace_id=None,
+    )
+    assert certificate["workspace_id"] is None
+    decision = await evaluate_release(
+        UUID(org["organization_id"]),
+        UUID(workflow_id),
+        action="publish",
+        workspace_id=UUID(workspace_id),
+    )
+    assert decision.allowed is True, decision.to_dict()
+    listed = await list_certificates(
+        UUID(org["organization_id"]),
+        UUID(workflow_id),
+        workspace_id=UUID(workspace_id),
+    )
+    assert any(item["id"] == certificate["id"] for item in listed["certificates"])
+
+
+@pytest.mark.asyncio
 async def test_legacy_metadata_cannot_self_assign(async_client: AsyncClient) -> None:
     org = await _org(async_client, "P13 Legacy Metadata")
     workflow_id, _ = await _create(

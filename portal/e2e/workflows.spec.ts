@@ -62,10 +62,18 @@ test.describe("Workflow Studio", () => {
     // El prompt por defecto usa el payload del trigger.
     await expect(page.getByTestId("wf-param-prompt")).toHaveValue("{{trigger.message}}");
 
-    // Guardar desde la cabecera del estudio.
-    await expect(page.getByText("Cambios sin guardar")).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId("wf-save").click();
-    await expect(page.getByText(/Guardado/).first()).toBeVisible({ timeout: 15_000 });
+    // Guardar desde la cabecera del estudio. El autosave puede adelantarse;
+    // esperamos a que el guardado en curso termine y forzamos el guardado manual.
+    await expect(page.getByTestId("wf-save")).toBeEnabled({ timeout: 20_000 });
+    const [saved] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/v1/workflows/") &&
+          response.request().method() === "PATCH",
+      ),
+      page.getByTestId("wf-save").click(),
+    ]);
+    expect(saved.ok()).toBeTruthy();
 
     // Probar: la pregunta llega como {{trigger.message}} y la respuesta es texto.
     await page.getByTestId("wf-test-payload").fill("quien es el gerente");

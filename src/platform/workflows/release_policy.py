@@ -370,7 +370,8 @@ async def list_certificates(
                 text(
                     "SELECT * FROM workflow_certificates "
                     "WHERE organization_id = :oid AND workflow_id = :wid "
-                    "AND workspace_id IS NOT DISTINCT FROM :ws "
+                    "AND (CAST(:ws AS uuid) IS NULL OR workspace_id = CAST(:ws AS uuid) "
+                    "OR workspace_id IS NULL) "
                     "ORDER BY issued_at DESC LIMIT :limit"
                 ),
                 {
@@ -409,7 +410,15 @@ async def _latest_certificate(
     finally:
         await session.close()
     certs = [_row_to_certificate(row) for row in rows]
-    scoped = [item for item in certs if item.get("workspace_id") == (str(workspace_id) if workspace_id else None)]
+    # Un certificado org-level (workspace NULL) es visible desde cualquier
+    # workspace de la organización; issue_certificate no permite NULL cuando el
+    # workflow tiene workspace propio.
+    scoped = [
+        item
+        for item in certs
+        if workspace_id is None
+        or item.get("workspace_id") in (None, str(workspace_id))
+    ]
     matching = [item for item in scoped if item.get("graph_hash") == graph_hash]
     return (matching[0] if matching else None, scoped[0] if scoped else (certs[0] if certs else None))
 
