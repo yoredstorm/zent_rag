@@ -35,34 +35,43 @@ describe("AgentPurposeForm", () => {
     vi.mocked(api).mockReset();
   });
 
-  it("aplica el borrador por reglas y avisa el recorte", async () => {
+  it("no auto-aplica: muestra la propuesta y aplica al confirmar", async () => {
     vi.mocked(api).mockResolvedValue({
       draft: "Atender las consultas sobre Soporte.",
-      warnings: ["mentions_unconfigured_capability:api", "purpose_replaced_by_rules"],
+      purpose: "Atender las consultas sobre Soporte.",
+      additional_instructions: "Responde con claridad.",
+      warnings: ["mentions_unconfigured_capability:api"],
       source: "rules",
+      quality: { passed: false, issues: ["capability_grounding"] },
     });
     const onPurpose = renderForm();
 
     await generate();
 
+    expect(onPurpose).not.toHaveBeenCalled();
+    expect(screen.getByTestId("purpose-proposal")).toHaveTextContent(
+      "capacidades no configuradas",
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: "Aplicar propósito" }));
     expect(onPurpose).toHaveBeenCalledWith("Atender las consultas sobre Soporte.");
-    const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("capacidades no configuradas (api)");
-    expect(notice.className).toContain("text-warn");
   });
 
-  it("sin recortes: avisa en tono ok", async () => {
+  it("sin fallos: propuesta lista sin guardar", async () => {
     vi.mocked(api).mockResolvedValue({
       draft: "Explicar tarifas con evidencia.",
+      purpose: "Explicar tarifas con evidencia.",
+      additional_instructions: "Cita la fuente.",
       warnings: [],
       source: "model",
+      quality: { passed: true, issues: [] },
     });
     renderForm();
 
     await generate();
 
     const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("Borrador generado");
+    expect(notice).toHaveTextContent("Propuesta lista para revisar");
+    expect(notice.textContent).toContain("No se guardó nada");
     expect(notice.className).toContain("text-ok");
   });
 

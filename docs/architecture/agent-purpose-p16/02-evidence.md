@@ -23,9 +23,11 @@ Portal:
 cd portal
 npm run typecheck
 npx vitest run src/pages/AgentStudio.test.tsx -t "construye propósito"
+npx vitest run src/components/agentStudio/AgentPurposeForm.test.tsx
 ```
 
-Resultado: **1 passed** para el flujo de propósito; typecheck OK.
+Resultado: **1 passed** para el flujo de propósito y **4 passed** para el
+formulario; typecheck OK.
 
 Casos cubiertos:
 
