@@ -473,7 +473,15 @@ async def response_profile_catalog(request: Request):
 
 
 class GeneratePurposeRequest(BaseModel):
-    instructions: str | None = Field(default=None, max_length=1000)
+    #: P16: borrador actual del formulario, aunque no esté guardado.
+    purpose: str | None = Field(default=None, max_length=2000)
+    instructions: str | None = Field(default=None, max_length=16000)
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+    profile: ResponseProfileConfig | None = None
+    mode: str | None = Field(default=None, max_length=20)
+    source_ids: list[UUID] | None = Field(default=None, max_length=50)
+    tools: list[str] | None = Field(default=None, max_length=20)
 
 
 class GenerateProfileRequest(BaseModel):
@@ -494,7 +502,13 @@ class CompareRequest(BaseModel):
     mock_evidence: str | None = Field(default=None, max_length=4000)
 
 
-async def _agent_config_context(request: Request, ctx, agent) -> object:
+async def _agent_config_context(
+    request: Request,
+    ctx,
+    agent,
+    *,
+    source_ids_override: list[UUID] | None = None,
+) -> object:
     """Contexto del configurador: sólo datos reales del agente (§31, §33)."""
     from src.intelligence.response.generator import context_from_agent
 
@@ -504,7 +518,11 @@ async def _agent_config_context(request: Request, ctx, agent) -> object:
         from src.api.deps import get_source_repo
 
         config = agent.config_json or {}
-        source_ids = list(config.get("source_ids") or [])[:20]
+        source_ids = (
+            list(source_ids_override)
+            if source_ids_override is not None
+            else list(config.get("source_ids") or [])
+        )[:20]
         if source_ids:
             repo = get_source_repo()
             for raw_id in source_ids:
@@ -548,53 +566,152 @@ async def _generate_text(
     return str(getattr(response, "content", "") or "")
 
 
-@router.post("/{agent_id}/config/purpose", summary="Generar propósito con IA (§30-§31)")
+@router.post("/{agent_id}/config/purpose", summary="Construir propósito con IA (P16)")
 async def generate_agent_purpose(agent_id: str, body: GeneratePurposeRequest, request: Request):
     from src.intelligence.response.generator import (
+        PURPOSE_MODE_AUTO,
+        PURPOSE_MODES,
         build_purpose_prompt,
-        draft_purpose,
+        build_purpose_repair_prompt,
+        effective_purpose_mode,
+        evaluate_purpose_intent,
+        parse_purpose_response,
+        suggest_purpose_intent,
     )
+    from src.intelligence.response.profile import profile_from_config
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "agents:write")
     agent = await _get_owned_agent(ctx, agent_id)
-    context = await _agent_config_context(request, ctx, agent)
-    if body.instructions:
-        context = replace(context, purpose=str(body.instructions)[:500])
-    prompt = build_purpose_prompt(context)
-    try:
-        raw = await _generate_text(prompt, max_tokens=512)
-    except Exception as exc:  # noqa: BLE001 — el usuario puede escribirlo a mano
-        raise HTTPException(503, f"No se pudo generar el propósito: {exc}") from exc
-    purpose, warnings, source = draft_purpose(raw, context)
-    if not purpose:  # defensivo: el borrador por reglas siempre devuelve texto
-        raise HTTPException(
-            502,
-            {
-                "error_code": "purpose_unavailable",
-                "message": (
-                    "No se pudo armar el borrador del propósito: faltan datos del "
-                    "agente para proponer algo. Escribilo a mano."
-                ),
-            },
+    context = await _agent_config_context(
+        request,
+        ctx,
+        agent,
+        source_ids_override=body.source_ids,
+    )
+    profile = (
+        profile_from_config(
+            {"response_profile": body.profile.model_dump(exclude_none=True)}
         )
-    if source == "rules":
+        if body.profile is not None
+        else context.profile
+    )
+    requested_mode = str(body.mode or PURPOSE_MODE_AUTO).strip().lower()
+    mode = requested_mode if requested_mode in PURPOSE_MODES else PURPOSE_MODE_AUTO
+    # Compatibilidad legacy: antes `instructions` transportaba el propósito.
+    legacy_purpose = body.purpose is None and body.instructions is not None
+    context = replace(
+        context,
+        name=body.name if body.name is not None else context.name,
+        description=body.description if body.description is not None else context.description,
+        purpose=(
+            body.purpose
+            if body.purpose is not None
+            else (body.instructions if legacy_purpose else context.purpose)
+        ),
+        instructions="" if legacy_purpose else (
+            body.instructions if body.instructions is not None else context.instructions
+        ),
+        profile=profile,
+        profile_audience=profile.audience if profile is not None else context.profile_audience,
+        tools=tuple(body.tools) if body.tools is not None else context.tools,
+        mode=mode,
+    )
+    mode = effective_purpose_mode(context)
+    warnings: list[str] = []
+    raw = ""
+    try:
+        raw = await _generate_text(
+            build_purpose_prompt(context, mode=mode),
+            max_tokens=3000,
+            temperature=0.0,
+        )
+    except Exception as exc:  # noqa: BLE001 — nunca sustituir la intención por 503
+        warnings.append(f"generation_unavailable:{type(exc).__name__}")
         logger.warning(
-            "agent purpose draft replaced by rules",
+            "agent purpose generation unavailable; preserving input",
             agent_id=agent_id,
             organization_id=str(ctx.organization_id),
+            error=str(exc)[:200],
+        )
+
+    if raw.strip():
+        draft = parse_purpose_response(raw, context)
+    else:
+        warnings.append("empty_model_output")
+        draft = suggest_purpose_intent(context, mode=mode)
+    quality = evaluate_purpose_intent(draft, context)
+    source = draft.generation_source
+
+    # Reparación acotada: una sola pasada si el incumplimiento es material.
+    if not quality.passed and raw.strip() and draft.purpose:
+        try:
+            repaired_raw = await _generate_text(
+                build_purpose_repair_prompt(context, draft, quality.issues),
+                max_tokens=3000,
+                temperature=0.1,
+            )
+            repaired = parse_purpose_response(repaired_raw, context)
+            repaired_quality = evaluate_purpose_intent(repaired, context)
+            if repaired_quality.score >= quality.score and repaired.purpose:
+                repaired_quality.repaired = True
+                draft, quality, source = repaired, repaired_quality, "model_repaired"
+        except Exception as exc:  # noqa: BLE001 — la reparación no rompe el borrador
+            warnings.append(f"repair_unavailable:{type(exc).__name__}")
+
+    # Fallo definitivo: conservar la entrada original, no inventar un propósito.
+    if not quality.passed and any(
+        str(value or "").strip()
+        for value in (context.purpose, context.description, context.name)
+    ):
+        original = suggest_purpose_intent(context, mode=mode)
+        compatibility_warnings: list[str] = []
+        if quality.unnecessary_tools or "capability_grounding" in quality.issues:
+            compatibility_warnings.append("mentions_unconfigured_capability")
+        original.warnings = list(dict.fromkeys([
+            "quality_failed_preserved_original",
+            *quality.issues[:8],
+            *compatibility_warnings,
+            *warnings,
+        ]))
+        draft = original
+        quality = evaluate_purpose_intent(draft, context)
+        source = "rules"
+
+    warnings = list(dict.fromkeys([
+        *draft.warnings,
+        *quality.issues,
+        *warnings,
+    ]))[:12]
+    if source == "rules":
+        logger.warning(
+            "agent purpose preserved input after generation/quality failure",
+            agent_id=agent_id,
+            organization_id=str(ctx.organization_id),
+            issues=quality.issues[:8],
             raw_excerpt=str(raw or "")[:300],
-            warnings=warnings,
         )
     return {
-        "draft": purpose,
+        # Compatibilidad con clientes que esperan una cadena.
+        "draft": draft.purpose,
+        "purpose": draft.purpose,
+        "additional_instructions": draft.additional_instructions,
+        "intent_summary": draft.intent_summary,
+        "persona": draft.persona.model_dump(),
+        "behavioral_objectives": list(draft.behavioral_objectives),
+        "knowledge_boundaries": list(draft.knowledge_boundaries),
         "warnings": warnings,
         "source": source,
+        "generation_source": draft.generation_source,
+        "mode": mode,
+        "input_purpose": str(context.purpose or ""),
+        "quality": quality.to_public_dict(),
         "grounded_in": {
             "sources": list(context.source_titles)[:6],
             "source_kinds": list(context.source_kinds)[:6],
-            "tools": list(context.tools)[:10],
             "capabilities": sorted(context.capabilities),
+            "profile_id": profile.profile_id if profile is not None else "",
+            "profile_audience": profile.audience if profile is not None else "",
         },
         "saved": False,
     }

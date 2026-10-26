@@ -32,7 +32,9 @@ _ANALYST_RE = re.compile(r"\b(analista|analyst)\b", re.I)
 _COMMERCIAL_RE = re.compile(r"\b(comercial|ventas|sales|account\s+executive)\b", re.I)
 _AUDITOR_RE = re.compile(r"\b(auditor|auditora)\b", re.I)
 _SUPPORT_RE = re.compile(r"\b(soporte|support|help\s*desk)\b", re.I)
-_CHILD_AUDIENCE_RE = re.compile(r"\b(ni[nñ]o|ni[nñ]a|infantil|children|kids)\b", re.I)
+_CHILD_AUDIENCE_RE = re.compile(
+    r"\b(ni[nñ]o[s]?|ni[nñ]a[s]?|infantil(?:es)?|children|kids)\b", re.I
+)
 _BUSINESS_AUDIENCE_RE = re.compile(r"\b(ejecutiv|gerente|director|business|management)\b", re.I)
 _TECHNICAL_AUDIENCE_RE = re.compile(r"\b(t[eé]cnic|ingenier|developer|expert)\b", re.I)
 

@@ -13,6 +13,7 @@ import { AgentStageNav, AgentStagePanel } from "../components/agentStudio/AgentS
 import { AgentTestChat } from "../components/agentStudio/AgentTestChat";
 import { AgentPublishSection } from "../components/agentStudio/AgentPublishSection";
 import { responseProfileSummary } from "../components/agentStudio/agentModes";
+import { toolsFromCapabilities } from "../components/agentStudio/types";
 import { useAgentStudio } from "../components/agentStudio/useAgentStudio";
 import { Breadcrumb } from "../components/Breadcrumb";
 import {
@@ -179,6 +180,13 @@ export default function AgentStudioPage() {
                     name={studio.name}
                     purpose={studio.config.purpose || ""}
                     instructions={studio.systemPrompt}
+                    profile={studio.profile}
+                    sourceTitles={studio.selectedSources.map((source) => source.name)}
+                    tools={toolsFromCapabilities(
+                      studio.capabilities.knowledge,
+                      studio.capabilities.data,
+                      studio.capabilities.integrations,
+                    )}
                     nameError={
                       studio.nameTouched && !studio.name.trim()
                         ? "Necesitas un nombre para guardar."

@@ -292,6 +292,31 @@ function fetchRouter(
       );
     if (url.includes("/config/response-profile"))
       return Promise.resolve(json({ draft: { preset: "analytical", default_detail: "deep" } }));
+    if (url.includes("/config/purpose"))
+      return Promise.resolve(
+        json({
+          draft: "Eres un narrador de cuentos infantiles que explica historias con voz cálida.",
+          purpose:
+            "Eres un narrador de cuentos infantiles que explica historias con voz cálida.",
+          additional_instructions:
+            "Abrí con una imagen cercana.\nSepará el hecho de tu lectura.",
+          intent_summary: "Explicar cuentos a niños con voz narrativa.",
+          persona: {
+            role: "Narrador",
+            audience: "infantil",
+            voice: "cálida e imaginativa",
+            communication_principles: ["una idea por frase"],
+          },
+          behavioral_objectives: ["explicar historias"],
+          knowledge_boundaries: ["no inventar hechos"],
+          warnings: [],
+          source: "model",
+          generation_source: "model",
+          mode: "expand",
+          quality: { passed: true, score: 1, criteria: {}, issues: [] },
+          saved: false,
+        }),
+      );
     if (url.includes("/run/stream")) {
       const frames = [
         { event: "status", data: { phase: "running" } },
@@ -678,6 +703,44 @@ describe("AgentStudio · comportamiento", () => {
     await user.click(useButtons[0]);
     expect(screen.getByText(/aplicado al borrador/)).toBeInTheDocument();
     expect(screen.getByText(/No se guardó/)).toBeInTheDocument();
+  });
+
+  it("construye propósito con campos sin guardar y no auto-aplica", async () => {
+    const { user, fetchMock } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    const purposeInput = screen.getByLabelText("Propósito", { exact: true });
+    await user.clear(purposeInput);
+    await user.type(purposeInput, "Responde como un narrador de cuentos infantil");
+    await user.click(screen.getByRole("button", { name: /Instrucciones adicionales/ }));
+    await user.clear(screen.getByLabelText("Texto libre"));
+    await user.type(screen.getByLabelText("Texto libre"), "No inventes datos.");
+    await user.click(screen.getByLabelText("Generar propósito con IA"));
+
+    const panel = await screen.findByTestId("purpose-proposal");
+    expect(within(panel).getByText(/Tu objetivo original/)).toBeInTheDocument();
+    expect(
+      within(panel).getByDisplayValue(/Eres un narrador de cuentos infantiles/),
+    ).toBeInTheDocument();
+    expect(within(panel).getByDisplayValue(/Abrí con una imagen cercana/)).toBeInTheDocument();
+
+    const call = fetchMock.mock.calls.find((entry) =>
+      String(entry[0]).includes("/config/purpose"),
+    );
+    expect(call).toBeTruthy();
+    const body = JSON.parse(String(call?.[1]?.body || "{}"));
+    expect(body.purpose).toBe("Responde como un narrador de cuentos infantil");
+    expect(body.instructions).toBe("No inventes datos.");
+    expect(body.name).toBe("Soporte");
+    expect(body.mode).toBe("auto");
+
+    await user.click(within(panel).getByRole("button", { name: "Aplicar propósito e instrucciones" }));
+    expect(screen.getByLabelText("Propósito", { exact: true })).toHaveValue(
+      "Eres un narrador de cuentos infantiles que explica historias con voz cálida.",
+    );
+    expect(screen.getByLabelText("Texto libre")).toHaveValue(
+      "- No inventes datos.\n- Abrí con una imagen cercana.\n- Separá el hecho de tu lectura.",
+    );
+    expect(screen.queryByTestId("purpose-proposal")).toBeNull();
   });
 
   it("pide un borrador de estilo con IA y avisa que es un borrador", async () => {

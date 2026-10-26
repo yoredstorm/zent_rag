@@ -683,10 +683,12 @@ def _patch_purpose_route(monkeypatch, raw: str | Exception) -> None:
     async def fake_owned_agent(ctx, agent_id):  # noqa: ANN001
         return object()
 
-    async def fake_context(request, ctx, agent):  # noqa: ANN001
+    async def fake_context(request, ctx, agent, source_ids_override=None):  # noqa: ANN001
         return AgentConfigContext(name="ATPCO Specialist", description="Analiza tarifas")
 
-    async def fake_generate(prompt: str, *, max_tokens: int = 400) -> str:
+    async def fake_generate(
+        prompt: str, *, max_tokens: int = 400, temperature: float = 0.2
+    ) -> str:
         if isinstance(raw, Exception):
             raise raw
         return raw
@@ -726,17 +728,17 @@ async def test_purpose_draft_sin_texto_del_modelo_devuelve_200(monkeypatch) -> N
     assert "empty_model_output" in payload["warnings"]
 
 
-async def test_purpose_draft_mantiene_503_si_el_proveedor_falla(monkeypatch) -> None:
-    from fastapi import HTTPException
-
+async def test_purpose_provider_failure_preserves_user_input(monkeypatch) -> None:
+    """P16: si el proveedor falla, se conserva la entrada y se señala el límite."""
     import src.api.routes.agents as agents
 
     _patch_purpose_route(monkeypatch, RuntimeError("gateway down"))
-    with pytest.raises(HTTPException) as exc:
-        await agents.generate_agent_purpose(
-            str(uuid4()), agents.GeneratePurposeRequest(), None  # type: ignore[arg-type]
-        )
-    assert exc.value.status_code == 503
+    payload = await agents.generate_agent_purpose(
+        str(uuid4()), agents.GeneratePurposeRequest(), None  # type: ignore[arg-type]
+    )
+    assert payload["source"] == "rules"
+    assert payload["draft"] == "Analiza tarifas"
+    assert any("generation_unavailable" in warning for warning in payload["warnings"])
 
 
 # ---------------------------------------------------------------------------
