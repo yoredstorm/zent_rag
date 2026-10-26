@@ -38,13 +38,13 @@ def test_migration_163_is_aditive_and_chained() -> None:
     assert "CREATE TABLE IF NOT EXISTS assistants" not in source
 
 
-def test_latest_migration_is_169() -> None:
+def test_latest_migration_is_current() -> None:
     numbers = sorted(
         int(path.stem.split("_", 1)[0])
         for path in VERSIONS.glob("*.py")
         if path.stem.split("_", 1)[0].isdigit()
     )
-    assert numbers[-1] == 169
+    assert numbers[-1] == 173
 
 
 def test_migration_169_persists_test_reports_only() -> None:

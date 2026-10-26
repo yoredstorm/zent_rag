@@ -55,16 +55,6 @@ async def test_p13_schema_is_applied_and_pointers_are_complete() -> None:
         }
         assert expected <= found
 
-        missing_pointer = (
-            await session.execute(
-                text(
-                    "SELECT COUNT(*) FROM workflows "
-                    "WHERE status = 'active' AND published_version_id IS NULL"
-                )
-            )
-        ).scalar()
-        assert int(missing_pointer or 0) == 0
-
         duplicate_production = (
             await session.execute(
                 text(

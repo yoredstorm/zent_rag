@@ -60,7 +60,12 @@ export async function apiAsTenant(
   if (["POST", "PUT", "PATCH"].includes((init.method || "GET").toUpperCase())) {
     headers["Idempotency-Key"] = crypto.randomUUID();
   }
-  return request.fetch(`/api/v1${path}`, { ...init, headers });
+  const { body, ...rest } = init;
+  return request.fetch(`/api/v1${path}`, {
+    ...rest,
+    data: body,
+    headers,
+  });
 }
 
 /** Corre axe-core sobre la página actual y falla si hay violaciones serias. */

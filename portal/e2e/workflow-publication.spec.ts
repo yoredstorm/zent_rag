@@ -1,6 +1,23 @@
 import { expect, test } from "@playwright/test";
 import { apiAsTenant, loginAsTenant, suppressProductTour } from "./fixtures";
 
+function markerNode(id: string, type: string, config: Record<string, unknown>) {
+  return {
+    id,
+    type,
+    label: type,
+    config,
+    version: 1,
+    metadata: {},
+    position: {},
+    timeout_ms: 60_000,
+    input_ports: [{ name: "in", type: "json", required: true }],
+    output_ports: [{ name: "out", type: "json" }],
+    retry_policy: { max_attempts: 1 },
+    error_policy: "fail",
+  };
+}
+
 function markerGraph(value: string) {
   return {
     workflow_version: 2,
@@ -8,34 +25,27 @@ function markerGraph(value: string) {
     entrypoints: ["t"],
     metadata: {},
     nodes: [
-      {
-        id: "t",
-        type: "trigger_webhook",
-        label: "trigger",
-        config: {},
-        input_ports: [{ name: "in", type: "json" }],
-        output_ports: [{ name: "out", type: "json" }],
-      },
-      {
-        id: "m",
-        type: "set_variable",
-        label: "marker",
-        config: { name: "marker", value },
-        input_ports: [{ name: "in", type: "json" }],
-        output_ports: [{ name: "out", type: "json" }],
-      },
-      {
-        id: "end",
-        type: "end",
-        label: "fin",
-        config: {},
-        input_ports: [{ name: "in", type: "json" }],
-        output_ports: [{ name: "out", type: "json" }],
-      },
+      markerNode("t", "trigger_webhook", {}),
+      markerNode("m", "set_variable", { name: "marker", value }),
+      markerNode("end", "end", {}),
     ],
     edges: [
-      { id: "e1", from_node: "t", from_port: "out", to_node: "m", to_port: "in" },
-      { id: "e2", from_node: "m", from_port: "out", to_node: "end", to_port: "in" },
+      {
+        id: "e1",
+        from_node: "t",
+        from_port: "out",
+        to_node: "m",
+        to_port: "in",
+        condition: null,
+      },
+      {
+        id: "e2",
+        from_node: "m",
+        from_port: "out",
+        to_node: "end",
+        to_port: "in",
+        condition: null,
+      },
     ],
   };
 }
@@ -56,6 +66,9 @@ test.describe("Publicación inmutable P13", () => {
         workflow_version: 2,
       }),
     });
+    if (!created.ok()) {
+      console.log("create failed", created.status(), await created.text());
+    }
     expect(created.ok()).toBeTruthy();
     const workflow = (await created.json()) as {
       workflow_id: string;
