@@ -1,6 +1,9 @@
 # P15 — Evidencia
 
 Fecha: `2026-10-26`.
+SHA de código verificado: `05457c313e45d60ee8fbd64dc509da123a33c4e6`.
+CI: run `40340238955`, todos los jobs en success (`test`, `portal`,
+`portal-e2e`, `lint`, SDKs, `kustomize`, `pip-audit`, `secrets-scan`, `build`).
 
 ## 1. Pruebas deterministas
 
