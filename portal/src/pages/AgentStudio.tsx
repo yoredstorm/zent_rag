@@ -163,7 +163,7 @@ export default function AgentStudioPage() {
                   title="Diseño del agente"
                   description="Lo esencial para que funcione. Lo demás está en Personalizar."
                 />
-                <div className="grid min-h-0 flex-1 auto-rows-min gap-6 overflow-y-auto p-4">
+                <div className="grid min-h-0 min-w-0 flex-1 auto-rows-min grid-cols-1 gap-6 overflow-y-auto p-4">
                   {studio.aiSuggestionOpen && (
                     <AgentAiConfigSuggestion
                       recommendation={studio.recommendation}

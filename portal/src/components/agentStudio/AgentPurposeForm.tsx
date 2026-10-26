@@ -294,23 +294,23 @@ export function AgentPurposeForm({
         <AgentSection
           title="Propuesta de propósito"
           hint="Revisá y editá antes de aplicar. Nada se guarda hasta que guardes el agente."
+          className="min-w-0"
         >
-          <div className="grid gap-4" data-testid="purpose-proposal">
-            <div>
+          <div className="grid min-w-0 gap-4" data-testid="purpose-proposal">
+            <div className="min-w-0">
               <p className="text-[11px] font-medium uppercase tracking-wide text-faint">
                 Tu objetivo original
               </p>
-              <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{originalSnapshot}</p>
+              <p className="mt-1 break-words whitespace-pre-wrap text-xs text-muted">
+                {originalSnapshot}
+              </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {proposal.quality ? (
                 <Badge tone={proposal.quality.passed ? "ok" : "warn"}>
                   {proposal.quality.passed ? "Chequeos superados" : "Revisar propuesta"}
                 </Badge>
-              ) : null}
-              {proposal.intent_summary ? (
-                <Badge tone="neutral">{proposal.intent_summary}</Badge>
               ) : null}
               <Badge tone="neutral">
                 {proposal.source === "rules" ? "Entrada preservada" : "Generado con IA"}
@@ -318,10 +318,21 @@ export function AgentPurposeForm({
               <Badge tone="neutral">Modo: {proposal.mode}</Badge>
             </div>
 
-            <AgentField id="purpose-proposal-purpose" label="Propósito propuesto">
+            {proposal.intent_summary ? (
+              <p className="min-w-0 break-words text-[11.5px] leading-relaxed text-muted">
+                <span className="font-medium text-faint">Intención detectada: </span>
+                {proposal.intent_summary}
+              </p>
+            ) : null}
+
+            <AgentField
+              id="purpose-proposal-purpose"
+              label="Propósito propuesto"
+              className="min-w-0"
+            >
               <Textarea
                 id="purpose-proposal-purpose"
-                className="min-h-28"
+                className="min-h-28 min-w-0"
                 value={proposalPurpose}
                 onChange={(e) => setProposalPurpose(e.target.value)}
               />
@@ -331,19 +342,22 @@ export function AgentPurposeForm({
               id="purpose-proposal-instructions"
               label="Instrucciones adicionales sugeridas"
               hint="Se aplican al campo de instrucciones; no reemplazan nada sin tu elección."
+              className="min-w-0"
             >
               <Textarea
                 id="purpose-proposal-instructions"
-                className="min-h-32"
+                className="min-h-32 min-w-0"
                 value={proposalInstructions}
                 onChange={(e) => setProposalInstructions(e.target.value)}
               />
             </AgentField>
 
             {instructions.trim() ? (
-              <div className="grid gap-2 rounded-md border border-border bg-surface/60 p-3">
+              <div className="grid min-w-0 gap-2 rounded-md border border-border bg-surface/60 p-3">
                 <p className="text-xs font-medium text-text">Ya tenés instrucciones</p>
-                <p className="whitespace-pre-wrap text-[11.5px] text-faint">{instructions}</p>
+                <p className="break-words whitespace-pre-wrap text-[11.5px] text-faint">
+                  {instructions}
+                </p>
                 <div className="flex flex-wrap gap-1.5" role="group" aria-label="Cómo aplicar instrucciones">
                   {(
                     [
@@ -371,19 +385,19 @@ export function AgentPurposeForm({
             ) : null}
 
             {proposal.persona.role || proposal.persona.voice || proposal.persona.audience ? (
-              <p className="text-[11.5px] text-faint">
+              <p className="min-w-0 break-words text-[11.5px] text-faint">
                 Identidad: {proposal.persona.role || "sin rol"} ·{" "}
                 {proposal.persona.audience || "audiencia no declarada"} ·{" "}
                 {proposal.persona.voice || "voz no declarada"}
               </p>
             ) : null}
             {proposal.warnings.length ? (
-              <p className="text-[11.5px] text-warn">
+              <p className="min-w-0 break-words text-[11.5px] text-warn">
                 {describeWarnings(proposal.warnings) || proposal.warnings.join(" · ")}
               </p>
             ) : null}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex min-w-0 flex-wrap gap-2">
               <Button variant="primary" size="sm" onClick={applyPurposeOnly}>
                 Aplicar propósito
               </Button>

@@ -29,3 +29,8 @@ Verificación real del endpoint en Docker:
 - no se guardó el agente; el registro de prueba se eliminó al final.
 
 La generación no modificó workflows publicados ni instancias durables.
+
+Verificación responsive de la propuesta con un `intent_summary` largo (825,
+1024, 1280 y 1440 px): `scrollWidth == clientWidth` en el panel, el textarea y
+el documento. El contenedor scrolleable del Agent Studio ahora usa una columna
+`minmax(0, 1fr)` explícita, así no se dimensiona al contenido más largo.
