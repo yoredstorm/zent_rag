@@ -131,7 +131,9 @@ test.describe("Publicación inmutable P13", () => {
     );
     expect(recertified.ok()).toBeTruthy();
     await page.reload();
-    await page.getByTestId("wf-open-advanced").click();
+    if (!(await page.getByTestId("wf-advanced-panel").isVisible())) {
+      await page.getByTestId("wf-open-advanced").click();
+    }
     await expect(page.getByTestId("wf-publish")).toBeEnabled({ timeout: 20_000 });
     await page.getByTestId("wf-publish").click();
     await expect(page.getByTestId("wf-published-banner")).toContainText(
