@@ -674,12 +674,19 @@ async def save_response_profile(agent_id: str, body: SaveProfileRequest, request
 async def preview_agent_response(agent_id: str, body: PreviewRequest, request: Request):
     """Muestra cómo respondería el agente. No ejecuta tools reales."""
     from src.intelligence.response.contract import prompt_block
+    from src.intelligence.response.identity import identity_from_agent_config
     from src.intelligence.response.profile import profile_from_config
+    from src.intelligence.response.quality import evaluate_response_quality
     from src.intelligence.response.wiring import compose_for_request
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "agents:write")
     agent = await _get_owned_agent(ctx, agent_id)
+    identity = identity_from_agent_config(
+        agent.config_json,
+        name=str(getattr(agent, "name", "") or ""),
+        system_prompt=str(getattr(agent, "system_prompt", "") or ""),
+    )
     temporary_profile = (
         profile_from_config(
             {"response_profile": body.profile.model_dump(exclude_none=True)}
@@ -691,6 +698,7 @@ async def preview_agent_response(agent_id: str, body: PreviewRequest, request: R
         question=body.question,
         config_json=agent.config_json,
         profile=temporary_profile,
+        identity=identity,
         mode="rules",
         request_id=None,
         organization_id=ctx.organization_id,
@@ -701,7 +709,7 @@ async def preview_agent_response(agent_id: str, body: PreviewRequest, request: R
         "configurados. No hay hechos de dominio en esta respuesta."
     )
     shape = (
-        prompt_block(plan.contract, profile=plan.profile)
+        prompt_block(plan.contract, profile=plan.profile, identity=plan.identity)
         if plan.contract is not None
         else ""
     )
@@ -717,17 +725,30 @@ async def preview_agent_response(agent_id: str, body: PreviewRequest, request: R
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"No se pudo generar el preview: {exc}") from exc
+    contract_public = (
+        plan.contract.to_public_dict() if plan.contract is not None else None
+    )
+    quality = evaluate_response_quality(
+        answer=draft,
+        contract=contract_public,
+        intent=(plan.user_intent.to_public_dict() if plan.user_intent else None),
+        identity=(plan.identity.to_public_dict() if plan.identity else None),
+    ).to_public_dict()
     return {
         "preview": draft,
         "simulated_evidence": True,
         "tools_executed": False,
         "profile_source": "temporary" if temporary_profile is not None else "saved",
         "profile": plan.profile.to_public_dict() if plan.profile is not None else None,
-        "response_contract": plan.contract.to_public_dict() if plan.contract is not None else None,
+        "identity": plan.identity.to_public_dict() if plan.identity else None,
+        "intent": plan.user_intent.to_public_dict() if plan.user_intent else None,
+        "response_contract": contract_public,
+        "quality": quality,
         "validation": {
             "contract_present": plan.contract is not None,
             "style_degraded": bool(plan.style_degraded),
             "style_degradation_reason": plan.style_degradation_reason,
+            "semantic_evaluated": False,
         },
         "mode": plan.mode,
         "source": plan.source,
@@ -743,12 +764,19 @@ async def compare_agent_profiles(agent_id: str, body: CompareRequest, request: R
     import asyncio
 
     from src.intelligence.response.contract import prompt_block
+    from src.intelligence.response.identity import identity_from_agent_config
     from src.intelligence.response.profile import RESPONSE_PROFILE_PRESETS
+    from src.intelligence.response.quality import evaluate_response_quality
     from src.intelligence.response.wiring import compose_for_request
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "agents:write")
     agent = await _get_owned_agent(ctx, agent_id)
+    identity = identity_from_agent_config(
+        agent.config_json,
+        name=str(getattr(agent, "name", "") or ""),
+        system_prompt=str(getattr(agent, "system_prompt", "") or ""),
+    )
     unknown = [item for item in body.profile_ids if item not in RESPONSE_PROFILE_PRESETS]
     if unknown:
         raise HTTPException(400, {"error_code": "unknown_profile", "profiles": unknown})
@@ -764,12 +792,13 @@ async def compare_agent_profiles(agent_id: str, body: CompareRequest, request: R
             question=body.question,
             config_json=agent.config_json,
             profile=profile,
+            identity=identity,
             mode="rules",
             request_id=None,
             organization_id=ctx.organization_id,
         )
         shape = (
-            prompt_block(plan.contract, profile=plan.profile)
+            prompt_block(plan.contract, profile=plan.profile, identity=plan.identity)
             if plan.contract is not None
             else ""
         )
@@ -790,26 +819,38 @@ async def compare_agent_profiles(agent_id: str, body: CompareRequest, request: R
             answer = ""
             error = str(exc)[:200]
         contract = plan.contract
+        contract_public = contract.to_public_dict() if contract is not None else None
+        quality = evaluate_response_quality(
+            answer=answer,
+            contract=contract_public,
+            intent=(plan.user_intent.to_public_dict() if plan.user_intent else None),
+            identity=(plan.identity.to_public_dict() if plan.identity else None),
+        ).to_public_dict()
         return {
             "profile_id": profile_id,
             "profile": plan.profile.to_public_dict() if plan.profile is not None else None,
+            "identity": plan.identity.to_public_dict() if plan.identity else None,
+            "intent": plan.user_intent.to_public_dict() if plan.user_intent else None,
             "answer": answer,
             "error": error,
             "chars": len(answer),
             "sections": list(contract.sections) if contract is not None else [],
             "formatting": dict(contract.formatting) if contract is not None else {},
             "evidence": dict(contract.evidence) if contract is not None else {},
-            "response_contract": contract.to_public_dict() if contract is not None else None,
+            "response_contract": contract_public,
+            "quality": quality,
             "validation": {
                 "contract_present": contract is not None,
                 "style_degraded": bool(plan.style_degraded),
                 "style_degradation_reason": plan.style_degradation_reason,
+                "semantic_evaluated": False,
             },
         }
 
     results = await asyncio.gather(*(run_one(item) for item in body.profile_ids))
     return {
         "question": body.question,
+        "identity": identity.to_public_dict(),
         "simulated_evidence": True,
         "tools_executed": False,
         "same_evidence": True,

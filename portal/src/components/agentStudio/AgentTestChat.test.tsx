@@ -92,6 +92,40 @@ describe("AgentTestChat · presentación de la respuesta", () => {
     expect(screen.queryByText(/Cat31_dapp_C\.pdfRec2/)).toBeNull();
   });
 
+  it("la vista técnica separa intención, identidad, perfil y validación", () => {
+    renderChat([
+      {
+        role: "assistant",
+        text: "Me parece una historia valiosa por su tono.",
+        flow: {
+          response: {
+            user_intent: { kind: "valuation", evaluative: true },
+            identity: { label: "Narrador", preserved: true },
+          },
+          response_contract: {
+            profile_id: "concise",
+            communication_strategy: "answer_only",
+            detail: "brief",
+          },
+          response_quality: {
+            label: "No evaluado",
+            semantic_evaluated: false,
+            unnecessary_refusal: false,
+            irrelevant_internal_metadata: false,
+          },
+        },
+      },
+    ]);
+
+    const trace = screen.getByTestId("agent-technical-trace");
+    expect(trace).toHaveTextContent("Intención valuation");
+    expect(trace).toHaveTextContent("Identidad Narrador");
+    expect(trace).toHaveTextContent("Perfil concise");
+    expect(trace).toHaveTextContent("Validación No evaluado");
+    expect(trace).toHaveTextContent("sin juez semántico");
+    expect(screen.queryByText(/validado/i)).toBeNull();
+  });
+
   it("no interpreta como markdown el texto del usuario", () => {
     renderChat([{ role: "user", text: "cuéntame sobre categoría 31 y byte 105" }]);
 

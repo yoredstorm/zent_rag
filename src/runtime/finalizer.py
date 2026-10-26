@@ -257,6 +257,7 @@ Rules:
 - If a domain premise is missing, state exactly which one; never fill it with
   model knowledge.
 
+{identity_block}
 USER QUESTION: {question}
 
 {analytical_workspace}
@@ -273,6 +274,7 @@ def build_finalize_prompt(
     history: list[str],
     analytical_workspace: str = "",
     response_shape: str = "",
+    identity_block: str = "",
 ) -> str:
     """Prompt del cierre estándar: última generación sin tools.
 
@@ -284,6 +286,7 @@ def build_finalize_prompt(
         history="\n".join(list(history or ())[-10:]),
         analytical_workspace=analytical_workspace,
         response_shape=response_shape,
+        identity_block=identity_block,
     )
 
 

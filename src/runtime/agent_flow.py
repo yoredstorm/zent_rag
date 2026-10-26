@@ -1443,6 +1443,40 @@ def build_agent_flow(
         contract = response_plan.get("contract")
         if isinstance(contract, Mapping):
             flow["response_contract"] = dict(contract)
+    # P15: calidad de la RESPUESTA, separada de la validez del contrato.
+    try:
+        from src.intelligence.response.quality import evaluate_response_quality
+
+        gate_step = next(
+            (
+                step
+                for step in steps
+                if isinstance(step, Mapping) and step.get("type") == "answer_gate"
+            ),
+            {},
+        )
+        claims = gate_step.get("claims") if isinstance(gate_step, Mapping) else {}
+        quality = evaluate_response_quality(
+            answer=getattr(result, "answer", ""),
+            contract=flow.get("response_contract"),
+            intent=(
+                dict(response_plan.get("user_intent"))
+                if isinstance(response_plan, Mapping)
+                and isinstance(response_plan.get("user_intent"), Mapping)
+                else getattr(result, "turn_intent", None)
+            ),
+            identity=(
+                dict(response_plan.get("identity"))
+                if isinstance(response_plan, Mapping)
+                and isinstance(response_plan.get("identity"), Mapping)
+                else None
+            ),
+            claims=claims if isinstance(claims, Mapping) else None,
+            semantic_evaluated=False,
+        )
+        flow["response_quality"] = quality.to_public_dict()
+    except Exception:  # noqa: BLE001 — la calidad nunca rompe el flujo
+        pass
     # Evidencia del run: fragmentos con `evidence_id` + citas ancladas a esos ids.
     # SOURCE != EVIDENCE: `sources` son los documentos; esto es lo recuperado.
     evidence_block = getattr(result, "evidence", None)

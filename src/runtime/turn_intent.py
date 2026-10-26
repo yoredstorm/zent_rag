@@ -29,6 +29,7 @@ from typing import Any, Mapping
 from src.decision.batch import answer_for, noul_for
 from src.decision.judgment import PHASE_PRE_RETRIEVAL, JudgmentContext, call_phase_judge
 from src.infrastructure.observability.logging_config import get_logger
+from src.intelligence.response.intent import detect_user_intent
 from src.runtime.jev_state import StateSection, build_jev_state
 
 logger = get_logger(__name__)
@@ -39,6 +40,9 @@ logger = get_logger(__name__)
 
 TURN_INTENTS: tuple[str, ...] = (
     "knowledge_question",
+    "valuation",
+    "interpretation",
+    "recommendation",
     "social_conversation",
     "greeting",
     "gratitude",
@@ -57,6 +61,19 @@ INTENT_CRITERIA: dict[str, str] = {
     "knowledge_question": (
         "The user asks for information, an explanation, a definition, a value, or "
         "data that lives in documents or databases."
+    ),
+    "valuation": (
+        "The user asks for an opinion or value judgment about an object, work, "
+        "answer, design or proposal ('qué te parece', 'qué opinas'). It is not a "
+        "request for a personal lived experience."
+    ),
+    "interpretation": (
+        "The user asks for an interpretation or reading of a work, result, symbol "
+        "or situation ('cuál es tu interpretación', 'qué significa para vos')."
+    ),
+    "recommendation": (
+        "The user asks for a recommendation or decision advice ('recomendarías', "
+        "'qué conviene elegir'). It requires criteria, not a lived experience."
     ),
     "social_conversation": (
         "Small talk, pleasantries, or a social check-in (how are you, how is it "
@@ -97,6 +114,12 @@ DIRECT_INTENTS = CONVERSATIONAL_INTENTS | {
     "clarification",
 }
 FACTUAL_INTENTS = frozenset({"knowledge_question", "action_request"})
+EVALUATIVE_INTENTS = frozenset({"valuation", "interpretation", "recommendation"})
+EVALUATIVE_TURN_BY_USER_INTENT = {
+    "valuation": "valuation",
+    "interpretation": "interpretation",
+    "recommendation": "recommendation",
+}
 
 ROUTE_DIRECT = "direct"
 ROUTE_CONTEXT = "context"
@@ -231,6 +254,8 @@ def _signals(message: str) -> list[str]:
         señales.append("question_word")
     if _SOCIAL_FALSE_KNOWLEDGE_RE.search(texto):
         señales.append("social")
+    if detect_user_intent(texto).evaluative:
+        señales.append("valuation")
     try:
         from src.intelligence.response.entities import asked_entities
 
@@ -276,6 +301,7 @@ def _decision(
                 else (1.0 if intent == "knowledge_question" else 0.0)
             )
         ),
+        evaluative=intent in EVALUATIVE_INTENTS,
         signals=tuple(signals),
         reasons=tuple(reasons),
         latency_ms=round(float(latency_ms), 2),
@@ -307,6 +333,21 @@ def rules_turn_intent(message: str, *, has_context: bool = False) -> "TurnIntent
             model_tier=MODEL_TIER_DEFAULT,
             signals=señales,
             reasons=("configuracion_del_agente_no_documentos",),
+        )
+    detected = detect_user_intent(texto)
+    if detected.evaluative:
+        # La valoración se apoya en el objeto/evidencia, pero no exige una
+        # experiencia personal del modelo. El route sigue siendo knowledge.
+        return _decision(
+            intent=EVALUATIVE_TURN_BY_USER_INTENT.get(detected.kind, "valuation"),
+            confidence=0.88,
+            provider="rules",
+            route=ROUTE_KNOWLEDGE,
+            needs_external_evidence=True,
+            evidence_source="rules",
+            model_tier=MODEL_TIER_DEFAULT,
+            signals=señales,
+            reasons=("valoracion_interpretativa",),
         )
     if "entity" in señales or "knowledge_verb" in señales:
         return _decision(
@@ -539,7 +580,11 @@ def decide_route(
         1.0 if intent in CONVERSATIONAL_INTENTS else 0.0
     )
 
-    factual = intent in FACTUAL_INTENTS or knowledge_prob >= knowledge_floor
+    factual = (
+        intent in FACTUAL_INTENTS
+        or intent in EVALUATIVE_INTENTS
+        or knowledge_prob >= knowledge_floor
+    )
     if intent == "contextual_followup":
         # Un follow-up factual necesita evidencia; uno social no.
         factual = bool(needs_external_evidence) if needs_external_evidence is not None else False
@@ -660,6 +705,19 @@ def fallback_turn_intent(
     if rules is not None:
         return rules
     señales = _signals(message or "")
+    detected = detect_user_intent(message or "")
+    if detected.evaluative:
+        return _decision(
+            intent=EVALUATIVE_TURN_BY_USER_INTENT.get(detected.kind, "valuation"),
+            confidence=0.80,
+            provider="rules_fallback",
+            route=ROUTE_KNOWLEDGE,
+            needs_external_evidence=True,
+            evidence_source="rules",
+            model_tier=MODEL_TIER_DEFAULT,
+            signals=señales,
+            reasons=("valoracion_sin_jev",),
+        )
     if not any(s in señales for s in ("entity", "knowledge_verb", "question_word", "action")):
         from src.runtime.deterministic_authority import requires_deterministic_decision
 
@@ -820,6 +878,7 @@ class TurnIntentDecision:
     route: str = ROUTE_KNOWLEDGE
     model_tier: str = MODEL_TIER_DEFAULT
     knowledge_probability: float = 0.0
+    evaluative: bool = False
     signals: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
     latency_ms: float = 0.0
@@ -843,6 +902,7 @@ class TurnIntentDecision:
             "needs_external_evidence": bool(self.needs_external_evidence),
             "evidence_source": self.evidence_source,
             "knowledge_probability": round(float(self.knowledge_probability), 4),
+            "evaluative": bool(self.evaluative),
             "retrieval": "not_applicable" if self.direct else "required",
             "answer_gate": "not_applicable" if self.direct else "applicable",
         }
@@ -903,6 +963,8 @@ __all__ = [
     "CONVERSATIONAL_INTENTS",
     "DIRECT_INTENTS",
     "DIRECT_ROUTES",
+    "EVALUATIVE_INTENTS",
+    "EVALUATIVE_TURN_BY_USER_INTENT",
     "FACTUAL_INTENTS",
     "INTENT_CRITERIA",
     "MODEL_TIER_DEFAULT",

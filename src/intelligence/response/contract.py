@@ -43,6 +43,13 @@ from src.intelligence.response.blueprints import (
     blueprint_ids,
     get_blueprint,
 )
+from src.intelligence.response.identity import (
+    AgentIdentity,
+    identity_block_from_contract,
+    identity_prompt_block,
+    resolve_identity_profile,
+)
+from src.intelligence.response.intent import UserIntent, detect_user_intent
 from src.intelligence.response.presentation import (
     PresentationPolicy,
     build_presentation_policy,
@@ -99,10 +106,17 @@ def compose_contract(
     presentation: PresentationPolicy | None = None,
     style_degraded: bool = False,
     style_degradation_reason: str = "",
+    identity: AgentIdentity | None = None,
+    user_intent: UserIntent | None = None,
+    evaluative: bool | None = None,
 ) -> ResponseContract:
     """Compone el contrato de respuesta. Fail-soft y determinista."""
     saved_profile = profile or ResponseProfile()
     turn_overrides = detect_turn_overrides(question)
+    detected_intent = user_intent or detect_user_intent(question)
+    is_evaluative = bool(detected_intent.evaluative if evaluative is None else evaluative)
+    identity_resolution = resolve_identity_profile(identity, saved_profile)
+    saved_profile = identity_resolution.profile
     base_profile = apply_turn_overrides(saved_profile, question)
     effective_profile_hash = profile_hash(base_profile)
     override_origin = "turn_override" if turn_overrides else saved_profile.override_origin
@@ -167,6 +181,9 @@ def compose_contract(
     evidence["citations_required"] = bool(
         evidence.get("citations_required") or pack.needs_flag("needs_citations")
     )
+    if is_evaluative:
+        evidence["evaluative"] = True
+        evidence["distinguish_evaluation"] = True
 
     hedging = bool(unresolved_list)
     if hedging or missing_list:
@@ -247,6 +264,15 @@ def compose_contract(
         turn_overrides=tuple(sorted(turn_overrides)),
         style_degraded=style_degraded,
         style_degradation_reason=style_degradation_reason[:200],
+        request_intent=detected_intent.kind,
+        request_intent_confidence=detected_intent.confidence,
+        identity_id=identity_resolution.identity.identity_id,
+        identity_version=identity_resolution.identity.version,
+        identity_hash=identity_resolution.identity.hash if identity_resolution.identity.active else "",
+        identity_voice=identity_resolution.identity.voice,
+        identity_mode=identity_resolution.mode,
+        identity_preserved=identity_resolution.preserved,
+        identity_conflicts=identity_resolution.conflicts,
     )
 
 
@@ -335,6 +361,14 @@ GROUNDING_RULE = (
     "ni registros"
 )
 
+EVALUATION_RULE = (
+    "- valoración interpretativa: si el usuario pide opinión, interpretación o recomendación, "
+    "responde con una tesis razonada. No rechaces por 'no tener experiencia personal'. "
+    "Sostén la valoración en rasgos concretos de la obra, el diseño, el resultado o la "
+    "evidencia; separa hecho documentado de lectura propia; no inventes citas, cifras ni "
+    "datos. Si falta un fundamento, declara sólo esa parte y evita la negativa mecánica."
+)
+
 
 def _sections_prose(sections: tuple[str, ...]) -> str:
     """Orden de la información en una sola frase, sin claves internas.
@@ -349,12 +383,17 @@ def _sections_prose(sections: tuple[str, ...]) -> str:
     return "; ".join(parts) + "."
 
 
-def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None = None) -> str:
+def prompt_block(
+    contract: ResponseContract,
+    *,
+    profile: ResponseProfile | None = None,
+    identity: AgentIdentity | None = None,
+) -> str:
     """Bloque compacto de composición para el generador.
 
     Es una instrucción de forma: no contiene hechos ni conclusiones, y nunca
-    expone las claves internas de las secciones. El ritmo (capas, conceptos,
-    enumeraciones) lo aporta la política de presentación del caso.
+    expone las claves internas de las secciones. La identidad va antes que el
+    perfil: el estilo ajusta la forma, no reemplaza la voz.
     """
     blueprint = get_blueprint(contract.blueprint)
     lines: list[str] = ["## FORMA DE LA RESPUESTA (cómo explicarlo, no qué decir)"]
@@ -389,6 +428,8 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     )
     # Va antes que la forma: pedir forma sin grounding invita a rellenar de memoria.
     lines.append(GROUNDING_RULE)
+    if contract.evidence.get("evaluative"):
+        lines.append(EVALUATION_RULE)
     # Ritmo de lectura del caso (capas, conceptos, enumeraciones, límites).
     lines.append(render_presentation_block(build_presentation_policy_from_contract(contract)))
     allowed = [
@@ -440,10 +481,32 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     if contract.custom_instructions:
         lines.append(f"- instrucciones del agente: {contract.custom_instructions}")
     lines.append("- nada de relleno: si algo no aporta, no lo escribas")
+    if contract.identity_voice:
+        lines.append(
+            "- recordatorio de identidad: la voz "
+            f"«{contract.identity_voice}» debe seguir presente; el perfil ajusta "
+            "longitud, estructura y detalle, no la reemplaza. No menciones este "
+            "recordatorio ni los criterios internos."
+        )
+    if contract.detail == DETAIL_BRIEF:
+        lines.append(
+            "- LÍMITE FINAL PARA DETALLE BREVE: máximo 90 palabras. Una "
+            "valoración directa y una razón. Sin secciones, sin cierre adicional."
+        )
     block = "\n".join(line for line in lines if line.strip())
-    if profile is not None:
-        block = f"{profile_prompt_block(profile)}\n\n{block}"
-    return block
+    identity_block = identity_prompt_block(identity) if identity is not None else ""
+    if not identity_block:
+        identity_block = identity_block_from_contract(contract)
+    parts = [
+        part
+        for part in (
+            identity_block,
+            profile_prompt_block(profile) if profile is not None else "",
+            block,
+        )
+        if part
+    ]
+    return "\n\n".join(parts)
 
 
 def build_presentation_policy_from_contract(contract: ResponseContract) -> PresentationPolicy:
@@ -687,11 +750,21 @@ def contract_from_public(payload: Mapping[str, Any] | None) -> ResponseContract 
         turn_overrides=_str_tuple(payload.get("turn_overrides")),
         style_degraded=bool(payload.get("style_degraded", False)),
         style_degradation_reason=str(payload.get("style_degradation_reason") or ""),
+        request_intent=str(payload.get("request_intent") or ""),
+        request_intent_confidence=float(payload.get("request_intent_confidence") or 0.0),
+        identity_id=str(payload.get("identity_id") or ""),
+        identity_version=int(payload.get("identity_version") or 1),
+        identity_hash=str(payload.get("identity_hash") or ""),
+        identity_voice=str(payload.get("identity_voice") or ""),
+        identity_mode=str(payload.get("identity_mode") or "preserve"),
+        identity_preserved=bool(payload.get("identity_preserved", True)),
+        identity_conflicts=_str_tuple(payload.get("identity_conflicts")),
     )
 
 
 __all__ = [
     "AnswerHygiene",
+    "EVALUATION_RULE",
     "blueprint_options",
     "build_presentation_policy_from_contract",
     "compose_contract",

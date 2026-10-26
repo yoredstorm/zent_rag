@@ -21,14 +21,20 @@ import {
 } from "./agentModes";
 import {
   RESPONSE_PROFILE_TOGGLES,
+  type AgentIdentityTrace,
   type ResponseProfile,
   type ResponseProfilePreset,
+  type ResponseQuality,
+  type UserIntentTrace,
 } from "./types";
 
 type PreviewResult = {
   preview: string;
   response_contract: Record<string, unknown> | null;
   profile: ResponseProfile | null;
+  identity: AgentIdentityTrace | null;
+  intent: UserIntentTrace | null;
+  quality: ResponseQuality | null;
   profile_source: "temporary" | "saved";
   simulated_evidence: boolean;
   tools_executed: boolean;
@@ -36,6 +42,7 @@ type PreviewResult = {
     contract_present: boolean;
     style_degraded: boolean;
     style_degradation_reason?: string;
+    semantic_evaluated?: boolean;
   };
 };
 
@@ -306,10 +313,16 @@ export function AgentResponseProfileSection({
               <Badge tone="neutral">
                 {String(preview.response_contract?.communication_strategy ?? "sin estrategia")}
               </Badge>
-              <Badge tone={preview.validation.style_degraded ? "danger" : "ok"}>
+              <Badge tone="neutral">
+                Identidad: {preview.identity?.label ?? "sin identidad"}
+              </Badge>
+              <Badge tone="neutral">
+                Intención: {preview.intent?.kind ?? "no detectada"}
+              </Badge>
+              <Badge tone={preview.validation.style_degraded ? "danger" : "neutral"}>
                 {preview.validation.style_degraded
                   ? `Estilo parcial: ${preview.validation.style_degradation_reason || "degradado"}`
-                  : "Contrato validado"}
+                  : preview.quality?.label ?? "No evaluado"}
               </Badge>
               <Badge tone="neutral">
                 {preview.profile_source === "temporary" ? "Perfil temporal" : "Perfil guardado"}

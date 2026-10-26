@@ -58,6 +58,42 @@ export type ProfileTrace = {
   degradationReason: string;
 };
 
+export type UserIntentTrace = {
+  kind: string;
+  confidence?: number;
+  evaluative: boolean;
+  signals?: string[];
+};
+
+export type AgentIdentityTrace = {
+  identity_id?: string;
+  label?: string;
+  voice?: string;
+  mission?: string;
+  audience?: string;
+  domain?: string;
+  hash?: string;
+  preserved?: boolean;
+  mode?: string;
+  conflicts?: string[];
+};
+
+export type ResponseQuality = {
+  status: "not_evaluated" | "deterministic_checks" | "semantic_evaluated" | "needs_review";
+  semantic_evaluated: boolean;
+  label: string;
+  intent_fulfilled: boolean | null;
+  persona_preserved: boolean | null;
+  style_applied: boolean | null;
+  evidence_integrity: boolean | null;
+  direct_answer_present: boolean | null;
+  unnecessary_refusal: boolean | null;
+  irrelevant_internal_metadata: boolean | null;
+  verbosity_appropriate: boolean | null;
+  notes: string[];
+  details?: Record<string, unknown>;
+};
+
 /** Preguntas de arranque del panel Probar: genéricas, sin datos de dominio. */
 export const SUGGESTED_QUESTIONS: string[] = [
   "¿Qué cubre la documentación que cargaste?",

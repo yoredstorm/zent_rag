@@ -47,6 +47,7 @@ PROCEDURE = "procedure"
 DATA_INTERPRETATION = "data_interpretation"
 EXECUTIVE_SUMMARY = "executive_summary"
 TUTORIAL = "tutorial"
+INTERPRETIVE_VALUATION = "interpretive_valuation"
 
 #: Defaults de todo blueprint: la experiencia base ya es legible y citable.
 _FORMATTING_BASE = {
@@ -221,6 +222,29 @@ BLUEPRINTS: dict[str, Blueprint] = {
         formatting=_formatting(numbered_steps=True, table=True),
         example_when="siempre que un ejemplo haga avanzar la comprensión",
     ),
+    INTERPRETIVE_VALUATION: Blueprint(
+        id=INTERPRETIVE_VALUATION,
+        label="Valoración interpretativa",
+        purpose=(
+            "Responder una valoración, interpretación o recomendación con una "
+            "tesis razonada, separando lo que la evidencia muestra de la lectura "
+            "propia."
+        ),
+        sections=(
+            SECTION_DIRECT_ANSWER,
+            SECTION_MEANING,
+            SECTION_EVIDENCE,
+            SECTION_WHY,
+        ),
+        detail=DETAIL_NORMAL,
+        formatting=_formatting(headings=False, bullets=False, table=False),
+        evidence=_evidence(
+            citations_required=False,
+            separate_fact_from_inference=True,
+            disclose_missing_information=True,
+        ),
+        example_when="sólo si un pasaje o detalle concreto sostiene la valoración",
+    ),
 }
 
 #: Orden estable para prompts y UI.
@@ -274,6 +298,7 @@ __all__ = [
     "DIAGNOSTIC",
     "DIRECT_FACT",
     "EXECUTIVE_SUMMARY",
+    "INTERPRETIVE_VALUATION",
     "PROCEDURE",
     "SCENARIO_ANALYSIS",
     "TECHNICAL_EXPLANATION",

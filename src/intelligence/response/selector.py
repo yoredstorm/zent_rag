@@ -24,11 +24,13 @@ from src.intelligence.response.blueprints import (
     DIAGNOSTIC,
     DIRECT_FACT,
     EXECUTIVE_SUMMARY,
+    INTERPRETIVE_VALUATION,
     PROCEDURE,
     SCENARIO_ANALYSIS,
     TECHNICAL_EXPLANATION,
     TUTORIAL,
 )
+from src.intelligence.response.intent import detect_user_intent
 
 DECIDED_BY_RULES = "deterministic"
 DECIDED_BY_JEV = "jev"
@@ -60,7 +62,7 @@ _PROCEDURE_RE = re.compile(
 )
 #: Comparación: «X vs Y», «diferencia entre X e Y»
 _COMPARISON_RE = re.compile(
-    r"\b(vs\.?|versus|diferencia entre|comparar|comparaci[oó]n|cu[aá]l conviene|"
+    r"\b(vs\.?|versus|diferencia(?:\s+hay)?\s+entre|comparar|comparaci[oó]n|cu[aá]l conviene|"
     r"which is better|difference between)\b",
     re.IGNORECASE,
 )
@@ -147,7 +149,16 @@ def deterministic_candidates(
         if candidate not in candidates:
             candidates.append(candidate)
 
-    if _EXECUTIVE_RE.search(text):
+    detected_intent = detect_user_intent(text)
+    if detected_intent.evaluative:
+        # Valoración/interpretación/recomendación: la forma es una tesis
+        # razonada, no una explicación técnica ni un resumen ejecutivo.
+        add(INTERPRETIVE_VALUATION)
+    if _EXECUTIVE_RE.search(text) and detected_intent.kind not in {
+        "valuation",
+        "interpretation",
+        "recommendation",
+    }:
         add(EXECUTIVE_SUMMARY)
     if _COMPARISON_RE.search(text):
         add(COMPARISON)
@@ -201,10 +212,16 @@ def deterministic_candidates(
     if not candidates:
         # Pregunta abierta sin señal: lo más honesto es explicar técnicamente.
         add(TECHNICAL_EXPLANATION)
-    elif TECHNICAL_EXPLANATION not in candidates and len(candidates) == 1:
+    elif (
+        TECHNICAL_EXPLANATION not in candidates
+        and len(candidates) == 1
+        and candidates[0] != INTERPRETIVE_VALUATION
+    ):
         add(TECHNICAL_EXPLANATION)
     if (
         explanation
+        and candidates
+        and candidates[0] != INTERPRETIVE_VALUATION
         and not _DEFINITION_RE.search(text)
         and not _PROCEDURE_RE.search(text)
         and not _EXECUTIVE_RE.search(text)

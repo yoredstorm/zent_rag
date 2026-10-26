@@ -59,6 +59,42 @@ function profileTrace(flow: Record<string, unknown> | null | undefined) {
   };
 }
 
+function technicalTrace(flow: Record<string, unknown> | null | undefined) {
+  const response = flow?.response;
+  const plan =
+    response && typeof response === "object"
+      ? (response as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+  const quality =
+    flow?.response_quality && typeof flow.response_quality === "object"
+      ? (flow.response_quality as Record<string, unknown>)
+      : null;
+  const intent =
+    plan.user_intent && typeof plan.user_intent === "object"
+      ? (plan.user_intent as Record<string, unknown>)
+      : null;
+  const identity =
+    plan.identity && typeof plan.identity === "object"
+      ? (plan.identity as Record<string, unknown>)
+      : null;
+  const contract =
+    flow?.response_contract && typeof flow.response_contract === "object"
+      ? (flow.response_contract as Record<string, unknown>)
+      : null;
+  return {
+    intent: String(intent?.kind ?? "no detectada"),
+    evaluative: Boolean(intent?.evaluative),
+    identity: String(identity?.label ?? identity?.identity_id ?? "sin identidad"),
+    identityPreserved: identity?.preserved !== false,
+    profile: String(contract?.profile_id ?? "sin perfil"),
+    evidence: Array.isArray(flow?.sources) ? flow.sources.length : 0,
+    quality: String(quality?.label ?? "No evaluado"),
+    semanticEvaluated: Boolean(quality?.semantic_evaluated),
+    refusal: Boolean(quality?.unnecessary_refusal),
+    metadata: Boolean(quality?.irrelevant_internal_metadata),
+  };
+}
+
 export type ChatTurn = {
   role: "user" | "assistant";
   text: string;
@@ -284,8 +320,30 @@ export function AgentTestChat({
                     Perfil {profileTrace(turn.flow)?.requested} → {profileTrace(turn.flow)?.applied}
                     {" · "}
                     {profileTrace(turn.flow)?.strategy}
-                    {profileTrace(turn.flow)?.degraded ? " · estilo parcial" : " · validado"}
+                    {profileTrace(turn.flow)?.degraded
+                      ? " · estilo parcial"
+                      : ` · ${technicalTrace(turn.flow).quality}`}
                   </span>
+                ) : null}
+                {turn.flow ? (
+                  <details
+                    className="w-full text-[10.5px] text-faint"
+                    data-testid="agent-technical-trace"
+                  >
+                    <summary className="cursor-pointer">Vista técnica</summary>
+                    <p className="mt-1">
+                      Intención {technicalTrace(turn.flow).intent}
+                      {technicalTrace(turn.flow).evaluative ? " (valoración)" : ""}
+                      {" · "}Identidad {technicalTrace(turn.flow).identity}
+                      {technicalTrace(turn.flow).identityPreserved ? "" : " (conflicto)"}
+                      {" · "}Perfil {technicalTrace(turn.flow).profile}
+                      {" · "}Evidencia {technicalTrace(turn.flow).evidence}
+                      {" · "}Validación {technicalTrace(turn.flow).quality}
+                      {technicalTrace(turn.flow).semanticEvaluated
+                        ? " (semántica)"
+                        : " (determinista; sin juez semántico)"}
+                    </p>
+                  </details>
                 ) : null}
                 {turn.flow && (
                   <Button

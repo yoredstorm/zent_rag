@@ -45,10 +45,18 @@ POLICY_CONFLICT = "conflict"
 POLICY_ANSWER_WITH_LIMITS = "answer_with_limits"
 POLICY_ABSTAIN = "abstain"
 
+_INTERPRETIVE_RE = re.compile(
+    r"\b(me parece|me pareci[oó]|considero|encuentro que|en mi lectura|"
+    r"mi lectura|mi interpretaci[oó]n|interpreto|valoro|lo valioso|"
+    r"a mi juicio|desde mi lectura|opino|creo que|recomiendo|recomendar[ií]a|"
+    r"lo que me dice|lo que transmite|sugiere)\b",
+    re.I,
+)
 _NON_FACTUAL_PATTERNS: list[re.Pattern] = [
     re.compile(r"^\s*(hola|hello|hi|hey|buenas|buen d[ií]a|gracias|thanks|de nada)\b", re.I),
     re.compile(r"^\s*(¿|�?)?(te gustar[ií]a|quer[eé]s|podemos|necesit[aá]s|en qu[eé] m[aá]s)\b", re.I),
     re.compile(r"\b(creo que|en mi opini[oó]n|quiz[aá]s|tal vez|podr[ií]a ser)\b", re.I),
+    _INTERPRETIVE_RE,
     re.compile(r"^\s*(\*\*|#|[-*]\s|referencias|fuentes|nota:)", re.I),
     re.compile(r"^\s*(no tengo|no hay|no existe|no encontr[eé])", re.I),
     re.compile(r"\?\s*$"),
@@ -68,6 +76,7 @@ class ClaimJudgment:
     verdict: str = ClaimVerdict.NOT_VERIFIABLE.value
     confidence: float = 0.0
     factual: bool = True
+    claim_type: str = "fact"
     jev_used: bool = False
     reason: str = ""
     evidence_refs: tuple[str, ...] = ()
@@ -75,9 +84,10 @@ class ClaimJudgment:
     contradiction: bool | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
-        """Sin CoT: claim, veredicto, señales y refs."""
+        """Sin CoT: claim, tipo, veredicto, señales y refs."""
         return {
             "text": self.text[:400],
+            "claim_type": self.claim_type,
             "verdict": self.verdict,
             "confidence": round(self.confidence, 4),
             "factual": self.factual,
@@ -141,6 +151,11 @@ def is_factual(text: str) -> bool:
     return not any(pattern.search(clean) for pattern in _NON_FACTUAL_PATTERNS)
 
 
+def is_interpretive(text: str) -> bool:
+    """Valoración/lectura propia explícita: no es un hecho universal."""
+    return bool(_INTERPRETIVE_RE.search(str(text or "")))
+
+
 def _tokens(text: str) -> set[str]:
     return set(_TOKEN_RE.findall(normalize_query(text)))
 
@@ -202,6 +217,7 @@ def deterministic_judgment(
             text=claim,
             verdict=ClaimVerdict.NOT_VERIFIABLE.value,
             factual=False,
+            claim_type="interpretive" if is_interpretive(claim) else "non_factual",
             reason="non_factual",
             confidence=0.0,
         )
@@ -210,6 +226,7 @@ def deterministic_judgment(
             text=claim,
             verdict=ClaimVerdict.UNSUPPORTED.value,
             factual=True,
+            claim_type="unsupported",
             reason="no_evidence",
             confidence=0.0,
         )
@@ -219,6 +236,7 @@ def deterministic_judgment(
             text=claim,
             verdict=ClaimVerdict.SUPPORTED.value,
             factual=True,
+            claim_type="documented_fact",
             reason="deterministic_overlap",
             confidence=min(1.0, ratio),
             evidence_refs=_refs(item),
@@ -228,6 +246,7 @@ def deterministic_judgment(
             text=claim,
             verdict=ClaimVerdict.NOT_VERIFIABLE.value,
             factual=True,
+            claim_type="inference",
             reason="numeric_mismatch",
             confidence=ratio,
             evidence_refs=_refs(item),
@@ -238,6 +257,7 @@ def deterministic_judgment(
         text=claim,
         verdict=ClaimVerdict.NOT_VERIFIABLE.value,
         factual=True,
+        claim_type="inference",
         reason="partial_overlap" if ratio >= _PARTIAL_OVERLAP else "uncertain_band",
         confidence=ratio,
         evidence_refs=_refs(item),

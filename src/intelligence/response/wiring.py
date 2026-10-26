@@ -21,6 +21,8 @@ from uuid import UUID
 from src.core.domain.response import ResponseContract, ResponseProfile
 from src.infrastructure.observability.logging_config import get_logger
 from src.intelligence.response.contract import compose_contract
+from src.intelligence.response.identity import AgentIdentity
+from src.intelligence.response.intent import UserIntent, detect_user_intent
 from src.intelligence.response.presentation import PresentationPolicy
 from src.intelligence.response.profile import profile_from_config
 from src.intelligence.response.questions import (
@@ -89,6 +91,9 @@ class ResponsePlan:
     error: str = ""
     #: Perfil resuelto que llegó al contrato (guardado o temporal del preview).
     profile: ResponseProfile | None = None
+    identity: AgentIdentity | None = None
+    user_intent: UserIntent | None = None
+    evaluative: bool = False
     style_degraded: bool = False
     style_degradation_reason: str = ""
     uncertain: list[str] = field(default_factory=list)
@@ -120,6 +125,11 @@ class ResponsePlan:
             "communication_strategy": contract.communication_strategy,
             "effective_profile_hash": contract.effective_profile_hash,
             "style_degraded": contract.style_degraded,
+            "request_intent": contract.request_intent,
+            "identity_id": contract.identity_id,
+            "identity_preserved": contract.identity_preserved,
+            "identity_conflicts": list(contract.identity_conflicts),
+            "evaluative": bool(contract.evidence.get("evaluative")),
         }
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -129,6 +139,11 @@ class ResponsePlan:
         }
         if self.profile is not None:
             payload["profile"] = self.profile.to_public_dict()
+        if self.identity is not None and self.identity.active:
+            payload["identity"] = self.identity.to_public_dict()
+        if self.user_intent is not None:
+            payload["user_intent"] = self.user_intent.to_public_dict()
+            payload["evaluative"] = bool(self.evaluative)
         if self.contract is not None:
             payload["contract"] = self.contract.to_public_dict()
         if self.selection is not None:
@@ -216,6 +231,9 @@ async def compose_for_request(
     question: str,
     profile: ResponseProfile | None = None,
     config_json: Mapping[str, Any] | None = None,
+    identity: AgentIdentity | None = None,
+    user_intent: UserIntent | None = None,
+    evaluative: bool | None = None,
     judge: Any = None,
     mode: str | None = None,
     request_id: UUID | None = None,
@@ -239,11 +257,16 @@ async def compose_for_request(
     """
     active_mode = normalize_mode(mode if mode is not None else mode_from_settings())
     resolved_profile = profile or profile_from_config(config_json)
+    detected_intent = user_intent or detect_user_intent(question)
+    is_evaluative = bool(detected_intent.evaluative if evaluative is None else evaluative)
     if active_mode == MODE_OFF:
         return ResponsePlan(
             mode=active_mode,
             source=SOURCE_OFF,
             profile=resolved_profile,
+            identity=identity,
+            user_intent=detected_intent,
+            evaluative=is_evaluative,
             style_degraded=True,
             style_degradation_reason="response_intelligence_off",
         )
@@ -267,6 +290,9 @@ async def compose_for_request(
         source=SOURCE_RULES,
         selection=selection,
         profile=resolved_profile,
+        identity=identity,
+        user_intent=detected_intent,
+        evaluative=is_evaluative,
     )
     should_ask_jev = active_mode in (MODE_ON, MODE_CANARY) and canary_allows(active_mode, request_id)
     if should_ask_jev and judge is not None and selection.needs_jev:
@@ -344,6 +370,9 @@ async def compose_for_request(
             source_conflict=source_conflict,
             conflict_note=conflict_note,
             presentation=presentation,
+            identity=identity,
+            user_intent=detected_intent,
+            evaluative=is_evaluative,
         )
     except Exception as exc:  # noqa: BLE001 — el estilo no puede romper la respuesta
         plan.error = str(exc)[:160]

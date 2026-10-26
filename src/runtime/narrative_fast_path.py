@@ -200,16 +200,33 @@ class GroundedAnswerPolicy:
     def evidence_only(self) -> bool:
         return self.mode == EVIDENCE_ONLY
 
+    evaluative: bool = False
+
     def instructions(self) -> str:
         if not self.evidence_only:
             return ""
+        if self.evaluative:
+            return f"{_EVIDENCE_ONLY_RULES}\n{_EVALUATIVE_ONLY_ADDENDUM}"
         return _EVIDENCE_ONLY_RULES
 
 
-def grounded_answer_policy(*, knowledge_question: bool = True) -> GroundedAnswerPolicy:
+def grounded_answer_policy(
+    *, knowledge_question: bool = True, evaluative: bool = False
+) -> GroundedAnswerPolicy:
     """Pregunta documental de conocimiento → EVIDENCE_ONLY. El código decide."""
-    return GroundedAnswerPolicy(mode=EVIDENCE_ONLY if knowledge_question else "STANDARD")
+    return GroundedAnswerPolicy(
+        mode=EVIDENCE_ONLY if knowledge_question else "STANDARD",
+        evaluative=bool(evaluative),
+    )
 
+
+_EVALUATIVE_ONLY_ADDENDUM = (
+    "- El usuario pide una valoración, interpretación o recomendación: formula una "
+    "tesis razonada y sostenida por la evidencia. No rechaces por 'no tener "
+    "experiencia personal'. Separa el hecho documentado de tu lectura propia. "
+    "No inventes citas, cifras ni datos; si falta un fundamento, declara sólo esa "
+    "parte y evita la negativa mecánica."
+)
 
 _EVIDENCE_ONLY_RULES = (
     "Reglas de grounding documental (obligatorias):\n"
@@ -1130,11 +1147,19 @@ async def build_narrative_prompt_plan(
     )
     signals = signals_from_plan(run_plan)
     coverage_limit = limitation_sentence(final_coverage)
-    policy = grounded_answer_policy()
+    policy = grounded_answer_policy(evaluative=bool(getattr(persona, "evaluative", False)))
     model_policy = narrative_model_for(agent_config, str(fallback_model or ""))
     system_prompt = (
         f"{agent_instructions}\n\n{style}\n{policy.instructions()}"
     ).strip()
+    identity_voice = str(getattr(persona, "identity_voice", "") or "")
+    if identity_voice:
+        system_prompt = (
+            f"{system_prompt}\n\n## RECORDATORIO DE IDENTIDAD\n"
+            f"La voz «{identity_voice}» debe seguir presente. El perfil ajusta "
+            "longitud, estructura y detalle, no la reemplaza. No muestres criterios "
+            "internos ni metadatos."
+        )
     frame_lines = narrative_frame_lines(concept_plan)
     if frame_lines:
         system_prompt = (

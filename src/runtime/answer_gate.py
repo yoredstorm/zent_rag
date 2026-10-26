@@ -426,8 +426,12 @@ def claim_checks(
         verdicts = [deterministic_judgment(claim, list(items)) for claim in claims]
     except Exception:  # noqa: BLE001 — la verificación por claim nunca rompe el gate
         return {}
+    claim_types: dict[str, int] = {}
+    for verdict in verdicts:
+        claim_types[verdict.claim_type] = claim_types.get(verdict.claim_type, 0) + 1
     return {
         "claims": [verdict.to_public_dict() for verdict in verdicts],
+        "claim_types": claim_types,
         "supported": sum(1 for v in verdicts if v.verdict == "supported"),
         "unsupported": sum(1 for v in verdicts if v.verdict == "unsupported"),
         "not_verifiable": sum(1 for v in verdicts if v.verdict == "not_verifiable"),
@@ -510,6 +514,26 @@ def apply_claim_answers(
         if c.get("verdict") in {"unsupported", "contradicted"}
     ][:4]
     return claims
+
+
+def keep_evaluative_answer(
+    *,
+    evaluative: bool,
+    draft: str,
+    supporting_chunks: int = 0,
+    evidence_available: bool = False,
+) -> bool:
+    """Una valoración legítima con fundamento no se convierte en negativa.
+
+    No autoriza hechos inventados: sólo evita que el gate documental reemplace
+    una tesis interpretativa por ``INSUFFICIENT_ANSWER`` cuando hay borrador y
+    evidencia sobre el objeto.
+    """
+    return bool(
+        evaluative
+        and str(draft or "").strip()
+        and (int(supporting_chunks or 0) > 0 or evidence_available)
+    )
 
 
 def _legacy_verdict(score: float, *, approve_at: float, revise_at: float) -> str:
@@ -601,6 +625,9 @@ async def judge_answer(
     evidence_sufficiency: Any | None = None,
     sufficiency_rounds_left: int | None = None,
     evidence_for_sufficiency: Iterable[Any] | None = None,
+    #: P15: el usuario pidió valoración/interpretación. El claim evaluativo no
+    #: se trata como hecho universal; el runtime conserva la tesis con límites.
+    evaluative: bool = False,
 ) -> AnswerGateResult:
     """Evalua el borrador. Nunca lanza: ante error devuelve skipped.
 
@@ -655,6 +682,16 @@ async def judge_answer(
         StateSection("user_request", 3, (user_request or "")[:4000]),
         StateSection("agent_instructions", 4, agent_instructions),
     ]
+    if evaluative:
+        sections.append(
+            StateSection(
+                "requested_intent",
+                3,
+                "El usuario pide una valoración/interpretación/recomendación. "
+                "Una tesis razonada y marcada como lectura propia no es un hecho "
+                "universal; sólo las afirmaciones factuales requieren respaldo.",
+            )
+        )
     grounding_public: dict[str, Any] = {}
     if grounded_reasoning is not None:
         try:
@@ -833,7 +870,7 @@ async def judge_answer(
         unsupported_claims=unsupported,
         claims_summary={
             key: claims[key]
-            for key in ("supported", "unsupported", "not_verifiable")
+            for key in ("supported", "unsupported", "not_verifiable", "claim_types")
             if key in claims
         }
         if claims

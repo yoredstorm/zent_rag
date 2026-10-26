@@ -169,7 +169,11 @@ def _response_shape_block(plan: object | None) -> str:
     try:
         from src.intelligence.response.contract import prompt_block
 
-        return prompt_block(contract, profile=getattr(plan, "profile", None))
+        return prompt_block(
+            contract,
+            profile=getattr(plan, "profile", None),
+            identity=getattr(plan, "identity", None),
+        )
     except Exception:  # noqa: BLE001 — sin bloque, el prompt queda como antes
         return ""
 
@@ -207,8 +211,19 @@ def _response_planning_step(plan: object | None) -> dict | None:
         "effective_profile_hash": contract.effective_profile_hash,
         "profile_origin": contract.override_origin,
         "style_degraded": bool(contract.style_degraded),
+        "request_intent": contract.request_intent,
+        "evaluative": bool(contract.evidence.get("evaluative")),
+        "identity_id": contract.identity_id,
+        "identity_preserved": contract.identity_preserved,
+        "identity_conflicts": list(contract.identity_conflicts),
         **facts,
     }
+    identity = getattr(plan, "identity", None)
+    if identity is not None and getattr(identity, "active", False):
+        step["identity"] = identity.to_public_dict()
+    user_intent = getattr(plan, "user_intent", None)
+    if user_intent is not None:
+        step["user_intent"] = user_intent.to_public_dict()
     if contract.style_degradation_reason:
         step["style_degradation_reason"] = contract.style_degradation_reason
     selection = getattr(plan, "selection", None)
@@ -420,15 +435,34 @@ def _evidence_meta_for_flow(meta: Any, *, excerpt_chars: int = 400) -> Any:
 
 
 def compose_agent_instructions(agent: Agent) -> str:
-    """Une purpose + system_prompt. Purpose vacío no altera el prompt."""
+    """Une purpose + system_prompt + identidad persistente."""
     prompt = (agent.system_prompt or "").strip()
     purpose = str((agent.config_json or {}).get("purpose") or "").strip()
+    identity_block = ""
+    try:
+        from src.intelligence.response.identity import (
+            identity_from_agent_config,
+            identity_prompt_block,
+        )
+
+        identity_block = identity_prompt_block(
+            identity_from_agent_config(
+                agent.config_json,
+                name=str(getattr(agent, "name", "") or ""),
+            )
+        )
+    except Exception:  # noqa: BLE001 — la identidad nunca rompe el prompt
+        identity_block = ""
+    if not purpose and not identity_block:
+        return prompt or "Answer the user's question. Use tools when you need data."
+    parts: list[str] = []
+    if identity_block:
+        parts.append(identity_block)
     if purpose:
-        block = f"## Purpose\n{purpose}"
-        if prompt:
-            return f"{block}\n\n## Instructions\n{prompt}"
-        return block
-    return prompt or "Answer the user's question. Use tools when you need data."
+        parts.append(f"## Purpose\n{purpose}")
+    if prompt:
+        parts.append(f"## Instructions\n{prompt}")
+    return "\n\n".join(parts)
 
 
 @dataclass(kw_only=True)
@@ -1695,6 +1729,22 @@ class AgentRuntime:
         # La respuesta final necesita su propio presupuesto: el del loop (o 512)
         # cortaba explicaciones técnicas y dejaba el JSON abierto. El techo del
         # run sigue siendo `config["max_tokens"]`; acá solo cabe lo que queda.
+        identity_block = ""
+        try:
+            from src.intelligence.response.identity import (
+                identity_from_agent_config,
+                identity_prompt_block,
+            )
+
+            identity_block = identity_prompt_block(
+                identity_from_agent_config(
+                    request.agent.config_json,
+                    name=str(getattr(request.agent, "name", "") or ""),
+                    system_prompt=str(getattr(request.agent, "system_prompt", "") or ""),
+                )
+            )
+        except Exception:  # noqa: BLE001 — el cierre nunca falla por identidad
+            identity_block = ""
         prompt = build_finalize_prompt(
             question=request.message,
             history=history,
@@ -1704,6 +1754,7 @@ class AgentRuntime:
                 else ""
             ),
             response_shape=_response_shape_block(run_plan),
+            identity_block=identity_block,
         )
         from src.runtime.finalizer import plan_finalize_budget
 
@@ -2462,9 +2513,18 @@ class AgentRuntime:
                     judge = engine
             except Exception:  # noqa: BLE001 — sin engine, contrato determinista
                 judge = None
+            from src.intelligence.response.identity import identity_from_agent_config
+            from src.intelligence.response.intent import detect_user_intent
+
             plan = await compose_for_request(
                 question=request.message,
                 config_json=request.agent.config_json,
+                identity=identity_from_agent_config(
+                    request.agent.config_json,
+                    name=str(getattr(request.agent, "name", "") or ""),
+                    system_prompt=str(getattr(request.agent, "system_prompt", "") or ""),
+                ),
+                user_intent=detect_user_intent(request.message),
                 judge=judge,
                 request_id=getattr(request, "request_id", None),
                 organization_id=getattr(request.agent, "organization_id", None),
@@ -3574,6 +3634,7 @@ class AgentRuntime:
                     retrieval_rounds_left=_rounds_left(),
                     evidence_budget_chars=evidence_budget,
                     grounded_reasoning=grounded_reasoning,
+                    evaluative=bool(turn_decision.evaluative) if turn_decision is not None else False,
                     # Fase C: reusar la suficiencia canónica del estado cuando
                     # es exactamente la misma evidencia y la misma ronda.
                     evidence_sufficiency=(
@@ -3614,6 +3675,8 @@ class AgentRuntime:
             abstenerse.
             """
             nonlocal revision_used
+            from src.runtime.answer_gate import keep_evaluative_answer
+
             if turn_direct:
                 # «Sin evidencia» sólo es un problema cuando la intención REQUIERE
                 # evidencia. Un saludo/queja/capacidad se responde directo: el gate
@@ -3795,6 +3858,28 @@ class AgentRuntime:
                     result.steps.append(gate.to_step())
                     return "retrieve_more"
             if gate.verdict == "abstain":
+                supporting_chunks = 0
+                if isinstance(sufficiency, Mapping):
+                    supporting_chunks = int(sufficiency.get("supporting_chunks") or 0)
+                else:
+                    supporting_chunks = int(getattr(sufficiency, "supporting_chunks", 0) or 0)
+                if keep_evaluative_answer(
+                    evaluative=bool(
+                        turn_decision is not None and turn_decision.evaluative
+                    ),
+                    draft=draft,
+                    supporting_chunks=supporting_chunks,
+                    evidence_available=not registry.is_empty(),
+                ):
+                    step = gate.to_step()
+                    step["verdict"] = "answer_with_limits"
+                    step["detail"] = (
+                        f"{step.get('detail') or ''} (valoración interpretativa: "
+                        "se conserva la tesis y se declaran los límites, sin "
+                        "negativa mecánica)"
+                    ).strip()
+                    result.steps.append(step)
+                    return "answer_with_limits"
                 if result.decision_envelope:
                     # DECISION_NARRATIVE_SEPARATION: con una decisión determinista
                     # autoritativa, una abstención del verificador NARRATIVO no
@@ -3846,6 +3931,26 @@ class AgentRuntime:
                 ):
                     result.steps.append(gate.to_step())
                     return "retrieve_more"
+                if (
+                    gate.grounding_verdict == "UNSUPPORTED"
+                    and keep_evaluative_answer(
+                        evaluative=bool(
+                            turn_decision is not None and turn_decision.evaluative
+                        ),
+                        draft=draft,
+                        supporting_chunks=0,
+                        evidence_available=not registry.is_empty(),
+                    )
+                ):
+                    step = gate.to_step()
+                    step["verdict"] = "answer_with_limits"
+                    step["detail"] = (
+                        f"{step.get('detail') or ''} (valoración interpretativa sin "
+                        "ronda de búsqueda: se responde la parte justificable y se "
+                        "declaran los límites)"
+                    ).strip()
+                    result.steps.append(step)
+                    return "answer_with_limits"
                 if gate.grounding_verdict == "UNSUPPORTED":
                     # Sin evidencia relevante (y sin ronda posible): la respuesta
                     # no se sostiene. Se declara, no se reescribe.

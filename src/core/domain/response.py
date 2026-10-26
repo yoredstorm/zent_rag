@@ -325,6 +325,16 @@ class ResponseContract:
     turn_overrides: tuple[str, ...] = ()
     style_degraded: bool = False
     style_degradation_reason: str = ""
+    #: P15: intención del usuario e identidad persistente del agente.
+    request_intent: str = ""
+    request_intent_confidence: float = 0.0
+    identity_id: str = ""
+    identity_version: int = 1
+    identity_hash: str = ""
+    identity_voice: str = ""
+    identity_mode: str = "preserve"
+    identity_preserved: bool = True
+    identity_conflicts: tuple[str, ...] = ()
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -352,6 +362,18 @@ class ResponseContract:
         }
         if self.audience_assumptions:
             payload["audience_assumptions"] = self.audience_assumptions
+        if self.request_intent:
+            payload["request_intent"] = self.request_intent
+            payload["request_intent_confidence"] = round(float(self.request_intent_confidence), 4)
+        if self.identity_id or self.identity_voice:
+            payload["identity_id"] = self.identity_id
+            payload["identity_version"] = self.identity_version
+            payload["identity_hash"] = self.identity_hash
+            payload["identity_voice"] = self.identity_voice[:240]
+            payload["identity_mode"] = self.identity_mode
+            payload["identity_preserved"] = bool(self.identity_preserved)
+            if self.identity_conflicts:
+                payload["identity_conflicts"] = list(self.identity_conflicts)
         if self.effective_profile_hash:
             payload["effective_profile_hash"] = self.effective_profile_hash
         if self.turn_overrides:

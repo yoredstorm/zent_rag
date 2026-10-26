@@ -457,6 +457,11 @@ class ComposerPersonality:
     communication_strategy: str = "adaptive"
     effective_profile_hash: str = ""
     turn_overrides: tuple[str, ...] = ()
+    identity_id: str = ""
+    identity_voice: str = ""
+    identity_preserved: bool = True
+    identity_conflicts: tuple[str, ...] = ()
+    evaluative: bool = False
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -470,6 +475,11 @@ class ComposerPersonality:
             "communication_strategy": self.communication_strategy,
             "effective_profile_hash": self.effective_profile_hash,
             "turn_overrides": list(self.turn_overrides),
+            "identity_id": self.identity_id,
+            "identity_voice": _text(self.identity_voice, limit=240),
+            "identity_preserved": bool(self.identity_preserved),
+            "identity_conflicts": list(self.identity_conflicts),
+            "evaluative": bool(self.evaluative),
             "custom_instructions": _text(self.custom_instructions, limit=200),
         }
 
@@ -489,6 +499,12 @@ def personality_for_agent(
     config = dict(agent_config or {})
     org = dict(org_config or {})
     try:
+        from src.intelligence.response.identity import (
+            identity_from_agent_config,
+            identity_prompt_block,
+            resolve_identity_profile,
+        )
+        from src.intelligence.response.intent import detect_user_intent
         from src.intelligence.response.profile import (
             apply_turn_overrides,
             detect_turn_overrides,
@@ -499,7 +515,21 @@ def personality_for_agent(
 
         profile = apply_turn_overrides(profile_from_config(config), message)
         turn_overrides = detect_turn_overrides(message)
-        block = profile_prompt_block(profile)
+        identity = identity_from_agent_config(
+            config,
+            system_prompt=str(config.get("system_prompt") or ""),
+        )
+        identity_resolution = resolve_identity_profile(identity, profile)
+        profile = identity_resolution.profile
+        detected_intent = detect_user_intent(message)
+        block = "\n\n".join(
+            part
+            for part in (
+                identity_prompt_block(identity),
+                profile_prompt_block(profile),
+            )
+            if part
+        )
         custom = (
             str(config.get("custom_instructions") or "").strip()
             or str(config.get("additional_instructions") or "").strip()
@@ -529,6 +559,11 @@ def personality_for_agent(
             communication_strategy=profile.communication_strategy,
             effective_profile_hash=profile_hash(profile),
             turn_overrides=tuple(sorted(turn_overrides)),
+            identity_id=identity.identity_id if identity.active else "",
+            identity_voice=identity.voice,
+            identity_preserved=identity_resolution.preserved,
+            identity_conflicts=identity_resolution.conflicts,
+            evaluative=detected_intent.evaluative,
         )
     except Exception:  # noqa: BLE001 — sin perfil el composer no se activa
         custom = (
@@ -777,8 +812,8 @@ COMPOSER_SYSTEM_SAFETY = (
     "código y es inmutable. Tu única tarea es explicarla con naturalidad, "
     "respetando la personalidad del agente y el pedido del usuario.\n"
     "Precedencia: seguridad de la plataforma > autoridad del DecisionEnvelope > "
-    "política de la organización > personalidad/instrucciones del agente > "
-    "estilo pedido por el usuario.\n"
+    "política de la organización > identidad persistente del agente > "
+    "personalidad/estilo del perfil > preferencia de formato del turno.\n"
     "No cambies la operación, el resultado, su polaridad, los números, las "
     "condiciones ni el estado de las premisas. No inventes hechos, reglas, "
     "fuentes ni citas. Si citás, usá únicamente los handles provistos "
@@ -808,6 +843,14 @@ def build_composer_prompt(
         system_parts.append(
             "## INSTRUCCIONES DEL AGENTE\n" + personality.custom_instructions
         )
+    if personality.evaluative:
+        system_parts.append(
+            "## VALORACIÓN INTERPRETATIVA\n"
+            "El usuario pide opinión, interpretación o recomendación. Formula una "
+            "tesis razonada y sosténla en los hechos/evidencia disponibles. No "
+            "rechaces por 'no tener experiencia personal'. Separa hecho de lectura "
+            "propia. No inventes datos ni citas."
+        )
     system_parts.append(
         "Estilo: respondé en "
         + (personality.language or "es")
@@ -818,6 +861,13 @@ def build_composer_prompt(
         "No repitas literalmente 'Resultado determinista'; explicá como una "
         "persona. No muestres IDs internos, tokens de control ni rutas técnicas."
     )
+    if personality.identity_voice:
+        system_parts.append(
+            "## RECORDATORIO DE IDENTIDAD\n"
+            f"La voz «{personality.identity_voice}» debe seguir presente. El perfil "
+            "ajusta longitud, estructura y detalle, no la reemplaza. No muestres "
+            "criterios internos ni metadatos."
+        )
     facts_payload = facts.to_prompt_dict()
     user_parts = [
         "HECHOS DE LA DECISIÓN (inmutables, no agregues ni cambies nada):",

@@ -10,11 +10,19 @@ import { api } from "../../api";
 import { Badge, Button } from "../ui";
 import { AgentSection } from "./AgentField";
 import { applyPresetToProfile } from "./agentModes";
-import type { ResponseProfile, ResponseProfilePreset } from "./types";
+import type {
+  AgentIdentityTrace,
+  ResponseProfile,
+  ResponseProfilePreset,
+  ResponseQuality,
+  UserIntentTrace,
+} from "./types";
 
 type CompareResult = {
   profile_id: string;
   profile: ResponseProfile | null;
+  identity: AgentIdentityTrace | null;
+  intent: UserIntentTrace | null;
   answer: string;
   error: string;
   chars: number;
@@ -22,10 +30,12 @@ type CompareResult = {
   formatting: Record<string, boolean>;
   evidence: Record<string, boolean>;
   response_contract: Record<string, unknown> | null;
+  quality: ResponseQuality | null;
   validation: {
     contract_present: boolean;
     style_degraded: boolean;
     style_degradation_reason?: string;
+    semantic_evaluated?: boolean;
   };
 };
 
@@ -180,10 +190,19 @@ export function AgentStyleComparator({
                     {String(result.response_contract?.communication_strategy ?? "sin estrategia")}
                   </Badge>
                   <Badge tone="neutral">{result.chars} chars</Badge>
-                  <Badge tone={result.validation.style_degraded ? "danger" : "ok"}>
-                    {result.validation.style_degraded ? "Parcial" : "Validado"}
+                  <Badge tone="neutral">
+                    {result.intent?.kind ?? "intención no detectada"}
+                  </Badge>
+                  <Badge tone={result.validation.style_degraded ? "danger" : "neutral"}>
+                    {result.validation.style_degraded
+                      ? "Estilo parcial"
+                      : result.quality?.label ?? "No evaluado"}
                   </Badge>
                 </div>
+                <p className="mb-2 text-[10.5px] text-faint">
+                  Identidad: {result.identity?.label ?? "sin identidad"}
+                  {result.identity?.preserved === false ? " · no preservada" : ""}
+                </p>
                 {result.error ? (
                   <p className="text-xs text-danger">{result.error}</p>
                 ) : (
