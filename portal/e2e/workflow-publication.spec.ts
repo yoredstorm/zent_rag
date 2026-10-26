@@ -130,12 +130,21 @@ test.describe("Publicación inmutable P13", () => {
       { method: "POST", body: JSON.stringify({ level: "design" }) },
     );
     expect(recertified.ok()).toBeTruthy();
-    await page.reload();
-    if (!(await page.getByTestId("wf-advanced-panel").isVisible())) {
-      await page.getByTestId("wf-open-advanced").click();
-    }
+    await page.goto(`/workflows/${workflow.workflow_id}?panel=advanced`);
+    await expect(page.getByTestId("wf-advanced-panel")).toBeVisible({
+      timeout: 20_000,
+    });
     await expect(page.getByTestId("wf-publish")).toBeEnabled({ timeout: 20_000 });
-    await page.getByTestId("wf-publish").click();
+    const [publishResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().includes(`/workflows/${workflow.workflow_id}/publish`) &&
+          response.request().method() === "POST",
+      ),
+      page.getByTestId("wf-publish").click(),
+    ]);
+    expect(publishResponse.ok()).toBeTruthy();
+    await page.goto(`/workflows/${workflow.workflow_id}?panel=advanced`);
     await expect(page.getByTestId("wf-published-banner")).toContainText(
       "Versión activa v2",
       { timeout: 20_000 },
