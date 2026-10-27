@@ -1,0 +1,119 @@
+{
+  "schema": "zent.p17.invariants/v1",
+  "created_at": "2026-10-27T02:48:40.446652+00:00",
+  "head": "11aeec7d1a8145f388ef952d7b08608a5df59b43",
+  "tables": {
+    "knowledge_bases": {
+      "exists": true,
+      "count": 289,
+      "hash": "a0833b90ba57a9f5",
+      "state_columns": []
+    },
+    "kb_sources": {
+      "exists": true,
+      "count": 35,
+      "hash": "a2de6362d42f682a",
+      "state_columns": [
+        "status",
+        "workspace_id"
+      ]
+    },
+    "source_documents": {
+      "exists": true,
+      "count": 1,
+      "hash": "08428467285068b4",
+      "state_columns": []
+    },
+    "structured_documents": {
+      "exists": true,
+      "count": 1,
+      "hash": "217a08ebf6637d1d",
+      "state_columns": []
+    },
+    "ingestion_jobs": {
+      "exists": true,
+      "count": 4,
+      "hash": "36ffc0dd6549aeb5",
+      "state_columns": [
+        "status"
+      ]
+    },
+    "knowledge_corpora": {
+      "exists": true,
+      "count": 1,
+      "hash": "f0efaeb3bd609114",
+      "state_columns": []
+    },
+    "knowledge_canonical_objects": {
+      "exists": true,
+      "count": 110,
+      "hash": "d97caa827140ecdc",
+      "state_columns": []
+    },
+    "knowledge_assertions": {
+      "exists": true,
+      "count": 209,
+      "hash": "9bd8950519c4b652",
+      "state_columns": [
+        "status"
+      ]
+    },
+    "knowledge_edges": {
+      "exists": true,
+      "count": 2,
+      "hash": "2e42c36037d3b8d3",
+      "state_columns": []
+    },
+    "knowledge_conflicts": {
+      "exists": true,
+      "count": 0,
+      "hash": "f215faf9d88b7f0a",
+      "state_columns": [
+        "status"
+      ]
+    },
+    "context_gaps": {
+      "exists": true,
+      "count": 0,
+      "hash": "f215faf9d88b7f0a",
+      "state_columns": [
+        "status"
+      ]
+    },
+    "knowledge_learning_sessions": {
+      "exists": true,
+      "count": 1,
+      "hash": "ba34dbbc33e8324d",
+      "state_columns": [
+        "status"
+      ]
+    },
+    "knowledge_compilations": {
+      "exists": true,
+      "count": 1,
+      "hash": "14fa4e921b354968",
+      "state_columns": []
+    },
+    "evidence_ledger": {
+      "exists": true,
+      "count": 269,
+      "hash": "f11b61212e7e0b66",
+      "state_columns": []
+    },
+    "workflows": {
+      "exists": true,
+      "count": 2266,
+      "hash": "fba2c313278c610f",
+      "state_columns": [
+        "status"
+      ]
+    },
+    "agents": {
+      "exists": true,
+      "count": 628,
+      "hash": "cff71cbd8064f2a8",
+      "state_columns": []
+    }
+  },
+  "note": "Read-only counts and deterministic ID/state hashes. Compare before and after a UX phase; no document content or secrets are stored."
+}
