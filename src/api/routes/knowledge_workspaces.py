@@ -307,7 +307,7 @@ async def workspace_chat(
     from src.rag.retrieval.models import RetrievalQuery
     from src.rag.retrieval.structured import V2RetrievalOptions
 
-    role = str(getattr(ctx, "role", "admin"))
+    role = "admin" if ctx.is_organization_admin() else "user"
     user_id = getattr(ctx, "user_id", None)
     groups: list[str] = []
     if user_id:

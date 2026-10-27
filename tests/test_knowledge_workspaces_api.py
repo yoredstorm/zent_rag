@@ -3,7 +3,12 @@
 # =============================================================================
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
+
+import pytest
+
+from src.core.domain.entities import TenantContext
 
 
 async def test_workspace_list_and_detail(async_client, monkeypatch) -> None:
@@ -92,3 +97,70 @@ async def test_workspace_list_and_detail(async_client, monkeypatch) -> None:
         headers=headers,
     )
     assert suggestions.status_code == 200, suggestions.text
+
+
+async def _captured_chat_role(monkeypatch, roles: set[str]) -> str:
+    import src.api.deps as deps
+    import src.api.routes.knowledge_workspaces as route
+
+    organization_id = uuid4()
+    workspace_id = uuid4()
+    corpus_id = uuid4()
+    captured: dict[str, str] = {}
+
+    class Repo:
+        async def get_corpus(self, org_id, cid):  # noqa: ANN001
+            assert org_id == organization_id
+            assert cid == corpus_id
+            return {"id": str(cid), "workspace_id": str(workspace_id)}
+
+    class Embedder:
+        async def embed(self, text: str):  # noqa: ANN001
+            return [[0.0] * 8]
+
+    class Retriever:
+        async def retrieve(self, query, options):  # noqa: ANN001
+            captured["role"] = query.role
+            return SimpleNamespace(context=[])
+
+    ctx = TenantContext(
+        tenant_id=organization_id,
+        user_id=uuid4(),
+        roles=frozenset(roles),
+        permissions=frozenset({"knowledge:read"}),
+        scopes=frozenset(),
+    )
+
+    async def fake_resolve(_request):
+        return SimpleNamespace(id=workspace_id)
+
+    async def fake_groups(_org, _user):
+        return []
+
+    monkeypatch.setattr(
+        "src.platform.rbac.policy.require_permission", lambda *a, **k: ctx
+    )
+    monkeypatch.setattr(route, "resolve_workspace", fake_resolve)
+    monkeypatch.setattr(route, "get_corpus_repo", lambda: Repo())
+    monkeypatch.setattr(deps, "get_embedding_provider", lambda: Embedder())
+    monkeypatch.setattr(deps, "get_knowledge_retriever", lambda: Retriever())
+    monkeypatch.setattr("src.platform.acl.groups.user_group_names", fake_groups)
+
+    result = await route.workspace_chat(
+        corpus_id,
+        route.ChatRequest(query="¿Cuál es la comisión?"),
+        SimpleNamespace(state=SimpleNamespace()),
+    )
+    assert result["grounded"]["answer"]
+    return captured["role"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_passes_reader_role_to_retrieval(monkeypatch) -> None:
+    """Un reader no debe llegar al retriever como admin (bypass ACL)."""
+    assert await _captured_chat_role(monkeypatch, {"reader"}) == "user"
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_passes_admin_role_to_retrieval(monkeypatch) -> None:
+    assert await _captured_chat_role(monkeypatch, {"owner"}) == "admin"
