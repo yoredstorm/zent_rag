@@ -12,7 +12,7 @@ export type UploadItem = {
 };
 
 export const UPLOAD_STATUS_LABEL: Record<UploadItem["status"], string> = {
-  created: "En cola de indexado",
+  created: "En cola de procesamiento",
   duplicate: "Ya existe",
   rejected: "Rechazado",
   error: "Error",
@@ -69,7 +69,7 @@ export type UploadQueueRow = {
 export const UPLOAD_ROW_LABEL: Record<UploadRowStatus, string> = {
   pending: "En espera",
   uploading: "Subiendo",
-  created: "En cola de indexado",
+  created: "En cola de procesamiento",
   indexing: "Indexando",
   indexed: "Indexado",
   duplicate: "Ya existe",

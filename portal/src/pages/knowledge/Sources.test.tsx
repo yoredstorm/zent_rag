@@ -184,7 +184,7 @@ describe("KnowledgeSourcesPage", () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/files/upload-batch") && (init as RequestInit)?.method === "POST")).toBe(true);
     });
-    expect(await screen.findByText("En cola de indexado")).toBeInTheDocument();
+    expect(await screen.findByText("En cola de procesamiento")).toBeInTheDocument();
     expect(screen.queryByLabelText("Nombre")).toBeNull();
   });
 
@@ -430,7 +430,7 @@ describe("KnowledgeSourcesPage", () => {
         ),
       ).toBe(true);
     });
-    expect(await screen.findByText("En cola de indexado")).toBeInTheDocument();
+    expect(await screen.findByText("En cola de procesamiento")).toBeInTheDocument();
   });
 
   it("elimina una fuente tras confirmar", async () => {

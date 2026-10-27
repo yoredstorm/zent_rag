@@ -177,7 +177,7 @@ export default function KnowledgeWorkspacePage() {
             role: "assistant",
             content:
               err instanceof Error && /503/.test(err.message)
-                ? "Knowledge V2 no está activo en este entorno. Activa RAG_KNOWLEDGE_V2_ENABLED + RAG_KNOWLEDGE_V2_PROMOTE para usar el chat grounded."
+                ? "No pudimos consultar esta base. Reintentá en unos segundos o revisá el estado de sus fuentes."
                 : (err instanceof Error ? err.message : "Error al consultar"),
           },
         ]),
@@ -523,7 +523,7 @@ function ChatPane({
             ) : (
               <p className="mx-auto mt-5 max-w-sm text-[11px] text-zinc-400">
                 Sin fuentes o conocimiento estructurado aún en este corpus — las
-                sugerencias aparecen cuando haya datos indexados.
+                sugerencias aparecen cuando haya datos disponibles.
               </p>
             )}
           </div>
@@ -545,7 +545,7 @@ function ChatPane({
                 : message.content}
               {message.role === "assistant" && message.citations && message.citations.length > 0 && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                  <span>Sources used: {message.citations.length}</span>
+                  <span>Fuentes citadas: {message.citations.length}</span>
                   <HoverCitation caption={message.citations[0].locator} excerpt={message.citations[0].excerpt} />
                 </div>
               )}
@@ -648,7 +648,7 @@ function ViewerPane({
         )}
         {documents.length === 0 ? (
           <p className="text-sm text-zinc-400">
-            Sin documentos estructurados indexados para esta fuente todavía.
+            Sin documentos disponibles para esta fuente todavía.
           </p>
         ) : (
           <ul className="space-y-2">

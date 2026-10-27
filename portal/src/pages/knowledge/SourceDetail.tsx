@@ -892,7 +892,7 @@ export default function SourceDetailPage() {
                     <EmptyState
                       icon={Files}
                       title={COPY.documentsEmpty}
-                      body="Sincroniza la fuente o espera a que termine el indexado."
+                      body="Sincroniza la fuente o espera a que termine el procesamiento."
                     />
                   }
                   footer={

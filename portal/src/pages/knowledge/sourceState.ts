@@ -20,12 +20,12 @@ const STATES: Record<SourceReadinessKey, Omit<SourceReadiness, "key">> = {
   },
   processing: {
     label: "Procesando",
-    detail: "La ingesta o el indexado están en curso; todavía no está lista para citar.",
+    detail: "El procesamiento está en curso; todavía no está lista para citar.",
     tone: "warn",
   },
   ready: {
     label: "Listo para consultar",
-    detail: "La fuente terminó el indexado y puede recuperarse con citas.",
+    detail: "La fuente terminó el procesamiento y puede recuperarse con citas.",
     tone: "ok",
   },
   attention: {

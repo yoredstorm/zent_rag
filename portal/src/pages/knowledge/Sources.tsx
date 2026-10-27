@@ -525,7 +525,7 @@ export default function KnowledgeSourcesPage() {
       setUploadItems((prev) =>
         prev.map((i) => (i.filename === item.filename ? result : i)),
       );
-      if (result.status === "created") setMsg("Copia creada. En cola de indexado.");
+      if (result.status === "created") setMsg("Copia creada. En cola de procesamiento.");
       load();
     } catch (err) {
       setError(uploadErrorMessage(err));
@@ -961,7 +961,7 @@ export default function KnowledgeSourcesPage() {
         <Panel id="knowledge-source-list">
           <PanelHeader
             title="Fuentes de conocimiento"
-            description="Origen de datos indexado en tus colecciones."
+            description="Origen de datos disponible para consultar en tus colecciones."
             actions={
               <div className="flex flex-wrap items-center gap-2">
                 <Input

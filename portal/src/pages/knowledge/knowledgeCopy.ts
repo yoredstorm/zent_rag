@@ -22,11 +22,11 @@ export const COPY = {
   lastSync: "Última sync",
   documents: "Documentos",
   issues: "Incidencias",
-  indexedReady: "Esta fuente ya está indexada; el agente puede citar estos documentos.",
-  indexedEmpty: "Aún no hay documentos; sincroniza o espera el indexado.",
-  documentsEmpty: "Esta fuente aún no tiene documentos indexados.",
+  indexedReady: "Esta fuente está lista; el agente puede citar estos documentos.",
+  indexedEmpty: "Aún no hay documentos; sincroniza o espera a que termine el procesamiento.",
+  documentsEmpty: "Esta fuente aún no tiene documentos disponibles.",
   neverSynced: "Todavía no se ha sincronizado.",
-  learningSqlHint: "Aprendizaje lee esquemas SQL. Archivos e indexado viven en Fuentes.",
+  learningSqlHint: "Aprendizaje lee esquemas SQL. Archivos y procesamiento viven en Fuentes.",
   sqlEmptyTitle: "Esta pantalla aprende bases SQL",
   sqlEmptyBody: (fileCount: number) =>
     fileCount > 0
@@ -95,8 +95,8 @@ export function sourceTypeBlurb(type: string, managed?: boolean): string {
   if (type === "file") return "Temas y secciones del documento que el agente puede citar.";
   if (type === "csv" || type === "excel") return "Campos, medidas y dimensiones del dataset.";
   if (type === "web") return "Páginas y temas del sitio que el agente puede citar.";
-  if (type === "gdrive") return "Archivos de Drive que el agente puede citar cuando estén indexados.";
-  return "Abre la fuente para ver qué documentos hay indexados.";
+  if (type === "gdrive") return "Archivos de Drive que el agente puede citar cuando estén disponibles.";
+  return "Abre la fuente para ver qué documentos están disponibles.";
 }
 
 const DOC_STATUS_LABEL: Record<string, string> = {

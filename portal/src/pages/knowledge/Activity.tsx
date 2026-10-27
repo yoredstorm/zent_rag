@@ -377,7 +377,7 @@ function RunsView() {
           </Button>
           <span className="text-xs text-muted">
             {learnableSources.length === 0
-              ? "No hay fuentes SQL reales con discovery. Los archivos indexados se consultan en Fuentes."
+              ? "No hay fuentes SQL reales con discovery. Los archivos disponibles se consultan en Fuentes."
               : "El aprendizaje corre en background y produce conocimiento persistente."}
           </span>
         </div>

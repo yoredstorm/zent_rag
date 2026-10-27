@@ -418,7 +418,7 @@ describe("wizard UI steps 3–6", () => {
     expect(list).toHaveTextContent("Indexado");
     expect(list).toHaveTextContent("contrato-b.csv");
     expect(list).toHaveTextContent("Indexando 40%");
-    expect(list).toHaveTextContent("En cola de indexado");
+    expect(list).toHaveTextContent("En cola de procesamiento");
     const bars = within(list).getAllByRole("progressbar");
     expect(bars.map((bar) => bar.getAttribute("aria-valuenow"))).toContain("40");
   });
@@ -502,7 +502,7 @@ describe("wizard UI steps 3–6", () => {
     await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
 
     const queue = screen.getByTestId("upload-queue");
-    expect(within(queue).getAllByText("En cola de indexado")).toHaveLength(2);
+    expect(within(queue).getAllByText("En cola de procesamiento")).toHaveLength(2);
     expect(screen.getByTestId("upload-progress")).toHaveTextContent("2 en cola de indexado");
   });
 

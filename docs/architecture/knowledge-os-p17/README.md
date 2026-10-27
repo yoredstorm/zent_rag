@@ -13,6 +13,7 @@ Programa de simplificación UX sin cambiar el pipeline canónico.
 - [08-summary.md](./08-summary.md): acciones frecuentes y carga parcial.
 - [09-ask.md](./09-ask.md): Preguntar, citas y resolución de evidencia.
 - [10-improve.md](./10-improve.md): bandeja única y gates de revisión.
+- [11-context.md](./11-context.md): vocabulario humano y errores accionables.
 
 ## Baseline reproducible
 
@@ -41,6 +42,8 @@ certificación real se ejecuta en el stack local.
 - P17-03: tres acciones frecuentes y carga parcial tolerante a fallos.
 - P17-04: Preguntar con scope, citas, resolución de evidencia y feedback.
 - P17-05: Bandeja de atención en Mejorar, sin tabla nueva ni autoaprendizaje.
+- P17-06: vocabulario humano en el flujo principal y errores accionables.
+- P17-07/P17-08: pendientes de cerrar; no se declaran completas.
 - No se activó ninguna flag experimental ni `ZENT_GOLD_RELEASE_ENABLED`.
 - El canary por tenant queda `NOT_AVAILABLE` por el contrato roto de
   `feature_flags`; el flag de entorno cubre staging y rollback.
