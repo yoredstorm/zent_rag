@@ -238,6 +238,10 @@ describe("SourceDetailPage", () => {
     expect(screen.getByText("Listo para consultar")).toBeInTheDocument();
     expect(screen.queryByText(LAST_SYNC)).toBeNull();
     expect(screen.getByTestId("source-index-copy")).toHaveTextContent(/el agente puede citar/);
+    expect(screen.getByRole("link", { name: "Usar en un agente" })).toHaveAttribute(
+      "href",
+      "/agents/new?source_id=src-1",
+    );
   });
 
   it("muestra la estructura tabular del archivo cuando existe", async () => {

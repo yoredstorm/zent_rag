@@ -14,6 +14,7 @@ import { useState } from "react";
 import { AgentSourcePicker } from "./AgentSourcePicker";
 import type { IngestionJob, KnowledgeSource } from "./types";
 import { Button, SkeletonBlock } from "../ui";
+import { sourceReadiness } from "../../pages/knowledge/sourceState";
 
 /** Filas visibles antes de ofrecer "Ver las N fuentes". */
 export const VISIBLE_SOURCES = 5;
@@ -63,7 +64,10 @@ export function AgentKnowledgeSection({
                 : `${selectedIds.length} fuente${selectedIds.length === 1 ? "" : "s"} conectada${
                     selectedIds.length === 1 ? "" : "s"
                   }`}
-            {!loading && pending > 0 ? ` · ${pending} sin indexar` : ""}
+            {!loading && pending > 0 ? ` · ${pending} en proceso` : ""}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-faint">
+            Este agente podrá consultar estas fuentes respetando sus permisos.
           </p>
         </div>
         <Button
@@ -99,8 +103,11 @@ export function AgentKnowledgeSection({
                   <span className="min-w-0 truncate" title={source.name}>
                     {source.name}
                   </span>
-                  <span className="shrink-0 text-xs text-faint tabular-nums">
-                    {source.document_count ? `${source.document_count} docs` : "sin indexar"}
+                  <span
+                    className="shrink-0 text-xs text-faint tabular-nums"
+                    title={sourceReadiness(source.status).detail}
+                  >
+                    {sourceReadiness(source.status).label}
                   </span>
                 </li>
               ))}

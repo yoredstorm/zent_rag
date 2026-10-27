@@ -489,6 +489,19 @@ describe("AgentStudio · identidad y conocimiento", () => {
 });
 
 describe("AgentStudio · creación simple", () => {
+  it("preselecciona la fuente al abrir un agente nuevo desde Fuentes", async () => {
+    const { user } = await renderStudio("/agents/new?source_id=s1");
+    await waitForStudio();
+    await user.click(screen.getByRole("button", { name: "Administrar conocimiento" }));
+    expect(await screen.findByTestId("agent-knowledge-list")).toHaveTextContent(
+      "Políticas RRHH",
+    );
+    expect(screen.getByTestId("agent-knowledge-list")).toHaveTextContent("Procesando");
+    expect(screen.getByTestId("agent-knowledge")).toHaveTextContent(
+      "respetando sus permisos",
+    );
+  });
+
   it("crea un agente con sólo nombre, propósito y fuentes", async () => {
     const fetchMock = fetchRouter();
     vi.stubGlobal("fetch", fetchMock);

@@ -180,8 +180,22 @@ export function useAgentStudio() {
 
   const sourcesRef = useRef<KnowledgeSource[]>([]);
   const jobsRef = useRef<IngestionJob[]>([]);
+  const prefilledSourceRef = useRef("");
   sourcesRef.current = sources;
   jobsRef.current = jobs;
+
+  useEffect(() => {
+    const requested = searchParams.get("source_id");
+    if (!isNew || !requested || prefilledSourceRef.current === requested) return;
+    if (!sources.some((source) => source.id === requested)) return;
+    prefilledSourceRef.current = requested;
+    setConfig((prev) =>
+      prev.source_ids.includes(requested)
+        ? prev
+        : { ...prev, source_ids: [...prev.source_ids, requested] },
+    );
+    setSemantic(true);
+  }, [isNew, searchParams, sources]);
 
   /**
    * Relee el checklist real del backend. Fail-silent: si falla, se conserva el

@@ -14,6 +14,8 @@ Programa de simplificación UX sin cambiar el pipeline canónico.
 - [09-ask.md](./09-ask.md): Preguntar, citas y resolución de evidencia.
 - [10-improve.md](./10-improve.md): bandeja única y gates de revisión.
 - [11-context.md](./11-context.md): vocabulario humano y errores accionables.
+- [12-agents-workflows.md](./12-agents-workflows.md): fuente → agente nuevo y scope de workflows.
+- [13-validation.md](./13-validation.md): gates reales, límites y decisión de release.
 
 ## Baseline reproducible
 
@@ -43,7 +45,10 @@ certificación real se ejecuta en el stack local.
 - P17-04: Preguntar con scope, citas, resolución de evidencia y feedback.
 - P17-05: Bandeja de atención en Mejorar, sin tabla nueva ni autoaprendizaje.
 - P17-06: vocabulario humano en el flujo principal y errores accionables.
-- P17-07/P17-08: pendientes de cerrar; no se declaran completas.
+- P17-07: fuente → agente nuevo con `source_ids`, estados de fuente y aviso de
+  permisos; workflows conservan su scope existente.
+- P17-08: validación técnica y a11y smoke; 5 usuarios, escala 1/100/1000,
+  bundle, red y canary quedan pendientes. `GO_STAGING`, no producción.
 - No se activó ninguna flag experimental ni `ZENT_GOLD_RELEASE_ENABLED`.
 - El canary por tenant queda `NOT_AVAILABLE` por el contrato roto de
   `feature_flags`; el flag de entorno cubre staging y rollback.

@@ -1,4 +1,4 @@
-import { ArrowsClockwise, ChatCircleDots, Code, Files, Table, Trash } from "@phosphor-icons/react";
+import { ArrowsClockwise, ChatCircleDots, Code, Files, Robot, Table, Trash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
@@ -432,6 +432,7 @@ export default function SourceDetailPage() {
   const docTotalPages = Math.max(1, Math.ceil(documents.length / PAGE_SIZE));
   const safeDocPage = Math.min(docPage, docTotalPages);
   const pageDocs = documents.slice((safeDocPage - 1) * PAGE_SIZE, safeDocPage * PAGE_SIZE);
+  const permissions = session?.permissions ?? [];
   const canRunSql = Boolean(
     session?.permissions?.includes("*") ||
       session?.permissions?.includes("sources:sql") ||
@@ -459,6 +460,19 @@ export default function SourceDetailPage() {
         }
         actions={
           <>
+            {source &&
+            (permissions.length === 0 ||
+              permissions.includes("*") ||
+              permissions.includes("agents:write")) ? (
+              <ButtonLink
+                to={`/agents/new?source_id=${source.id}`}
+                variant="secondary"
+                size="sm"
+                leadingIcon={Robot}
+              >
+                Usar en un agente
+              </ButtonLink>
+            ) : null}
             <ButtonLink
               to="/chat?target=knowledge"
               variant="secondary"
