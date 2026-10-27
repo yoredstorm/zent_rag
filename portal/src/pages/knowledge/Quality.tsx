@@ -17,6 +17,7 @@ import {
   ErrorInline,
   Modal,
   Panel,
+  PanelHeader,
   PageHeader,
   Select,
   Skeleton,
@@ -52,9 +53,18 @@ import {
 } from "../../lib/knowledgeModel";
 import { fmtDateTime } from "../../lib/format";
 
-type QualityTab = "issues" | "conflicts" | "ingestion" | "gaps" | "questions" | "reviews" | "improvements";
+type QualityTab =
+  | "inbox"
+  | "issues"
+  | "conflicts"
+  | "ingestion"
+  | "gaps"
+  | "questions"
+  | "reviews"
+  | "improvements";
 
 const TABS: { id: QualityTab; label: string }[] = [
+  { id: "inbox", label: "Bandeja" },
   { id: "issues", label: "Problemas" },
   { id: "conflicts", label: "Conflictos" },
   { id: "ingestion", label: "Calidad de ingesta" },
@@ -103,7 +113,9 @@ export default function KnowledgeQualityPage() {
   const { session } = useAuth();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") as QualityTab) || "issues";
+  const defaultTab: QualityTab =
+    location.pathname === "/knowledge/improve" ? "inbox" : "issues";
+  const tab = (params.get("tab") as QualityTab) || defaultTab;
 
   const [quality, setQuality] = useState<QualityReport | null>(null);
   const [health, setHealth] = useState<KnowledgeHealth | null>(null);
@@ -120,6 +132,19 @@ export default function KnowledgeQualityPage() {
   const [conflictChoice, setConflictChoice] = useState<"chose_a" | "chose_b" | "merged">("chose_a");
   const [conflictReason, setConflictReason] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+  const permissions = session?.permissions ?? [];
+  const canWrite =
+    permissions.length === 0 ||
+    permissions.includes("*") ||
+    permissions.includes("knowledge:write");
+  const canAdmin =
+    permissions.length === 0 ||
+    permissions.includes("*") ||
+    permissions.includes("knowledge:admin");
+  const canCatalog =
+    permissions.length === 0 ||
+    permissions.includes("*") ||
+    permissions.includes("catalog:write");
 
   const setTab = (next: QualityTab) => {
     const updated = new URLSearchParams(params);
@@ -136,7 +161,39 @@ export default function KnowledgeQualityPage() {
         .catch(() => {
           // La salud es informativa: su fallo no oculta los problemas accionables.
         });
-      if (tab === "issues") {
+      if (tab === "inbox") {
+        const [qualityResult, conflictResult, gapResult, questionResult, suggestionResult, improvementResult] =
+          await Promise.allSettled([
+            fetchKnowledgeQuality(30),
+            fetchKnowledgeConflicts("open"),
+            fetchKnowledgeGaps({ status: "open", limit: 100 }),
+            fetchQuestions({ status: "pending", limit: 100 }),
+            session
+              ? api<{ suggestions: Suggestion[] }>(
+                  "/api/v1/catalog/suggestions?status=pending&limit=100",
+                  { token: session.token, organizationId: session.organizationId },
+                )
+              : Promise.resolve({ suggestions: [] as Suggestion[] }),
+            session
+              ? api<Improvement[]>("/api/v1/learning/improvements?limit=100", {
+                  token: session.token,
+                  organizationId: session.organizationId,
+                })
+              : Promise.resolve([] as Improvement[]),
+          ]);
+        if (qualityResult.status === "fulfilled") setQuality(qualityResult.value);
+        if (conflictResult.status === "fulfilled") setConflicts(conflictResult.value.conflicts);
+        if (gapResult.status === "fulfilled") setGaps(gapResult.value.gaps);
+        if (questionResult.status === "fulfilled") setQuestions(questionResult.value.questions);
+        if (suggestionResult.status === "fulfilled") {
+          setSuggestions(suggestionResult.value.suggestions ?? []);
+        }
+        if (improvementResult.status === "fulfilled") {
+          setImprovements(
+            Array.isArray(improvementResult.value) ? improvementResult.value : [],
+          );
+        }
+      } else if (tab === "issues") {
         setQuality(await fetchKnowledgeQuality(30));
       } else if (tab === "conflicts") {
         const data = await fetchKnowledgeConflicts("open");
@@ -278,6 +335,19 @@ export default function KnowledgeQualityPage() {
     }
   };
 
+  const inboxItems: { tab: QualityTab; label: string; count: number }[] = [
+    { tab: "issues", label: "Problemas de calidad", count: quality?.total ?? 0 },
+    { tab: "conflicts", label: "Información contradictoria", count: conflicts.length },
+    { tab: "gaps", label: "Información faltante", count: gaps.length },
+    { tab: "questions", label: "Aprobaciones y preguntas", count: questions.length },
+    { tab: "reviews", label: "Cola de revisión", count: suggestions.length },
+    { tab: "improvements", label: "Mejoras propuestas", count: improvements.length },
+  ];
+  const inboxTotal = inboxItems.reduce((total, item) => total + item.count, 0);
+  const qualityMeasured = Boolean(
+    health && health.measured_dimensions > 0 && health.overall !== null,
+  );
+
   return (
     <KnowledgeLayout>
       <PageHeader
@@ -324,6 +394,51 @@ export default function KnowledgeQualityPage() {
             <Skeleton className="h-[96px] rounded-lg" />
             <Skeleton className="h-[96px] rounded-lg" />
           </div>
+        )}
+
+        {!loading && tab === "inbox" && (
+          <Panel data-testid="quality-inbox">
+            <PanelHeader
+              title="Bandeja de atención"
+              description="Un solo lugar para decidir qué corregir. Cada acción abre la cola existente; nada se resuelve solo."
+            />
+            <div className="panel-body flex flex-col gap-2">
+              {inboxTotal === 0 ? (
+                <div className="flex items-start gap-2 text-sm">
+                  {qualityMeasured ? (
+                    <>
+                      <ShieldCheck size={16} className="mt-0.5 text-ok" aria-hidden />
+                      <span>No hay problemas conocidos.</span>
+                    </>
+                  ) : (
+                    <>
+                      <WarningCircle size={16} className="mt-0.5 text-warn" aria-hidden />
+                      <span>
+                        Calidad aún no evaluada. No hay problemas reportados, pero
+                        tampoco una medición que permita afirmar que está sana.
+                      </span>
+                    </>
+                  )}
+                </div>
+              ) : (
+                inboxItems
+                  .filter((item) => item.count > 0)
+                  .map((item) => (
+                    <div
+                      key={item.tab}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-border-soft px-3 py-2"
+                    >
+                      <span className="text-sm text-text">
+                        {item.label} <span className="text-muted">· {item.count}</span>
+                      </span>
+                      <Button variant="ghost" size="sm" onClick={() => setTab(item.tab)}>
+                        Abrir
+                      </Button>
+                    </div>
+                  ))
+              )}
+            </div>
+          </Panel>
         )}
 
         {!loading && tab === "issues" && quality && (
@@ -452,15 +567,21 @@ export default function KnowledgeQualityPage() {
                           ? " · fuentes independientes"
                           : ""}
                       </span>
-                      <Button
-                        variant="primary"
-                        onClick={() => {
-                          setConflictTarget(conflict);
-                          setConflictChoice("chose_a");
-                        }}
-                      >
-                        Resolver
-                      </Button>
+                      {canAdmin ? (
+                        <Button
+                          variant="primary"
+                          onClick={() => {
+                            setConflictTarget(conflict);
+                            setConflictChoice("chose_a");
+                          }}
+                        >
+                          Resolver
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-faint">
+                          Requiere permiso de administración
+                        </span>
+                      )}
                     </div>
                   </div>
                 </Panel>
@@ -578,13 +699,19 @@ export default function KnowledgeQualityPage() {
                           Ver objeto
                         </Link>
                       )}
-                      <Button
-                        variant="ghost"
-                        disabled={busyId === gap.id || gap.origin === "knowledge_question"}
-                        onClick={() => void resolveGap(gap)}
-                      >
-                        Resolver
-                      </Button>
+                      {canWrite ? (
+                        <Button
+                          variant="ghost"
+                          disabled={busyId === gap.id || gap.origin === "knowledge_question"}
+                          onClick={() => void resolveGap(gap)}
+                        >
+                          Resolver
+                        </Button>
+                      ) : (
+                        <span className="self-center text-xs text-faint">
+                          Requiere permiso de edición
+                        </span>
+                      )}
                     </div>
                   </div>
                 </Panel>
@@ -653,20 +780,28 @@ export default function KnowledgeQualityPage() {
                       )}
                     </div>
                     <div className="flex shrink-0 gap-2">
-                      <Button
-                        variant="secondary"
-                        disabled={busyId === suggestion.id}
-                        onClick={() => void reviewSuggestion(suggestion, "reject")}
-                      >
-                        Rechazar
-                      </Button>
-                      <Button
-                        variant="primary"
-                        disabled={busyId === suggestion.id}
-                        onClick={() => void reviewSuggestion(suggestion, "approve")}
-                      >
-                        Aprobar
-                      </Button>
+                      {canCatalog ? (
+                        <>
+                          <Button
+                            variant="secondary"
+                            disabled={busyId === suggestion.id}
+                            onClick={() => void reviewSuggestion(suggestion, "reject")}
+                          >
+                            Rechazar
+                          </Button>
+                          <Button
+                            variant="primary"
+                            disabled={busyId === suggestion.id}
+                            onClick={() => void reviewSuggestion(suggestion, "approve")}
+                          >
+                            Aprobar
+                          </Button>
+                        </>
+                      ) : (
+                        <span className="self-center text-xs text-faint">
+                          Requiere permiso de catálogo
+                        </span>
+                      )}
                     </div>
                   </div>
                 </Panel>
