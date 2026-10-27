@@ -146,7 +146,6 @@ export default function IngestionPage() {
         method: "POST",
         token: session.token,
         organizationId: session.organizationId,
-        headers: { "X-User-Role": "admin" },
       });
       await loadSources();
     } catch (err) {

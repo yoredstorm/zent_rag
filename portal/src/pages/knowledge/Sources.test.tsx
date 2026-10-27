@@ -109,10 +109,19 @@ describe("KnowledgeSourcesPage", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByTestId("source-files")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Base de datos/ })).toHaveAttribute(
-      "href",
-      "/knowledge/add?kind=database",
+    expect(screen.getByTestId("add-information-options")).toHaveTextContent(
+      "Subir archivos",
     );
+    expect(
+      screen.getByRole("link", { name: /Conectar un sistema/ }),
+    ).toHaveAttribute("href", "/knowledge/add");
+    expect(
+      screen.getByRole("button", { name: /Usar una fuente existente/ }),
+    ).toBeInTheDocument();
+    const databaseLink = screen
+      .getAllByRole("link")
+      .find((link) => link.getAttribute("href") === "/knowledge/add?kind=database");
+    expect(databaseLink).toHaveAttribute("href", "/knowledge/add?kind=database");
     expect(screen.getByRole("link", { name: /Google Drive/ })).toHaveAttribute(
       "href",
       "/knowledge/add?kind=drive",
@@ -134,9 +143,9 @@ describe("KnowledgeSourcesPage", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderSources();
-    expect(await screen.findByText("Indexando")).toBeInTheDocument();
+    expect(await screen.findByText("Procesando")).toBeInTheDocument();
     // El poll de respaldo (5 s) trae la verdad nueva sin recargar la página.
-    await waitFor(() => expect(screen.getByText("Indexada")).toBeInTheDocument(), {
+    await waitFor(() => expect(screen.getByText("Listo para consultar")).toBeInTheDocument(), {
       timeout: 9_000,
     });
     expect(sourceCalls).toBeGreaterThan(1);
@@ -150,7 +159,7 @@ describe("KnowledgeSourcesPage", () => {
     expect(screen.getByRole("button", { name: `Sincronizar ${FILE_SOURCE.name}` })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: `Eliminar ${FILE_SOURCE.name}` })).toBeInTheDocument();
     expect(screen.getByText(/Documentos:/)).toBeInTheDocument();
-    expect(screen.getByText("Indexada")).toBeInTheDocument();
+    expect(screen.getByText("Listo para consultar")).toBeInTheDocument();
     expect(screen.queryByText("Open")).toBeNull();
     expect(screen.queryByRole("button", { name: `Perfilizar ${FILE_SOURCE.name}` })).toBeNull();
   });

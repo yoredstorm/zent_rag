@@ -59,6 +59,7 @@ import {
   sourceStatusLabel,
   sourceTypeLabel,
 } from "./knowledgeCopy";
+import { sourceReadiness } from "./sourceState";
 
 const SOURCE_TYPES = ["sql", "web", "s3", "api", "gdrive"] as const;
 
@@ -672,7 +673,7 @@ export default function KnowledgeSourcesPage() {
               aria-expanded={showCreate}
               onClick={() => (showCreate ? closeCreate() : setShowCreate(true))}
             >
-              Nueva fuente
+              Añadir información
             </Button>
           </div>
         }
@@ -691,8 +692,8 @@ export default function KnowledgeSourcesPage() {
         {showCreate && (
           <Panel>
             <PanelHeader
-              title="Añadir fuentes"
-              description="Soltá uno o varios archivos: se suben de a uno, cada uno se indexa solo y hereda el nombre del archivo."
+              title="Añadir información"
+              description="Elegí cómo querés incorporar conocimiento. Todo termina en la misma lista de fuentes."
               actions={
                 <IconButton
                   label="Cerrar alta de fuente"
@@ -702,6 +703,67 @@ export default function KnowledgeSourcesPage() {
               }
             />
             <div className="panel-body flex flex-col gap-3">
+              <div
+                className="grid gap-2 sm:grid-cols-3"
+                data-testid="add-information-options"
+              >
+                <button
+                  type="button"
+                  className="flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 text-left transition-colors hover:border-border-strong"
+                  onClick={() =>
+                    document
+                      .querySelector<HTMLInputElement>('[data-testid="source-files"]')
+                      ?.click()
+                  }
+                >
+                  <Plus size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden />
+                  <span>
+                    <span className="block text-[13px] font-medium text-text">
+                      Subir archivos
+                    </span>
+                    <span className="block text-[11px] leading-relaxed text-faint">
+                      PDF, DOCX, CSV o Excel.
+                    </span>
+                  </span>
+                </button>
+                <Link
+                  to="/knowledge/add"
+                  className="flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 transition-colors hover:border-border-strong"
+                >
+                  <Plugs size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden />
+                  <span>
+                    <span className="block text-[13px] font-medium text-text">
+                      Conectar un sistema
+                    </span>
+                    <span className="block text-[11px] leading-relaxed text-faint">
+                      Base de datos, Drive, web o API.
+                    </span>
+                  </span>
+                </Link>
+                <button
+                  type="button"
+                  className="flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 text-left transition-colors hover:border-border-strong"
+                  onClick={() => {
+                    closeCreate();
+                    window.setTimeout(() => {
+                      document
+                        .getElementById("knowledge-source-list")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }, 50);
+                  }}
+                >
+                  <FolderSimple size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden />
+                  <span>
+                    <span className="block text-[13px] font-medium text-text">
+                      Usar una fuente existente
+                    </span>
+                    <span className="block text-[11px] leading-relaxed text-faint">
+                      Revisá lo que ya está cargado.
+                    </span>
+                  </span>
+                </button>
+              </div>
+
               <FileDropzone
                 onFiles={addUploadFiles}
                 inputTestId="source-files"
@@ -896,7 +958,7 @@ export default function KnowledgeSourcesPage() {
           </Panel>
         )}
 
-        <Panel>
+        <Panel id="knowledge-source-list">
           <PanelHeader
             title="Fuentes de conocimiento"
             description="Origen de datos indexado en tus colecciones."
@@ -979,7 +1041,10 @@ export default function KnowledgeSourcesPage() {
                           >
                             {s.name}
                           </Link>
-                          <StatusBadge status={s.status} label={sourceStatusLabel(s.status)} />
+                          <StatusBadge
+                            status={s.status}
+                            label={sourceReadiness(s.status).label}
+                          />
                           <span className="text-xs text-faint">
                             {sourceTypeLabel(s.type, s.config?.managed)}
                           </span>

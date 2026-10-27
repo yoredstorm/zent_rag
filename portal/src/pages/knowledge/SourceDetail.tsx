@@ -43,11 +43,11 @@ import {
   parseSourceTab,
   SOURCE_TAB_LABEL,
   SOURCE_TABS,
-  sourceStatusLabel,
   sourceTypeBlurb,
   sourceTypeLabel,
   type SourceTab,
 } from "./knowledgeCopy";
+import { sourceReadiness } from "./sourceState";
 
 type SourceDetail = {
   id: string;
@@ -450,7 +450,10 @@ export default function SourceDetailPage() {
               <span className="text-[13px] text-muted">
                 {sourceTypeLabel(source.type, managed)}
               </span>
-              <StatusBadge status={source.status} label={sourceStatusLabel(source.status)} />
+              <StatusBadge
+                status={source.status}
+                label={sourceReadiness(source.status).label}
+              />
             </>
           ) : undefined
         }

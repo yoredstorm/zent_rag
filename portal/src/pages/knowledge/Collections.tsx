@@ -2,6 +2,7 @@ import { Database, Plus, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import {
   Button,
   DataTable,
@@ -44,6 +45,8 @@ export default function KnowledgeBasesPage() {
   const [loadError, setLoadError] = useState("");
   const [msg, setMsg] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<KB | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   function load() {
     if (!session) return;
@@ -84,20 +87,24 @@ export default function KnowledgeBasesPage() {
     }
   }
 
-  async function remove(kbId: string, kbName: string) {
+  async function remove(kb: KB) {
     if (!session) return;
     setError("");
     setMsg("");
+    setDeleting(true);
     try {
-      await api(`/api/v1/knowledge-bases/${kbId}`, {
+      await api(`/api/v1/knowledge-bases/${kb.id}`, {
         method: "DELETE",
         token: session.token,
         organizationId: session.organizationId,
       });
-      setMsg(`Colección «${kbName}» eliminada con sus vectores.`);
+      setMsg(`Colección «${kb.name}» eliminada con sus vectores.`);
+      setPendingDelete(null);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al eliminar");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -228,7 +235,7 @@ export default function KnowledgeBasesPage() {
               label={`Eliminar ${kb.name}`}
               icon={Trash}
               className="text-danger"
-              onClick={() => void remove(kb.id, kb.name)}
+              onClick={() => setPendingDelete(kb)}
             />
           )}
           footer={
@@ -238,6 +245,16 @@ export default function KnowledgeBasesPage() {
           }
         />
       </div>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={`Eliminar ${pendingDelete?.name || "colección"}`}
+        body="Se eliminan la colección y sus vectores de recuperación. No se puede deshacer."
+        confirmLabel="Eliminar colección"
+        busy={deleting}
+        onConfirm={() => pendingDelete && void remove(pendingDelete)}
+        onCancel={() => setPendingDelete(null)}
+      />
     </KnowledgeLayout>
   );
 }

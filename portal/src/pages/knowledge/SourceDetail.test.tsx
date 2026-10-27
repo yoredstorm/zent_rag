@@ -235,7 +235,7 @@ describe("SourceDetailPage", () => {
     expect(screen.queryByText("What Zent Understood")).toBeNull();
     expect(screen.queryByText("All sources")).toBeNull();
     expect(screen.getByText("Todas las fuentes")).toBeInTheDocument();
-    expect(screen.getByText("Indexada")).toBeInTheDocument();
+    expect(screen.getByText("Listo para consultar")).toBeInTheDocument();
     expect(screen.queryByText(LAST_SYNC)).toBeNull();
     expect(screen.getByTestId("source-index-copy")).toHaveTextContent(/el agente puede citar/);
   });

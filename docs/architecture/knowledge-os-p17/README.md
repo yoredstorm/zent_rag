@@ -9,6 +9,7 @@ Programa de simplificación UX sin cambiar el pipeline canónico.
 - [04-adr-ux-only.md](./04-adr-ux-only.md): decisión de arquitectura.
 - [05-p0-acl-fix.md](./05-p0-acl-fix.md): P0 ACL del chat grounded.
 - [06-navigation.md](./06-navigation.md): cuatro experiencias y flag visual.
+- [07-sources.md](./07-sources.md): entrada única, estados verificables y seguridad.
 
 ## Baseline reproducible
 
@@ -30,6 +31,10 @@ certificación real se ejecuta en el stack local.
 - Baseline real: 5 citas API, cross-tenant rechazado; viewer de cita y conflicto
   abierto quedan como gaps documentados para P17-04/P17-05.
 - P0 ACL y P17-00 están verdes en CI (`40444744321`).
-- P17-01: nav de 4 experiencias detrás de `knowledge_simple_ux`, rutas
-  `/knowledge/ask` y `/knowledge/improve`, redirects con query conservado.
+- P17-01: nav de 4 experiencias detrás de `RAG_KNOWLEDGE_SIMPLE_UX_ENABLED`,
+  rutas `/knowledge/ask` y `/knowledge/improve`, redirects con query conservado.
+- P17-02: entrada única de Fuentes, estados verificables y confirmación de
+  borrado de colección.
 - No se activó ninguna flag experimental ni `ZENT_GOLD_RELEASE_ENABLED`.
+- El canary por tenant queda `NOT_AVAILABLE` por el contrato roto de
+  `feature_flags`; el flag de entorno cubre staging y rollback.
