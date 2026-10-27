@@ -10,6 +10,7 @@ Programa de simplificación UX sin cambiar el pipeline canónico.
 - [05-p0-acl-fix.md](./05-p0-acl-fix.md): P0 ACL del chat grounded.
 - [06-navigation.md](./06-navigation.md): cuatro experiencias y flag visual.
 - [07-sources.md](./07-sources.md): entrada única, estados verificables y seguridad.
+- [08-summary.md](./08-summary.md): acciones frecuentes y carga parcial.
 
 ## Baseline reproducible
 
@@ -35,6 +36,7 @@ certificación real se ejecuta en el stack local.
   rutas `/knowledge/ask` y `/knowledge/improve`, redirects con query conservado.
 - P17-02: entrada única de Fuentes, estados verificables y confirmación de
   borrado de colección.
+- P17-03: tres acciones frecuentes y carga parcial tolerante a fallos.
 - No se activó ninguna flag experimental ni `ZENT_GOLD_RELEASE_ENABLED`.
 - El canary por tenant queda `NOT_AVAILABLE` por el contrato roto de
   `feature_flags`; el flag de entorno cubre staging y rollback.

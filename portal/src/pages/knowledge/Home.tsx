@@ -6,7 +6,15 @@
 // =============================================================================
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Lightning, Plus, Sparkle } from "@phosphor-icons/react";
+import {
+  ArrowRight,
+  ChatCircleDots,
+  Lightning,
+  Plus,
+  Sparkle,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import { loadSession } from "../../api";
 import { Button, ButtonLink, ErrorInline, Panel } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KnowledgeHero } from "../../components/knowledge/KnowledgeHero";
@@ -78,7 +86,41 @@ function FirstSteps() {
   );
 }
 
+function QuickActions({ permissions }: { permissions: string[] }) {
+  const can = (code: string) =>
+    permissions.length === 0 || permissions.includes("*") || permissions.includes(code);
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-soft/60 px-3 py-2.5"
+      data-testid="knowledge-quick-actions"
+    >
+      <span className="mr-1 text-xs font-medium text-muted">Acciones frecuentes</span>
+      {can("sources:write") ? (
+        <ButtonLink to="/knowledge/sources?new=1" variant="primary" size="sm" leadingIcon={Plus}>
+          Añadir información
+        </ButtonLink>
+      ) : null}
+      {can("knowledge:read") ? (
+        <ButtonLink to="/knowledge/ask" variant="secondary" size="sm" leadingIcon={ChatCircleDots}>
+          Hacer una pregunta
+        </ButtonLink>
+      ) : null}
+      {can("knowledge:read") ? (
+        <ButtonLink
+          to="/knowledge/improve?tab=conflicts"
+          variant="ghost"
+          size="sm"
+          leadingIcon={WarningCircle}
+        >
+          Revisar problemas
+        </ButtonLink>
+      ) : null}
+    </div>
+  );
+}
+
 export default function KnowledgeHomePage() {
+  const permissions = loadSession()?.permissions ?? [];
   const navigate = useNavigate();
   const [overview, setOverview] = useState<KnowledgeOverview | null>(null);
   const [delta, setDelta] = useState<KnowledgeDeltaData | null>(null);
@@ -92,27 +134,27 @@ export default function KnowledgeHomePage() {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError("");
-    try {
-      const [overviewData, deltaData, graphData] = await Promise.all([
-        fetchKnowledgeOverview(),
-        fetchKnowledgeDelta({ window: "24h" }),
-        fetchKnowledgeGraph({ limit_nodes: 40, limit_edges: 90 }),
-      ]);
-      setOverview(overviewData);
-      setDelta(deltaData);
-      setGraph(graphData);
-    } catch (err) {
-      setOverview(null);
-      setDelta(null);
-      setGraph(null);
+    const results = await Promise.allSettled([
+      fetchKnowledgeOverview(),
+      fetchKnowledgeDelta({ window: "24h" }),
+      fetchKnowledgeGraph({ limit_nodes: 40, limit_edges: 90 }),
+    ]);
+    const [overviewResult, deltaResult, graphResult] = results;
+    setOverview(overviewResult.status === "fulfilled" ? overviewResult.value : null);
+    setDelta(deltaResult.status === "fulfilled" ? deltaResult.value : null);
+    setGraph(graphResult.status === "fulfilled" ? graphResult.value : null);
+    const failed = results.filter((result) => result.status === "rejected").length;
+    if (failed === results.length) {
+      const reason = results[0].status === "rejected" ? results[0].reason : null;
       setError(
-        err instanceof Error
-          ? err.message
+        reason instanceof Error
+          ? reason.message
           : "No pudimos obtener el conocimiento de tu organización."
       );
-    } finally {
-      if (!silent) setLoading(false);
+    } else {
+      setError("");
     }
+    if (!silent) setLoading(false);
   }, []);
 
   const loadFeed = useCallback(async () => {
@@ -178,6 +220,8 @@ export default function KnowledgeHomePage() {
             navigate(`/knowledge/search?q=${encodeURIComponent(query)}`)
           }
         />
+
+        {!loading && !error ? <QuickActions permissions={permissions} /> : null}
 
         {!loading && error && (
           <div data-testid="knowledge-home-error">

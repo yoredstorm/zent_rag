@@ -208,6 +208,33 @@ describe("KnowledgeHomePage", () => {
     expect(screen.getByTestId("knowledge-pulse")).toBeInTheDocument();
     expect(screen.getByTestId("knowledge-domains")).toBeInTheDocument();
     expect(screen.getByText("ATPCO")).toBeInTheDocument();
+    expect(screen.getByTestId("knowledge-quick-actions")).toHaveTextContent(
+      "Añadir información",
+    );
+    expect(screen.getByTestId("knowledge-quick-actions")).toHaveTextContent(
+      "Hacer una pregunta",
+    );
+    expect(screen.getByTestId("knowledge-quick-actions")).toHaveTextContent(
+      "Revisar problemas",
+    );
+  });
+
+  it("tolera que falle un widget sin ocultar el resto de la portada", async () => {
+    fetchKnowledgeOverview.mockResolvedValue(overviewFixture());
+    fetchKnowledgeDelta.mockRejectedValue(new Error("delta down"));
+    fetchKnowledgeGraph.mockResolvedValue(graphFixture());
+    fetchKnowledgeFeed.mockResolvedValue([]);
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Tu conocimiento empresarial está creciendo")
+      ).toBeInTheDocument()
+    );
+    expect(screen.queryByTestId("knowledge-home-error")).not.toBeInTheDocument();
+    expect(screen.getByTestId("knowledge-quick-actions")).toBeInTheDocument();
+    expect(screen.getByTestId("knowledge-pulse")).toBeInTheDocument();
   });
 
   it("en error muestra error con reintento y NO ceros", async () => {
