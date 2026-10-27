@@ -3,7 +3,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-const API_TARGET = process.env.VITE_API_PROXY || "http://localhost:8000";
+const API_TARGET = process.env.VITE_API_PROXY || "http://127.0.0.1:8000";
 
 /** El portal siempre habla con la API por el mismo origen (dev y preview). */
 const proxy = {
