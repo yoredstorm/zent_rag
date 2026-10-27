@@ -21,13 +21,44 @@ os.environ.setdefault(
 )
 os.environ.setdefault("RAG_ENVIRONMENT", "development")
 # Match docker-compose defaults so local pytest can talk to rag-redis / rag-qdrant.
+# 127.0.0.1 explícito: Docker publica solo loopback IPv4. Con `localhost`,
+# Windows intenta `::1` primero y pierde ~2s por conexión (una por test).
 os.environ.setdefault(
     "RAG_REDIS_URL",
-    "redis://:dev-redis-password-change-me@localhost:6379/0",
+    "redis://:dev-redis-password-change-me@127.0.0.1:6379/0",
 )
 # Prefixed RAG_QDRANT_API_KEY is extra=forbid when QDRANT_API_KEY uses AliasChoices.
 os.environ.pop("RAG_QDRANT_API_KEY", None)
 os.environ.setdefault("QDRANT_API_KEY", "dev-qdrant-key-change-me")
+
+# Hermetic suite: no real LLM/provider calls by default. A local `.env` with
+# real credentials must not leak into tests: gasta créditos y agrega minutos
+# (el planner espera al proveedor en cada turno). Opt-in explícito para live:
+#   RAG_TEST_REAL_LLM=1 pytest ...
+#   RAG_CERT_REAL_LLM=1 pytest tests/certification/ai ...
+# Claves vacías: Settings las resuelve como None/falsy y aplica los fallbacks
+# deterministas que ya usa CI.
+_ALLOW_REAL_LLM = (
+    os.environ.get("RAG_TEST_REAL_LLM") == "1"
+    or os.environ.get("RAG_CERT_REAL_LLM") == "1"
+)
+if not _ALLOW_REAL_LLM:
+    for _credential in (
+        "RAG_LITELLM_API_KEY",
+        "RAG_LITELLM_API_BASE",
+        "RAG_GATEWAY_FALLBACK_API_KEY",
+        "RAG_GATEWAY_FALLBACK_API_BASE",
+        "RAG_EMBEDDING_FALLBACK_API_KEY",
+        "RAG_EMBEDDING_FALLBACK_API_BASE",
+        "RAG_JEV_API_KEY",
+        "JEV_API_KEY",
+        "TYPESAFE_API_KEY",
+    ):
+        os.environ[_credential] = ""
+    # Si alguna ruta ignora la falta de credenciales, que falle en segundos
+    # en vez de esperar el timeout de producción (300s) con reintentos.
+    os.environ["RAG_LITELLM_TIMEOUT_SECONDS"] = "5"
+    os.environ["RAG_LITELLM_MAX_RETRIES"] = "0"
 
 import pytest
 import pytest_asyncio
@@ -178,98 +209,118 @@ def _close_async_db_engine_at_session_end() -> None:
     asyncio.run(close_db_connections())
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def _ensure_developer_scopes() -> None:
-    """Inserta rag:read / rag:write / agents:execute si la DB local es anterior."""
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_developer_scopes() -> None:
+    """Inserta rag:read / rag:write / agents:execute si la DB local es anterior.
+
+    Session-scoped: el seed es idempotente y no cambia durante la suite. Antes
+    corría por test y abría una conexión Postgres extra en cada uno; el costo
+    era ~0.2-0.4s por test. Se ejecuta una sola vez con su propio event loop
+    (mismo patrón que `_close_async_db_engine_at_session_end`).
+    """
+    import asyncio
+
     from sqlalchemy import text
 
-    from src.infrastructure.postgres.session import get_async_session
+    from src.infrastructure.postgres.session import (
+        close_db_connections,
+        get_async_session,
+    )
 
-    session = await get_async_session()
-    try:
-        await session.execute(
-            text(
-                """
-                INSERT INTO permissions (id, code, description) VALUES
-                    ('40000000-0000-0000-0000-000000000023', 'rag:read',
-                     'Leer / consultar RAG (chat)'),
-                    ('40000000-0000-0000-0000-000000000024', 'rag:write',
-                     'Escribir en RAG (ingestion, fuentes, KBs)'),
-                    ('40000000-0000-0000-0000-000000000025', 'agents:execute',
-                     'Ejecutar agentes'),
-                    ('40000000-0000-0000-0000-000000000026', 'admin:sql',
-                     'Ejecutar SQL de solo lectura (consola admin)'),
-                    ('40000000-0000-0000-0000-000000000027', 'prompt:read',
-                     'Ver system prompts de la organización'),
-                    ('40000000-0000-0000-0000-000000000028', 'prompt:write',
-                     'Editar system prompts de la organización'),
-                    ('40000000-0000-0000-0000-000000000051', 'catalog:read',
-                     'Ver catálogo semántico y descubrimiento'),
-                    ('40000000-0000-0000-0000-000000000052', 'catalog:write',
-                     'Gestionar catálogo, glosario, métricas y revisar sugerencias'),
-                    ('40000000-0000-0000-0000-000000000053', 'knowledge:read',
-                     'Ver el conocimiento de la organización'),
-                    ('40000000-0000-0000-0000-000000000054', 'knowledge:write',
-                     'Gestionar aprendizaje y conocimiento'),
-                    ('40000000-0000-0000-0000-000000000055', 'knowledge:validate',
-                     'Aprobar assertions y objetos de conocimiento'),
-                    ('40000000-0000-0000-0000-000000000056', 'knowledge:admin',
-                     'Reconstruir el modelo y resolver conflictos'),
-                    ('40000000-0000-0000-0000-000000000057', 'knowledge:run_learning',
-                     'Ejecutar aprendizaje sobre fuentes')
-                ON CONFLICT (code) DO NOTHING
-                """
+    async def _seed() -> None:
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO permissions (id, code, description) VALUES
+                        ('40000000-0000-0000-0000-000000000023', 'rag:read',
+                         'Leer / consultar RAG (chat)'),
+                        ('40000000-0000-0000-0000-000000000024', 'rag:write',
+                         'Escribir en RAG (ingestion, fuentes, KBs)'),
+                        ('40000000-0000-0000-0000-000000000025', 'agents:execute',
+                         'Ejecutar agentes'),
+                        ('40000000-0000-0000-0000-000000000026', 'admin:sql',
+                         'Ejecutar SQL de solo lectura (consola admin)'),
+                        ('40000000-0000-0000-0000-000000000027', 'prompt:read',
+                         'Ver system prompts de la organización'),
+                        ('40000000-0000-0000-0000-000000000028', 'prompt:write',
+                         'Editar system prompts de la organización'),
+                        ('40000000-0000-0000-0000-000000000051', 'catalog:read',
+                         'Ver catálogo semántico y descubrimiento'),
+                        ('40000000-0000-0000-0000-000000000052', 'catalog:write',
+                         'Gestionar catálogo, glosario, métricas y revisar sugerencias'),
+                        ('40000000-0000-0000-0000-000000000053', 'knowledge:read',
+                         'Ver el conocimiento de la organización'),
+                        ('40000000-0000-0000-0000-000000000054', 'knowledge:write',
+                         'Gestionar aprendizaje y conocimiento'),
+                        ('40000000-0000-0000-0000-000000000055', 'knowledge:validate',
+                         'Aprobar assertions y objetos de conocimiento'),
+                        ('40000000-0000-0000-0000-000000000056', 'knowledge:admin',
+                         'Reconstruir el modelo y resolver conflictos'),
+                        ('40000000-0000-0000-0000-000000000057', 'knowledge:run_learning',
+                         'Ejecutar aprendizaje sobre fuentes')
+                    ON CONFLICT (code) DO NOTHING
+                    """
+                )
             )
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO role_permissions (role_id, permission_id)
-                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
-                WHERE r.organization_id IS NULL AND r.name = 'owner'
-                ON CONFLICT DO NOTHING
-                """
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                    WHERE r.organization_id IS NULL AND r.name = 'owner'
+                    ON CONFLICT DO NOTHING
+                    """
+                )
             )
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO role_permissions (role_id, permission_id)
-                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
-                WHERE r.organization_id IS NULL AND r.name = 'admin'
-                  AND p.code <> 'billing:write'
-                ON CONFLICT DO NOTHING
-                """
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                    WHERE r.organization_id IS NULL AND r.name = 'admin'
+                      AND p.code <> 'billing:write'
+                    ON CONFLICT DO NOTHING
+                    """
+                )
             )
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO role_permissions (role_id, permission_id)
-                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
-                WHERE r.organization_id IS NULL AND r.name = 'member'
-                  AND p.code IN ('rag:read', 'rag:write', 'agents:execute')
-                ON CONFLICT DO NOTHING
-                """
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                    WHERE r.organization_id IS NULL AND r.name = 'member'
+                      AND p.code IN ('rag:read', 'rag:write', 'agents:execute')
+                    ON CONFLICT DO NOTHING
+                    """
+                )
             )
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO role_permissions (role_id, permission_id)
-                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
-                WHERE r.organization_id IS NULL AND r.name = 'viewer'
-                  AND p.code IN ('rag:read')
-                ON CONFLICT DO NOTHING
-                """
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                    WHERE r.organization_id IS NULL AND r.name = 'viewer'
+                      AND p.code IN ('rag:read')
+                    ON CONFLICT DO NOTHING
+                    """
+                )
             )
-        )
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def _run() -> None:
+        try:
+            await _seed()
+        finally:
+            await close_db_connections()
+
+    asyncio.run(_run())
 
 
 @pytest_asyncio.fixture

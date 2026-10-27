@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [master]
 
+# Un push nuevo al mismo PR cancela el run anterior: no compite por runners.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   secrets-scan:
     runs-on: ubuntu-latest
@@ -52,8 +57,13 @@ jobs:
           # --skip-editable: el proyecto editable (rag-as-a-service) no está en PyPI.
           pip-audit --skip-editable
 
-  test:
+  test-shard:
+    name: test (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       RAG_POSTGRES_HOST: localhost
       RAG_POSTGRES_PORT: "5432"
@@ -137,12 +147,14 @@ jobs:
         run: uv run --frozen --no-sync alembic upgrade head
 
       - name: Architecture invariants (fast, required)
+        if: matrix.shard == 1
         run: |
           # Invariantes de arquitectura y contratos: rápido y obligatorio en PR.
           # Un fallo acá es un cambio de contrato, no un test flaky.
           set -o pipefail
           uv run --frozen --no-sync pytest \
             tests/test_architecture.py \
+            tests/test_suite_hermeticity.py \
             tests/test_authority_ownership.py \
             tests/test_authorization_matrix.py \
             tests/test_closure_authority.py \
@@ -178,7 +190,7 @@ jobs:
             -q --no-header --junitxml=artifacts/junit-invariants.xml 2>&1 | tee /tmp/invariants.log
 
       - name: Annotate invariant failure
-        if: failure()
+        if: failure() && matrix.shard == 1
         run: |
           if [ -f /tmp/invariants.log ]; then
             grep -E "^(FAILED|ERROR) " /tmp/invariants.log | head -n 5 | while IFS= read -r line; do
@@ -186,18 +198,119 @@ jobs:
             done
           fi
 
-      - name: Run tests
+      - name: Run tests (shard ${{ matrix.shard }}/4)
         run: |
           set -o pipefail
-          # PR: fail-fast (-x) para feedback corto. Push a master: suite completa
-          # sin -x — todos los fallos visibles sobre el mismo SHA.
+          # PR: fail-fast (-x) para feedback corto. Push a master: cada shard
+          # corre sin -x y reporta todos sus fallos.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             XFLAG="-x"
           else
             XFLAG=""
           fi
-          uv run --frozen --no-sync pytest tests/ -v --tb=short --timeout=300 $XFLAG \
-            --junitxml=artifacts/junit-tests.xml 2>&1 | tee /tmp/pytest.log
+          uv run --frozen --no-sync pytest tests/ -q --tb=short --timeout=300 \
+            --ignore=tests/certification/workflows \
+            --splits 4 --group ${{ matrix.shard }} --durations-path .test_durations \
+            $XFLAG --junitxml=artifacts/junit-tests-shard-${{ matrix.shard }}.xml \
+            2>&1 | tee /tmp/pytest-shard-${{ matrix.shard }}.log
+
+      - name: Annotate test failure
+        if: failure()
+        run: |
+          # Los logs requieren auth: deja el primer fallo como annotation.
+          LOG=/tmp/pytest-shard-${{ matrix.shard }}.log
+          {
+            grep -E "^(FAILED|ERROR) " "$LOG" | tail -n 3 || true
+            grep -E "^E   " "$LOG" | head -n 3 || true
+          } | while IFS= read -r line; do
+            echo "::error::$(echo "$line" | cut -c1-220)"
+          done
+
+      - name: Upload JUnit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-ci-shard-${{ matrix.shard }}
+          path: artifacts/junit-*.xml
+          if-no-files-found: ignore
+
+  certification:
+    name: certification
+    runs-on: ubuntu-latest
+    env:
+      RAG_POSTGRES_HOST: localhost
+      RAG_POSTGRES_PORT: "5432"
+      RAG_POSTGRES_USER: rag_user
+      RAG_POSTGRES_PASSWORD: zent_ci_password
+      RAG_POSTGRES_DB: rag_platform
+      RAG_REDIS_URL: redis://localhost:6379/0
+      RAG_QDRANT_HOST: localhost
+      RAG_QDRANT_PORT: "6333"
+      RAG_BILLING_ENABLED: "false"
+      RAG_ENVIRONMENT: development
+      RAG_SEED_DEMO_DATA: "true"
+      RAG_LITELLM_DEFAULT_MODEL: gpt-4o
+      RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      PYTHONPATH: ${{ github.workspace }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: rag_user
+          POSTGRES_PASSWORD: zent_ci_password
+          POSTGRES_DB: rag_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag_user -d rag_platform"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      qdrant:
+        image: qdrant/qdrant:v1.13.4
+        ports:
+          - 6333:6333
+          - 6334:6334
+        options: >-
+          --health-cmd "bash -c ': > /dev/tcp/127.0.0.1/6333'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Init DB schema
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          export PGPASSWORD=zent_ci_password
+          for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
+            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Seed dev key (CI-only, mirrors 07-dev-seed.sh)
+        run: |
+          PGPASSWORD=zent_ci_password psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
+
+      - name: Install deps (lock reproducible)
+        run: |
+          python -m pip install "uv==0.12.13"
+          uv sync --frozen --extra prod --extra dev
+
+      - name: Apply Alembic migrations
+        run: uv run --frozen --no-sync alembic upgrade head
 
       - name: Certification — Gold Workflow (Retail Sales Funnel)
         # Benchmark arquitectónico permanente: conversación → workflow durable →
@@ -218,25 +331,65 @@ jobs:
             done
           fi
 
-      - name: Annotate test failure
-        if: failure()
-        run: |
-          # Los logs requieren auth: deja el primer fallo como annotation.
-          {
-            grep -E "^_{3,} .* _{3,}$" /tmp/pytest.log | tail -n 2 || true
-            grep -E "^(FAILED|ERROR) " /tmp/pytest.log | tail -n 3 || true
-            grep -E "^E   " /tmp/pytest.log | head -n 3 || true
-          } | while IFS= read -r line; do
-            echo "::error::$(echo "$line" | cut -c1-220)"
-          done
-
       - name: Upload JUnit artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: junit-ci
+          name: junit-certification
           path: artifacts/junit-*.xml
           if-no-files-found: ignore
+
+  # Fusiona los JUnit de los 4 shards en el artifact historico `junit-ci`.
+  # `scripts/cert/fetch_ci_evidence.py` sigue extrayendo junit-tests.xml y
+  # junit-invariants.xml sin cambios.
+  test-evidence:
+    name: test-evidence
+    needs: [test-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download shard JUnit
+        uses: actions/download-artifact@v4
+        with:
+          pattern: junit-ci-shard-*
+          path: artifacts/shards
+          merge-multiple: true
+      - name: Merge shard JUnit
+        run: |
+          python scripts/cert/merge_junit_shards.py \
+            --input-dir artifacts/shards \
+            --out artifacts/junit-tests.xml
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-ci
+          path: |
+            artifacts/junit-tests.xml
+            artifacts/shards/junit-invariants.xml
+          if-no-files-found: ignore
+
+  # Gate con el nombre `test`: mantiene el required check y `build.needs`.
+  test:
+    name: test
+    needs: [test-shard, certification, test-evidence]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all test jobs
+        env:
+          SHARDS: ${{ needs.test-shard.result }}
+          CERTIFICATION: ${{ needs.certification.result }}
+          EVIDENCE: ${{ needs.test-evidence.result }}
+        run: |
+          echo "shards=$SHARDS certification=$CERTIFICATION evidence=$EVIDENCE"
+          test "$SHARDS" = "success"
+          test "$CERTIFICATION" = "success"
+          test "$EVIDENCE" = "success"
 
   sdk-python:
     runs-on: ubuntu-latest
