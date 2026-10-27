@@ -467,6 +467,41 @@ async def verify_assertion(
     return result
 
 
+@router.get("/evidence/{evidence_id}", summary="Resolver evidencia a cita")
+async def get_evidence(evidence_id: UUID, request: Request) -> dict:
+    from src.api.deps import get_evidence_ledger_repo
+    from src.platform.workspaces.context import resolve_workspace
+
+    ctx = require_permission(request, "knowledge:read")
+    record = await get_evidence_ledger_repo().get(ctx.organization_id, evidence_id)
+    if record is None:
+        raise HTTPException(404, "Evidence not found")
+    if record.workspace_id is not None:
+        try:
+            workspace = await resolve_workspace(request)
+        except HTTPException:
+            raise HTTPException(404, "Evidence not found") from None
+        if str(record.workspace_id) != str(workspace.id):
+            raise HTTPException(404, "Evidence not found")
+    return {
+        "schema": "zent.evidence/v1",
+        "id": str(record.id),
+        "source_id": str(record.source_id) if record.source_id else None,
+        "document_id": str(record.document_id) if record.document_id else None,
+        "corpus_id": str(record.corpus_id) if record.corpus_id else None,
+        "workspace_id": str(record.workspace_id) if record.workspace_id else None,
+        "page": record.page,
+        "section_path": list(record.section_path),
+        "table_reference": record.table_reference,
+        "row_reference": record.row_reference,
+        "database_reference": record.database_reference,
+        "excerpt": record.excerpt,
+        "authority": record.authority,
+        "version": record.version,
+        "created_at": record.created_at.isoformat(),
+    }
+
+
 # -------------------------------------------------------------- search/graph
 @router.get("/search", summary="Búsqueda global en el conocimiento")
 async def search_knowledge(

@@ -80,6 +80,7 @@ const KnowledgeDocumentsPage = lazy(() => import("./pages/knowledge/Documents"))
 const KnowledgeSqlPage = lazy(() => import("./pages/knowledge/SqlSources"));
 const KnowledgeJobsPage = lazy(() => import("./pages/knowledge/Jobs"));
 const KnowledgePlaygroundPage = lazy(() => import("./pages/knowledge/Playground"));
+const KnowledgeAskPage = lazy(() => import("./pages/knowledge/Ask"));
 const KnowledgeCatalogPage = lazy(() => import("./pages/knowledge/Catalog"));
 const KnowledgeGlossaryPage = lazy(() => import("./pages/knowledge/Glossary"));
 const KnowledgeDatabasePage = lazy(() => import("./pages/knowledge/DatabaseBuilder"));
@@ -585,7 +586,7 @@ export default function App() {
         <Route path="/knowledge/map" element={<Suspense fallback={<PageFallback />}><KnowledgeMapPage /></Suspense>} />
         <Route path="/knowledge/objects/:objectId" element={<Suspense fallback={<PageFallback />}><KnowledgeObjectPage /></Suspense>} />
         <Route path="/knowledge/search" element={<Suspense fallback={<PageFallback />}><KnowledgeSearchPage /></Suspense>} />
-        <Route path="/knowledge/ask" element={<Suspense fallback={<PageFallback />}><KnowledgePlaygroundPage /></Suspense>} />
+        <Route path="/knowledge/ask" element={<Suspense fallback={<PageFallback />}><KnowledgeAskPage /></Suspense>} />
         <Route path="/knowledge/health" element={<Suspense fallback={<PageFallback />}><KnowledgeQualityPage /></Suspense>} />
         <Route path="/knowledge/improve" element={<Suspense fallback={<PageFallback />}><KnowledgeQualityPage /></Suspense>} />
         <Route path="/company-intelligence" element={<Suspense fallback={<PageFallback />}><CompanyOverviewPage /></Suspense>} />
