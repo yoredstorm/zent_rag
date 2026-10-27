@@ -7,6 +7,8 @@ export const KNOWLEDGE_HEADINGS = {
   evaluation: "Evaluación",
   object: "Objeto de conocimiento",
   search: "Búsqueda de conocimiento",
+  ask: "Preguntar",
+  improve: "Mejorar",
   // Rutas legadas (redirects o Avanzado).
   overview: "Conocimiento",
   model: "Explorador",
@@ -60,6 +62,40 @@ export const KNOWLEDGE_PILLARS: KnowledgePillar[] = [
   { id: "actividad", to: "/knowledge/activity", label: "Actividad" },
 ];
 
+export type KnowledgeSimpleSection = "resumen" | "fuentes" | "preguntar" | "mejorar";
+
+export const KNOWLEDGE_SIMPLE_TABS: KnowledgeTab[] = [
+  { to: "/knowledge", label: "Resumen", end: true },
+  { to: "/knowledge/sources", label: "Fuentes" },
+  { to: "/knowledge/ask", label: "Preguntar" },
+  { to: "/knowledge/improve", label: "Mejorar" },
+];
+
+export const KNOWLEDGE_SIMPLE_ADVANCED_TABS: KnowledgeTab[] = [
+  { to: "/knowledge/explorer", label: "Explorador" },
+  { to: "/knowledge/map", label: "Mapa" },
+  { to: "/knowledge/understanding", label: "Estudio semántico" },
+  { to: "/knowledge/evaluation", label: "Evaluación" },
+  { to: "/knowledge/jobs", label: "Trabajos" },
+  { to: "/knowledge/documents", label: "Documentos" },
+  { to: "/knowledge/collections", label: "Colecciones" },
+  { to: "/knowledge/workspaces", label: "Workspaces" },
+  { to: "/knowledge/glossary", label: "Glosario" },
+  { to: "/knowledge/catalog", label: "Catálogo" },
+  { to: "/knowledge/sql", label: "Fuentes SQL" },
+  { to: "/knowledge/database", label: "Database Builder" },
+  { to: "/knowledge/database/import", label: "Importar CSV / Excel" },
+  { to: "/connectors", label: "Conectores" },
+];
+
+export function knowledgeTabs(simple: boolean): KnowledgeTab[] {
+  return simple ? KNOWLEDGE_SIMPLE_TABS : KNOWLEDGE_PILLARS;
+}
+
+export function knowledgeAdvancedTabs(simple: boolean): KnowledgeTab[] {
+  return simple ? KNOWLEDGE_SIMPLE_ADVANCED_TABS : KNOWLEDGE_ADVANCED_TABS;
+}
+
 export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [
   { to: "/knowledge/evaluation", label: "Evaluación" },
   { to: "/knowledge/understanding", label: "Estudio semántico" },
@@ -78,6 +114,8 @@ export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
   "/knowledge/explorer": KNOWLEDGE_HEADINGS.explorer,
   "/knowledge/health": KNOWLEDGE_HEADINGS.health,
   "/knowledge/sources": KNOWLEDGE_HEADINGS.sources,
+  "/knowledge/ask": KNOWLEDGE_HEADINGS.ask,
+  "/knowledge/improve": KNOWLEDGE_HEADINGS.improve,
   "/knowledge/activity": KNOWLEDGE_HEADINGS.activity,
   "/knowledge/evaluation": KNOWLEDGE_HEADINGS.evaluation,
   "/knowledge/search": KNOWLEDGE_HEADINGS.search,
@@ -171,4 +209,79 @@ export function knowledgeTabIsActive(pathname: string, tab: KnowledgeTab): boole
   const path = normalizeKnowledgePath(pathname);
   if (tab.end) return path === tab.to;
   return matchesPrefix(path, tab.to);
+}
+
+export function legacyKnowledgeRedirectTarget(
+  to: string,
+  search: string,
+  tab?: string,
+): string {
+  const params = new URLSearchParams(search);
+  if (tab && !params.has("tab")) params.set("tab", tab);
+  const query = params.toString();
+  return `${to}${query ? `?${query}` : ""}`;
+}
+
+const SIMPLE_SECTION_PREFIXES: { section: KnowledgeSimpleSection; prefixes: string[] }[] = [
+  { section: "resumen", prefixes: ["/knowledge", "/knowledge/activity"] },
+  {
+    section: "fuentes",
+    prefixes: ["/knowledge/sources", "/knowledge/add", "/knowledge/sessions"],
+  },
+  {
+    section: "preguntar",
+    prefixes: [
+      "/knowledge/ask",
+      "/knowledge/search",
+      "/knowledge/playground",
+      "/knowledge/workspaces",
+    ],
+  },
+  {
+    section: "mejorar",
+    prefixes: [
+      "/knowledge/improve",
+      "/knowledge/health",
+      "/knowledge/quality",
+      "/knowledge/review",
+      "/knowledge/gaps",
+      "/knowledge/conflicts",
+      "/knowledge/improvements",
+      "/knowledge/evaluation",
+    ],
+  },
+];
+
+const SIMPLE_ADVANCED_PREFIXES = [
+  "/knowledge/explorer",
+  "/knowledge/objects",
+  "/knowledge/map",
+  "/knowledge/understanding",
+  "/knowledge/jobs",
+  "/knowledge/documents",
+  "/knowledge/collections",
+  "/knowledge/glossary",
+  "/knowledge/catalog",
+  "/knowledge/sql",
+  "/knowledge/database",
+  "/connectors",
+];
+
+export function knowledgeSimpleSectionForPath(
+  pathname: string,
+): KnowledgeSimpleSection | "avanzado" | null {
+  const path = normalizeKnowledgePath(pathname);
+  if (SIMPLE_ADVANCED_PREFIXES.some((prefix) => matchesPrefix(path, prefix))) {
+    return "avanzado";
+  }
+  for (const group of SIMPLE_SECTION_PREFIXES) {
+    if (
+      group.prefixes.some((prefix) =>
+        prefix === "/knowledge" ? path === prefix : matchesPrefix(path, prefix),
+      )
+    ) {
+      return group.section;
+    }
+  }
+  return null;
 }

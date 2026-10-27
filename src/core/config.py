@@ -580,8 +580,15 @@ class Settings(BaseSettings):
     KNOWLEDGE_MODEL_ENABLED: bool = Field(
         default=True,
         description=(
-            "Activa el Knowledge OS: objetos de conocimiento, assertions, "
-            "evidencia, health y quality center."
+            "Activa el Knowledge Canonical Model (objetos, assertions, conflicts, "
+            "health y grafo)."
+        ),
+    )
+    KNOWLEDGE_SIMPLE_UX_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Activa la navegación P17 de cuatro experiencias. Rollback visual: "
+            "volver a false; las rutas legacy siguen."
         ),
     )
     KNOWLEDGE_MODEL_AUTO_MATERIALIZE: bool = Field(

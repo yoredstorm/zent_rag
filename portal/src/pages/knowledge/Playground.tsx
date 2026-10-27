@@ -1,5 +1,6 @@
 import { MagnifyingGlass, Quotes } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -27,6 +28,7 @@ type PlaygroundResult = {
 
 export default function KnowledgePlaygroundPage() {
   const { session } = useAuth();
+  const location = useLocation();
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<PlaygroundResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,7 +60,11 @@ export default function KnowledgePlaygroundPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title={KNOWLEDGE_HEADINGS.playground}
+        title={
+          location.pathname === "/knowledge/ask"
+            ? KNOWLEDGE_HEADINGS.ask
+            : KNOWLEDGE_HEADINGS.playground
+        }
         subtitle="La misma API que usa el chat, sin el hilo de conversación. Sirve para comprobar qué recupera Zent antes de publicar un agente."
       />
 

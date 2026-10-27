@@ -31,6 +31,16 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
 
 
+async def _portal_feature_flags(_ctx, _workspace_id=None) -> dict[str, bool]:
+    from src.core.config import get_settings
+
+    return {
+        "knowledge_simple_ux": bool(
+            get_settings().KNOWLEDGE_SIMPLE_UX_ENABLED
+        )
+    }
+
+
 def _session_response(payload: dict, typ: str) -> JSONResponse:
     """Respuesta de sesión con cookies HttpOnly (FASE 05) cuando está habilitado."""
     from src.core.config import get_settings
@@ -811,6 +821,7 @@ async def me(request: Request):
             "status": None,
             "auth_type": ctx.auth_type,
             "typ": "platform",
+            "feature_flags": {},
         }
     billing_ctx = getattr(request.state, "billing_context", None)
 
@@ -834,6 +845,7 @@ async def me(request: Request):
         "plan_name": billing_ctx.plan_name if billing_ctx else None,
         "status": billing_ctx.status.value if billing_ctx else None,
         "auth_type": ctx.auth_type,
+        "feature_flags": await _portal_feature_flags(ctx),
     }
     from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
     from src.platform.workspaces.context import (
@@ -860,4 +872,5 @@ async def me(request: Request):
         ws = next((w for w in workspaces if w.id == active_id), workspaces[0])
         payload["active_workspace_id"] = str(ws.id)
         payload["workspace_kind"] = getattr(ws.kind, "value", str(ws.kind))
+    payload["feature_flags"] = await _portal_feature_flags(ctx, ws.id)
     return payload

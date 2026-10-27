@@ -104,6 +104,14 @@ proceso, inferido o no medido. La disponibilidad real se deriva de
 `knowledge_scores`; no hay un gate único de retrieval hoy. La UI debe mostrar
 la señal disponible y `No medido` cuando falte, nunca un porcentaje inventado.
 
+## 7.1 Hallazgo de flags
+
+`feature_flags` usa `(key, scope, plan_name, organization_id, workspace_id)`
+como PK y las tres dimensiones son NOT NULL. `set_flag` inserta `NULL` para las
+dimensiones no aplicables, por lo que los scopes organization/workspace/platform
+no se pueden escribir. P17 usa `RAG_KNOWLEDGE_SIMPLE_UX_ENABLED` para el flag
+visual y reporta el canary por tenant como `NOT_AVAILABLE`.
+
 ## 8. Conclusión
 
 La simplificación es viable sin tocar el pipeline. El riesgo principal no es

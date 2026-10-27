@@ -11,6 +11,7 @@ import type {
 } from "../../lib/knowledgeModel";
 import { priorityTone } from "../../lib/knowledgeModel";
 import { ConflictCard } from "./ConflictCard";
+import { loadSession } from "../../api";
 
 export function AttentionPanel({
   attention,
@@ -22,6 +23,7 @@ export function AttentionPanel({
   gaps: KnowledgeGap[];
 }) {
   const empty = attention.length === 0 && conflicts.length === 0 && gaps.length === 0;
+  const simple = Boolean(loadSession()?.featureFlags?.knowledge_simple_ux);
 
   return (
     <Panel className="overflow-hidden" data-testid="knowledge-attention">
@@ -33,10 +35,10 @@ export function AttentionPanel({
           </p>
         </div>
         <Link
-          to="/knowledge/health"
+          to={simple ? "/knowledge/improve" : "/knowledge/health"}
           className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
         >
-          Ir a Salud
+          {simple ? "Ir a Mejorar" : "Ir a Salud"}
           <ArrowRight size={12} aria-hidden />
         </Link>
       </div>

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -13,6 +14,22 @@ from httpx import AsyncClient
 _SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
+
+
+@pytest.mark.asyncio
+async def test_portal_feature_flags_reflect_settings(monkeypatch) -> None:
+    import src.api.routes.auth as auth
+
+    monkeypatch.setattr(
+        "src.core.config.get_settings",
+        lambda: SimpleNamespace(KNOWLEDGE_SIMPLE_UX_ENABLED=True),
+    )
+    assert await auth._portal_feature_flags(None) == {"knowledge_simple_ux": True}
+    monkeypatch.setattr(
+        "src.core.config.get_settings",
+        lambda: SimpleNamespace(KNOWLEDGE_SIMPLE_UX_ENABLED=False),
+    )
+    assert await auth._portal_feature_flags(None) == {"knowledge_simple_ux": False}
 
 
 class TestPortalSessionCrypto:

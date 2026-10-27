@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { afterLoginPath, api, platformApi } from "./api";
+import { afterLoginPath, api, clearSession, loadSession, platformApi, saveSession } from "./api";
 import { ApiError, AUTH_EXPIRED_EVENT } from "./lib/errors";
 
 function jsonResponse(
@@ -15,6 +15,21 @@ function jsonResponse(
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  clearSession();
+});
+
+describe("sesión del portal", () => {
+  it("persiste solo flags visuales, sin secretos", () => {
+    saveSession({
+      organizationId: "org-1",
+      companyName: "Acme",
+      featureFlags: { knowledge_simple_ux: true },
+    });
+    expect(loadSession()?.featureFlags?.knowledge_simple_ux).toBe(true);
+    expect(localStorage.getItem("rag_portal_token")).toBeNull();
+    clearSession();
+    expect(loadSession()).toBeNull();
+  });
 });
 
 describe("api() — manejo de errores y headers", () => {

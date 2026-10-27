@@ -4,7 +4,11 @@ import {
   KNOWLEDGE_HEADINGS,
   KNOWLEDGE_PILLARS,
   KNOWLEDGE_ROUTE_TITLES,
+  knowledgeAdvancedTabs,
+  legacyKnowledgeRedirectTarget,
   knowledgePillarForPath,
+  knowledgeSimpleSectionForPath,
+  knowledgeTabs,
 } from "./knowledgeNav";
 
 describe("knowledge IA", () => {
@@ -57,6 +61,42 @@ describe("knowledge IA", () => {
     expect(knowledgePillarForPath("/knowledge/glossary")).toBe("avanzado");
     expect(knowledgePillarForPath("/knowledge/jobs")).toBe("avanzado");
     expect(knowledgePillarForPath("/connectors")).toBe("avanzado");
+  });
+
+  it("conserva query y deep links en redirects legacy", () => {
+    expect(
+      legacyKnowledgeRedirectTarget("/knowledge/health", "?tab=conflicts"),
+    ).toBe("/knowledge/health?tab=conflicts");
+    expect(legacyKnowledgeRedirectTarget("/knowledge/health", "", "reviews")).toBe(
+      "/knowledge/health?tab=reviews",
+    );
+    expect(
+      legacyKnowledgeRedirectTarget("/knowledge/explorer", "?focus=obj-1&view=graph"),
+    ).toBe("/knowledge/explorer?focus=obj-1&view=graph");
+  });
+
+  it("expone cuatro experiencias simples cuando el flag está activo", () => {
+    expect(knowledgeTabs(true).map((tab) => tab.label)).toEqual([
+      "Resumen",
+      "Fuentes",
+      "Preguntar",
+      "Mejorar",
+    ]);
+    expect(knowledgeSimpleSectionForPath("/knowledge")).toBe("resumen");
+    expect(knowledgeSimpleSectionForPath("/knowledge/activity")).toBe("resumen");
+    expect(knowledgeSimpleSectionForPath("/knowledge/sources/abc")).toBe("fuentes");
+    expect(knowledgeSimpleSectionForPath("/knowledge/ask")).toBe("preguntar");
+    expect(knowledgeSimpleSectionForPath("/knowledge/playground")).toBe("preguntar");
+    expect(knowledgeSimpleSectionForPath("/knowledge/improve")).toBe("mejorar");
+    expect(knowledgeSimpleSectionForPath("/knowledge/health")).toBe("mejorar");
+    expect(knowledgeSimpleSectionForPath("/knowledge/explorer")).toBe("avanzado");
+    expect(knowledgeSimpleSectionForPath("/knowledge/objects/abc")).toBe("avanzado");
+    expect(knowledgeSimpleSectionForPath("/knowledge/unknown")).toBeNull();
+    const advanced = knowledgeAdvancedTabs(true).map((tab) => tab.to);
+    expect(advanced).toContain("/knowledge/map");
+    expect(advanced).toContain("/knowledge/sql");
+    expect(advanced).toContain("/knowledge/database/import");
+    expect(advanced).not.toContain("/knowledge/ask");
   });
 
   it("usa headings de página únicos y estables", () => {

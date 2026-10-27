@@ -24,9 +24,26 @@ import { Brand } from "./components/Brand";
 import { EntryCurtain } from "./components/auth/EntryCurtain";
 import { entryArmed } from "./components/auth/entryTransit";
 import { PageSkeleton } from "./components/ui/states";
+import { legacyKnowledgeRedirectTarget } from "./lib/knowledgeNav";
 
 const IDLE_SESSION_MINUTES = 30;
 const SIDEBAR_COLLAPSED_KEY = "zent_sidebar_collapsed";
+
+function LegacyKnowledgeRedirect({
+  to,
+  tab,
+}: {
+  to: string;
+  tab?: string;
+}) {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={legacyKnowledgeRedirectTarget(to, location.search, tab)}
+      replace
+    />
+  );
+}
 
 const ChatPage = lazy(() => import("./pages/Chat"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
@@ -557,8 +574,8 @@ export default function App() {
         <Route path="/agent-instructions" element={<Navigate to="/prompts" replace />} />
         <Route path="/users" element={<Navigate to="/team" replace />} />
         <Route path="/audit" element={<Navigate to="/security" replace />} />
-        <Route path="/ingestion" element={<Navigate to="/knowledge/sql" replace />} />
-        <Route path="/knowledge-bases" element={<Navigate to="/knowledge/collections" replace />} />
+        <Route path="/ingestion" element={<LegacyKnowledgeRedirect to="/knowledge/sql" />} />
+        <Route path="/knowledge-bases" element={<LegacyKnowledgeRedirect to="/knowledge/collections" />} />
         <Route path="/" element={<Suspense fallback={<PageFallback />}><DashboardPage /></Suspense>} />
         <Route path="/usage" element={<Suspense fallback={<PageFallback />}><UsagePage /></Suspense>} />
         <Route path="/keys" element={<Suspense fallback={<PageFallback />}><KeysPage /></Suspense>} />
@@ -568,7 +585,9 @@ export default function App() {
         <Route path="/knowledge/map" element={<Suspense fallback={<PageFallback />}><KnowledgeMapPage /></Suspense>} />
         <Route path="/knowledge/objects/:objectId" element={<Suspense fallback={<PageFallback />}><KnowledgeObjectPage /></Suspense>} />
         <Route path="/knowledge/search" element={<Suspense fallback={<PageFallback />}><KnowledgeSearchPage /></Suspense>} />
+        <Route path="/knowledge/ask" element={<Suspense fallback={<PageFallback />}><KnowledgePlaygroundPage /></Suspense>} />
         <Route path="/knowledge/health" element={<Suspense fallback={<PageFallback />}><KnowledgeQualityPage /></Suspense>} />
+        <Route path="/knowledge/improve" element={<Suspense fallback={<PageFallback />}><KnowledgeQualityPage /></Suspense>} />
         <Route path="/company-intelligence" element={<Suspense fallback={<PageFallback />}><CompanyOverviewPage /></Suspense>} />
         <Route path="/company-intelligence/map" element={<Suspense fallback={<PageFallback />}><CompanyMapPage /></Suspense>} />
         <Route path="/company-intelligence/concepts" element={<Suspense fallback={<PageFallback />}><CompanyEntitiesPage /></Suspense>} />
@@ -587,11 +606,11 @@ export default function App() {
         <Route path="/knowledge/evaluation" element={<Suspense fallback={<PageFallback />}><KnowledgeEvaluationPage /></Suspense>} />
         <Route path="/knowledge/activity" element={<Suspense fallback={<PageFallback />}><KnowledgeActivityPage /></Suspense>} />
         {/* Rutas legadas: redirects para no romper bookmarks. */}
-        <Route path="/knowledge/learning" element={<Navigate to="/knowledge/activity" replace />} />
-        <Route path="/knowledge/model" element={<Navigate to="/knowledge/explorer" replace />} />
-        <Route path="/knowledge/quality" element={<Navigate to="/knowledge/health" replace />} />
-        <Route path="/knowledge/review" element={<Navigate to="/knowledge/health?tab=reviews" replace />} />
-        <Route path="/knowledge/improvements" element={<Navigate to="/knowledge/health?tab=improvements" replace />} />
+        <Route path="/knowledge/learning" element={<LegacyKnowledgeRedirect to="/knowledge/activity" />} />
+        <Route path="/knowledge/model" element={<LegacyKnowledgeRedirect to="/knowledge/explorer" />} />
+        <Route path="/knowledge/quality" element={<LegacyKnowledgeRedirect to="/knowledge/health" />} />
+        <Route path="/knowledge/review" element={<LegacyKnowledgeRedirect to="/knowledge/health" tab="reviews" />} />
+        <Route path="/knowledge/improvements" element={<LegacyKnowledgeRedirect to="/knowledge/health" tab="improvements" />} />
         <Route path="/knowledge/understanding" element={<Suspense fallback={<PageFallback />}><KnowledgeUnderstandingPage /></Suspense>} />
         <Route path="/knowledge/add/:sessionId" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
         <Route path="/knowledge/add" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
@@ -630,7 +649,7 @@ export default function App() {
         <Route path="/deployments" element={<Suspense fallback={<PageFallback />}><DeploymentsPage /></Suspense>} />
               <Route path="/environments" element={<Suspense fallback={<PageFallback />}><EnvironmentsPage /></Suspense>} />
         {/* Fuentes: un solo flujo. /data-sources se consolidó en Fuentes. */}
-        <Route path="/data-sources" element={<Navigate to="/knowledge/sources" replace />} />
+        <Route path="/data-sources" element={<LegacyKnowledgeRedirect to="/knowledge/sources" />} />
         <Route path="/security" element={<Suspense fallback={<PageFallback />}><SecurityAuditPage /></Suspense>} />
         <Route path="/audit/compliance" element={<Suspense fallback={<PageFallback />}><AuditCompliancePage /></Suspense>} />
         <Route path="/notifications" element={<Suspense fallback={<PageFallback />}><NotificationsPage /></Suspense>} />
@@ -655,7 +674,7 @@ export default function App() {
         <Route path="/workflows/:id" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
         <Route path="/chat-insights" element={<Suspense fallback={<PageFallback />}><ChatInsightsPage /></Suspense>} />
         {/* Knowledge Hub legacy retirado: la página se absorbió en /knowledge. */}
-        <Route path="/knowledge-hub" element={<Navigate to="/knowledge" replace />} />
+        <Route path="/knowledge-hub" element={<LegacyKnowledgeRedirect to="/knowledge" />} />
         <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
         <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><MarketplacePage /></Suspense>} />
         <Route path="/products" element={<Navigate to="/marketplace" replace />} />

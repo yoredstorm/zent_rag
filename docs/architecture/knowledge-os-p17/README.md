@@ -8,6 +8,7 @@ Programa de simplificación UX sin cambiar el pipeline canónico.
 - [03-invariants.md](./03-invariants.md): snapshot y no-regresión.
 - [04-adr-ux-only.md](./04-adr-ux-only.md): decisión de arquitectura.
 - [05-p0-acl-fix.md](./05-p0-acl-fix.md): P0 ACL del chat grounded.
+- [06-navigation.md](./06-navigation.md): cuatro experiencias y flag visual.
 
 ## Baseline reproducible
 
@@ -26,8 +27,9 @@ certificación real se ejecuta en el stack local.
 ## Estado
 
 - P17-00: auditoría, matriz, ADR, snapshot y baseline E2E ejecutados.
-- P0 ACL: corregido en PR separado; pendiente de CI.
 - Baseline real: 5 citas API, cross-tenant rechazado; viewer de cita y conflicto
   abierto quedan como gaps documentados para P17-04/P17-05.
-- P17-01 no empieza hasta que P0 ACL esté verde.
+- P0 ACL y P17-00 están verdes en CI (`40444744321`).
+- P17-01: nav de 4 experiencias detrás de `knowledge_simple_ux`, rutas
+  `/knowledge/ask` y `/knowledge/improve`, redirects con query conservado.
 - No se activó ninguna flag experimental ni `ZENT_GOLD_RELEASE_ENABLED`.

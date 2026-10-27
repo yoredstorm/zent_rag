@@ -15,6 +15,38 @@ function renderAt(path: string) {
 }
 
 describe("KnowledgeLayout", () => {
+  it("muestra cuatro experiencias y Avanzado cuando el flag está activo", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/knowledge/improve"]}>
+        <KnowledgeLayout simpleNavigation>
+          <h1>contenido</h1>
+        </KnowledgeLayout>
+      </MemoryRouter>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((el) => el.textContent)).toEqual([
+      "Resumen",
+      "Fuentes",
+      "Preguntar",
+      "Mejorar",
+    ]);
+    expect(within(nav).getByRole("link", { name: "Mejorar" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await user.click(within(nav).getByRole("button", { name: "Avanzado" }));
+    expect(within(nav).getByRole("link", { name: "Mapa" })).toHaveAttribute(
+      "href",
+      "/knowledge/map",
+    );
+    expect(within(nav).getByRole("link", { name: "Fuentes SQL" })).toHaveAttribute(
+      "href",
+      "/knowledge/sql",
+    );
+  });
+
   it("muestra 5 pilares + Avanzado sin abrir el disclosure", () => {
     renderAt("/knowledge");
     const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });

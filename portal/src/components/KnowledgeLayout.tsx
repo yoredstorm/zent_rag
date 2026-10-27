@@ -1,19 +1,24 @@
 import {
   Brain,
   CaretDown,
+  ChatCircleDots,
   Database,
   Graph,
   Heartbeat,
   Pulse,
+  Wrench,
   type Icon,
 } from "@phosphor-icons/react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
+import { loadSession } from "../api";
 import {
-  KNOWLEDGE_ADVANCED_TABS,
-  KNOWLEDGE_PILLARS,
+  knowledgeAdvancedTabs,
   knowledgePillarForPath,
+  knowledgeSimpleSectionForPath,
   knowledgeTabIsActive,
+  knowledgeTabs,
+  type KnowledgeSimpleSection,
   type KnowledgeTab,
 } from "../lib/knowledgeNav";
 
@@ -23,6 +28,16 @@ const PILLAR_ICONS: Record<string, Icon> = {
   salud: Heartbeat,
   fuentes: Database,
   actividad: Pulse,
+  resumen: Brain,
+  preguntar: ChatCircleDots,
+  mejorar: Heartbeat,
+};
+
+const SIMPLE_TAB_SECTIONS: Record<string, KnowledgeSimpleSection> = {
+  "/knowledge": "resumen",
+  "/knowledge/sources": "fuentes",
+  "/knowledge/ask": "preguntar",
+  "/knowledge/improve": "mejorar",
 };
 
 function TabLink({ tab, pathname }: { tab: KnowledgeTab; pathname: string }) {
@@ -39,22 +54,39 @@ function TabLink({ tab, pathname }: { tab: KnowledgeTab; pathname: string }) {
   );
 }
 
-/** Knowledge OS: Resumen, Fuentes, Modelo, Calidad, Evaluación + Avanzado. */
-export function KnowledgeLayout({ children }: { children: ReactNode }) {
+/** Knowledge OS: cuatro experiencias simples + herramientas avanzadas. */
+export function KnowledgeLayout({
+  children,
+  simpleNavigation,
+}: {
+  children: ReactNode;
+  simpleNavigation?: boolean;
+}) {
   const { pathname } = useLocation();
-  const pillar = knowledgePillarForPath(pathname);
-  const [advanced, setAdvanced] = useState(pillar === "avanzado");
+  const simple =
+    simpleNavigation ?? Boolean(loadSession()?.featureFlags?.knowledge_simple_ux);
+  const tabs = knowledgeTabs(simple);
+  const advancedTabs = knowledgeAdvancedTabs(simple);
+  const legacyPillar = simple ? null : knowledgePillarForPath(pathname);
+  const simpleSection = simple ? knowledgeSimpleSectionForPath(pathname) : null;
+  const activeId = simple ? simpleSection : legacyPillar;
+  const [advanced, setAdvanced] = useState(activeId === "avanzado");
 
   useEffect(() => {
-    if (pillar === "avanzado") setAdvanced(true);
-  }, [pillar]);
+    if (activeId === "avanzado") setAdvanced(true);
+  }, [activeId]);
 
   return (
     <div>
       <nav className="tabs" aria-label="Secciones de conocimiento">
-        {KNOWLEDGE_PILLARS.map((tab) => {
-          const IconCmp = PILLAR_ICONS[tab.id];
-          const active = pillar === tab.id;
+        {tabs.map((tab) => {
+          const active = simple
+            ? SIMPLE_TAB_SECTIONS[tab.to] === simpleSection
+            : legacyPillar === (tab as { id?: string }).id;
+          const iconKey = simple
+            ? SIMPLE_TAB_SECTIONS[tab.to]
+            : (tab as { id?: string }).id;
+          const IconCmp = iconKey ? PILLAR_ICONS[iconKey] : undefined;
           return (
             <NavLink
               key={tab.to}
@@ -63,22 +95,22 @@ export function KnowledgeLayout({ children }: { children: ReactNode }) {
               aria-current={active ? "page" : undefined}
               className={`tab ${active ? "" : "opacity-70 hover:opacity-100"}`}
             >
-              <IconCmp size={15} aria-hidden />
+              {IconCmp && <IconCmp size={15} aria-hidden />}
               {tab.label}
             </NavLink>
           );
         })}
         <button
           type="button"
-          className={`tab ${advanced || pillar === "avanzado" ? "" : "opacity-70 hover:opacity-100"}`}
+          className={`tab ${advanced || activeId === "avanzado" ? "" : "opacity-70 hover:opacity-100"}`}
           onClick={() => setAdvanced((v) => !v)}
           aria-expanded={advanced}
         >
-          <CaretDown size={15} aria-hidden />
+          {simple ? <Wrench size={15} aria-hidden /> : <CaretDown size={15} aria-hidden />}
           Avanzado
         </button>
         {advanced &&
-          KNOWLEDGE_ADVANCED_TABS.map((tab) => (
+          advancedTabs.map((tab) => (
             <TabLink key={tab.to} tab={tab} pathname={pathname} />
           ))}
       </nav>

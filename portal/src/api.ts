@@ -10,6 +10,7 @@ const ROLES_KEY = "rag_portal_roles";
 const PERMS_KEY = "rag_portal_permissions";
 const WS_KEY = "rag_portal_workspace";
 const WS_KIND_KEY = "rag_portal_workspace_kind";
+const FEATURE_FLAGS_KEY = "rag_portal_feature_flags";
 
 export type Session = {
   token?: string;
@@ -21,6 +22,7 @@ export type Session = {
   workspaceId?: string;
   workspaceKind?: string;
   needsStartMode?: boolean;
+  featureFlags?: Record<string, boolean>;
 };
 
 export function afterLoginPath(session: Session | null): string {
@@ -78,6 +80,13 @@ export function loadSession(): Session | null {
   const token = readToken();
   const workspaceId = localStorage.getItem(WS_KEY) || undefined;
   const workspaceKind = localStorage.getItem(WS_KIND_KEY) || undefined;
+  const flagsRaw = localStorage.getItem(FEATURE_FLAGS_KEY);
+  let featureFlags: Record<string, boolean> | undefined;
+  try {
+    featureFlags = flagsRaw ? (JSON.parse(flagsRaw) as Record<string, boolean>) : undefined;
+  } catch {
+    featureFlags = undefined;
+  }
   return {
     token,
     organizationId,
@@ -87,6 +96,7 @@ export function loadSession(): Session | null {
     permissions,
     workspaceId,
     workspaceKind,
+    featureFlags,
     needsStartMode: !workspaceId,
   };
 }
@@ -121,6 +131,11 @@ export function saveSession(session: Session) {
   } else {
     localStorage.removeItem(WS_KIND_KEY);
   }
+  if (session.featureFlags) {
+    localStorage.setItem(FEATURE_FLAGS_KEY, JSON.stringify(session.featureFlags));
+  } else {
+    localStorage.removeItem(FEATURE_FLAGS_KEY);
+  }
 }
 
 export function clearSession() {
@@ -134,6 +149,7 @@ export function clearSession() {
   localStorage.removeItem(PERMS_KEY);
   localStorage.removeItem(WS_KEY);
   localStorage.removeItem(WS_KIND_KEY);
+  localStorage.removeItem(FEATURE_FLAGS_KEY);
 }
 
 /** Extrae el trace id del backend (TraceMiddleware → X-Trace-Id). */

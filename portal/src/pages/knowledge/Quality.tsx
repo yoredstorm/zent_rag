@@ -6,7 +6,7 @@ import {
   WarningCircle,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -101,6 +101,7 @@ type Improvement = {
 
 export default function KnowledgeQualityPage() {
   const { session } = useAuth();
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const tab = (params.get("tab") as QualityTab) || "issues";
 
@@ -280,7 +281,11 @@ export default function KnowledgeQualityPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title={KNOWLEDGE_HEADINGS.quality}
+        title={
+          location.pathname === "/knowledge/improve"
+            ? KNOWLEDGE_HEADINGS.improve
+            : KNOWLEDGE_HEADINGS.health
+        }
         subtitle="Qué tan sano está el conocimiento y qué necesita una decisión humana: conflictos, vacíos, baja confianza y evidencia faltante."
         actions={
           <Link to="/knowledge/explorer" className="btn btn-secondary min-h-9 px-3 text-xs">

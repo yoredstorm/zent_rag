@@ -70,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           active_workspace_id?: string | null;
           workspace_kind?: string | null;
           needs_start_mode?: boolean;
+          feature_flags?: Record<string, boolean>;
         }>("/api/v1/auth/me", {
           token: current.token,
           organizationId: current.organizationId,
@@ -88,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           workspaceId: me.active_workspace_id || undefined,
           workspaceKind: me.workspace_kind || undefined,
           needsStartMode: Boolean(me.needs_start_mode),
+          featureFlags: me.feature_flags || {},
         };
         saveSession(next);
         setSession(next);
@@ -122,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active_workspace_id?: string | null;
       workspace_kind?: string | null;
       needs_start_mode?: boolean;
+      feature_flags?: Record<string, boolean>;
     }>(
       "/api/v1/auth/me",
       {
@@ -134,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active_workspace_id: null,
       workspace_kind: null,
       needs_start_mode: false,
+      feature_flags: {} as Record<string, boolean>,
     }));
     const next: Session = {
       token: data.access_token,
@@ -145,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       workspaceId: me.active_workspace_id || undefined,
       workspaceKind: me.workspace_kind || undefined,
       needsStartMode: Boolean(me.needs_start_mode),
+      featureFlags: me.feature_flags || {},
     };
     saveSession(next);
     setSession(next);
@@ -175,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         active_workspace_id?: string | null;
         workspace_kind?: string | null;
         needs_start_mode?: boolean;
+        feature_flags?: Record<string, boolean>;
       }>("/api/v1/auth/me", {
         token: data.access_token,
         organizationId: data.organization_id,
@@ -184,6 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         active_workspace_id: null,
         workspace_kind: null,
         needs_start_mode: true,
+        feature_flags: {} as Record<string, boolean>,
       }));
       const next: Session = {
         token: data.access_token,
@@ -195,6 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         workspaceId: me.active_workspace_id || undefined,
         workspaceKind: me.workspace_kind || undefined,
         needsStartMode: Boolean(me.needs_start_mode),
+        featureFlags: me.feature_flags || {},
       };
       saveSession(next);
       setSession(next);
