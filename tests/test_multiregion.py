@@ -295,6 +295,12 @@ async def test_edge_cache_hit_miss_and_bypass(async_client: AsyncClient) -> None
     }
     # Sin API key pública usamos la sesión portal para simular el ctx.
 
+    # Los contadores de stats son globales en Redis y persisten entre tests.
+    # Se comparan contra la línea base: q1 MISS suma 1 miss; q3 BYPASS no suma.
+    baseline = await async_client.get("/api/v1/platform/edge/cache/stats", headers=plat)
+    assert baseline.status_code == 200, baseline.text
+    before = baseline.json()
+
     q1 = await async_client.post(
         "/api/v1/deployments/edge-prod/query",
         headers={**_headers(org), "Idempotency-Key": f"mr-q-{uuid4().hex}"},
@@ -327,6 +333,7 @@ async def test_edge_cache_hit_miss_and_bypass(async_client: AsyncClient) -> None
 
     stats = await async_client.get("/api/v1/platform/edge/cache/stats", headers=plat)
     assert stats.status_code == 200, stats.text
-    assert stats.json()["hits"] >= 1
-    assert stats.json()["misses"] >= 2
-    assert stats.json()["hit_ratio"] > 0
+    after = stats.json()
+    assert after["hits"] >= before["hits"] + 1
+    assert after["misses"] >= before["misses"] + 1
+    assert after["hit_ratio"] > 0

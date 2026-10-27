@@ -57,7 +57,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--junit", required=True, type=Path)
     parser.add_argument("--out", type=Path, default=ROOT / ".test_durations")
+    parser.add_argument(
+        "--fallback",
+        type=Path,
+        default=None,
+        help="Durations previos para tests que no aparecen en el JUnit (runs parciales).",
+    )
     args = parser.parse_args()
+
+    fallback: dict[str, float] = {}
+    if args.fallback and args.fallback.exists():
+        fallback = json.loads(args.fallback.read_text(encoding="utf-8"))
 
     collected = _collected_nodeids()
     collected_set = set(collected)
@@ -79,8 +89,15 @@ def main() -> int:
 
     mapped = len(durations)
     fill = statistics.median(durations.values())
+    from_fallback = 0
     for node in collected:
-        durations.setdefault(node, fill)
+        if node in durations:
+            continue
+        if node in fallback:
+            durations[node] = fallback[node]
+            from_fallback += 1
+        else:
+            durations[node] = fill
 
     args.out.write_text(
         json.dumps(dict(sorted(durations.items())), indent=0),
@@ -92,6 +109,7 @@ def main() -> int:
                 "out": str(args.out),
                 "collected": len(collected),
                 "mapped_from_junit": mapped,
+                "from_fallback": from_fallback,
                 "tests": len(durations),
                 "estimated_seconds": round(sum(durations.values()), 1),
                 "median_seconds": round(fill, 3),
