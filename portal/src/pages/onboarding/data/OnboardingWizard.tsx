@@ -6,7 +6,7 @@ import { ErrorInline, PageHeader } from "../../../components/ui";
 import { WarningInline } from "../../../components/ui/states";
 import { KnowledgeLayout } from "../../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../../lib/knowledgeNav";
-import { Stepper } from "../../../components/Stepper";
+
 import {
   MAX_UPLOAD_MB,
   fileRowId,
@@ -25,13 +25,12 @@ import { DriveStep } from "./DriveStep";
 import { FileUploadStep } from "./FileUploadStep";
 import { QuestionValidationStep } from "./QuestionValidationStep";
 import { ReadinessStep } from "./ReadinessStep";
-import { SourceTypeStep } from "./SourceTypeStep";
+
 import { UnderstandingReviewStep } from "./UnderstandingReviewStep";
 import { WebsiteStep } from "./WebsiteStep";
 import {
   API,
   FLOW_QUESTION_HEADING,
-  WIZARD_STEPS,
   canContinueAnalyze,
   type OnboardingKind,
   type OnboardingSession,
@@ -156,6 +155,14 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
     void startKind(requested as OnboardingKind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, current, search]);
+
+  // Sin tipo ni sesión no hay una segunda pantalla de elección: el recorrido
+  // principal vive en Fuentes. Las conexiones llegan con `?kind=`.
+  useEffect(() => {
+    if (sessionId || current || autoStarted.current) return;
+    if (search.get("kind")) return;
+    navigate("/knowledge/sources?new=1", { replace: true });
+  }, [sessionId, current, search, navigate]);
 
   // Indexado en vivo mientras el usuario mira Analizar (aunque no haya subido en esta pantalla).
   useEffect(() => {
@@ -619,15 +626,6 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
     setUiStep("ready");
   }
 
-  function selectStep(id: string) {
-    const step = id as WizardStep;
-    if (step === "test" && questions.length === 0) {
-      void loadQuestions();
-      return;
-    }
-    setUiStep(step);
-  }
-
   async function startDrive() {
     if (!session || !current) return;
     const data = await api<OnboardingSession & { authorization_url?: string }>(
@@ -669,16 +667,39 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
       <ErrorInline message={error} />
       {current?.warning && <WarningInline message={current.warning} />}
       {current && (
-        <div className="rounded-lg border border-border bg-surface p-2 shadow-panel">
-          <Stepper
-            steps={WIZARD_STEPS}
-            active={uiStep === "confirm" ? "review" : uiStep}
-            onSelect={selectStep}
-          />
-        </div>
+        <ol
+          className="grid grid-cols-3 gap-2"
+          aria-label="Etapas de incorporación"
+        >
+          {[
+            ["1", "Elegir", "Tipo de fuente"],
+            ["2", "Incorporar", "Conexión y lectura"],
+            ["3", "Comprobar", "Revisar y preguntar"],
+          ].map(([number, label, hint], index) => {
+            const active =
+              (index === 0 && uiStep === "choose") ||
+              (index === 1 && ["connect", "analyze"].includes(uiStep)) ||
+              (index === 2 && ["review", "confirm", "test", "ready"].includes(uiStep));
+            return (
+              <li
+                key={label}
+                aria-current={active ? "step" : undefined}
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  active
+                    ? "border-accent bg-accent/10 text-text"
+                    : "border-border text-muted"
+                }`}
+              >
+                <strong>
+                  {number}. {label}
+                </strong>
+                <span className="mt-1 block text-[11px] text-faint">{hint}</span>
+              </li>
+            );
+          })}
+        </ol>
       )}
-      <div className="mt-6">    
-      {uiStep === "choose" && <SourceTypeStep onSelect={startKind} />}
+      <div className="mt-6">
       {current && uiStep === "connect" && kind === "database" && (
         <>
           <DatabaseConnectionStep onSubmit={connectDatabase} busy={busy} result={dbResult} />

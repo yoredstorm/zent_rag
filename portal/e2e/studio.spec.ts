@@ -25,9 +25,8 @@ test.describe("Semantic Mapping Studio", () => {
     await page.getByRole("button", { name: "Ya la guardé" }).click();
     await expect(keyDialog).toBeHidden();
 
-    await page.getByRole("link", { name: "Conectar mis datos" }).click();
+    await page.goto("/knowledge/add?kind=spreadsheets");
     await expect(page).toHaveURL(/\/knowledge\/add/);
-    await page.getByTestId("source-kind-spreadsheets").click();
     await page.getByTestId("onboarding-file").setInputFiles(CSV);
     await page.getByTestId("onboarding-upload").click();
     await expect(page.getByText("Zent está entendiendo tus datos")).toBeVisible({ timeout: 30_000 });
