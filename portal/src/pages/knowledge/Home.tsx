@@ -95,11 +95,6 @@ function QuickActions({ permissions }: { permissions: string[] }) {
       data-testid="knowledge-quick-actions"
     >
       <span className="mr-1 text-xs font-medium text-muted">Acciones frecuentes</span>
-      {can("sources:write") ? (
-        <ButtonLink to="/knowledge/sources?new=1" variant="primary" size="sm" leadingIcon={Plus}>
-          Añadir información
-        </ButtonLink>
-      ) : null}
       {can("knowledge:read") ? (
         <ButtonLink to="/knowledge/ask" variant="secondary" size="sm" leadingIcon={ChatCircleDots}>
           Hacer una pregunta
@@ -300,7 +295,7 @@ export default function KnowledgeHomePage() {
                 leadingIcon={Plus}
                 className="self-start"
               >
-                Añadir fuente
+                Añadir información
               </ButtonLink>
             </Panel>
           </div>

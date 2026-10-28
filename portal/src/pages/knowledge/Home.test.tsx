@@ -208,9 +208,9 @@ describe("KnowledgeHomePage", () => {
     expect(screen.getByTestId("knowledge-pulse")).toBeInTheDocument();
     expect(screen.getByTestId("knowledge-domains")).toBeInTheDocument();
     expect(screen.getByText("ATPCO")).toBeInTheDocument();
-    expect(screen.getByTestId("knowledge-quick-actions")).toHaveTextContent(
-      "Añadir información",
-    );
+    expect(
+      screen.getAllByRole("link", { name: /Añadir información/ }).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByTestId("knowledge-quick-actions")).toHaveTextContent(
       "Hacer una pregunta",
     );
@@ -307,8 +307,8 @@ describe("KnowledgeHomePage", () => {
     );
     expect(screen.getByTestId("knowledge-first-steps")).toBeInTheDocument();
     expect(screen.getByTestId("knowledge-pulse-empty")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /Añadir fuente/ }).length).toBeGreaterThan(
-      0
-    );
+    expect(
+      screen.getAllByRole("link", { name: /Añadir información/ }).length,
+    ).toBeGreaterThan(0);
   });
 });

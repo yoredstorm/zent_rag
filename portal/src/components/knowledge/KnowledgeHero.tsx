@@ -9,6 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 import { Button, ButtonLink, Skeleton, cn } from "../ui";
+import { loadSession } from "../../api";
 import type { KnowledgeDelta, KnowledgeOverview } from "../../lib/knowledgeModel";
 import { interpretHealth } from "../../lib/knowledgeLanguage";
 import { AnimatedNumber } from "./AnimatedNumber";
@@ -68,6 +69,10 @@ export function KnowledgeHero({
   loading: boolean;
   onSearch: (query: string) => void;
 }) {
+  const simple = Boolean(
+    loadSession()?.featureFlags?.knowledge_simple_ux,
+  );
+
   if (loading && !overview) {
     return (
       <section className="panel kh-hero" aria-busy="true">
@@ -185,7 +190,7 @@ export function KnowledgeHero({
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <ButtonLink to="/knowledge/sources?new=1" variant="primary" leadingIcon={Plus}>
-              Añadir fuente
+              Añadir información
             </ButtonLink>
             <ButtonLink
               to="/knowledge/explorer"
@@ -240,10 +245,10 @@ export function KnowledgeHero({
               ))}
           </ul>
           <Link
-            to="/knowledge/health"
+            to={simple ? "/knowledge/improve" : "/knowledge/health"}
             className="mt-4 inline-flex items-center gap-1.5 text-xs text-accent hover:underline"
           >
-            Ver salud del conocimiento
+            {simple ? "Ver qué mejorar" : "Ver salud del conocimiento"}
             <ArrowRight size={12} aria-hidden />
           </Link>
         </aside>
