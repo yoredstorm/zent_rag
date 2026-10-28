@@ -2,7 +2,7 @@
 
 Fecha: 2026-10-28. Rama: `fix/p18-1-knowledge-integrity-explorer`.
 Base: `06415700e7c4a312a938ab9d81375026750b6dd9`.
-Último commit funcional antes de este informe: `640eb96`.
+Último commit de evidencia: `d601b8f`.
 
 ## Resultado ejecutivo
 
