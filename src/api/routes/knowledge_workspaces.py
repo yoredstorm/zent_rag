@@ -197,6 +197,68 @@ async def document_understanding(
     }
 
 
+@router.get(
+    "/workspaces/{corpus_id}/sources/{source_id}/insight",
+    summary="Proyección documental explicable (knowledge_explorer_insight/v1)",
+)
+async def source_insight(
+    corpus_id: UUID, source_id: UUID, request: Request
+) -> dict:
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.knowledge.understanding.explorer import build_explorer_insight
+
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
+    sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
+    source = next((item for item in sources if str(item["id"]) == str(source_id)), None)
+    if source is None:
+        raise HTTPException(404, "Source not found in this workspace")
+
+    documents = await PostgresStructuredDocumentRepository().list_documents(
+        ctx.organization_id, source_id, limit=1
+    )
+    document = documents[0] if documents else None
+
+    session = await get_async_session()
+    try:
+        objects = (
+            await session.execute(
+                text(
+                    "SELECT id, kind, name, display_name, description, status, "
+                    "confidence, evidence_count, metadata "
+                    "FROM knowledge_canonical_objects "
+                    "WHERE organization_id = :oid AND source_id = :sid "
+                    "ORDER BY evidence_count DESC, updated_at DESC LIMIT 1000"
+                ),
+                {"oid": ctx.organization_id, "sid": source_id},
+            )
+        ).fetchall()
+        evidence = (
+            await session.execute(
+                text(
+                    "SELECT id, canonical_id, page, section_path, excerpt, locator, "
+                    "evidence_type, strength "
+                    "FROM evidence_ledger "
+                    "WHERE organization_id = :oid AND source_id = :sid "
+                    "ORDER BY created_at DESC LIMIT 1000"
+                ),
+                {"oid": ctx.organization_id, "sid": source_id},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+
+    return build_explorer_insight(
+        source=source,
+        document=document,
+        objects=[dict(row._mapping) for row in objects],
+        evidence=[dict(row._mapping) for row in evidence],
+    )
+
+
 class LocateRequest(BaseModel):
     query: str = Field(..., min_length=2, max_length=4000)
     page_hint: int | None = Field(default=None, ge=1)

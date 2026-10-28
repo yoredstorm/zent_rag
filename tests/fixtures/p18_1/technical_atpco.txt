@@ -1,0 +1,6 @@
+ATPCO Record 4 — Especificación del registro
+Campo Fare Basis | posición 12 | longitud 8 | formato alfanumérico
+Campo Currency Code | posición 20 | longitud 3 | ISO 4217
+Campo Byte 105 | posición 105 | longitud 3 | máscara 999
+El registro debe validar la máscara y la columna antes de publicar.
+El carrier must not change the fare basis code on reissue.

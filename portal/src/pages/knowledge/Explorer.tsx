@@ -5,12 +5,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowRight,
+  BookOpen,
   Graph,
   ListBullets,
   MagnifyingGlass,
   X,
-} from "@phosphor-icons/react";
-import {
+} from "@phosphor-icons/react";import {
   Button,
   ButtonLink,
   EmptyState,
@@ -23,14 +23,19 @@ import {
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KnowledgeConfidenceBadge } from "../../components/knowledgeLearning/KnowledgeConfidenceBadge";
 import {
+  fetchKnowledgeCorpora,
   fetchKnowledgeDomains,
   fetchKnowledgeGraph,
   fetchKnowledgeObjects,
+  fetchKnowledgeSourceInsight,
+  fetchKnowledgeSources,
   objectTypeLabel,
   statusTone,
   type KnowledgeDomain,
+  type KnowledgeExplorerInsightPayload,
   type KnowledgeGraphPayload,
   type KnowledgeObject,
+  type KnowledgeSourceSummary,
 } from "../../lib/knowledgeModel";
 import { timeAgo } from "../../lib/format";
 
@@ -68,6 +73,162 @@ const ORDER_OPTIONS = [
 ];
 
 const PAGE_SIZE = 40;
+
+type ExplorerSource = KnowledgeSourceSummary;
+type ExplorerInsightPayload = KnowledgeExplorerInsightPayload;
+
+function DocumentInsightPanel({
+  insight,
+  sourceId,
+  loading,
+  error,
+}: {
+  insight: ExplorerInsightPayload | null;
+  sourceId: string | null;
+  loading: boolean;
+  error: string;
+}) {
+  if (loading) {
+    return (
+      <Panel className="panel-body" aria-busy="true">
+        <Skeleton className="h-24 rounded-md" />
+      </Panel>
+    );
+  }
+  if (error) return <ErrorInline message={error} className="mb-0" />;
+  if (!insight) {
+    return (
+      <EmptyState
+        icon={BookOpen}
+        title="Sin una fuente seleccionada"
+        body="Elige un documento para ver qué encontró ZENT, con pasajes y límites de certeza."
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col gap-4" data-testid="knowledge-document-insight">
+      <Panel className="p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="eyebrow">Documento</p>
+            <h2 className="mt-1 break-words text-h3">
+              {insight.source.name || "Fuente"}
+            </h2>
+            <p className="prose-measure mt-1 text-sm leading-relaxed text-muted">
+              {insight.summary}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px] text-faint">
+            <span className="badge badge-muted">{insight.source.genre}</span>
+            {insight.source.pages != null && <span>{insight.source.pages} páginas</span>}
+            {insight.source.sections != null && (
+              <span>{insight.source.sections} secciones</span>
+            )}
+            {insight.source.tables != null && <span>{insight.source.tables} tablas</span>}
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+          <span>{insight.counts.objects_visible} hallazgos visibles</span>
+          <span>{insight.counts.objects_hidden} en revisión</span>
+          {insight.source.genre_confidence != null && (
+            <span>
+              Clasificación de género {Math.round(insight.source.genre_confidence * 100)}%
+              (no es comprensión del documento)
+            </span>
+          )}
+        </div>
+        {insight.warnings.length > 0 && (
+          <ul className="mt-3 flex flex-col gap-1">
+            {insight.warnings.map((warning) => (
+              <li
+                key={warning.code}
+                className="rounded-sm border border-border-soft bg-soft px-2 py-1.5 text-[11px] text-muted"
+              >
+                {warning.message}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      {insight.topics.length === 0 ? (
+        <Panel className="panel-body">
+          <p className="text-sm text-muted">
+            No hay una descripción fiable todavía. Puedes revisar los pasajes y
+            los objetos individuales.
+          </p>
+        </Panel>
+      ) : (
+        insight.topics.map((topic) => (
+          <Panel key={topic.id} className="overflow-hidden">
+            <div className="panel-header">
+              <div className="min-w-0">
+                <h3 className="text-h3">{topic.label}</h3>
+                <p className="mt-0.5 text-xs text-muted">{topic.summary}</p>
+              </div>
+              <span className="mono text-xs text-faint">{topic.count}</span>
+            </div>
+            <ul className="flex flex-col divide-y divide-border-soft">
+              {topic.insights.map((item, index) => (
+                <li key={`${topic.id}-${item.object_id ?? item.name}-${index}`} className="p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="break-words text-sm font-medium text-text">
+                        {item.name}
+                      </p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted">
+                        {item.claim_text}
+                      </p>
+                    </div>
+                    <span className="badge badge-muted shrink-0">
+                      {item.uncertainty === "alta"
+                        ? "Certeza baja"
+                        : item.uncertainty === "media"
+                          ? "Interpretación"
+                          : "Evidencia disponible"}
+                    </span>
+                  </div>
+                  {item.grounded_excerpt ? (
+                    <p className="mt-2 line-clamp-3 rounded-sm border border-border-soft bg-soft px-2 py-1.5 text-xs leading-relaxed text-muted">
+                      “{item.grounded_excerpt}”
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-[11px] text-warn">
+                      Sin pasaje abrible registrado para este hallazgo.
+                    </p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
+                    {item.source_locator?.page != null && (
+                      <span className="text-faint">
+                        página {item.source_locator.page}
+                      </span>
+                    )}
+                    {item.object_id ? (
+                      <Link
+                        to={`/knowledge/objects/${item.object_id}`}
+                        className="text-accent hover:underline"
+                      >
+                        Ver hallazgo y pasaje
+                      </Link>
+                    ) : null}
+                    {sourceId ? (
+                      <Link
+                        to={`/knowledge/sources/${sourceId}`}
+                        className="text-accent hover:underline"
+                      >
+                        Abrir fuente
+                      </Link>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        ))
+      )}
+    </div>
+  );
+}
 
 function GraphPanel({
   payload,
@@ -217,6 +378,8 @@ export default function KnowledgeExplorerPage() {
   const status = params.get("status") ?? "";
   const orderBy = params.get("order") ?? "updated_at";
   const view = params.get("view") === "graph" ? "graph" : "list";
+  const mode = params.get("mode") === "all" ? "all" : "document";
+  const sourceParam = params.get("source") ?? "";
   const focusId = params.get("focus");
 
   const [domains, setDomains] = useState<KnowledgeDomain[]>([]);
@@ -229,6 +392,12 @@ export default function KnowledgeExplorerPage() {
   const [error, setError] = useState("");
   const [graph, setGraph] = useState<KnowledgeGraphPayload | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [corpusId, setCorpusId] = useState("");
+  const [sources, setSources] = useState<ExplorerSource[]>([]);
+  const [sourceId, setSourceId] = useState(sourceParam);
+  const [insight, setInsight] = useState<ExplorerInsightPayload | null>(null);
+  const [insightError, setInsightError] = useState("");
+  const [insightLoading, setInsightLoading] = useState(false);
 
   const updateParams = useCallback(
     (patch: Record<string, string | null>, replace = true) => {
@@ -256,6 +425,91 @@ export default function KnowledgeExplorerPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetchKnowledgeCorpora()
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.corpora ?? [];
+        const selected =
+          list.find((item) => item.id === params.get("corpus")) ??
+          list.find((item) => item.slug === "principal") ??
+          list[0];
+        setCorpusId(selected?.id ?? "");
+      })
+      .catch(() => {
+        if (!cancelled) setCorpusId("");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `params` cambia al navegar; no debe reabrir la lista en cada tecla.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!corpusId) return;
+    let cancelled = false;
+    void fetchKnowledgeSources(corpusId)
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.sources ?? [];
+        setSources(list);
+        setSourceId((current) => {
+          if (current && list.some((item) => item.id === current)) return current;
+          const ready = list.find((item) =>
+            ["indexed", "available", "completed"].includes(item.status),
+          );
+          return (ready ?? list[0])?.id ?? "";
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSources([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [corpusId]);
+
+  useEffect(() => {
+    if (!sourceId) {
+      setInsight(null);
+      return;
+    }
+    if (sourceId !== sourceParam) {
+      updateParams({ source: sourceId, mode: "document" }, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceId]);
+
+  useEffect(() => {
+    if (!corpusId || !sourceId || view === "graph") {
+      setInsight(null);
+      return;
+    }
+    let cancelled = false;
+    setInsightLoading(true);
+    setInsightError("");
+    void fetchKnowledgeSourceInsight(corpusId, sourceId)
+      .then((data) => {
+        if (!cancelled) setInsight(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setInsight(null);
+          setInsightError(
+            err instanceof Error ? err.message : "No pudimos leer este documento.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setInsightLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [corpusId, sourceId, view]);
+
   const loadObjects = useCallback(
     async (nextOffset: number, append: boolean) => {
       if (append) setLoadingMore(true);
@@ -266,6 +520,7 @@ export default function KnowledgeExplorerPage() {
           domain: domain || undefined,
           type: type || undefined,
           status: status || undefined,
+          source_id: mode === "document" && sourceId ? sourceId : undefined,
           q: query.trim() || undefined,
           order_by: orderBy,
           limit: PAGE_SIZE,
@@ -282,7 +537,7 @@ export default function KnowledgeExplorerPage() {
         setLoadingMore(false);
       }
     },
-    [domain, type, status, query, orderBy]
+    [domain, type, status, query, orderBy, mode, sourceId]
   );
 
   useEffect(() => {
@@ -321,20 +576,28 @@ export default function KnowledgeExplorerPage() {
     <KnowledgeLayout>
       <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-h1">Explorador</h1>
+          <h1 className="text-h1">Qué encontramos en tus documentos</h1>
           <p className="prose-measure mt-1.5 text-sm leading-relaxed text-muted">
-            Recorre el conocimiento como está organizado: dominio, tipo, objeto,
-            hechos, evidencia y fuente.
+            Elige un documento, revisa qué entendió ZENT y abre el pasaje que
+            sustenta cada hallazgo. Una interpretación no es un hecho verificado.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button
             size="sm"
-            variant={view === "list" ? "secondary" : "ghost"}
-            leadingIcon={ListBullets}
-            onClick={() => updateParams({ view: null, focus: null })}
+            variant={view === "list" && mode === "document" ? "secondary" : "ghost"}
+            leadingIcon={BookOpen}
+            onClick={() => updateParams({ view: null, mode: null, focus: null })}
           >
-            Lista
+            Por documento
+          </Button>
+          <Button
+            size="sm"
+            variant={view === "list" && mode === "all" ? "secondary" : "ghost"}
+            leadingIcon={ListBullets}
+            onClick={() => updateParams({ view: null, mode: "all", focus: null })}
+          >
+            Todos los hallazgos
           </Button>
           <Button
             size="sm"
@@ -406,6 +669,25 @@ export default function KnowledgeExplorerPage() {
                 />
               </div>
               <div className="flex flex-wrap gap-2">
+                <Select
+                  aria-label="Documento"
+                  value={sourceId}
+                  onChange={(event) => {
+                    setSourceId(event.target.value);
+                    updateParams({ source: event.target.value, mode: "document" });
+                  }}
+                  className="min-h-9 w-[210px]"
+                  disabled={sources.length === 0}
+                >
+                  {sources.length === 0 ? (
+                    <option value="">Sin fuentes</option>
+                  ) : null}
+                  {sources.map((source) => (
+                    <option key={source.id} value={source.id}>
+                      {source.name}
+                    </option>
+                  ))}
+                </Select>
                 <Select
                   aria-label="Tipo de conocimiento"
                   value={type}
@@ -485,6 +767,15 @@ export default function KnowledgeExplorerPage() {
           )}
 
           {error && <ErrorInline message={error} className="mb-0" />}
+
+          {view === "list" && mode === "document" ? (
+            <DocumentInsightPanel
+              insight={insight}
+              sourceId={sourceId || null}
+              loading={insightLoading}
+              error={insightError}
+            />
+          ) : null}
 
           {view === "graph" ? (
             <Panel className="panel-body">

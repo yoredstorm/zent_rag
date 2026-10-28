@@ -1,0 +1,4 @@
+El proveedor debe pagar en 30 días.
+El proveedor no debe pagar en 30 días.
+La fecha de entrega es el 1 de marzo.
+La fecha de entrega es el 15 de marzo.
