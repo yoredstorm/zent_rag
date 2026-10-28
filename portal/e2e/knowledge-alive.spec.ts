@@ -93,7 +93,11 @@ test("P18 knowledge alive: navegación y wizard en desktop/móvil", async ({
       fullPage: true,
     });
 
-    await page.goto("/knowledge/sources?new=1", { waitUntil: "domcontentloaded" });
+    await nav.getByRole("link", { name: "Fuentes" }).click();
+    await expect(page.getByRole("heading", { name: "Fuentes", exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.getByRole("button", { name: "Añadir información" }).click();
     await expect(page.getByTestId("knowledge-import-wizard")).toBeVisible({
       timeout: 30_000,
     });
