@@ -71,6 +71,13 @@ test("P18.1 explorador documental: fuente real, resumen y evidencia", async ({
     },
   );
   expect(upload.ok()).toBeTruthy();
+  const uploadedSource = (await upload.json()) as { id: string };
+  const fileResponse = await request.get(
+    `/api/v1/knowledge/workspaces/${corpus.corpus.id}/sources/${uploadedSource.id}/file`,
+    { headers },
+  );
+  expect(fileResponse.ok()).toBeTruthy();
+  expect(fileResponse.headers()["cache-control"]).toContain("no-store");
 
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt += 1) {
