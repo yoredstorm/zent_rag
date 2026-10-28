@@ -131,8 +131,9 @@ test("P18.1 explorador documental: fuente real, resumen y evidencia", async ({
     await expect(page.getByText("politica-gastos.txt").first()).toBeVisible();
     await expect(page.getByText(/Documento de naturaleza/)).toBeVisible();
     await expect(page.getByText(/hallazgos visibles/).first()).toBeVisible();
+    await expect(page.getByText("Documento de naturaleza política.")).toBeVisible();
     await expect(
-      page.getByText(/clasificación de género es provisional/i),
+      page.getByText(/no es comprensión del documento/i),
     ).toBeVisible();
     const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
     expect(bodyWidth, `${viewport.name}px sin overflow`).toBeLessThanOrEqual(

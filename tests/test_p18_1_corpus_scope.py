@@ -191,3 +191,53 @@ async def test_chat_pending_source_is_not_used_by_default(monkeypatch) -> None:
 
     assert "query" not in captured
     assert result["retrieval_scope"]["source_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_source_file_rejects_source_outside_authorized_corpus(
+    monkeypatch,
+) -> None:
+    import src.api.routes.knowledge_workspaces as route
+
+    async def fake_require(_request, _corpus_id):
+        return _ctx(), SimpleNamespace(id=uuid4()), {"id": "corpus"}
+
+    async def fake_sources(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(route, "_require_corpus", fake_require)
+    monkeypatch.setattr(route, "_sources_for_corpus", fake_sources)
+
+    with pytest.raises(HTTPException) as exc:
+        await route.source_file(uuid4(), uuid4(), SimpleNamespace(state=SimpleNamespace()))
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_source_file_is_inline_pdf_and_no_store(monkeypatch, tmp_path) -> None:
+    import src.api.routes.knowledge_workspaces as route
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    workspace = uuid4()
+    source = _source(workspace)
+    source["object_key"] = "org/doc.pdf"
+
+    async def fake_require(_request, _corpus_id):
+        return _ctx(), SimpleNamespace(id=workspace), {"id": "corpus"}
+
+    async def fake_sources(*_args, **_kwargs):
+        return [source]
+
+    monkeypatch.setattr(route, "_require_corpus", fake_require)
+    monkeypatch.setattr(route, "_sources_for_corpus", fake_sources)
+    monkeypatch.setattr(
+        "src.knowledge.storage.resolve_path", lambda *_args: pdf
+    )
+
+    response = await route.source_file(
+        uuid4(), UUID(source["id"]), SimpleNamespace(state=SimpleNamespace())
+    )
+    assert response.headers["content-disposition"].startswith("inline")
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
