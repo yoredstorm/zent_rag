@@ -708,6 +708,17 @@ export default function KnowledgeSourcesPage() {
               }
             />
             <div className="panel-body flex flex-col gap-3">
+              <ol aria-label="Etapas de incorporación" className="grid grid-cols-3 gap-2">
+                <li className="rounded-md border border-accent bg-accent/10 px-3 py-2 text-xs text-text">
+                  <strong>1. Elegir</strong><span className="mt-1 block text-muted">Archivo o conexión</span>
+                </li>
+                <li className="rounded-md border border-border px-3 py-2 text-xs text-muted">
+                  <strong>2. Incorporar</strong><span className="mt-1 block">Transferencia y lectura</span>
+                </li>
+                <li className="rounded-md border border-border px-3 py-2 text-xs text-muted">
+                  <strong>3. Consultar</strong><span className="mt-1 block">Comprobar las respuestas</span>
+                </li>
+              </ol>
               <div
                 className="grid gap-2 sm:grid-cols-3"
                 data-testid="add-information-options"
