@@ -23,6 +23,8 @@ from src.knowledge.compiler.model import (
     TemporalScope,
     normalize_term,
 )
+from src.knowledge.compiler.candidates import assess_rule_candidate
+from src.knowledge.quality.ingestion import QualityCollector, QualityKind
 
 _MAX_RULES = 2_000
 _MIN_STATEMENT = 24
@@ -96,7 +98,10 @@ def _subject_for(
 
 
 def extract_rules(
-    document: StructuredDocument, *, temporal: TemporalScope | None = None
+    document: StructuredDocument,
+    *,
+    temporal: TemporalScope | None = None,
+    quality: QualityCollector | None = None,
 ) -> list[RuleCandidate]:
     """Reglas y restricciones declaradas explícitamente en el documento."""
     scope = temporal or TemporalScope()
@@ -124,11 +129,41 @@ def extract_rules(
         subject = _subject_for(
             text, section_path, document_title=document.title
         )
+        decision = assess_rule_candidate(
+            text,
+            subject=subject,
+            document=document,
+            section_path=section_path,
+        )
+        if not decision.accepted:
+            if quality is not None:
+                kind = {
+                    "NUMERIC_SUBJECT": QualityKind.LOW_QUALITY_EXTRACTION.value,
+                    "QUESTION_NOT_RULE": QualityKind.SENTENCE_FRAGMENT.value,
+                    "NON_NORMATIVE_CONTEXT": QualityKind.INSUFFICIENT_CONTEXT.value,
+                    "UNCLASSIFIED_CLAIM": QualityKind.INSUFFICIENT_CONTEXT.value,
+                    "TOO_SHORT": QualityKind.SENTENCE_FRAGMENT.value,
+                }.get(decision.reason, QualityKind.INSUFFICIENT_CONTEXT.value)
+                quality.add(
+                    kind,
+                    subject or text[:120],
+                    detail={
+                        "stage": "rule_discovery",
+                        "semantic_gate": decision.reason,
+                        "claim_kind": decision.claim_kind or None,
+                        "why": decision.detail,
+                    },
+                    source_id=document.source_id,
+                    document_id=document.id,
+                )
+            continue
         key = rule_key(text, subject)
         if key in seen or len(rules) >= _MAX_RULES:
             continue
         seen.add(key)
         rule_type = "constraint" if modality == "constraint" else "business_rule"
+        if decision.claim_kind == "technical_constraint":
+            rule_type = "constraint"
         if any(
             marker in text.lower()
             for marker in ("procedimiento", "procedure", "paso ", "step ")
@@ -141,6 +176,7 @@ def extract_rules(
                 rule_key=key,
                 rule_type=rule_type,
                 modality=modality,
+                claim_kind=decision.claim_kind,
                 confidence=0.82 if modality in {"must", "must_not"} else 0.7,
                 temporal=scope,
                 evidence=[

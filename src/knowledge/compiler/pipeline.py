@@ -122,7 +122,7 @@ class KnowledgeCompiler:
             extracted_relations=extract.extracta_for(document).get("relations") or [],
         )
 
-        rules = rule_engine.extract_rules(document, temporal=scope)
+        rules = rule_engine.extract_rules(document, temporal=scope, quality=quality)
         # Semantic Rule Compiler: convierte candidatos normativos en reglas
         # canónicas con propiedades verificadas y provenance por propiedad.
         # Determinista; no reemplaza la detección existente, la profundiza.

@@ -32,6 +32,7 @@ from src.knowledge.compiler.model import (
 )
 from src.knowledge.quality.fragments import TextQualityStatus, analyze_text_quality
 from src.knowledge.quality.ingestion import QualityCollector, QualityKind
+from src.knowledge.compiler.candidates import assess_entity_candidate
 
 UMBRAL_ALIAS = 0.85
 UMBRAL_SIGLA = 0.70
@@ -264,10 +265,28 @@ def discover_entities(
             document_id=document.id,
         )
 
-    def _usable(name: str) -> bool:
+    def _usable(name: str, *, kind: str = "concept", text: str = "") -> bool:
         stripped = (name or "").strip()
         if stripped.isdigit() or not any(char.isalpha() for char in stripped):
             _reject(stripped, TextQualityStatus.LOW_QUALITY_EXTRACTION.value)
+            return False
+        decision = assess_entity_candidate(
+            stripped,
+            kind=kind,
+            document=document,
+            text=text,
+        )
+        if not decision.accepted:
+            status = (
+                TextQualityStatus.SENTENCE_FRAGMENT.value
+                if decision.reason in {"QUESTION_OR_DIALOGUE", "DIALOGUE_FRAGMENT"}
+                else TextQualityStatus.LOW_QUALITY_EXTRACTION.value
+            )
+            _reject(
+                name,
+                status,
+                detail={"semantic_gate": decision.reason, "why": decision.detail},
+            )
             return False
         verdict = analyze_text_quality(
             stripped,
@@ -332,7 +351,7 @@ def discover_entities(
             continue
         if unit.kind == SemanticUnitKind.DEFINITION.value:
             primary_name, declared_alias = split_declared_alias(label)
-            if len(primary_name) < 2 or not _usable(primary_name):
+            if len(primary_name) < 2 or not _usable(primary_name, text=unit.text):
                 continue
             entity_type = infer_entity_type(primary_name)
             entity = entity_for(primary_name, entity_type)
@@ -376,7 +395,7 @@ def discover_entities(
                 )
             continue
         if unit.kind == SemanticUnitKind.FIELD.value:
-            if not _usable(label):
+            if not _usable(label, kind="field", text=unit.text):
                 continue
             entity = entity_for(label, EntityType.FIELD.value)
             entity.description = entity.description or unit.text
@@ -384,14 +403,14 @@ def discover_entities(
             entity.evidence.append(unit.evidence)
             continue
         if unit.kind == SemanticUnitKind.TABLE.value:
-            if not _usable(label):
+            if not _usable(label, kind="table"):
                 continue
             entity = entity_for(label, EntityType.TABLE.value)
             entity.confidence = max(entity.confidence, unit.confidence)
             entity.evidence.append(unit.evidence)
             continue
         if unit.kind == SemanticUnitKind.COLUMN.value:
-            if not _usable(label):
+            if not _usable(label, kind="column"):
                 continue
             table_reference = str(unit.attributes.get("table") or "").strip()
             entity_type = (
@@ -420,7 +439,7 @@ def discover_entities(
             SemanticUnitKind.PROCEDURE_STEP.value,
             SemanticUnitKind.SECTION.value,
         }:
-            if not _usable(label):
+            if not _usable(label, kind="process", text=unit.text):
                 continue
             entity = entity_for(label, EntityType.PROCESS.value)
             entity.confidence = max(entity.confidence, unit.confidence)

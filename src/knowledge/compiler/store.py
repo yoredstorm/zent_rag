@@ -764,6 +764,7 @@ class PostgresCompilerStore:
                             {
                                 "rule_type": rule.rule_type,
                                 "modality": rule.modality,
+                                "claim_kind": getattr(rule, "claim_kind", "") or None,
                                 "rule_key": rule.rule_key,
                                 "document_id": str(document_id) if document_id else None,
                                 "compiled_by": "knowledge_compiler",

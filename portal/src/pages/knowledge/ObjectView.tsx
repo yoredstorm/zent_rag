@@ -65,6 +65,17 @@ function KeyValueRow({ label, children }: { label: string; children: React.React
   );
 }
 
+const CLAIM_KIND_LABEL: Record<string, string> = {
+  policy_rule: "Regla de política",
+  technical_constraint: "Restricción técnica",
+  contract_obligation: "Obligación contractual",
+  narrative_statement: "Afirmación narrativa",
+  advice: "Consejo",
+  quoted_dialogue: "Diálogo citado",
+  metaphor: "Metáfora",
+  unclassified: "Sin clasificar",
+};
+
 function EdgeRow({ edge, direction }: { edge: KnowledgeEdge; direction: "in" | "out" }) {
   const otherId = direction === "out" ? edge.object_id : edge.subject_id;
   const otherName =
@@ -148,7 +159,7 @@ function EvidenceRow({ evidence }: { evidence: KnowledgeEvidence }) {
           <span>{evidence.section_path.join(" › ")}</span>
         )}
         {evidence.strength != null && (
-          <span className="mono">fuerza {Math.round(evidence.strength * 100)}%</span>
+          <span className="mono">fuerza de evidencia {Math.round(evidence.strength * 100)}%</span>
         )}
         {evidence.source_id && (
           <Link
@@ -380,14 +391,29 @@ export default function KnowledgeObjectPage() {
                     {objectTypeLabel(object.type)}
                   </KeyValueRow>
                   <KeyValueRow label="Estado">{object.status}</KeyValueRow>
+                  {typeof object.metadata?.claim_kind === "string" && (
+                    <KeyValueRow label="Tipo de afirmación">
+                      {CLAIM_KIND_LABEL[object.metadata.claim_kind] ||
+                        object.metadata.claim_kind}
+                    </KeyValueRow>
+                  )}
+                  {typeof object.metadata?.verification_state === "string" && (
+                    <KeyValueRow label="Verificación">
+                      {object.metadata.verification_state}
+                    </KeyValueRow>
+                  )}
                   <KeyValueRow label="Procedencia">{object.provenance || "—"}</KeyValueRow>
-                  <KeyValueRow label="Confianza">
+                  <KeyValueRow label="Confianza calculada">
                     {object.confidence_label || "—"}
                     {object.confidence != null && (
                       <span className="mono ml-2 text-xs text-muted">
                         {Math.round(object.confidence * 100)}%
                       </span>
                     )}
+                    <span className="mt-1 block text-[11px] text-faint">
+                      Señales de evidencia y validación. No es un porcentaje de
+                      comprensión del documento.
+                    </span>
                   </KeyValueRow>
                   <KeyValueRow label="Fuente de verdad">
                     {object.source_of_truth || "—"}
