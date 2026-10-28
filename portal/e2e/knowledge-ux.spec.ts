@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { expectNoA11yViolations } from "./fixtures";
 
-test("P17 smoke: Preguntar y Mejorar sin violaciones graves", async ({
+test("P17 smoke: cuatro experiencias sin escrituras ni violaciones graves", async ({
   page,
   request,
 }) => {
@@ -52,7 +52,27 @@ test("P17 smoke: Preguntar y Mejorar sin violaciones graves", async ({
     },
   );
 
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method())) {
+      writes.push(`${request.method()} ${request.url()}`);
+    }
+  });
+
   await page.setViewportSize({ width: 1280, height: 900 });
+
+  await page.goto("/knowledge");
+  await expect(page.getByTestId("knowledge-quick-actions")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expectNoA11yViolations(page);
+
+  await page.goto("/knowledge/sources");
+  await expect(page.getByRole("heading", { name: "Fuentes", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expectNoA11yViolations(page);
+
   await page.goto("/knowledge/ask");
   await expect(page.getByRole("heading", { name: "Preguntar" })).toBeVisible({
     timeout: 30_000,
@@ -65,4 +85,6 @@ test("P17 smoke: Preguntar y Mejorar sin violaciones graves", async ({
   });
   await expect(page.getByTestId("quality-inbox")).toBeVisible();
   await expectNoA11yViolations(page);
+
+  expect(writes, "navegar las cuatro experiencias no debe escribir").toEqual([]);
 });

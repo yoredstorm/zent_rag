@@ -12,7 +12,8 @@
 | Ask UI | PASS, cita, evidencia, fuente y feedback |
 | Improve inbox | PASS, no evaluado vs sin problemas |
 | Baseline PDF real | PASS, 5 citas API; conflicto abierto `NOT_AVAILABLE` |
-| A11y smoke Preguntar/Mejorar | PASS local, `knowledge-ux.spec.ts` (axe serias/críticas) |
+| A11y smoke 4 experiencias | PASS local, `knowledge-ux.spec.ts` (axe serias/críticas) |
+| Writes al navegar 4 experiencias | PASS: cero métodos de escritura |
 | A11y de todas las vistas Knowledge | NOT_MEASURED |
 | 1000 fuentes en la UI | PASS: sólo 25 tarjetas por página |
 | Carga real backend 1/100/1000 | NOT_MEASURED; `/sources` no pagina en backend |
