@@ -582,7 +582,7 @@ export default function KnowledgeExplorerPage() {
             sustenta cada hallazgo. Una interpretación no es un hecho verificado.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant={view === "list" && mode === "document" ? "secondary" : "ghost"}

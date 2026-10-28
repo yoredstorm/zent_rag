@@ -245,6 +245,17 @@ def classify_document_genre(
         policy += 0.1
     scores["policy"] = min(policy, 0.95)
 
+    title_hint = f"{document.title or ''} {filename or ''}".lower()
+    if re.search(r"pol[ií]tica|policy|norma|procedimiento", title_hint):
+        scores["policy"] = min(scores["policy"] + 0.25, 0.95)
+        signals.append(GenreSignal("policy_title", 0.25, "título normativo"))
+    if re.search(r"record|manual|spec|atpco|layout|especificaci[oó]n", title_hint):
+        scores["technical"] = min(scores["technical"] + 0.2, 0.95)
+        signals.append(GenreSignal("technical_title", 0.2, "título técnico"))
+    if re.search(r"cuento|relato|novela|principito|narrativa", title_hint):
+        scores["narrative"] = min(scores["narrative"] + 0.2, 0.95)
+        signals.append(GenreSignal("narrative_title", 0.2, "título narrativo"))
+
     # Legal: contrato/cláusulas/partes.
     legal_score = 0.0
     if legal >= 3:
@@ -256,6 +267,9 @@ def classify_document_genre(
         legal_score += 0.25
         signals.append(GenreSignal("legal_heading", 0.25, "encabezado contractual"))
     scores["legal"] = min(legal_score, 0.95)
+    if re.search(r"contrato|contract|acuerdo", title_hint):
+        scores["legal"] = min(scores["legal"] + 0.25, 0.95)
+        signals.append(GenreSignal("legal_title", 0.25, "título contractual"))
 
     if educational >= 3:
         scores["educational"] = min(educational / 20, 0.7)
