@@ -1,8 +1,9 @@
-import { ChatCircleDots, FileText, WarningCircle } from "@phosphor-icons/react";
+import { ChatCircleDots, FileText, WarningCircle, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
+import PdfViewer from "../../components/PdfViewer";
 import {
   Badge,
   Button,
@@ -60,6 +61,11 @@ export default function KnowledgeAskPage() {
   const [result, setResult] = useState<Grounded | null>(null);
   const [error, setError] = useState("");
   const [evidence, setEvidence] = useState<Record<number, Evidence | "loading" | "missing">>({});
+  const [viewer, setViewer] = useState<{
+    sourceId: string;
+    page: number;
+    excerpt: string;
+  } | null>(null);
   const [feedback, setFeedback] = useState<string>("");
   const [feedbackError, setFeedbackError] = useState("");
 
@@ -381,14 +387,19 @@ export default function KnowledgeAskPage() {
                             {resolved.source_id ? (
                               <span className="mt-1 flex flex-wrap gap-3">
                                 {resolved.page ? (
-                                  <a
-                                    href={`/api/v1/knowledge/workspaces/${corpusId}/sources/${resolved.source_id}/file#page=${resolved.page}`}
-                                    target="_blank"
-                                    rel="noreferrer"
+                                  <button
+                                    type="button"
                                     className="text-accent hover:underline"
+                                    onClick={() =>
+                                      setViewer({
+                                        sourceId: resolved.source_id as string,
+                                        page: resolved.page as number,
+                                        excerpt: resolved.excerpt,
+                                      })
+                                    }
                                   >
                                     Abrir página {resolved.page}
-                                  </a>
+                                  </button>
                                 ) : null}
                                 <Link
                                   to={`/knowledge/sources/${resolved.source_id}`}
@@ -442,6 +453,50 @@ export default function KnowledgeAskPage() {
           </Panel>
         ) : null}
       </div>
+
+      {viewer && corpusId ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Evidencia original"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setViewer(null);
+          }}
+        >
+          <div className="flex h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl">
+            <div className="flex items-center justify-between border-b border-border px-4 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-text">
+                  Evidencia original
+                </p>
+                <p className="text-[11px] text-muted">
+                  Página {viewer.page} · abierta con autenticación de la sesión
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Cerrar evidencia"
+                onClick={() => setViewer(null)}
+              >
+                <X size={15} aria-hidden />
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <PdfViewer
+                fileUrl={`/api/v1/knowledge/workspaces/${corpusId}/sources/${viewer.sourceId}/file`}
+                token={session?.token}
+                highlight={{
+                  page: viewer.page,
+                  bbox: null,
+                  excerpt: viewer.excerpt,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </KnowledgeLayout>
   );
 }
