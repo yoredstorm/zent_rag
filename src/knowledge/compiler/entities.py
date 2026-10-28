@@ -435,7 +435,13 @@ def _domain_from(document: StructuredDocument) -> str | None:
         return path.strip().strip("/").split("/")[0][:120]
     profile = (document.metadata.get("understanding") or {}).get("profile")
     if isinstance(profile, dict):
-        value = profile.get("domain") or profile.get("document_type")
+        # `document_type` describe la forma, no el dominio. Nunca se usa como
+        # dominio de negocio (P18.1-05).
+        value = (
+            profile.get("business_domain")
+            or profile.get("topic_domain")
+            or profile.get("domain")
+        )
         if isinstance(value, str) and value.strip():
             return value.strip()[:120]
     return None
