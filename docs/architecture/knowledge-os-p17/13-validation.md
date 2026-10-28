@@ -16,7 +16,8 @@
 | A11y de todas las vistas Knowledge | NOT_MEASURED |
 | 1000 fuentes en la UI | PASS: sólo 25 tarjetas por página |
 | Carga real backend 1/100/1000 | NOT_MEASURED; `/sources` no pagina en backend |
-| Bundle/latencia Knowledge | NOT_MEASURED |
+| Bundle producción | PASS: 4.381.702 B JS, 248.042 B CSS; artefacto `bundle.json` |
+| Latencia Knowledge | NOT_MEASURED |
 | 429/proveedor caído en UX nueva | NOT_TESTED en E2E; cubierto parcialmente por jobs/backend |
 | 5 usuarios no técnicos | NOT_STARTED |
 | Snapshot de invariantes después | NOT_VERIFIED; el snapshot previo existe |

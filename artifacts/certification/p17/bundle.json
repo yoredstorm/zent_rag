@@ -1,0 +1,31 @@
+{
+  "schema": "zent.p17.bundle/v1",
+  "built_at": "2026-10-28T00:34:47.7958611Z",
+  "total_js_bytes": 4381702,
+  "total_css_bytes": 248042,
+  "js_files": 262,
+  "css_files": 1,
+  "largest_chunks": [
+    {
+      "name": "pdf.worker.min-Dswkl-cV.mjs",
+      "bytes": 1265413
+    },
+    {
+      "name": "index-CCVqCvvS.js",
+      "bytes": 782991
+    },
+    {
+      "name": "KnowledgeWorkspace-CrkXnFQo.js",
+      "bytes": 507810
+    },
+    {
+      "name": "charts-nBtlpWom.js",
+      "bytes": 381941
+    },
+    {
+      "name": "index-UWDm8EGB.css",
+      "bytes": 248042
+    }
+  ],
+  "note": "Measured local production build; no historical baseline. gzip not summed."
+}
