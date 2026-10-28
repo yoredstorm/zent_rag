@@ -103,3 +103,29 @@ def test_hidden_metadata_is_respected() -> None:
     )
     assert result["counts"]["objects_visible"] == 0
     assert any(item["code"] == "HIDDEN_CANDIDATES" for item in result["warnings"])
+
+
+def test_technical_document_keeps_fields_and_real_rules() -> None:
+    field = _object("Fare Basis", kind="field")
+    rule = _object(
+        "The carrier",
+        kind="business_rule",
+        description="The carrier must not change the fare basis code on reissue.",
+    )
+    result = build_explorer_insight(
+        source={"id": "src-1", "name": "atpco.pdf"},
+        document={
+            "id": "doc-1",
+            "metadata": {
+                "understanding": {
+                    "profile": {"document_genre": "technical"},
+                    "report": {"pages": 2, "sections": 1, "tables": 1},
+                }
+            },
+        },
+        objects=[field, rule],
+        evidence=[],
+    )
+    names = {item["name"] for item in result["insights"]}
+    assert names == {"Fare Basis", "The carrier"}
+    assert result["counts"]["objects_hidden"] == 0

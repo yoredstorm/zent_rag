@@ -16,10 +16,59 @@ _MIN_AUTONOMY = 3
 _DIALOGUE = re.compile(r"^[\s“”«»—–-]|[\?¿]")
 _QUESTION_LABEL = re.compile(r"^[¿\s]*.+[\?]\s*$")
 _DIALOGUE_VERB = re.compile(
-    r"\b(dijo|respondió|respondio|preguntó|pregunto|exclamó|exclamo|"
-    r"susurró|susurro|contestó|contesto|refutó|refuto)\b",
+    r"\b(dijo|decía|decia|respondió|respondio|preguntó|pregunto|exclamó|exclamo|"
+    r"susurró|susurro|contestó|contesto|refutó|refuto|pensó|penso|"
+    r"se\s+preguntó|se\s+pregunto)\b",
     re.IGNORECASE,
 )
+_NARRATIVE_OPENING = re.compile(
+    r"^(es|son|el|la|los|las|un|una|unos|unas|yo|me|mi|no|he|has|"
+    r"te|acércate|acercate|mira|ven|dime|haz|pon|quita|déjame|dejame|"
+    r"en el|en la|deesemodo|de este modo)\b",
+    re.IGNORECASE,
+)
+_NON_TERM_LABELS = {
+    "adiós",
+    "adios",
+    "señor",
+    "senor",
+    "entonces",
+    "sobre todo",
+    "sobre todo eso",
+    "por supuesto",
+    "sin embargo",
+    "además",
+    "ademas",
+    "en efecto",
+    "sí",
+    "si",
+    "no",
+}
+_ROMAN = re.compile(r"^[IVXLCDM]+$")
+_CLAUSE_VERB = re.compile(
+    r"\b(soy|eres|es|somos|son|sería|seria|estoy|está|esta|estaba|"
+    r"bebo|sé|sabe|tengo|tiene|tienen|tienes|puedo|puede|quiero|quiere|voy|va|"
+    r"fue|era|había|habia|suspiró|suspiro|reflexionó|reflexiono|"
+    r"busco|busca|buscan|continuó|continuo|conoce|conocen|mantener|"
+    r"mantiene|embellece|digo|dice|decir|pienso|piensa|creo|crees)\b",
+    re.IGNORECASE,
+)
+_NON_TERM_PREFIX = re.compile(
+    r"^(para|con|sin|por|pero|nunca|siempre|cuando|donde|qué|que|cómo|como|"
+    r"cuánto|cuanta|buenos|buenas|exacto|claro|golpea|acércate|acercate|"
+    r"mira|ven|dime|haz|pon|quita|déjame|dejame|suspiró|suspiro)\b",
+    re.IGNORECASE,
+)
+_NON_TERM_PHRASES = {
+    "buenos días",
+    "buenos dias",
+    "buenosdías",
+    "buenosdias",
+    "buenas noches",
+    "buenas tardes",
+    "qué mala suerte",
+    "que mala suerte",
+}
 _NARRATIVE = re.compile(
     r"\b(era|fue|había|habia|principito|rosa|zorro|planeta|"
     r"yo|mi|me|nosotros)\b",
@@ -111,6 +160,81 @@ def assess_entity_candidate(
             "DIALOGUE_FRAGMENT",
             detail="fragmento de diálogo, no unidad semántica autónoma",
         )
+    words = value.split()
+    if _DIALOGUE_VERB.search(value):
+        return CandidateDecision(
+            False,
+            True,
+            "NARRATIVE_CLAUSE",
+            detail="cláusula de relato, no un nombre o término",
+        )
+    if _ROMAN.fullmatch(value) and kind not in {
+        "field",
+        "column",
+        "table",
+        "record",
+    }:
+        return CandidateDecision(
+            False,
+            True,
+            "HEADING_OR_INDEX",
+            detail="numeración de sección, no un concepto",
+        )
+    if kind in {"concept", "definition", "term", "attribute"}:
+        plain = value.lower().strip(" .,;:!…")
+        if plain in _NON_TERM_LABELS or plain in _NON_TERM_PHRASES:
+            return CandidateDecision(
+                False,
+                True,
+                "NON_TERM_LABEL",
+                detail="conector, saludo o interjección, no un concepto",
+            )
+        if _NON_TERM_PREFIX.search(value):
+            return CandidateDecision(
+                False,
+                True,
+                "NON_TERM_LABEL",
+                detail="preposición, adverbio o imperativo, no un concepto",
+            )
+        if _CLAUSE_VERB.search(value):
+            return CandidateDecision(
+                False,
+                True,
+                "SENTENCE_FRAGMENT",
+                detail="verbo conjugado en una etiqueta de concepto",
+            )
+        opening = _NARRATIVE_OPENING.search(value)
+        if opening:
+            first = opening.group(1).lower()
+            determiner = first in {"el", "la", "los", "las", "un", "una", "unos", "unas"}
+            if not (determiner and len(words) <= 2):
+                return CandidateDecision(
+                    False,
+                    True,
+                    "SENTENCE_FRAGMENT",
+                    detail="oración narrativa usada como etiqueta",
+                )
+        if re.search(r"[.,;:!…]", value):
+            return CandidateDecision(
+                False,
+                True,
+                "SENTENCE_FRAGMENT",
+                detail="puntuación de oración en una etiqueta de concepto",
+            )
+        if len(value) > 30 and len(words) == 1:
+            return CandidateDecision(
+                False,
+                True,
+                "TRUNCATED_OR_CONCATENATED",
+                detail="palabra concatenada sin autonomía semántica",
+            )
+        if len(words) > 10:
+            return CandidateDecision(
+                False,
+                True,
+                "TOO_LONG_FOR_TERM",
+                detail="frase demasiado larga para un concepto",
+            )
 
     genre = _genre(document)
     if is_isolated_number(value):

@@ -7,6 +7,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from src.knowledge.compiler.candidates import (
@@ -123,7 +124,26 @@ def _group_for(genre: str, kind: str) -> tuple[str, str] | None:
     return None
 
 
-def _visible_object(obj: dict) -> tuple[bool, str]:
+_HEADING_NAMES = {
+    "presentación",
+    "presentacion",
+    "introducción",
+    "introduccion",
+    "prólogo",
+    "prologo",
+    "capítulo",
+    "capitulo",
+    "índice",
+    "indice",
+}
+_NORMATIVE_TEXT = re.compile(
+    r"\b(debe|deben|deberá|deberan|obligatorio|obligatoria|prohibido|"
+    r"prohibida|must|shall|required|forbidden|no\s+debe)\b",
+    re.IGNORECASE,
+)
+
+
+def _visible_object(obj: dict, document: dict | None = None) -> tuple[bool, str]:
     metadata = obj.get("metadata") or {}
     if metadata.get("explorer_visibility") == "hidden":
         return False, "oculto por revisión"
@@ -133,6 +153,16 @@ def _visible_object(obj: dict) -> tuple[bool, str]:
         return False, "pregunta o diálogo"
     if name.isdigit() and kind not in {"field", "column", "table", "record"}:
         return False, "número aislado"
+    profile = ((document or {}).get("metadata") or {}).get("understanding", {}).get(
+        "profile"
+    ) or {}
+    genre = str(profile.get("document_genre") or "unknown")
+    if name.casefold() in _HEADING_NAMES and genre in {"narrative", "unknown"}:
+        return False, "encabezado de sección"
+    if kind in {"business_rule", "rule"} and not _NORMATIVE_TEXT.search(
+        str(obj.get("description") or "")
+    ):
+        return False, "regla sin contexto normativo"
     decision = assess_entity_candidate(name, kind=kind)
     if not decision.accepted:
         return False, decision.reason
@@ -164,12 +194,30 @@ def build_explorer_insight(
     hidden = 0
     hidden_reasons: dict[str, int] = {}
     for obj in objects:
-        ok, reason = _visible_object(obj)
+        ok, reason = _visible_object(obj, document)
         if not ok:
             hidden += 1
             hidden_reasons[reason] = hidden_reasons.get(reason, 0) + 1
             continue
         visible.append(obj)
+
+    # Deduplicación de presentación por identidad semántica dentro de la
+    # fuente. No borra filas: oculta duplicados de la vista y los cuenta.
+    deduped: list[dict] = []
+    seen_identity: set[tuple[str, str]] = set()
+    for obj in visible:
+        kind = str(obj.get("kind") or obj.get("type") or "concept").lower()
+        name = str(obj.get("name") or obj.get("display_name") or "").strip().casefold()
+        identity = (kind, " ".join(name.split()))
+        if identity in seen_identity:
+            hidden += 1
+            hidden_reasons["duplicado de presentación"] = (
+                hidden_reasons.get("duplicado de presentación", 0) + 1
+            )
+            continue
+        seen_identity.add(identity)
+        deduped.append(obj)
+    visible = deduped
 
     topics: dict[str, dict] = {}
     insights: list[dict] = []

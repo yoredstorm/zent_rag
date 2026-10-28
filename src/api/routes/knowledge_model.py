@@ -530,6 +530,12 @@ async def explorer_cleanup(
     if not ctx.is_organization_admin():
         raise HTTPException(403, "Organization admin permission required")
     _ensure_enabled()
+    if not body.dry_run and not get_settings().KNOWLEDGE_HISTORICAL_CLEANUP_ENABLED:
+        raise HTTPException(
+            403,
+            "Historical cleanup is disabled; run dry-run or enable "
+            "KNOWLEDGE_HISTORICAL_CLEANUP_ENABLED explicitly.",
+        )
 
     from sqlalchemy import text
 
