@@ -6,6 +6,7 @@
 |---|---|
 | CI completo (P17-00..06, SHA `db52ebc`) | PASS, run `40465714085` |
 | P17-07 tests focalizados | PASS, `51 passed` (Agent Studio + SourceDetail) |
+| Fuentes 1000 UI | PASS, 25 tarjetas por página |
 | P0 ACL reader/admin | PASS, `3 passed` |
 | Evidence resolver org/workspace | PASS, `4 passed` |
 | Ask UI | PASS, cita, evidencia, fuente y feedback |
@@ -13,7 +14,8 @@
 | Baseline PDF real | PASS, 5 citas API; conflicto abierto `NOT_AVAILABLE` |
 | A11y smoke Preguntar/Mejorar | PASS local, `knowledge-ux.spec.ts` (axe serias/críticas) |
 | A11y de todas las vistas Knowledge | NOT_MEASURED |
-| 1/100/1000 fuentes | NOT_MEASURED |
+| 1000 fuentes en la UI | PASS: sólo 25 tarjetas por página |
+| Carga real backend 1/100/1000 | NOT_MEASURED; `/sources` no pagina en backend |
 | Bundle/latencia Knowledge | NOT_MEASURED |
 | 429/proveedor caído en UX nueva | NOT_TESTED en E2E; cubierto parcialmente por jobs/backend |
 | 5 usuarios no técnicos | NOT_STARTED |

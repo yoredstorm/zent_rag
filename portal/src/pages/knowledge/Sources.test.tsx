@@ -469,6 +469,22 @@ describe("KnowledgeSourcesPage", () => {
     expect(dialog.getByText(/la usa por su colección/)).toBeInTheDocument();
   });
 
+  it("con 1000 fuentes sólo materializa 25 tarjetas por página", async () => {
+    const many = Array.from({ length: 1000 }, (_, i) => ({
+      ...FILE_SOURCE,
+      id: `src-${i}`,
+      name: `Doc ${i}.pdf`,
+    }));
+    stubApi(many);
+    renderSources();
+    await waitFor(() =>
+      expect(screen.getByTestId("source-card-src-0")).toBeInTheDocument(),
+    );
+    expect(screen.getAllByTestId(/^source-card-/)).toHaveLength(25);
+    expect(screen.getByTestId("source-card-src-24")).toBeInTheDocument();
+    expect(screen.queryByTestId("source-card-src-25")).toBeNull();
+  });
+
   it("pagina de a 25 fuentes", async () => {
     const many = Array.from({ length: 26 }, (_, i) => ({
       ...FILE_SOURCE,
