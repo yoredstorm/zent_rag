@@ -66,9 +66,14 @@ export function LearningHero({
   connected: boolean;
 }) {
   const finished = ["completed", "partial"].includes(detail.status);
-  const total = Math.max(1, detail.source_count);
-  const completed = detail.completed_sources;
-  const progress = Math.min(100, Math.round((completed / total) * 100));
+  const ready = Math.min(
+    detail.source_count,
+    detail.completed_sources + detail.available_sources,
+  );
+  const busy = Math.max(
+    0,
+    detail.source_count - ready - detail.failed_sources,
+  );
   const taxonomy = taxonomyCounts(delta);
   const partial = detail.status === "partial" || detail.failed_sources > 0;
 
@@ -90,27 +95,29 @@ export function LearningHero({
           {active
             ? "Comprendiendo y conectando conocimiento"
             : partial
-              ? "El conocimiento quedó disponible; hay puntos por revisar"
-              : "El conocimiento de tu empresa creció con esta carga"}
+              ? "Parte del conocimiento quedó disponible; hay puntos por revisar"
+              : "El procesamiento terminó. Revisa qué quedó disponible."}
         </p>
 
         <div className="ks-hero-progress" data-testid="learning-progress">
-          <div className="flex items-baseline justify-between gap-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
             <span className="text-[13px] text-text">
-              Fuentes comprendidas{" "}
+              Fuentes listas para consultar{" "}
               <span className="font-mono tabular-nums">
-                {completed} / {detail.source_count}
+                {ready} / {detail.source_count}
               </span>
             </span>
             <span className="text-[11px] text-faint">
-              {progress}% ·{" "}
-              {detail.available_sources} consultable
-              {detail.available_sources === 1 ? "" : "s"}
+              {busy > 0 ? `${busy} en proceso` : "Sin fuentes en proceso"}
+              {detail.failed_sources > 0
+                ? ` · ${detail.failed_sources} por revisar`
+                : ""}
             </span>
           </div>
-          <span className="ks-hero-bar" aria-hidden>
-            <span style={{ width: `${progress}%` }} />
-          </span>
+          <p className="mt-1 text-[11px] leading-relaxed text-faint">
+            Listo para consultar significa que la fuente terminó su indexación y
+            puede recuperarse con citas. No implica que el contenido sea correcto.
+          </p>
         </div>
 
         <dl className="ks-hero-metrics">

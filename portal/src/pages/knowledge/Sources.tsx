@@ -1,31 +1,18 @@
 import {
   ArrowsClockwise,
   Database,
-  FolderSimple,
-  Globe,
   MagnifyingGlass,
-  Plugs,
   Plus,
   Trash,
-  X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { FileDropzone } from "../../components/FileDropzone";
-import { SelectedFilesList, UploadResultsList } from "../../components/UploadQueueList";
 import { SourceUsageWarning, useSourceUsage } from "../../components/SourceUsageWarning";
 import {
-  mergeSelectedFiles,
-  uploadErrorMessage,
-  type UploadItem,
-} from "../../lib/uploadQueue";
-import {
   fetchLearningSessions,
-  sealLearningSession,
-  startLearningSession,
   type LearningSessionDetail,
 } from "../../lib/knowledgeSessions";
 import { useLearningJob } from "../../learningJob";
@@ -36,7 +23,6 @@ import {
   DataTable,
   EmptyState,
   ErrorInline,
-  Field,
   IconButton,
   Input,
   PageHeader,
@@ -52,6 +38,7 @@ import {
 import { StatusBadge } from "../../components/ui/Badge";
 import { MarketplaceSurfaceDialog } from "../../components/marketplace/MarketplaceSurfaceDialog";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KnowledgeImportWizard } from "../../components/knowledgeImport/KnowledgeImportWizard";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtNum } from "../../lib/format";
 import {
@@ -60,10 +47,6 @@ import {
   sourceTypeLabel,
 } from "./knowledgeCopy";
 import { sourceReadiness } from "./sourceState";
-
-const SOURCE_TYPES = ["sql", "web", "s3", "api", "gdrive"] as const;
-
-type SourceType = (typeof SOURCE_TYPES)[number];
 
 const PAGE_SIZE = 25;
 
@@ -78,36 +61,6 @@ const SESSION_STATUS_LABEL: Record<string, string> = {
   failed: "no se pudo completar",
   canceled: "cancelado",
 };
-
-/** Sube UN archivo por request: evita el 413 por suma de tamaños del lote. */
-async function uploadSingleFile(
-  file: File,
-  auth: { token: string; organizationId: string },
-  opts: { kbId?: string; force: boolean; sessionId?: string },
-): Promise<UploadItem> {
-  const form = new FormData();
-  form.append("files", file);
-  const params = new URLSearchParams();
-  if (opts.kbId) params.set("knowledge_base_id", opts.kbId);
-  if (opts.force) params.set("force", "true");
-  if (opts.sessionId) params.set("session_id", opts.sessionId);
-  const out = await api<{ items: UploadItem[] }>(
-    `/api/v1/sources/files/upload-batch?${params.toString()}`,
-    {
-      method: "POST",
-      token: auth.token,
-      organizationId: auth.organizationId,
-      body: form,
-    },
-  );
-  return (
-    (out.items || [])[0] ?? {
-      filename: file.name,
-      status: "error",
-      error: "El servidor no devolvió resultado para el archivo.",
-    }
-  );
-}
 
 type SourceRow = {
   id: string;
@@ -150,23 +103,6 @@ const RAIL_STATE: Record<string, RailState> = {
   indexed: "ready",
   error: "failed",
 };
-
-/**
- * Conexiones guiadas: mismo asistente para todos los puntos de entrada.
- * Los archivos se suben acá mismo; las conexiones abren el asistente con el
- * tipo ya elegido (`?kind=`), sin pasar por la pantalla de elección.
- */
-const GUIDED_SOURCES: Array<{
-  kind: "database" | "website" | "api" | "drive";
-  icon: typeof Database;
-  label: string;
-  desc: string;
-}> = [
-  { kind: "database", icon: Database, label: "Base de datos", desc: "ERP o base empresarial" },
-  { kind: "website", icon: Globe, label: "Sitio web", desc: "Zent lee tu sitio" },
-  { kind: "api", icon: Plugs, label: "API", desc: "Sistemas externos" },
-  { kind: "drive", icon: FolderSimple, label: "Google Drive", desc: "Carpeta compartida" },
-];
 
 const PROFILE_COLUMNS: Column<ProfileCol>[] = [
   {
@@ -229,17 +165,6 @@ export default function KnowledgeSourcesPage() {
   const [loadError, setLoadError] = useState("");
   const [msg, setMsg] = useState("");
   const [profile, setProfile] = useState<{ sourceId: string; tables: { name: string; columns: ProfileCol[] }[] } | null>(null);
-  const [advanced, setAdvanced] = useState(false);
-  const [name, setName] = useState("");
-  const [type, setType] = useState<SourceType>("web");
-  const [folderId, setFolderId] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadCompleted, setUploadCompleted] = useState(0);
-  const [uploadTotal, setUploadTotal] = useState(0);
-  const [retrying, setRetrying] = useState("");
   const [syncingId, setSyncingId] = useState("");
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [pendingDelete, setPendingDelete] = useState<SourceRow | null>(null);
@@ -247,11 +172,11 @@ export default function KnowledgeSourcesPage() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [recentSessions, setRecentSessions] = useState<LearningSessionDetail[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  // `?new=1` abre el alta: todos los puntos de entrada caen en el mismo flujo.
-  const [showCreate, setShowCreate] = useState(() => searchParams.get("new") === "1");
+  // `?new=1` abre el alta; `session_id` recupera una incorporación tras refresh.
+  const [showCreate, setShowCreate] = useState(
+    () => searchParams.get("new") === "1" || Boolean(searchParams.get("session_id")),
+  );
   const [showMarketplace, setShowMarketplace] = useState(false);
 
   const closeCreate = useCallback(() => {
@@ -342,7 +267,6 @@ export default function KnowledgeSourcesPage() {
     const sourceName = (pending.name || "").trim();
     const folder = (pending.folder_id || "").trim();
     if (!sourceName || !folder) return;
-    setCreating(true);
     api("/api/v1/sources", {
       method: "POST",
       token: session.token,
@@ -357,200 +281,8 @@ export default function KnowledgeSourcesPage() {
         setMsg("Fuente de Google Drive creada. Los tokens no se guardan en la fuente.");
         load();
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
-      .finally(() => setCreating(false));
+      .catch((err) => setError(err instanceof Error ? err.message : "Error"));
   }, [session, load]);
-
-  async function create() {
-    if (!session) return;
-    setError("");
-    setMsg("");
-    if (type === "gdrive") {
-      if (!folderId.trim()) {
-        setError("Indica el ID de la carpeta de Google Drive.");
-        return;
-      }
-      setCreating(true);
-      try {
-        sessionStorage.setItem(
-          PENDING_KEY,
-          JSON.stringify({ name: name.trim(), folder_id: folderId.trim() }),
-        );
-        const started = await api<{ authorization_url: string; connector_id: string }>(
-          "/api/v1/connectors/oauth/drive/start",
-          {
-            method: "POST",
-            token: session.token,
-            organizationId: session.organizationId,
-            body: JSON.stringify({
-              name: name.trim(),
-              folder_id: folderId.trim(),
-            }),
-          },
-        );
-        window.location.assign(started.authorization_url);
-      } catch (err) {
-        sessionStorage.removeItem(PENDING_KEY);
-        setError(err instanceof Error ? err.message : "Error al conectar Drive");
-        setCreating(false);
-      }
-      return;
-    }
-    setCreating(true);
-    try {
-      const kbId = await ensureKbId();
-      await api("/api/v1/sources", {
-        method: "POST",
-        token: session.token,
-        organizationId: session.organizationId,
-        body: JSON.stringify({
-          name: name.trim(),
-          type,
-          knowledge_base_id: kbId || null,
-          config: {},
-        }),
-      });
-      setMsg("Fuente creada.");
-      setName("");
-      setShowCreate(false);
-      setAdvanced(false);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al crear");
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  function addUploadFiles(list: FileList | File[]) {
-    const incoming = Array.from(list);
-    if (incoming.length === 0) return;
-    setUploadItems([]);
-    setUploadFiles((prev) => mergeSelectedFiles(prev, incoming));
-  }
-
-  async function uploadAll(force: boolean) {
-    if (!session?.token || uploadFiles.length === 0) return;
-    const auth = { token: session.token, organizationId: session.organizationId };
-    setUploading(true);
-    setUploadCompleted(0);
-    setUploadTotal(uploadFiles.length);
-    setError("");
-    setMsg("");
-    const results: UploadItem[] = [];
-    let created = 0;
-    let failed = 0;
-    let sessionId: string | null = null;
-    try {
-      const kbId = await ensureKbId();
-      // Una sola sesión de aprendizaje agrupa todos los archivos del lote:
-      // "ZENT está aprendiendo · N fuentes", con eventos reales por fuente.
-      try {
-        const learning = await startLearningSession({
-          title:
-            uploadFiles.length === 1
-              ? `Aprendiendo ${uploadFiles[0].name}`
-              : `Aprendiendo ${uploadFiles.length} fuentes`,
-          origin: "upload",
-        });
-        sessionId = learning.session_id;
-        setActiveSessionId(sessionId);
-        trackLearning(sessionId, learning);
-      } catch {
-        // Sin sesión de aprendizaje: la carga de archivos sigue funcionando.
-      }
-      for (const file of uploadFiles) {
-        try {
-          const item = await uploadSingleFile(file, auth, {
-            kbId,
-            force,
-            sessionId: sessionId ?? undefined,
-          });
-          results.push(item);
-          if (item.status === "created") created += 1;
-          else if (item.status === "error" || item.status === "rejected") failed += 1;
-        } catch (err) {
-          failed += 1;
-          results.push({
-            filename: file.name,
-            status: "error",
-            error: uploadErrorMessage(err),
-          });
-        }
-        // Progreso por archivo: los que falten siguen aunque uno falle.
-        setUploadItems([...results]);
-        setUploadCompleted(results.length);
-      }
-      if (created > 0) {
-        setMsg(
-          created === 1
-            ? "1 archivo en aprendizaje."
-            : `${created} archivos en aprendizaje.`,
-        );
-      }
-      if (failed > 0) {
-        setError(
-          failed === 1
-            ? "1 archivo no se pudo subir. Revisa el detalle."
-            : `${failed} archivos no se pudieron subir. Revisa el detalle.`,
-        );
-      }
-      if (created > 0 && sessionId) {
-        // El lote terminó: la sesión puede declarar el aprendizaje completo
-        // cuando todas las fuentes estén disponibles.
-        try {
-          await sealLearningSession(sessionId);
-        } catch {
-          // sin sello, el backend la cierra sola tras el margen de seguridad
-        }
-        navigate(`/knowledge/sessions/${sessionId}`);
-        return;
-      }
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al subir");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function retryUpload(item: UploadItem) {
-    if (!session?.token) return;
-    const file = uploadFiles.find((f) => f.name === item.filename);
-    if (!file) return;
-    setRetrying(item.filename);
-    setError("");
-    try {
-      const kbId = await ensureKbId();
-      const result = await uploadSingleFile(
-        file,
-        { token: session.token, organizationId: session.organizationId },
-        { kbId, force: true, sessionId: activeSessionId ?? undefined },
-      );
-      setUploadItems((prev) =>
-        prev.map((i) => (i.filename === item.filename ? result : i)),
-      );
-      if (result.status === "created") setMsg("Copia creada. En cola de procesamiento.");
-      load();
-    } catch (err) {
-      setError(uploadErrorMessage(err));
-    } finally {
-      setRetrying("");
-    }
-  }
-
-  async function ensureKbId(): Promise<string | undefined> {
-    if (!session) return undefined;
-    if (kbs[0]) return kbs[0].id;
-    const created = await api<KnowledgeBase>("/api/v1/knowledge-bases", {
-      method: "POST",
-      token: session.token,
-      organizationId: session.organizationId,
-      body: JSON.stringify({ name: COPY.principalKb }),
-    });
-    setKbs((prev) => [...prev, created]);
-    return created.id;
-  }
 
   async function assignKb(sourceId: string, knowledgeBaseId: string) {
     if (!session || !knowledgeBaseId) return;
@@ -695,255 +427,34 @@ export default function KnowledgeSourcesPage() {
         <SuccessInline message={msg} className="mb-0" />
 
         {showCreate && (
-          <Panel>
-            <PanelHeader
-              title="Añadir información"
-              description="Elegí cómo querés incorporar conocimiento. Todo termina en la misma lista de fuentes."
-              actions={
-                <IconButton
-                  label="Cerrar alta de fuente"
-                  icon={X}
-                  onClick={closeCreate}
-                />
-              }
-            />
-            <div className="panel-body flex flex-col gap-3">
-              <ol aria-label="Etapas de incorporación" className="grid grid-cols-3 gap-2">
-                <li className="rounded-md border border-accent bg-accent/10 px-3 py-2 text-xs text-text">
-                  <strong>1. Elegir</strong><span className="mt-1 block text-muted">Archivo o conexión</span>
-                </li>
-                <li className="rounded-md border border-border px-3 py-2 text-xs text-muted">
-                  <strong>2. Incorporar</strong><span className="mt-1 block">Transferencia y lectura</span>
-                </li>
-                <li className="rounded-md border border-border px-3 py-2 text-xs text-muted">
-                  <strong>3. Consultar</strong><span className="mt-1 block">Comprobar las respuestas</span>
-                </li>
-              </ol>
-              <div
-                className="grid gap-2 sm:grid-cols-3"
-                data-testid="add-information-options"
-              >
-                <button
-                  type="button"
-                  className="flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 text-left transition-colors hover:border-border-strong"
-                  onClick={() =>
-                    document
-                      .querySelector<HTMLInputElement>('[data-testid="source-files"]')
-                      ?.click()
-                  }
-                >
-                  <Plus size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden />
-                  <span>
-                    <span className="block text-[13px] font-medium text-text">
-                      Subir archivos
-                    </span>
-                    <span className="block text-[11px] leading-relaxed text-faint">
-                      PDF, DOCX, CSV o Excel.
-                    </span>
-                  </span>
-                </button>
-                <Link
-                  to="/knowledge/add"
-                  className="flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 transition-colors hover:border-border-strong"
-                >
-                  <Plugs size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden />
-                  <span>
-                    <span className="block text-[13px] font-medium text-text">
-                      Conectar un sistema
-                    </span>
-                    <span className="block text-[11px] leading-relaxed text-faint">
-                      Base de datos, Drive, web o API.
-                    </span>
-                  </span>
-                </Link>
-                <button
-                  type="button"
-                  className="flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 text-left transition-colors hover:border-border-strong"
-                  onClick={() => {
-                    closeCreate();
-                    window.setTimeout(() => {
-                      document
-                        .getElementById("knowledge-source-list")
-                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }, 50);
-                  }}
-                >
-                  <FolderSimple size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden />
-                  <span>
-                    <span className="block text-[13px] font-medium text-text">
-                      Usar una fuente existente
-                    </span>
-                    <span className="block text-[11px] leading-relaxed text-faint">
-                      Revisá lo que ya está cargado.
-                    </span>
-                  </span>
-                </button>
-              </div>
-
-              <FileDropzone
-                onFiles={addUploadFiles}
-                inputTestId="source-files"
-                dropzoneTestId="source-dropzone"
-              />
-
-              <SelectedFilesList
-                files={uploadFiles}
-                onRemove={(file) =>
-                  setUploadFiles((prev) => prev.filter((f) => f !== file))
-                }
-              />
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="primary"
-                  leadingIcon={Plus}
-                  loading={uploading}
-                  disabled={uploading || uploadFiles.length === 0}
-                  onClick={() => void uploadAll(false)}
-                >
-                  {uploadFiles.length > 1
-                    ? `Subir ${uploadFiles.length} archivos`
-                    : "Subir e indexar"}
-                </Button>
-                {uploadFiles.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setUploadFiles([]);
-                      setUploadItems([]);
-                    }}
-                  >
-                    Limpiar
-                  </Button>
-                )}
-              </div>
-
-              <p className="text-[13px] leading-relaxed text-muted">
-                {kbs.length > 0
-                  ? `Se indexa en la colección ${kbs[0].name}.`
-                  : "Se crea la colección Principal y se indexa ahí."}{" "}
-                Después puedes marcarla en Agent Studio.
-              </p>
-
-              {uploading && (
-                <div className="rounded-lg border border-border bg-soft p-3" role="status" aria-live="polite" data-testid="upload-live-progress">
-                  <div className="flex items-center justify-between gap-2 text-sm">
-                    <strong>Enviando archivos</strong>
-                    <span className="tabular-nums">{uploadCompleted} de {uploadTotal}</span>
-                  </div>
-                  <progress className="mt-2 block h-2 w-full accent-accent" aria-label="Archivos enviados"
-                    value={uploadCompleted} max={uploadTotal || 1} />
-                  <p className="mt-2 text-xs text-muted">
-                    Progreso real por archivo recibido, no porcentaje del procesamiento.
-                    Después seguirás la lectura e indexación en la sesión en vivo.
-                  </p>
-                </div>
-              )}
-              <UploadResultsList
-                items={uploadItems}
-                retrying={retrying}
-                onRetry={(item) => void retryUpload(item)}
-              />
-
-              <div className="border-t border-border-soft pt-3">
-                <p className="eyebrow mb-2">Conectar un sistema</p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  {GUIDED_SOURCES.map((item) => (
-                    <Link
-                      key={item.kind}
-                      to={`/knowledge/add?kind=${item.kind}`}
-                      className="group flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 transition-[border-color,background-color,transform] duration-300 ease-[var(--ease-swift)] hover:-translate-y-0.5 hover:border-border-strong"
-                    >
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border bg-surface text-accent transition-transform duration-300 ease-[var(--ease-swift)] group-hover:scale-105">
-                        <item.icon size={14} aria-hidden />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[13px] font-medium text-text">
-                          {item.label}
-                        </span>
-                        <span className="block text-[11px] leading-relaxed text-faint">
-                          {item.desc}
-                        </span>
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <Button variant="ghost" size="sm" onClick={() => setAdvanced((v) => !v)}>
-                  {advanced
-                    ? "Ocultar conexión directa"
-                    : "Conexión directa (sin asistente)"}
-                </Button>
-              </div>
-
-              {advanced && (
-                <form
-                  className="flex flex-col gap-3 border-t border-border-soft pt-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void create();
-                  }}
-                >
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Nombre" hint="Cómo vas a reconocer esta fuente en los agentes.">
-                      <Input
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        autoComplete="off"
-                        required
-                      />
-                    </Field>
-                    <Field label="Tipo">
-                      <Select value={type} onChange={(e) => setType(e.target.value as SourceType)}>
-                        {SOURCE_TYPES.map((t) => (
-                          <option key={t} value={t}>
-                            {sourceTypeLabel(t)}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                  </div>
-
-                  {type === "gdrive" && (
-                    <Field
-                      label="ID de carpeta de Google Drive"
-                      hint="1abc… (ID de la carpeta, no la URL). Se autoriza solo lectura."
-                    >
-                      <Input
-                        value={folderId}
-                        onChange={(e) => setFolderId(e.target.value)}
-                        autoComplete="off"
-                        placeholder="1abc…"
-                      />
-                    </Field>
-                  )}
-
-                  <p className="prose-measure text-[13px] leading-relaxed text-muted">
-                    {type === "gdrive"
-                      ? "Se abre Google para autorizar solo lectura. El refresh token vive en el almacén de secretos, nunca en la fuente."
-                      : "Las credenciales de conectores viven en Vault, no en esta ficha."}
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="submit"
-                      variant="primary"
-                      loading={creating}
-                      leadingIcon={Plus}
-                      disabled={creating || !name.trim()}
-                    >
-                      {type === "gdrive" ? "Conectar Google Drive" : "Crear fuente"}
-                    </Button>
-                    <Button variant="ghost" onClick={closeCreate}>
-                      Cancelar
-                    </Button>
-                  </div>
-                </form>
-              )}
-            </div>
-          </Panel>
+          <KnowledgeImportWizard
+            open={showCreate}
+            onClose={closeCreate}
+            initialSessionId={searchParams.get("session_id")}
+            initialCorpusId={searchParams.get("corpus_id")}
+            onSession={(sessionId) => {
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.set("session_id", sessionId);
+                  return next;
+                },
+                { replace: true },
+              );
+            }}
+            onMinimize={(sessionId) => {
+              trackLearning(sessionId);
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.set("session_id", sessionId);
+                  return next;
+                },
+                { replace: true },
+              );
+              closeCreate();
+            }}
+          />
         )}
 
         {recentSessions.length > 0 && (

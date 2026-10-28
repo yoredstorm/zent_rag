@@ -96,10 +96,10 @@ export function interpretHealth(health: KnowledgeHealth): string {
   const unmeasured = health.total_dimensions - health.measured_dimensions;
   const prefix =
     overall >= 85
-      ? "Tu Knowledge OS está saludable."
+      ? "El conocimiento de tu empresa está bien respaldado."
       : overall >= 65
-        ? "Tu Knowledge OS está estable, con puntos por reforzar."
-        : "Tu Knowledge OS necesita atención.";
+        ? "El conocimiento está estable, con puntos por reforzar."
+        : "El conocimiento necesita atención.";
   const weak = health.dimensions
     .filter((d) => d.measured && d.score != null && d.score < 60)
     .map((d) => d.label.toLowerCase());

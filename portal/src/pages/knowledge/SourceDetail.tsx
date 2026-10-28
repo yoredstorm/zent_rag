@@ -1,4 +1,13 @@
-import { ArrowsClockwise, ChatCircleDots, Code, Files, Robot, Table, Trash } from "@phosphor-icons/react";
+import {
+  ArrowsClockwise,
+  ChatCircleDots,
+  Code,
+  Files,
+  Robot,
+  Table,
+  Trash,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
@@ -75,6 +84,16 @@ type SourceDocument = {
     version?: string | null;
     mode?: string | null;
     structure_source?: string | null;
+  } | null;
+  understanding?: {
+    pages?: number | null;
+    sections?: number | null;
+    tables?: number | null;
+    figures?: number | null;
+    warnings?: string[] | null;
+    ocr_pages?: number[] | null;
+    extraction_quality?: number | null;
+    pipeline_state?: string | null;
   } | null;
 };
 
@@ -565,6 +584,131 @@ export default function SourceDetailPage() {
                     ) : null}
                   </div>
                 </Panel>
+
+                {docs > 0 || tabular ? (
+                  <Panel className="mt-4" data-testid="source-insights">
+                    <PanelHeader
+                      title="Esto encontró ZENT"
+                      description="Hechos comprobables de la lectura. No es una estimación de calidad."
+                    />
+                    <div className="panel-body flex flex-col gap-3">
+                      <ul className="grid gap-2 sm:grid-cols-3">
+                        <li className="rounded-md border border-border-soft bg-soft/60 px-3 py-2">
+                          <p className="text-[11px] text-faint">Documentos detectados</p>
+                          <p className="mt-1 text-lg font-semibold text-text">
+                            {fmtNum(docs)}
+                          </p>
+                        </li>
+                        <li className="rounded-md border border-border-soft bg-soft/60 px-3 py-2">
+                          <p className="text-[11px] text-faint">Filas estructuradas</p>
+                          <p className="mt-1 text-lg font-semibold text-text">
+                            {tabular
+                              ? fmtNum(
+                                  tabular.workbooks.reduce(
+                                    (sum, workbook) => sum + workbook.row_count,
+                                    0,
+                                  ),
+                                )
+                              : "—"}
+                          </p>
+                        </li>
+                        <li className="rounded-md border border-border-soft bg-soft/60 px-3 py-2">
+                          <p className="text-[11px] text-faint">Hojas / tablas</p>
+                          <p className="mt-1 text-lg font-semibold text-text">
+                            {tabular
+                              ? `${fmtNum(
+                                  tabular.workbooks.reduce(
+                                    (sum, workbook) => sum + workbook.sheet_count,
+                                    0,
+                                  ),
+                                )} / ${fmtNum(tabular.tables.length)}`
+                              : "—"}
+                          </p>
+                        </li>
+                      </ul>
+                      {tabular && tabular.workbooks.length > 0 ? (
+                        <p className="text-xs leading-relaxed text-muted">
+                          {tabular.workbooks
+                            .map(
+                              (workbook) =>
+                                `${workbook.filename}: ${workbook.sheet_count} hoja(s), ${workbook.table_count} tabla(s), ${fmtNum(
+                                  workbook.row_count,
+                                )} fila(s)`,
+                            )
+                            .join(" · ")}
+                        </p>
+                      ) : null}
+                      {source.error_count > 0 ? (
+                        <p className="flex items-start gap-1 text-xs text-warn">
+                          <WarningCircle size={13} className="mt-0.5 shrink-0" aria-hidden />
+                          Hay {fmtNum(source.error_count)} incidencia(s) de lectura. Revisa
+                          Documentos antes de usar esta fuente.
+                        </p>
+                      ) : null}
+                      <details className="rounded-md border border-border-soft px-3 py-2">
+                        <summary className="cursor-pointer text-xs font-medium text-text">
+                          Ver más detalles
+                        </summary>
+                        <ul className="mt-2 flex flex-col gap-1 text-[11px] text-muted">
+                          {documents.slice(0, 8).map((document) => (
+                            <li key={document.id} className="flex flex-wrap gap-x-2">
+                              <span className="mono text-text">{document.external_id}</span>
+                              <span>{documentStatusLabel(document.status)}</span>
+                              {document.parser?.engine ? (
+                                <span>
+                                  {document.parser.engine}
+                                  {document.parser.version
+                                    ? ` · ${document.parser.version}`
+                                    : ""}
+                                </span>
+                              ) : null}
+                              {document.understanding ? (
+                                <span>
+                                  {document.understanding.pages
+                                    ? `${fmtNum(document.understanding.pages)} página(s)`
+                                    : "páginas no medidas"}
+                                  {typeof document.understanding.sections === "number"
+                                    ? ` · ${fmtNum(document.understanding.sections)} sección(es)`
+                                    : ""}
+                                  {typeof document.understanding.tables === "number"
+                                    ? ` · ${fmtNum(document.understanding.tables)} tabla(s)`
+                                    : ""}
+                                </span>
+                              ) : null}
+                              {document.understanding?.warnings?.length ? (
+                                <span className="text-warn">
+                                  {document.understanding.warnings.length} aviso(s) de lectura
+                                </span>
+                              ) : null}
+                            </li>
+                          ))}
+                          {documents.length > 8 ? (
+                            <li>+{documents.length - 8} documento(s) más</li>
+                          ) : null}
+                        </ul>
+                        <p className="mt-2 text-[11px] text-faint">
+                          La muestra respeta los permisos de esta fuente; no se
+                          descargan tablas completas ni contenido de otras organizaciones.
+                        </p>
+                      </details>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setTab("documentos")}>
+                          Ver documentos
+                        </Button>
+                        {tabular ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void loadPreview()}
+                            loading={previewLoading}
+                          >
+                            Ver muestra de la tabla
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </Panel>
+                ) : null}
 
                 {knowledgeImpact &&
                 (knowledgeImpact.compilations.length > 0 ||

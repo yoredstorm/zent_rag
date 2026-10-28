@@ -85,7 +85,9 @@ test.describe("P17-00 baseline de conocimiento", () => {
     expect(corpusResponse.ok()).toBeTruthy();
     const corpus = (await corpusResponse.json()) as { corpus: { id: string } };
 
-    const upload = await request.post("/api/v1/sources/files/upload-batch", {
+    const upload = await request.post(
+      `/api/v1/sources/files/upload-batch?corpus_id=${corpus.corpus.id}`,
+      {
       headers: {
         Authorization: headers.Authorization,
         "X-Organization-Id": headers["X-Organization-Id"],
@@ -183,12 +185,15 @@ test.describe("P17-00 baseline de conocimiento", () => {
       console.log("P17 baseline: navigated to workspace");
       const question = page.getByPlaceholder("Haz una pregunta sobre el corpus…");
       await expect(question).toBeVisible({ timeout: 30_000 });
+      await expect(
+        page.getByRole("button", { name: /atpco\.pdf/i }).first(),
+      ).toBeVisible({ timeout: 30_000 });
       test.info().annotations.push({
         type: "citation_ui",
         description:
-          "NOT_VERIFIED: el workspace carga, pero la cita no abre un viewer porque la fuente no está asociada al corpus (gap P17-04).",
+          "source linked to corpus; viewer remains the existing workspace PDF viewer",
       });
-      console.log("P17 baseline: citation UI gap recorded");
+      console.log("P17 baseline: source linked to corpus");
 
       const conflicts = await request.get("/api/v1/knowledge/conflicts?status=open", {
         headers,

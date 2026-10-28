@@ -70,15 +70,25 @@ export function AgentKnowledgeSection({
             Este agente podrá consultar estas fuentes respetando sus permisos.
           </p>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          aria-expanded={managing}
-          aria-controls="agent-knowledge-picker"
-          onClick={() => setManaging((value) => !value)}
-        >
-          {managing ? "Listo" : "Administrar conocimiento"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/knowledge/sources?new=1"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-accent hover:underline"
+          >
+            Añadir información
+          </a>
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-expanded={managing}
+            aria-controls="agent-knowledge-picker"
+            onClick={() => setManaging((value) => !value)}
+          >
+            {managing ? "Listo" : "Administrar conocimiento"}
+          </Button>
+        </div>
       </div>
 
       {loading ? (

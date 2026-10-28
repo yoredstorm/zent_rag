@@ -191,9 +191,9 @@ export function UploadResultsList({
       className={cn("flex max-h-48 flex-col gap-1.5 overflow-y-auto", className)}
       data-testid={testId}
     >
-      {items.map((item) => (
+      {items.map((item, index) => (
         <li
-          key={item.filename}
+          key={`${item.filename}:${index}`}
           className="animate-rise flex flex-wrap items-center gap-2 rounded-sm border border-border-soft px-2.5 py-2 text-[12.5px]"
         >
           <span className="min-w-0 flex-1 truncate text-text">

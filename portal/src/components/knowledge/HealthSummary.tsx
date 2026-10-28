@@ -39,16 +39,19 @@ export function HealthSummary({
         <div className="flex flex-col items-start gap-3">
           <p className="eyebrow flex items-center gap-2">
             <Heartbeat size={12} className="text-accent" aria-hidden />
-            Knowledge Health
+            Calidad del conocimiento
           </p>
           <div className="flex items-center gap-4">
             <HealthIndicator value={health.overall} size={92} />
             <div>
               <p className="text-h3">
-                {health.overall != null ? `${Math.round(health.overall)}%` : "Sin medir"}
+                {health.overall != null
+                  ? `Calidad medida: ${Math.round(health.overall)} de 100`
+                  : "Sin medir"}
               </p>
               <p className="text-xs text-muted">
-                {health.measured_dimensions} de {health.total_dimensions} dimensiones
+                {health.measured_dimensions} de {health.total_dimensions} señales
+                medidas. Las no medidas no cuentan como cero.
               </p>
             </div>
           </div>

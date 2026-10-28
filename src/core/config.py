@@ -585,9 +585,9 @@ class Settings(BaseSettings):
         ),
     )
     KNOWLEDGE_SIMPLE_UX_ENABLED: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Activa la navegación P17 de cuatro experiencias. Rollback visual: "
+            "Navegación principal de cuatro experiencias. Rollback visual: "
             "volver a false; las rutas legacy siguen."
         ),
     )

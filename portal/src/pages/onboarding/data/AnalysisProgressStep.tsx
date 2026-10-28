@@ -3,7 +3,7 @@ import { UploadQueueList } from "../../../components/UploadQueueList";
 import { rowsFromJobFiles } from "../../../lib/uploadQueue";
 import { WizardLearningPanel } from "../../../components/knowledgeSession/WizardLearningPanel";
 import { WIZARD_STEP_HEADINGS, type ProgressFile } from "./types";
-import { analyzePercent, type AnalyzeGlimpse } from "./wizardUx";
+import type { AnalyzeGlimpse } from "./wizardUx";
 
 const IDLE_PHRASES = [
   "Leyendo el archivo…",
@@ -19,10 +19,8 @@ export function AnalysisProgressStep({
   onToggleTech,
   onContinue,
   ready,
-  percent,
   glimpses = [],
   files = [],
-  status,
   learningSessionId = null,
 }: {
   headline: string;
@@ -38,16 +36,9 @@ export function AnalysisProgressStep({
   status?: string | null;
   learningSessionId?: string | null;
 }) {
-  const jobProgress =
-    typeof technical?.job_progress === "number" ? (technical.job_progress as number) : null;
   const pages =
     typeof technical?.pages === "number" ? ` (${String(technical.pages)} páginas)` : "";
   const visibleGlimpses = glimpses.slice(0, 12);
-  const displayPercent = ready
-    ? 100
-    : typeof percent === "number"
-      ? percent
-      : analyzePercent({ phases, status, jobProgress });
   const [idleIdx, setIdleIdx] = useState(0);
 
   useEffect(() => {
@@ -70,19 +61,19 @@ export function AnalysisProgressStep({
       <p className="mt-1 text-sm text-muted">
         {headline || "Zent está entendiendo tu fuente"}
       </p>
-      <div className="mt-6 flex justify-center sm:justify-start">
-        <div
-          className="analyze-ring"
-          role="progressbar"
-          aria-label="Progreso del análisis"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={displayPercent}
-          data-testid="analyze-ring"
-          style={{ ["--p" as string]: displayPercent }}
-        >
-          <div className="analyze-ring-inner">{displayPercent}%</div>
-        </div>
+      <div
+        className="mt-6 rounded-md border border-border bg-soft px-4 py-3"
+        role="status"
+        data-testid="analyze-ring"
+      >
+        <p className="text-sm font-medium text-text">
+          {ready ? "Listo para revisar" : "En proceso"}
+        </p>
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          {ready
+            ? "El procesamiento terminó. Revisa lo encontrado antes de continuar."
+            : "No mostramos un porcentaje: el backend no expone avance por etapas. Las fases de abajo reflejan señales reales."}
+        </p>
       </div>
       <p className="mt-3 text-sm text-text" aria-live="polite" data-testid="analyze-live">
         {live}

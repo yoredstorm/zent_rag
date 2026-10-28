@@ -141,12 +141,16 @@ export function LearningSessionView({ sessionId }: { sessionId: string }) {
           <p>
             {failed
               ? "ZENT no pudo completar esta sesión."
-              : `ZENT aprendió ${detail.completed_sources} de ${detail.source_count} fuentes. ${detail.failed_sources} necesita${
-                  detail.failed_sources === 1 ? "" : "n"
-                } atención.`}{" "}
+              : `${Math.min(
+                  detail.source_count,
+                  detail.completed_sources + detail.available_sources,
+                )} de ${detail.source_count} fuentes quedaron listas para consultar. ${
+                  detail.failed_sources
+                } necesita${detail.failed_sources === 1 ? "" : "n"} atención.`}{" "}
             <span className="text-muted">
-              El resto del conocimiento está disponible: revisa el detalle en cada
-              fuente para ver qué parte quedó parcialmente aprendida.
+              {detail.is_available
+                ? "El conocimiento disponible se puede consultar; revisa el detalle de cada fuente antes de usarlo en una tarea crítica."
+                : "No hay una fuente consultable todavía. Revisa el detalle del error antes de reintentar."}
             </span>
           </p>
         </div>

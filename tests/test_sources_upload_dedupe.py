@@ -175,6 +175,27 @@ async def test_batch_upload_reports_per_file_status(
     assert all(i["name"] == i["filename"] for i in created_items)
 
 
+async def test_upload_assigns_default_corpus(
+    async_client, org, isolated_settings
+) -> None:
+    """Una carga explícita queda ligada al corpus consultable por defecto."""
+    data = fx.atpco_workbook_bytes()
+    upload = await async_client.post(
+        "/api/v1/sources/files/upload",
+        headers=_headers(org),
+        files={"file": ("CORPUS_LINK.xlsx", data, "application/octet-stream")},
+    )
+    assert upload.status_code == 201, upload.text
+    body = upload.json()
+    assert body["corpus_id"], "la respuesta debe devolver el corpus de la carga"
+
+    source = await async_client.get(
+        f"/api/v1/sources/{body['id']}", headers=_headers(org)
+    )
+    assert source.status_code == 200, source.text
+    assert source.json()["corpus_id"] == body["corpus_id"]
+
+
 async def test_batch_upload_force_creates_copy(
     async_client, org, isolated_settings
 ) -> None:

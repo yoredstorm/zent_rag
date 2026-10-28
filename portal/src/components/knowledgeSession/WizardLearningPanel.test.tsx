@@ -63,7 +63,7 @@ describe("WizardLearningPanel", () => {
     expect(screen.getByTestId("wizard-learning-panel")).toBeInTheDocument();
     expect(screen.getByText("ZENT está aprendiendo")).toBeInTheDocument();
     expect(screen.getByText("286")).toBeInTheDocument();
-    expect(screen.getByText("Conectando")).toBeInTheDocument();
+    expect(screen.getByText("Relacionando información")).toBeInTheDocument();
     expect(screen.getByText("Rec4_dapp_C.pdf")).toBeInTheDocument();
     expect(
       screen.getByText("ZENT reconoció una entidad nueva: Record 4"),

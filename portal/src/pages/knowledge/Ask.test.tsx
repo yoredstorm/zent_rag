@@ -11,15 +11,15 @@ vi.mock("../../api", async (importOriginal) => {
   return { ...actual, api };
 });
 
-vi.mock("../../auth", () => ({
-  useAuth: () => ({
-    session: {
-      token: "t",
-      organizationId: "o",
-      permissions: ["knowledge:read", "knowledge:write"],
-    },
-  }),
+const AUTH = vi.hoisted(() => ({
+  session: {
+    token: "t",
+    organizationId: "o",
+    permissions: ["knowledge:read", "knowledge:write"],
+  },
 }));
+
+vi.mock("../../auth", () => ({ useAuth: () => AUTH }));
 
 function json(body: unknown) {
   return Promise.resolve(body);

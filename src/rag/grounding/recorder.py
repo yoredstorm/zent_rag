@@ -35,10 +35,34 @@ class GroundingLedgerRecorder:
         task_id: UUID | None = None,
     ) -> list[UUID]:
         """Agrega una fila de evidencia por cita con excerpt no vacío."""
-        evidence_ids: list[UUID] = []
+        aligned = await self.record_evidence_aligned(
+            organization_id=organization_id,
+            answer=answer,
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            task_id=task_id,
+        )
+        return [evidence_id for evidence_id in aligned if evidence_id is not None]
+
+    async def record_evidence_aligned(
+        self,
+        *,
+        organization_id: UUID,
+        answer: GroundedAnswer,
+        workspace_id: UUID | None = None,
+        agent_id: UUID | None = None,
+        task_id: UUID | None = None,
+    ) -> list[UUID | None]:
+        """IDs alineados con ``answer.citations``; ``None`` si no hay excerpt.
+
+        El índice de la lista coincide con el índice de la cita. Así la UI nunca
+        abre la evidencia equivocada cuando una cita no tiene excerpt.
+        """
+        evidence_ids: list[UUID | None] = []
         for citation in answer.citations:
             excerpt = citation.excerpt.strip()
             if not excerpt:
+                evidence_ids.append(None)
                 continue
             record = EvidenceRecord(
                 organization_id=organization_id,

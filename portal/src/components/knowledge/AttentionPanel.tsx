@@ -17,10 +17,12 @@ export function AttentionPanel({
   attention,
   conflicts,
   gaps,
+  measured = true,
 }: {
   attention: KnowledgeAttention[];
   conflicts: KnowledgeConflict[];
   gaps: KnowledgeGap[];
+  measured?: boolean;
 }) {
   const empty = attention.length === 0 && conflicts.length === 0 && gaps.length === 0;
   const simple = Boolean(loadSession()?.featureFlags?.knowledge_simple_ux);
@@ -44,15 +46,23 @@ export function AttentionPanel({
       </div>
       <div className="panel-body">
         {empty ? (
-          <p className="flex items-center gap-2 text-sm text-muted">
-            <CheckCircle size={15} className="text-ok" aria-hidden />
-            Nada requiere tu atención: sin conflictos ni vacíos críticos.
+          <p className="flex items-start gap-2 text-sm text-muted">
+            {measured ? (
+              <CheckCircle size={15} className="mt-0.5 shrink-0 text-ok" aria-hidden />
+            ) : (
+              <WarningCircle size={15} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+            )}
+            <span>
+              {measured
+                ? "No hay problemas medidos en este momento. Sigue revisando la evidencia antes de una tarea crítica."
+                : "Todavía no hay mediciones suficientes para afirmar que el conocimiento está sano. No es lo mismo que cero problemas."}
+            </span>
           </p>
         ) : (
           <div className="flex flex-col gap-4">
             {attention.length > 0 && (
               <ul className="flex flex-col gap-2">
-                {attention.slice(0, 5).map((item) => (
+                {attention.slice(0, 3).map((item) => (
                   <li key={`${item.kind}-${item.title}`}>
                     <Link
                       to={item.href}

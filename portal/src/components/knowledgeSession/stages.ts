@@ -9,12 +9,12 @@ export const STAGE_ORDER = [
 ] as const;
 
 export const STAGE_LABELS: Record<string, string> = {
-  reading: "Leyendo",
-  understanding: "Entendiendo",
+  reading: "Leyendo y estructurando",
+  understanding: "Entendiendo el contenido",
   organizing: "Organizando",
-  connecting: "Conectando",
+  connecting: "Relacionando información",
   verifying: "Verificando",
-  learned: "Aprendido",
+  learned: "Disponible para consultar",
 };
 
 export const STAGE_TECHNICAL: Record<string, string> = {

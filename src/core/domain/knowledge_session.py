@@ -281,6 +281,10 @@ class LearningSession:
 
     def to_dict(self) -> dict:
         delta = self.knowledge_delta or {}
+        ready_sources = min(
+            self.source_count,
+            int(self.available_sources or 0) + int(self.completed_sources or 0),
+        )
         return {
             "session_id": str(self.id),
             "organization_id": str(self.organization_id),
@@ -302,6 +306,7 @@ class LearningSession:
             "source_count": self.source_count,
             "available_sources": self.available_sources,
             "completed_sources": self.completed_sources,
+            "ready_sources": ready_sources,
             "failed_sources": self.failed_sources,
             "metrics": dict(self.metrics),
             "knowledge_delta": delta,
@@ -316,23 +321,28 @@ class LearningSession:
             "sealed_at": _iso(self.sealed_at),
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),
-            "is_available": self.status
-            in (
-                LearningSessionStatus.AVAILABLE.value,
-                LearningSessionStatus.OPTIMIZING.value,
-                LearningSessionStatus.COMPLETED.value,
-                LearningSessionStatus.PARTIAL.value,
+            "is_available": (
+                ready_sources > 0
+                or self.status
+                in (
+                    LearningSessionStatus.AVAILABLE.value,
+                    LearningSessionStatus.OPTIMIZING.value,
+                )
+                or (
+                    self.status == LearningSessionStatus.COMPLETED.value
+                    and int(self.failed_sources or 0) == 0
+                )
             ),
         }
 
 
 STAGE_LABELS: dict[str, str] = {
-    LearningStage.READING.value: "Leyendo",
-    LearningStage.UNDERSTANDING.value: "Entendiendo",
+    LearningStage.READING.value: "Leyendo y estructurando",
+    LearningStage.UNDERSTANDING.value: "Entendiendo el contenido",
     LearningStage.ORGANIZING.value: "Organizando",
-    LearningStage.CONNECTING.value: "Conectando",
+    LearningStage.CONNECTING.value: "Relacionando información",
     LearningStage.VERIFYING.value: "Verificando",
-    LearningStage.LEARNED.value: "Aprendido",
+    LearningStage.LEARNED.value: "Disponible para consultar",
 }
 
 

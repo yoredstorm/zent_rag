@@ -78,7 +78,9 @@ test.describe("Customer portal — flujo smoke", () => {
     // Knowledge
     await page.goto("/knowledge");
     await expect(page.getByTestId("knowledge-hero")).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 })).toContainText(/conocimiento/i);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      /conocimiento|información/i,
+    );
     const knowledgeNav = page.getByRole("navigation", { name: "Secciones de conocimiento" });
     const simpleNav = (await knowledgeNav.getByRole("link", { name: "Resumen" }).count()) > 0;
     const expectedTabs = simpleNav

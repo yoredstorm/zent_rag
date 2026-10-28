@@ -315,6 +315,33 @@ async def workspace_chat(
 
         groups = list(await user_group_names(ctx.organization_id, user_id))
 
+    if body.source_ids:
+        from sqlalchemy import text
+
+        from src.infrastructure.postgres.session import get_async_session
+
+        db = await get_async_session()
+        try:
+            rows = (
+                await db.execute(
+                    text(
+                        "SELECT id FROM kb_sources WHERE organization_id = :oid "
+                        "AND (workspace_id = :wid OR workspace_id IS NULL) "
+                        "AND id = ANY(:ids)"
+                    ),
+                    {
+                        "oid": ctx.organization_id,
+                        "wid": ws.id,
+                        "ids": [str(source_id) for source_id in body.source_ids],
+                    },
+                )
+            ).fetchall()
+        finally:
+            await db.close()
+        allowed = {str(row.id) for row in rows}
+        if any(str(source_id) not in allowed for source_id in body.source_ids):
+            raise HTTPException(404, "Source not found in this workspace")
+
     query_embedding = await get_embedding_provider().embed(body.query)
     if isinstance(query_embedding[0], list):
         query_embedding = query_embedding[0]
@@ -326,6 +353,7 @@ async def workspace_chat(
         user_id=user_id,
         groups=groups,
         workspace_id=ws.id,
+        source_ids=list(body.source_ids),
         top_k=100,
         rerank_top_k=12,
         score_threshold=max(settings.RAG_SCORE_THRESHOLD, 0.1),
@@ -334,11 +362,6 @@ async def workspace_chat(
         filters={
             "metadata.v2_chunk": "true",
             "workspace_id": str(ws.id),
-            **(
-                {"metadata.source_id": str(body.source_ids[0])}
-                if len(body.source_ids) == 1
-                else {}
-            ),
         },
         query_embedding=list(query_embedding),
     )
@@ -384,12 +407,17 @@ async def workspace_chat(
 
         evidence_ids = await GroundingLedgerRecorder(
             get_evidence_ledger_repo()
-        ).record_evidence(
+        ).record_evidence_aligned(
             organization_id=ctx.organization_id,
             answer=grounded,
             workspace_id=ws.id,
         )
-        payload["evidence_ids"] = [str(eid) for eid in evidence_ids]
+        payload["evidence_ids"] = [
+            str(eid) for eid in evidence_ids if eid is not None
+        ]
+        payload["citation_evidence_ids"] = [
+            str(eid) if eid is not None else None for eid in evidence_ids
+        ]
     except Exception:  # noqa: BLE001 - el ledger nunca rompe el chat
         logger.warning("Failed to record grounded evidence", corpus_id=str(corpus_id))
 

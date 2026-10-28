@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -67,6 +67,7 @@ def _source_response(source, extra: dict | None = None) -> dict:
         "type": source.type,
         "knowledge_base_id": str(source.knowledge_base_id) if source.knowledge_base_id else None,
         "workspace_id": str(source.workspace_id) if getattr(source, "workspace_id", None) else None,
+        "corpus_id": str(source.corpus_id) if getattr(source, "corpus_id", None) else None,
         "config": source.config_json,
         "status": source.status,
         "created_at": source.created_at.isoformat(),
@@ -156,6 +157,108 @@ async def _assert_own_kb(ctx, kb_id: UUID | None) -> None:
     kb = await get_kb_repo().get_kb(ctx.organization_id, kb_id)
     if kb is None:
         raise HTTPException(404, "Knowledge base not found in this organization")
+
+
+async def _resolve_upload_corpus(
+    ctx,
+    *,
+    workspace_id: UUID,
+    corpus_id: UUID | None,
+    knowledge_base_id: UUID | None,
+) -> UUID | None:
+    """Destino consultable canónico para una carga explícita.
+
+    Usa el corpus pedido, el corpus de la colección o el corpus ``Principal``
+    del workspace (lo crea una sola vez). Sin corpus, la fuente no aparecería
+    en Preguntar aunque el indexado terminara.
+    """
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        if corpus_id is not None:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM knowledge_corpora "
+                        "WHERE organization_id = :oid AND workspace_id = :wid "
+                        "AND id = :cid"
+                    ),
+                    {
+                        "oid": ctx.organization_id,
+                        "wid": workspace_id,
+                        "cid": corpus_id,
+                    },
+                )
+            ).fetchone()
+            if row is None:
+                raise HTTPException(404, "Knowledge corpus not found in this workspace")
+            return UUID(str(row.id))
+
+        if knowledge_base_id is not None:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT corpus_id FROM knowledge_bases "
+                        "WHERE organization_id = :oid AND id = :kid"
+                    ),
+                    {"oid": ctx.organization_id, "kid": knowledge_base_id},
+                )
+            ).fetchone()
+            if row is not None and row.corpus_id is not None:
+                return UUID(str(row.corpus_id))
+
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id FROM knowledge_corpora "
+                    "WHERE organization_id = :oid AND workspace_id = :wid "
+                    "ORDER BY created_at ASC LIMIT 1"
+                ),
+                {"oid": ctx.organization_id, "wid": workspace_id},
+            )
+        ).fetchone()
+        if row is None:
+            row = (
+                await session.execute(
+                    text(
+                        "INSERT INTO knowledge_corpora "
+                        "(id, organization_id, workspace_id, name, slug, status) "
+                        "VALUES (:id, :oid, :wid, 'Principal', 'principal', 'active') "
+                        "ON CONFLICT (organization_id, workspace_id, slug) "
+                        "DO UPDATE SET updated_at = now() RETURNING id"
+                    ),
+                    {
+                        "id": uuid4(),
+                        "oid": ctx.organization_id,
+                        "wid": workspace_id,
+                    },
+                )
+            ).fetchone()
+        resolved = UUID(str(row.id))
+        if knowledge_base_id is not None:
+            await session.execute(
+                text(
+                    "UPDATE knowledge_bases SET corpus_id = :cid, updated_at = now() "
+                    "WHERE organization_id = :oid AND id = :kid "
+                    "AND corpus_id IS NULL"
+                ),
+                {
+                    "cid": resolved,
+                    "oid": ctx.organization_id,
+                    "kid": knowledge_base_id,
+                },
+            )
+        await session.commit()
+        return resolved
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +509,7 @@ async def list_source_documents(
                 "status": r.status,
                 "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
                 "parser": _parser_payload(r.metadata),
+                "understanding": _understanding_summary(r.metadata),
             }
             for r in rows
         ],
@@ -440,6 +544,37 @@ def _parser_payload(metadata: object) -> dict[str, object] | None:
         "structure_source": str(structure) if structure else None,
         "representations": representations,
     }
+
+
+def _understanding_summary(metadata: object) -> dict[str, object] | None:
+    """Resumen comprobable del parser, sin AST, markdown ni contenido completo."""
+    import json as _json
+
+    if isinstance(metadata, str):
+        try:
+            metadata = _json.loads(metadata)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(metadata, dict):
+        return None
+    block = metadata.get("understanding")
+    if not isinstance(block, dict):
+        return None
+    report = block.get("report")
+    if not isinstance(report, dict):
+        return None
+    keys = (
+        "pages",
+        "sections",
+        "tables",
+        "figures",
+        "warnings",
+        "ocr_pages",
+        "extraction_quality",
+        "pipeline_state",
+    )
+    summary = {key: report.get(key) for key in keys if report.get(key) is not None}
+    return summary or None
 
 
 def _representations_payload(metadata: dict) -> dict[str, object] | None:
@@ -762,6 +897,7 @@ async def _store_uploaded_file(
     name: str | None,
     force: bool,
     workspace_id: UUID | None = None,
+    corpus_id: UUID | None = None,
     session=None,
     sessions=None,
 ):
@@ -816,6 +952,7 @@ async def _store_uploaded_file(
         knowledge_base_id=knowledge_base_id,
         config_json=config,
         workspace_id=workspace_id,
+        corpus_id=corpus_id,
     )
     await _audit().write(
         ctx, "source.created", "source", source.id,
@@ -832,6 +969,7 @@ async def upload_file_source(
     request: Request,
     file: UploadFile = File(...),
     knowledge_base_id: UUID | None = None,
+    corpus_id: UUID | None = None,
     source_type: str | None = Query(default=None, pattern=r"^(file|csv|excel)$"),
     name: str | None = Query(default=None, max_length=255),
     force: bool = Query(
@@ -852,6 +990,12 @@ async def upload_file_source(
     if knowledge_base_id is not None:
         await _assert_own_kb(ctx, knowledge_base_id)
     ws = await resolve_workspace(request)
+    resolved_corpus = await _resolve_upload_corpus(
+        ctx,
+        workspace_id=ws.id,
+        corpus_id=corpus_id,
+        knowledge_base_id=knowledge_base_id,
+    )
     session = await _open_learning_session(
         ctx,
         sessions,
@@ -871,6 +1015,7 @@ async def upload_file_source(
         name=name,
         force=force,
         workspace_id=ws.id,
+        corpus_id=resolved_corpus,
         session=session,
         sessions=sessions,
     )
@@ -879,6 +1024,7 @@ async def upload_file_source(
         extra={
             "job_id": str(job.id),
             "session_id": str(session.id) if session else None,
+            "corpus_id": str(resolved_corpus) if resolved_corpus else None,
         },
     )
 
@@ -892,6 +1038,7 @@ async def upload_files_batch(
     request: Request,
     files: list[UploadFile] = File(...),
     knowledge_base_id: UUID | None = None,
+    corpus_id: UUID | None = None,
     force: bool = Query(
         default=False,
         description="Crear copia aunque exista otra fuente con el mismo nombre.",
@@ -920,6 +1067,12 @@ async def upload_files_batch(
     if knowledge_base_id is not None:
         await _assert_own_kb(ctx, knowledge_base_id)
     ws = await resolve_workspace(request)
+    resolved_corpus = await _resolve_upload_corpus(
+        ctx,
+        workspace_id=ws.id,
+        corpus_id=corpus_id,
+        knowledge_base_id=knowledge_base_id,
+    )
 
     items: list[dict] = []
     created = duplicates = rejected = failed = 0
@@ -946,6 +1099,7 @@ async def upload_files_batch(
                 name=None,
                 force=force,
                 workspace_id=ws.id,
+                corpus_id=resolved_corpus,
                 session=session,
                 sessions=sessions,
             )
@@ -998,6 +1152,7 @@ async def upload_files_batch(
         "rejected": rejected,
         "failed": failed,
         "session_id": str(session.id) if session else None,
+        "corpus_id": str(resolved_corpus) if resolved_corpus else None,
     }
 
 @router.post("/sources/{source_id}/profile", summary="Perfilizar fuente (SQL: null rates, cardinalidad, PII)")
