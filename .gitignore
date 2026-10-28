@@ -69,7 +69,7 @@ coverage.json
 skills-lock.json
 # Estado local del agente (taste/learnings): nunca se versiona
 .commandcode/
-
+.swarm/
 # Grafo local de graphify (graph.json, graph.html, report): artefacto de máquina
 graphify-out/
 
