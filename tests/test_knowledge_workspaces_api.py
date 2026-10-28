@@ -137,11 +137,24 @@ async def _captured_chat_role(monkeypatch, roles: set[str]) -> str:
     async def fake_groups(_org, _user):
         return []
 
+    async def fake_sources(_org, _corpus, **_kwargs):
+        return [
+            {
+                "id": str(uuid4()),
+                "name": "manual.pdf",
+                "type": "file",
+                "status": "indexed",
+                "workspace_id": str(workspace_id),
+                "object_key": None,
+            }
+        ]
+
     monkeypatch.setattr(
         "src.platform.rbac.policy.require_permission", lambda *a, **k: ctx
     )
     monkeypatch.setattr(route, "resolve_workspace", fake_resolve)
     monkeypatch.setattr(route, "get_corpus_repo", lambda: Repo())
+    monkeypatch.setattr(route, "_sources_for_corpus", fake_sources)
     monkeypatch.setattr(deps, "get_embedding_provider", lambda: Embedder())
     monkeypatch.setattr(deps, "get_knowledge_retriever", lambda: Retriever())
     monkeypatch.setattr("src.platform.acl.groups.user_group_names", fake_groups)
