@@ -33,7 +33,8 @@ def _sha256(path: Path) -> str:
 def _git_head() -> str:
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - git está en PATH
+            text=True,
         ).strip()
     except Exception:  # noqa: BLE001
         return "unknown"

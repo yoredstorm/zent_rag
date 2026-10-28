@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.domain.knowledge_v2 import StructuredDocument, StructuredBlockKind
+from src.core.domain.knowledge_v2 import StructuredBlockKind, StructuredDocument
 
 _GENRE_VERSION = "p18.1-genre-1"
 

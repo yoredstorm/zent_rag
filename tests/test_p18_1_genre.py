@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from src.core.domain.knowledge_v2 import StructuredBlock, StructuredBlockKind, StructuredDocument
 from src.knowledge.compiler.entities import _domain_from
-from src.knowledge.understanding.genre import classify_document_genre
 from src.knowledge.understanding.views import source_profile
 
 

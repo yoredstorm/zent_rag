@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 
 from src.core.domain.knowledge_v2 import StructuredDocument
+from src.knowledge.compiler.candidates import assess_entity_candidate
 from src.knowledge.compiler.model import (
     AliasType,
     EntityAlias,
@@ -32,7 +33,6 @@ from src.knowledge.compiler.model import (
 )
 from src.knowledge.quality.fragments import TextQualityStatus, analyze_text_quality
 from src.knowledge.quality.ingestion import QualityCollector, QualityKind
-from src.knowledge.compiler.candidates import assess_entity_candidate
 
 UMBRAL_ALIAS = 0.85
 UMBRAL_SIGLA = 0.70

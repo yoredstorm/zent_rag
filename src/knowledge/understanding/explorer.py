@@ -288,7 +288,10 @@ def build_explorer_insight(
         warnings.append(
             {
                 "code": "ONLY_LOW_UTILITY",
-                "message": "Los hallazgos detectados no tienen autonomía semántica suficiente; puedes revisar los pasajes.",
+                "message": (
+                    "Los hallazgos detectados no tienen autonomía semántica "
+                    "suficiente; puedes revisar los pasajes."
+                ),
                 "severity": "warning",
             }
         )

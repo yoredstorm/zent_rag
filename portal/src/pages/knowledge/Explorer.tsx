@@ -88,6 +88,16 @@ function DocumentInsightPanel({
   loading: boolean;
   error: string;
 }) {
+  const genreLabel: Record<string, string> = {
+    narrative: "narrativa",
+    technical: "técnica",
+    policy: "política",
+    legal: "legal",
+    tabular: "tabular",
+    mixed: "mixta",
+    educational: "educativa",
+    unknown: "sin género confirmado",
+  };
   if (loading) {
     return (
       <Panel className="panel-body" aria-busy="true">
@@ -119,7 +129,9 @@ function DocumentInsightPanel({
             </p>
           </div>
           <div className="flex flex-wrap gap-2 text-[11px] text-faint">
-            <span className="badge badge-muted">{insight.source.genre}</span>
+            <span className="badge badge-muted">
+              {genreLabel[insight.source.genre] || insight.source.genre}
+            </span>
             {insight.source.pages != null && <span>{insight.source.pages} páginas</span>}
             {insight.source.sections != null && (
               <span>{insight.source.sections} secciones</span>

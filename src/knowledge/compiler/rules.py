@@ -16,6 +16,7 @@ import hashlib
 import re
 
 from src.core.domain.knowledge_v2 import StructuredDocument
+from src.knowledge.compiler.candidates import assess_rule_candidate
 from src.knowledge.compiler.model import (
     EvidenceRef,
     EvidenceType,
@@ -23,7 +24,6 @@ from src.knowledge.compiler.model import (
     TemporalScope,
     normalize_term,
 )
-from src.knowledge.compiler.candidates import assess_rule_candidate
 from src.knowledge.quality.ingestion import QualityCollector, QualityKind
 
 _MAX_RULES = 2_000
