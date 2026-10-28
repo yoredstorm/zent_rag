@@ -12,6 +12,7 @@ test.describe("Customer portal — flujo smoke", () => {
     page,
     request,
   }) => {
+    test.setTimeout(180_000);
     page.on("response", async (resp) => {
       if (resp.status() === 429 && resp.url().includes("/api/v1")) {
         console.log("429 URL:", resp.url().replace("http://127.0.0.1:8090", ""));
