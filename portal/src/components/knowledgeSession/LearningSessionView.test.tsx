@@ -114,7 +114,7 @@ describe("LearningSessionView", () => {
     expect(screen.getByTestId("session-sources")).toBeInTheDocument();
     expect(screen.getByTestId("learning-summary")).toBeInTheDocument();
     // La evolución de la fuente muestra hitos reales, no "100%".
-    expect(screen.getByText(/27/)).toBeInTheDocument();
+    expect(screen.getByText("27 páginas")).toBeInTheDocument();
     expect(screen.queryByText("100% completado")).toBeNull();
   });
 
