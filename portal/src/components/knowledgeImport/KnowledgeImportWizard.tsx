@@ -32,6 +32,7 @@ import {
   ButtonLink,
   Panel,
   PanelHeader,
+  Select,
   Textarea,
 } from "../ui";
 import {
@@ -132,6 +133,9 @@ export function KnowledgeImportWizard({
   const [corpusId, setCorpusId] = useState<string | null>(
     initialCorpusId ?? null,
   );
+  const [corpora, setCorpora] = useState<
+    { id: string; name: string; slug: string }[]
+  >([]);
   const [corpusName, setCorpusName] = useState("Principal");
   const [readySourceIds, setReadySourceIds] = useState<string[]>([]);
   const [readyInfo, setReadyInfo] = useState({
@@ -197,10 +201,13 @@ export function KnowledgeImportWizard({
       .then((data) => {
         if (cancelled) return;
         const corpora = data.corpora ?? [];
+        setCorpora(corpora);
         const selected =
           corpora.find((item) => item.id === corpusId) ??
-          corpora.find((item) => item.slug === "principal");
+          corpora.find((item) => item.slug === "principal") ??
+          corpora[0];
         setCorpusName(selected?.name ?? "Principal");
+        setCorpusId((current) => current ?? selected?.id ?? null);
       })
       .catch(() => {
         if (!cancelled) setCorpusName("Principal");
@@ -591,11 +598,36 @@ export function KnowledgeImportWizard({
 
         {step === "files" ? (
           <div className="flex flex-col gap-3" data-testid="wizard-files">
-            <p className="text-sm text-muted">
-              Se incorporan a{" "}
-              <strong className="text-text">{corpusName}</strong>. El destino se
-              valida en el servidor; puedes cambiarlo después en Fuentes.
-            </p>
+            <div className="rounded-md border border-border bg-soft p-3">
+              <p className="text-sm text-muted">
+                Se incorporan a{" "}
+                <strong className="text-text">{corpusName}</strong>. El destino se
+                valida en el servidor; puedes cambiarlo después en Fuentes.
+              </p>
+              {corpora.length > 1 ? (
+                <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <span>Guardar en</span>
+                  <Select
+                    aria-label="Corpus de destino"
+                    value={corpusId ?? ""}
+                    onChange={(event) => {
+                      const next = corpora.find(
+                        (item) => item.id === event.target.value,
+                      );
+                      setCorpusId(next?.id ?? null);
+                      setCorpusName(next?.name ?? "Principal");
+                    }}
+                    className="min-h-8 w-[220px]"
+                  >
+                    {corpora.map((corpus) => (
+                      <option key={corpus.id} value={corpus.id}>
+                        {corpus.name}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              ) : null}
+            </div>
             <FileDropzone
               onFiles={addFiles}
               inputTestId="wizard-source-files"
