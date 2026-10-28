@@ -36,7 +36,7 @@ describe("KnowledgeLayout", () => {
       "aria-current",
       "page",
     );
-    await user.click(within(nav).getByRole("button", { name: "Avanzado" }));
+    await user.click(within(nav).getByRole("button", { name: "Herramientas avanzadas" }));
     expect(within(nav).getByRole("link", { name: "Mapa" })).toHaveAttribute(
       "href",
       "/knowledge/map",
@@ -60,7 +60,7 @@ describe("KnowledgeLayout", () => {
       "Fuentes",
       "Actividad",
     ]);
-    expect(within(nav).getByRole("button", { name: "Avanzado" })).toHaveAttribute(
+    expect(within(nav).getByRole("button", { name: "Herramientas avanzadas" })).toHaveAttribute(
       "aria-expanded",
       "false"
     );
@@ -84,7 +84,7 @@ describe("KnowledgeLayout", () => {
     const user = userEvent.setup();
     renderAt("/knowledge");
     const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
-    await user.click(within(nav).getByRole("button", { name: "Avanzado" }));
+    await user.click(within(nav).getByRole("button", { name: "Herramientas avanzadas" }));
     expect(within(nav).getByRole("link", { name: "Estudio semántico" })).toHaveAttribute(
       "href",
       "/knowledge/understanding"
@@ -103,13 +103,15 @@ describe("KnowledgeLayout", () => {
     );
   });
 
-  it("abre Avanzado automáticamente en rutas avanzadas", () => {
+  it("mantiene Avanzado oculto hasta que se solicite, también en rutas avanzadas", async () => {
+    const user = userEvent.setup();
     renderAt("/knowledge/understanding");
     const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
-    expect(within(nav).getByRole("button", { name: "Avanzado" })).toHaveAttribute(
+    expect(within(nav).getByRole("button", { name: "Herramientas avanzadas" })).toHaveAttribute(
       "aria-expanded",
-      "true"
+      "false"
     );
+    await user.click(within(nav).getByRole("button", { name: "Herramientas avanzadas" }));
     expect(within(nav).getByRole("link", { name: "Estudio semántico" })).toHaveAttribute(
       "aria-current",
       "page"
