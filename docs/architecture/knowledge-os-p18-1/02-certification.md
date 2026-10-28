@@ -16,7 +16,7 @@ ajenos. No se fusiona ni se declara PASS.
 | Área | Comando | Resultado |
 | --- | --- | --- |
 | Backend P18.1 | `pytest tests/test_p18_1_* -q` | 27 passed |
-| Backend Knowledge | `pytest tests/test_knowledge_workspaces_api.py tests/test_knowledge_compiler.py tests/test_document_understanding.py tests/test_semantic_reconstruction.py tests/test_knowledge_conflict_quality.py tests/test_knowledge_api.py tests/test_knowledge_corpora.py tests/test_knowledge_model.py` | 130 passed |
+| Backend Knowledge | `pytest tests/test_knowledge_workspaces_api.py tests/test_knowledge_compiler.py tests/test_document_understanding.py tests/test_semantic_reconstruction.py tests/test_knowledge_conflict_quality.py tests/test_knowledge_api.py tests/test_knowledge_corpora.py tests/test_knowledge_model.py` | 129 passed, 1 flaky de orden; aislada pasa |
 | Portal unitario | `npm test -- --run` | 814 passed, 2 fallos ajenos |
 | E2E P18 existente | `playwright test e2e/knowledge-alive.spec.ts` | 1 passed |
 | E2E Explorador P18.1 | `playwright test e2e/p18-1-explorer.spec.ts` | 1 passed, 1366 y 390 |
@@ -27,6 +27,10 @@ ajenos. No se fusiona ni se declara PASS.
 
 - `pytest -q` completo se detuvo por timeout en una prueba larga no
   relacionada; no se usa como PASS.
+- `test_knowledge_api.py::test_sync_creates_job_and_engine_completes` falla
+  solo dentro de la suite completa y pasa aislada; el estado `error` proviene
+  del acceptance de retrieval previo, no de las rutas P18.1. No se declara PASS
+  de esa prueba.
 - Portal: `AgentStudio.test.tsx` agotó 20 s y `evaluation.test.tsx` no encontró
   un campo del diálogo. No tocan Knowledge ni P18.1. No se corrigen aquí.
 
