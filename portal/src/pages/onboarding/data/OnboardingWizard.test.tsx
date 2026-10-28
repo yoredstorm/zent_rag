@@ -124,7 +124,7 @@ afterEach(() => {
 
 function renderWizard() {
   return render(
-    <MemoryRouter initialEntries={["/knowledge/add"]}>
+    <MemoryRouter initialEntries={["/knowledge/add?kind=documents"]}>
       <Routes>
         <Route path="/knowledge/add" element={<OnboardingWizardPage />} />
         <Route path="/knowledge/add/:sessionId" element={<OnboardingWizardPage />} />
@@ -139,7 +139,6 @@ describe("Asistente de conocimiento en lote", () => {
     const user = userEvent.setup();
     renderWizard();
 
-    await user.click(screen.getByTestId("source-kind-documents"));
     await waitFor(() => expect(screen.getByTestId("onboarding-file")).toBeInTheDocument());
 
     await user.upload(screen.getByTestId("onboarding-file"), [

@@ -25,9 +25,11 @@ pipeline.
 
 ## Límites conocidos
 
-- La conexión de sistemas sigue abriendo el asistente existente de
-  data-onboarding con `?kind=`; no se duplicó ningún motor, pero la extracción
-  de un `ConnectorJourney` embebido queda pendiente.
+- La pantalla de elección duplicada se eliminó: `/knowledge/add` sin `kind`
+  redirige al wizard de Fuentes. Las conexiones con `?kind=` siguen usando el
+  asistente de data-onboarding, ahora con macro-pasos Elegir, Incorporar y
+  Comprobar. La extracción de un `ConnectorJourney` completamente embebido y
+  el retiro del upload legacy de data-onboarding quedan pendientes.
 - El visor de evidencia abre el PDF original en la página indicada mediante el
   endpoint existente, no un visor embebido con bbox.
 - El baseline visual está en `artifacts/certification/p18/`; las pruebas con

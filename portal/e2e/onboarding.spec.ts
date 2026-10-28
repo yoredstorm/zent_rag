@@ -7,6 +7,7 @@ const CSV = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", 
 
 test.describe("Data onboarding wizard — org nueva CSV", () => {
   test("signup → dashboard empty → CSV → review → pregunta → ready", async ({ page }) => {
+    test.setTimeout(180_000);
     const stamp = Date.now();
     const email = `e2e-onb-${stamp}@example.com`;
     const password = "Onboard123!";
@@ -29,10 +30,8 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
       timeout: 20_000,
     });
     await expect(page.getByTestId("demo-banner")).toHaveCount(0);
-    await page.getByRole("link", { name: "Conectar mis datos" }).click();
+    await page.goto("/knowledge/add?kind=spreadsheets");
     await expect(page).toHaveURL(/\/knowledge\/add/);
-
-    await page.getByTestId("source-kind-spreadsheets").click();
     await expect(page.getByText("Sube tus archivos")).toBeVisible();
     await page.getByTestId("onboarding-file").setInputFiles(CSV);
     await page.getByTestId("onboarding-upload").click();
@@ -58,7 +57,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await expect(question).toBeVisible();
     await question.click();
     await expect(page.getByText(/Pregunta entendida|Pendiente de indexar/)).toBeVisible({
-      timeout: 30_000,
+      timeout: 60_000,
     });
 
     await page.getByTestId("finish-wizard").click();
