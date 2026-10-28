@@ -62,7 +62,7 @@ test("P17 smoke: cuatro experiencias sin escrituras ni violaciones graves", asyn
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await page.goto("/knowledge");
-  await expect(page.getByTestId("knowledge-quick-actions")).toBeVisible({
+  await expect(page.getByTestId("knowledge-hero")).toBeVisible({
     timeout: 30_000,
   });
   await expectNoA11yViolations(page);

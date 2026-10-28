@@ -40,7 +40,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await expect(page.getByRole("heading", { name: "Analizar", exact: true })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByRole("progressbar")).toBeVisible();
+    await expect(page.getByTestId("analyze-ring")).toHaveAttribute("role", "status");
     await expect(page.getByText("Zent está entendiendo tus datos")).toBeVisible();
     await expect(page.getByTestId("analyze-continue")).toBeEnabled({ timeout: 45_000 });
     await page.getByTestId("analyze-continue").click();
