@@ -237,6 +237,8 @@ export default function KnowledgeSourcesPage() {
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadCompleted, setUploadCompleted] = useState(0);
+  const [uploadTotal, setUploadTotal] = useState(0);
   const [retrying, setRetrying] = useState("");
   const [syncingId, setSyncingId] = useState("");
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
@@ -431,6 +433,8 @@ export default function KnowledgeSourcesPage() {
     if (!session?.token || uploadFiles.length === 0) return;
     const auth = { token: session.token, organizationId: session.organizationId };
     setUploading(true);
+    setUploadCompleted(0);
+    setUploadTotal(uploadFiles.length);
     setError("");
     setMsg("");
     const results: UploadItem[] = [];
@@ -475,6 +479,7 @@ export default function KnowledgeSourcesPage() {
         }
         // Progreso por archivo: los que falten siguen aunque uno falle.
         setUploadItems([...results]);
+        setUploadCompleted(results.length);
       }
       if (created > 0) {
         setMsg(
@@ -809,6 +814,20 @@ export default function KnowledgeSourcesPage() {
                 Después puedes marcarla en Agent Studio.
               </p>
 
+              {uploading && (
+                <div className="rounded-lg border border-border bg-soft p-3" role="status" aria-live="polite" data-testid="upload-live-progress">
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <strong>Enviando archivos</strong>
+                    <span className="tabular-nums">{uploadCompleted} de {uploadTotal}</span>
+                  </div>
+                  <progress className="mt-2 block h-2 w-full accent-accent" aria-label="Archivos enviados"
+                    value={uploadCompleted} max={uploadTotal || 1} />
+                  <p className="mt-2 text-xs text-muted">
+                    Progreso real por archivo recibido, no porcentaje del procesamiento.
+                    Después seguirás la lectura e indexación en la sesión en vivo.
+                  </p>
+                </div>
+              )}
               <UploadResultsList
                 items={uploadItems}
                 retrying={retrying}
