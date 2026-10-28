@@ -165,7 +165,7 @@ describe("Asistente de conocimiento en lote", () => {
       () => expect(screen.getByTestId("analyze-files")).toHaveTextContent("Indexado"),
       { timeout: 8000 },
     );
-    expect(screen.getAllByRole("progressbar").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("analyze-ring")).toHaveTextContent("Listo para revisar");
     expect(screen.getByRole("heading", { name: "Analizar" })).toBeInTheDocument();
   });
 });

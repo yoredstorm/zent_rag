@@ -30,7 +30,10 @@ type Grounded = {
   citations?: Citation[];
   missing_information?: string[];
   evidence_ids?: string[];
+  citation_evidence_ids?: Array<string | null>;
 };
+
+type Suggestion = { text: string; intent?: string; basis?: string };
 type Evidence = {
   id: string;
   source_id?: string | null;
@@ -47,7 +50,12 @@ export default function KnowledgeAskPage() {
   const [params, setParams] = useSearchParams();
   const [corpora, setCorpora] = useState<Corpus[]>([]);
   const [corpusId, setCorpusId] = useState(params.get("corpus") || "");
-  const [question, setQuestion] = useState("");
+  const [sourceIds, setSourceIds] = useState<string[]>(() => {
+    const raw = params.get("source_ids") || params.get("source_id") || "";
+    return raw.split(",").map((item) => item.trim()).filter(Boolean);
+  });
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [question, setQuestion] = useState(params.get("q") || "");
   const [answering, setAnswering] = useState(false);
   const [result, setResult] = useState<Grounded | null>(null);
   const [error, setError] = useState("");
@@ -79,6 +87,29 @@ export default function KnowledgeAskPage() {
     [corpora, corpusId],
   );
 
+  useEffect(() => {
+    if (!session || !corpusId) {
+      setSuggestions((prev) => (prev.length > 0 ? [] : prev));
+      return;
+    }
+    let cancelled = false;
+    api<{ suggestions: Suggestion[] }>(
+      `/api/v1/knowledge/workspaces/${corpusId}/suggestions`,
+      { token: session.token, organizationId: session.organizationId },
+    )
+      .then((data) => {
+        if (cancelled) return;
+        const next = (data.suggestions || []).slice(0, 3);
+        setSuggestions((prev) => (next.length > 0 ? next : prev));
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestions((prev) => (prev.length > 0 ? [] : prev));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, corpusId]);
+
   async function ask() {
     if (!session || !corpusId || !question.trim()) return;
     setAnswering(true);
@@ -94,7 +125,10 @@ export default function KnowledgeAskPage() {
           method: "POST",
           token: session.token,
           organizationId: session.organizationId,
-          body: JSON.stringify({ query: question.trim() }),
+          body: JSON.stringify({
+            query: question.trim(),
+            ...(sourceIds.length > 0 ? { source_ids: sourceIds } : {}),
+          }),
         },
       );
       setResult(data.grounded);
@@ -105,15 +139,22 @@ export default function KnowledgeAskPage() {
     }
   }
 
+  function evidenceIdFor(citationIndex: number): string | null | undefined {
+    const aligned = result?.citation_evidence_ids?.[citationIndex];
+    if (aligned !== undefined) return aligned;
+    return result?.evidence_ids?.[citationIndex];
+  }
+
   async function resolveEvidence(citationIndex: number) {
-    if (!session || !result?.evidence_ids?.[citationIndex]) {
+    const evidenceId = evidenceIdFor(citationIndex);
+    if (!session || !evidenceId) {
       setEvidence((prev) => ({ ...prev, [citationIndex]: "missing" }));
       return;
     }
     setEvidence((prev) => ({ ...prev, [citationIndex]: "loading" }));
     try {
       const item = await api<Evidence>(
-        `/api/v1/knowledge/evidence/${result.evidence_ids[citationIndex]}`,
+        `/api/v1/knowledge/evidence/${evidenceId}`,
         {
           token: session.token,
           organizationId: session.organizationId,
@@ -155,6 +196,10 @@ export default function KnowledgeAskPage() {
     permissions.length === 0 ||
     permissions.includes("*") ||
     permissions.includes("knowledge:write");
+  const canBindAgents =
+    permissions.length === 0 ||
+    permissions.includes("*") ||
+    permissions.includes("agents:write");
 
   return (
     <KnowledgeLayout>
@@ -168,6 +213,7 @@ export default function KnowledgeAskPage() {
             onChange={(event) => {
               const next = event.target.value;
               setCorpusId(next);
+              setSourceIds([]);
               setParams({ corpus: next }, { replace: true });
               setResult(null);
             }}
@@ -209,6 +255,25 @@ export default function KnowledgeAskPage() {
               }
             />
             <div className="panel-body flex flex-col gap-3">
+              {suggestions.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[11px] text-faint">
+                    Preguntas sugeridas a partir de esta base
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestions.map((suggestion) => (
+                      <button
+                        key={suggestion.text}
+                        type="button"
+                        className="rounded-full border border-border bg-soft px-3 py-1 text-left text-xs text-muted transition-colors hover:border-border-strong hover:text-text"
+                        onClick={() => setQuestion(suggestion.text)}
+                      >
+                        {suggestion.text}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <Textarea
                 aria-label="Pregunta"
                 rows={3}
@@ -272,14 +337,26 @@ export default function KnowledgeAskPage() {
                           </span>
                           {citation.page ? (
                             <span className="text-[11px] text-muted">página {citation.page}</span>
-                          ) : null}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void resolveEvidence(index)}
-                          >
-                            Ver dónde lo encontró
-                          </Button>
+                          ) : citation.locator ? (
+                            <span className="text-[11px] text-muted">{citation.locator}</span>
+                          ) : (
+                            <span className="text-[11px] text-warn">
+                              Sin página o sección registrada
+                            </span>
+                          )}
+                          {evidenceIdFor(index) ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void resolveEvidence(index)}
+                            >
+                              Ver dónde lo encontró
+                            </Button>
+                          ) : (
+                            <span className="text-[11px] text-warn">
+                              No es posible abrir la evidencia
+                            </span>
+                          )}
                         </div>
                         {citation.section_path?.length ? (
                           <p className="mt-1 text-[11px] text-faint">
@@ -295,18 +372,39 @@ export default function KnowledgeAskPage() {
                           <p className="mt-1 text-[11px] text-faint">Abriendo evidencia…</p>
                         ) : resolved === "missing" ? (
                           <p className="mt-1 flex items-center gap-1 text-[11px] text-warn">
-                            <WarningCircle size={12} aria-hidden /> Evidencia no medible o no autorizada.
+                            <WarningCircle size={12} aria-hidden /> No es posible abrir la
+                            evidencia registrada para esta cita.
                           </p>
                         ) : resolved ? (
                           <div className="mt-2 rounded-sm border border-border bg-surface p-2 text-[11px] text-muted">
                             <p>{resolved.excerpt}</p>
                             {resolved.source_id ? (
-                              <Link
-                                to={`/knowledge/sources/${resolved.source_id}`}
-                                className="mt-1 inline-block text-accent hover:underline"
-                              >
-                                Abrir fuente
-                              </Link>
+                              <span className="mt-1 flex flex-wrap gap-3">
+                                {resolved.page ? (
+                                  <a
+                                    href={`/api/v1/knowledge/workspaces/${corpusId}/sources/${resolved.source_id}/file#page=${resolved.page}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-accent hover:underline"
+                                  >
+                                    Abrir página {resolved.page}
+                                  </a>
+                                ) : null}
+                                <Link
+                                  to={`/knowledge/sources/${resolved.source_id}`}
+                                  className="text-accent hover:underline"
+                                >
+                                  Abrir fuente
+                                </Link>
+                                {canBindAgents ? (
+                                  <Link
+                                    to={`/agents/new?source_id=${resolved.source_id}`}
+                                    className="text-accent hover:underline"
+                                  >
+                                    Usar en un agente
+                                  </Link>
+                                ) : null}
+                              </span>
                             ) : null}
                           </div>
                         ) : null}

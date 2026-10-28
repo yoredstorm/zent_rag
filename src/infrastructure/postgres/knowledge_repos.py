@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 class PostgresSourceRepository(SourceRepository):
 
     _COLS = (
-        "id, organization_id, knowledge_base_id, workspace_id, name, type, "
+        "id, organization_id, knowledge_base_id, workspace_id, corpus_id, name, type, "
         "config_json, status, created_at"
     )
 
@@ -48,6 +48,7 @@ class PostgresSourceRepository(SourceRepository):
             organization_id=row.organization_id,
             knowledge_base_id=row.knowledge_base_id,
             workspace_id=getattr(row, "workspace_id", None),
+            corpus_id=getattr(row, "corpus_id", None),
             name=row.name,
             type=row.type,
             config_json=row.config_json if isinstance(row.config_json, dict) else {},
@@ -107,14 +108,15 @@ class PostgresSourceRepository(SourceRepository):
         knowledge_base_id: UUID | None = None,
         config_json: dict | None = None,
         workspace_id: UUID | None = None,
+        corpus_id: UUID | None = None,
     ) -> KbSource:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
                     "INSERT INTO kb_sources (id, organization_id, knowledge_base_id, "
-                    "workspace_id, name, type, config_json, status) "
-                    "VALUES (uuid_generate_v4(), :oid, :kid, :wid, :name, :type, "
+                    "workspace_id, corpus_id, name, type, config_json, status) "
+                    "VALUES (uuid_generate_v4(), :oid, :kid, :wid, :cid, :name, :type, "
                     "CAST(:config AS jsonb), 'created') "
                     f"RETURNING {self._COLS}"
                 ),
@@ -122,6 +124,7 @@ class PostgresSourceRepository(SourceRepository):
                     "oid": organization_id,
                     "kid": knowledge_base_id,
                     "wid": workspace_id,
+                    "cid": corpus_id,
                     "name": name,
                     "type": source_type,
                     "config": json.dumps(config_json or {}),

@@ -102,6 +102,7 @@ export interface LearningSessionDetail {
   source_count: number;
   available_sources: number;
   completed_sources: number;
+  ready_sources?: number;
   failed_sources: number;
   metrics: Record<string, number>;
   knowledge_delta: Partial<KnowledgeDelta>;

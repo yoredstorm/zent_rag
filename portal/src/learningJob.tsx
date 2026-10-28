@@ -31,16 +31,6 @@ const RESUME_MAX_MS = 30 * 60 * 1000;
 const AUTO_CLEAR_MS = 15_000;
 const TERMINAL = ["completed", "partial", "failed", "canceled"];
 
-// Avance mínimo por etapa: el rail nunca se ve vacío mientras ZENT lee.
-const STAGE_PERCENT: Record<string, number> = {
-  reading: 12,
-  understanding: 32,
-  organizing: 52,
-  connecting: 68,
-  verifying: 84,
-  learned: 100,
-};
-
 type LearningJobContextValue = {
   sessionId: string | null;
   detail: LearningSessionDetail | null;
@@ -70,6 +60,7 @@ function storageKey(organizationId: string) {
 
 export function LearningJobProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
+  const location = useLocation();
   const { pushToast } = useToast();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [detail, setDetail] = useState<LearningSessionDetail | null>(null);
@@ -146,6 +137,7 @@ export function LearningJobProvider({ children }: { children: ReactNode }) {
   // Poll de respaldo mientras la sesión siga viva.
   useEffect(() => {
     if (!session || !sessionId) return;
+    if (location.pathname === `/knowledge/sessions/${sessionId}`) return;
     if (detail && TERMINAL.includes(detail.status)) return;
 
     let stopped = false;
@@ -184,7 +176,14 @@ export function LearningJobProvider({ children }: { children: ReactNode }) {
       stopped = true;
       window.clearInterval(interval);
     };
-  }, [session, sessionId, detail?.status, pushToast, clear]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    session,
+    sessionId,
+    detail?.status,
+    location.pathname,
+    pushToast,
+    clear,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const active = Boolean(
     sessionId && (!detail || !TERMINAL.includes(detail.status)),
@@ -213,14 +212,11 @@ export function LearningBanner() {
 
   const terminal = !active;
   const failed = detail.status === "failed" || detail.status === "canceled";
-  const ratio =
-    detail.source_count > 0 ? (detail.available_sources / detail.source_count) * 100 : 0;
-  const stagePercent = STAGE_PERCENT[detail.stage] ?? 6;
-  const percent = failed
-    ? Math.min(stagePercent, 100)
-    : terminal
-      ? 100
-      : Math.max(stagePercent, ratio);
+  const ready = Math.min(
+    detail.source_count,
+    detail.completed_sources + detail.available_sources,
+  );
+  const busy = Math.max(0, detail.source_count - ready - detail.failed_sources);
 
   const state = failed
     ? "failed"
@@ -246,10 +242,6 @@ export function LearningBanner() {
   ]
     .filter(Boolean)
     .join(" · ");
-  const sourcesLabel = `${detail.source_count} fuente${
-    detail.source_count === 1 ? "" : "s"
-  }`;
-
   return (
     <div
       className={`state-rail lj-banner mb-5 flex flex-col gap-2 rounded-md border px-4 py-3 shadow-pop ${
@@ -284,8 +276,19 @@ export function LearningBanner() {
           </span>
           <span className="block text-[12.5px] leading-relaxed text-muted">
             {terminal
-              ? deltaText || `${sourcesLabel} aprendida${detail.source_count === 1 ? "" : "s"}`
-              : `${detail.stage_label || "Leyendo"} · ${sourcesLabel}`}
+              ? deltaText ||
+                `${ready} de ${detail.source_count} fuente${
+                  detail.source_count === 1 ? "" : "s"
+                } lista${ready === 1 ? "" : "s"}${
+                  detail.failed_sources > 0
+                    ? ` · ${detail.failed_sources} por revisar`
+                    : ""
+                }`
+              : `${detail.stage_label || "Leyendo"} · ${ready} de ${detail.source_count} fuente${
+                  detail.source_count === 1 ? "" : "s"
+                } lista${ready === 1 ? "" : "s"}${
+                  busy > 0 ? " · procesando" : ""
+                }`}
           </span>
         </span>
         <Link
@@ -303,12 +306,14 @@ export function LearningBanner() {
           <X size={14} aria-hidden />
         </button>
       </div>
-      <div className="progress-track">
-        <div
-          className={`progress-fill ${failed ? "bg-danger" : ""}`}
-          style={{ width: `${Math.min(percent, 100)}%` }}
-        />
-      </div>
+      <p className="text-[11px] text-faint" data-testid="learning-banner-counts">
+        {ready} de {detail.source_count} fuentes listas
+        {detail.failed_sources > 0
+          ? ` · ${detail.failed_sources} necesitan revisión`
+          : busy > 0
+            ? ` · ${busy} en proceso`
+            : ""}
+      </p>
     </div>
   );
 }

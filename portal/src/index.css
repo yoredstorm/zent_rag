@@ -786,6 +786,22 @@
   .tab:focus-visible {
     outline-offset: -2px;
   }
+  @media (max-width: 639px) {
+    .tabs {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .tab {
+      flex-shrink: 0;
+      padding-left: 8px;
+      padding-right: 8px;
+      font-size: 12.5px;
+    }
+    .tab > svg {
+      display: none;
+    }
+  }
 
   /* --- Estados: cargando / progreso ------------------------------- */
   .skeleton {

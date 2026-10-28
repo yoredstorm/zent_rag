@@ -271,6 +271,7 @@ export type KnowledgeOverview = {
     sources: number;
     indexed_sources: number;
     indexed_documents: number;
+    sources_ready?: number;
     by_type: Record<string, { total: number; verified: number; inferred: number }>;
   };
   recent: KnowledgeActivityItem[];

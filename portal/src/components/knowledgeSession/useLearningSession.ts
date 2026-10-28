@@ -215,6 +215,7 @@ export function useLearningSession(
   const lastSeqRef = useRef(0);
   const pendingRef = useRef<SessionEvent[]>([]);
   const closedRef = useRef(false);
+  const terminalRef = useRef(false);
 
   const active = Boolean(
     detail &&
@@ -222,6 +223,13 @@ export function useLearningSession(
   );
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
+
+  useEffect(() => {
+    terminalRef.current = Boolean(
+      detail &&
+        ["completed", "partial", "failed", "canceled"].includes(detail.status),
+    );
+  }, [detail?.status]);
 
   // ------------------------------------------------------------- carga inicial
   useEffect(() => {
@@ -238,8 +246,9 @@ export function useLearningSession(
         ]);
         if (cancelled) return;
         setDetail(loadedDetail);
-        setEvents(mergeEvents([], loadedEvents.events));
-        lastSeqRef.current = loadedEvents.events.reduce(
+        const events = loadedEvents.events ?? [];
+        setEvents(mergeEvents([], events));
+        lastSeqRef.current = events.reduce(
           (max, event) => Math.max(max, event.seq),
           0
         );
@@ -259,15 +268,35 @@ export function useLearningSession(
   // -------------------------------------------------------------------- SSE
   useEffect(() => {
     if (!sessionId) return;
-    const handle = streamLearningSession({
-      sessionId,
-      sinceSeq: lastSeqRef.current,
-      onOpen: () => setConnected(true),
-      onError: () => setConnected(false),
-      onEvent: (event) => {
-        pendingRef.current.push(event);
-      },
-    });
+    let stopped = false;
+    let attempt = 0;
+    let timer = 0;
+    let handle: { close: () => void } | null = null;
+
+    const connect = () => {
+      if (stopped || terminalRef.current) return;
+      handle = streamLearningSession({
+        sessionId,
+        sinceSeq: lastSeqRef.current,
+        onOpen: () => {
+          attempt = 0;
+          setConnected(true);
+        },
+        onError: () => {
+          setConnected(false);
+          if (stopped || terminalRef.current) return;
+          attempt += 1;
+          const delay = Math.min(15_000, 1_000 * 2 ** Math.min(attempt, 4));
+          window.clearTimeout(timer);
+          timer = window.setTimeout(connect, delay);
+        },
+        onEvent: (event) => {
+          pendingRef.current.push(event);
+        },
+      });
+    };
+
+    connect();
     const flush = window.setInterval(() => {
       const batch = pendingRef.current;
       if (batch.length === 0) return;
@@ -278,7 +307,9 @@ export function useLearningSession(
       setEvents((prev) => mergeEvents(prev, batch));
     }, BATCH_MS);
     return () => {
-      handle.close();
+      stopped = true;
+      window.clearTimeout(timer);
+      handle?.close();
       window.clearInterval(flush);
       setConnected(false);
     };
@@ -289,7 +320,7 @@ export function useLearningSession(
     if (!sessionId) return;
     let stopped = false;
     const pollDetail = window.setInterval(async () => {
-      if (stopped) return;
+      if (stopped || terminalRef.current) return;
       try {
         const fresh = await fetchLearningSession(sessionId);
         if (!stopped) setDetail(fresh);
@@ -307,14 +338,15 @@ export function useLearningSession(
     if (!sessionId) return;
     let stopped = false;
     const pollEvents = window.setInterval(async () => {
-      if (stopped) return;
+      if (stopped || terminalRef.current) return;
       try {
         const fresh = await fetchSessionEvents(sessionId, lastSeqRef.current, 800);
-        if (stopped || fresh.events.length === 0) return;
-        for (const event of fresh.events) {
+        const incoming = fresh.events ?? [];
+        if (stopped || incoming.length === 0) return;
+        for (const event of incoming) {
           lastSeqRef.current = Math.max(lastSeqRef.current, event.seq);
         }
-        setEvents((prev) => mergeEvents(prev, fresh.events));
+        setEvents((prev) => mergeEvents(prev, incoming));
       } catch {
         // silencio
       }
@@ -329,6 +361,7 @@ export function useLearningSession(
     if (!sessionId || !includeGraph) return;
     let stopped = false;
     const load = async () => {
+      if (terminalRef.current) return;
       try {
         const fresh = await fetchSessionGraph(sessionId);
         if (!stopped) setGraph(fresh);

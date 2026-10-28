@@ -1,16 +1,14 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import KnowledgeHomePage from "./Home";
 import type {
   KnowledgeDelta,
-  KnowledgeGraphPayload,
   KnowledgeOverview,
 } from "../../lib/knowledgeModel";
 
 const fetchKnowledgeOverview = vi.hoisted(() => vi.fn());
 const fetchKnowledgeDelta = vi.hoisted(() => vi.fn());
-const fetchKnowledgeGraph = vi.hoisted(() => vi.fn());
 const fetchKnowledgeFeed = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/knowledgeModel", async (importOriginal) => {
@@ -19,7 +17,7 @@ vi.mock("../../lib/knowledgeModel", async (importOriginal) => {
     ...actual,
     fetchKnowledgeOverview,
     fetchKnowledgeDelta,
-    fetchKnowledgeGraph,
+    fetchKnowledgeGraph: vi.fn(),
   };
 });
 
@@ -35,12 +33,12 @@ vi.mock("../../lib/knowledgeActivity", async (importOriginal) => {
 function overviewFixture(patch: Partial<KnowledgeOverview> = {}): KnowledgeOverview {
   return {
     state: "ready",
-    headline: "Zent entiende 3 área(s) de tu negocio",
+    headline: "Zent entiende 3 áreas de tu negocio",
     generated_at: new Date().toISOString(),
     health: {
       overall: 94,
       measured_dimensions: 3,
-      total_dimensions: 3,
+      total_dimensions: 5,
       state: "ready",
       computed_at: new Date().toISOString(),
       dimensions: [
@@ -60,19 +58,7 @@ function overviewFixture(patch: Partial<KnowledgeOverview> = {}): KnowledgeOverv
         },
       ],
     },
-    domains: [
-      {
-        name: "ATPCO",
-        objects: 12431,
-        verified: 9000,
-        measured: true,
-        avg_confidence: 0.91,
-        sources: 7,
-        edges: 2400,
-        conflicts: 2,
-        last_updated: new Date().toISOString(),
-      },
-    ],
+    domains: [],
     attention: [],
     counts: {
       objects: 1816,
@@ -85,6 +71,7 @@ function overviewFixture(patch: Partial<KnowledgeOverview> = {}): KnowledgeOverv
       sources: 2418,
       indexed_sources: 40,
       indexed_documents: 900,
+      sources_ready: 37,
       by_type: {
         entity: { total: 18616, verified: 9000, inferred: 400 },
         business_rule: { total: 9218, verified: 3000, inferred: 200 },
@@ -129,136 +116,79 @@ function deltaFixture(): KnowledgeDelta {
   };
 }
 
-function graphFixture(): KnowledgeGraphPayload {
-  return {
-    nodes: [
-      {
-        id: "n1",
-        type: "entity",
-        name: "Record 4",
-        domain: "ATPCO",
-        status: "verified",
-        confidence: 0.9,
-        evidence_count: 7,
-        degree: 4,
-      },
-      {
-        id: "n2",
-        type: "entity",
-        name: "Record 2",
-        domain: "ATPCO",
-        status: "inferred",
-        confidence: 0.7,
-        evidence_count: 3,
-        degree: 2,
-      },
-    ],
-    edges: [
-      {
-        id: "e1",
-        source: "n1",
-        target: "n2",
-        predicate: "modifies",
-        relationship_type: "business",
-        confidence: 0.8,
-        status: "inferred",
-        provenance: "APPROVED",
-      },
-    ],
-    counts: { nodes: 2, edges: 1 },
-    truncated: false,
-    focus_id: null,
-    depth: 1,
-  };
-}
-
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={["/knowledge"]}>
       <KnowledgeHomePage />
-    </MemoryRouter>
+    </MemoryRouter>,
   );
 }
 
 afterEach(() => {
   fetchKnowledgeOverview.mockReset();
   fetchKnowledgeDelta.mockReset();
-  fetchKnowledgeGraph.mockReset();
   fetchKnowledgeFeed.mockReset();
 });
 
 describe("KnowledgeHomePage", () => {
-  it("muestra el hero vivo con conteos reales, delta y salud interpretada", async () => {
+  it("muestra estado factual, tres señales y una acción principal", async () => {
     fetchKnowledgeOverview.mockResolvedValue(overviewFixture());
     fetchKnowledgeDelta.mockResolvedValue(deltaFixture());
-    fetchKnowledgeGraph.mockResolvedValue(graphFixture());
     fetchKnowledgeFeed.mockResolvedValue([]);
 
     renderPage();
 
     await waitFor(() =>
-      expect(
-        screen.getByText("Tu conocimiento empresarial está creciendo")
-      ).toBeInTheDocument()
+      expect(screen.getByText("Zent entiende 3 áreas de tu negocio")).toBeInTheDocument(),
     );
-    expect(screen.getByText("Entidades")).toBeInTheDocument();
-    expect(screen.getByText(/18[.,]616/)).toBeInTheDocument();
+    expect(screen.getByText("Documentos listos")).toBeInTheDocument();
+    expect(screen.getByText("Fuentes con contenido")).toBeInTheDocument();
+    expect(screen.getByText("Señales de atención")).toBeInTheDocument();
     expect(screen.getByText("+412 entidades")).toBeInTheDocument();
-    expect(screen.getByText(/Knowledge OS está saludable/)).toBeInTheDocument();
-    expect(screen.getByTestId("knowledge-pulse")).toBeInTheDocument();
-    expect(screen.getByTestId("knowledge-domains")).toBeInTheDocument();
-    expect(screen.getByText("ATPCO")).toBeInTheDocument();
+    expect(screen.queryByText(/está creciendo/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("knowledge-pulse")).not.toBeInTheDocument();
     expect(
-      screen.getAllByRole("link", { name: /Añadir información/ }).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByTestId("knowledge-quick-actions")).toHaveTextContent(
-      "Hacer una pregunta",
-    );
-    expect(screen.getByTestId("knowledge-quick-actions")).toHaveTextContent(
-      "Revisar problemas",
-    );
+      within(screen.getByTestId("knowledge-hero")).getByRole("link", {
+        name: "Preguntar",
+      }),
+    ).toHaveAttribute("href", "/knowledge/ask");
+    expect(screen.queryByTestId("knowledge-quick-actions")).not.toBeInTheDocument();
+    expect(screen.getByTestId("knowledge-recent-activity")).toBeInTheDocument();
   });
 
-  it("tolera que falle un widget sin ocultar el resto de la portada", async () => {
+  it("tolera que falle delta sin ocultar el estado durable", async () => {
     fetchKnowledgeOverview.mockResolvedValue(overviewFixture());
     fetchKnowledgeDelta.mockRejectedValue(new Error("delta down"));
-    fetchKnowledgeGraph.mockResolvedValue(graphFixture());
     fetchKnowledgeFeed.mockResolvedValue([]);
 
     renderPage();
 
     await waitFor(() =>
-      expect(
-        screen.getByText("Tu conocimiento empresarial está creciendo")
-      ).toBeInTheDocument()
+      expect(screen.getByText("Zent entiende 3 áreas de tu negocio")).toBeInTheDocument(),
     );
     expect(screen.queryByTestId("knowledge-home-error")).not.toBeInTheDocument();
-    expect(screen.getByTestId("knowledge-quick-actions")).toBeInTheDocument();
-    expect(screen.getByTestId("knowledge-pulse")).toBeInTheDocument();
+    expect(screen.getByTestId("knowledge-next-step")).toBeInTheDocument();
   });
 
-  it("en error muestra error con reintento y NO ceros", async () => {
+  it("en error muestra reintento y no inventa ceros", async () => {
     fetchKnowledgeOverview.mockRejectedValue(new Error("db down"));
     fetchKnowledgeDelta.mockRejectedValue(new Error("db down"));
-    fetchKnowledgeGraph.mockRejectedValue(new Error("db down"));
     fetchKnowledgeFeed.mockResolvedValue([]);
 
     renderPage();
 
     await waitFor(() =>
-      expect(screen.getByTestId("knowledge-home-error")).toBeInTheDocument()
+      expect(screen.getByTestId("knowledge-home-error")).toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
-    expect(screen.queryByText("Tu conocimiento empresarial está creciendo")).toBeNull();
-    expect(screen.queryByText("0")).toBeNull();
+    expect(screen.queryByText("Documentos listos")).not.toBeInTheDocument();
   });
 
-  it("en vacío explica los primeros pasos y muestra el pulse inicial", async () => {
+  it("en vacío ofrece un único camino para añadir información", async () => {
     fetchKnowledgeOverview.mockResolvedValue(
       overviewFixture({
         state: "empty",
         headline: "Zent todavía no tiene conocimiento de tu negocio.",
-        domains: [],
         counts: {
           objects: 0,
           verified: 0,
@@ -270,9 +200,10 @@ describe("KnowledgeHomePage", () => {
           sources: 0,
           indexed_sources: 0,
           indexed_documents: 0,
+          sources_ready: 0,
           by_type: {},
         },
-      })
+      }),
     );
     fetchKnowledgeDelta.mockResolvedValue({
       ...deltaFixture(),
@@ -285,16 +216,7 @@ describe("KnowledgeHomePage", () => {
         rules: 0,
         evidence: 0,
         sources: 0,
-        conflicts_resolved: 0,
       },
-    });
-    fetchKnowledgeGraph.mockResolvedValue({
-      nodes: [],
-      edges: [],
-      counts: { nodes: 0, edges: 0 },
-      truncated: false,
-      focus_id: null,
-      depth: 1,
     });
     fetchKnowledgeFeed.mockResolvedValue([]);
 
@@ -302,13 +224,13 @@ describe("KnowledgeHomePage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("ZENT todavía no tiene conocimiento de tu negocio.")
-      ).toBeInTheDocument()
+        screen.getByText("Todavía no hay información lista para responder."),
+      ).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("knowledge-first-steps")).toBeInTheDocument();
-    expect(screen.getByTestId("knowledge-pulse-empty")).toBeInTheDocument();
-    expect(
-      screen.getAllByRole("link", { name: /Añadir información/ }).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Añadir información" })).toHaveAttribute(
+      "href",
+      "/knowledge/sources?new=1",
+    );
+    expect(screen.queryByTestId("knowledge-first-steps")).not.toBeInTheDocument();
   });
 });

@@ -71,29 +71,113 @@ export const KNOWLEDGE_SIMPLE_TABS: KnowledgeTab[] = [
   { to: "/knowledge/improve", label: "Mejorar" },
 ];
 
-export const KNOWLEDGE_SIMPLE_ADVANCED_TABS: KnowledgeTab[] = [
-  { to: "/knowledge/explorer", label: "Explorador" },
-  { to: "/knowledge/map", label: "Mapa" },
-  { to: "/knowledge/understanding", label: "Estudio semántico" },
-  { to: "/knowledge/evaluation", label: "Evaluación" },
-  { to: "/knowledge/jobs", label: "Trabajos" },
-  { to: "/knowledge/documents", label: "Documentos" },
-  { to: "/knowledge/collections", label: "Colecciones" },
-  { to: "/knowledge/workspaces", label: "Workspaces" },
-  { to: "/knowledge/glossary", label: "Glosario" },
-  { to: "/knowledge/catalog", label: "Catálogo" },
-  { to: "/knowledge/sql", label: "Fuentes SQL" },
-  { to: "/knowledge/database", label: "Database Builder" },
-  { to: "/knowledge/database/import", label: "Importar CSV / Excel" },
-  { to: "/connectors", label: "Conectores" },
+export type KnowledgeAdvancedGroup = {
+  id: "investigar" | "administrar" | "diagnosticar" | "modelar";
+  label: string;
+  description: string;
+  tabs: KnowledgeTab[];
+};
+
+/** Herramientas agrupadas por intención, no por pantalla técnica. */
+export const KNOWLEDGE_SIMPLE_ADVANCED_GROUPS: KnowledgeAdvancedGroup[] = [
+  {
+    id: "investigar",
+    label: "Investigar",
+    description: "Explorar el conocimiento y su procedencia.",
+    tabs: [
+      { to: "/knowledge/explorer", label: "Explorador" },
+      { to: "/knowledge/map", label: "Mapa" },
+      { to: "/knowledge/understanding", label: "Estudio semántico" },
+    ],
+  },
+  {
+    id: "administrar",
+    label: "Administrar",
+    description: "Organizar fuentes, colecciones y conectores.",
+    tabs: [
+      { to: "/knowledge/workspaces", label: "Workspaces" },
+      { to: "/knowledge/collections", label: "Colecciones" },
+      { to: "/knowledge/documents", label: "Documentos" },
+      { to: "/connectors", label: "Conectores" },
+    ],
+  },
+  {
+    id: "diagnosticar",
+    label: "Diagnosticar",
+    description: "Ver trabajos, evaluación y estado técnico.",
+    tabs: [
+      { to: "/knowledge/evaluation", label: "Evaluación" },
+      { to: "/knowledge/jobs", label: "Trabajos" },
+    ],
+  },
+  {
+    id: "modelar",
+    label: "Modelar datos",
+    description: "Glosario, catálogo, SQL y bases gestionadas.",
+    tabs: [
+      { to: "/knowledge/glossary", label: "Glosario" },
+      { to: "/knowledge/catalog", label: "Catálogo" },
+      { to: "/knowledge/sql", label: "Fuentes SQL" },
+      { to: "/knowledge/database", label: "Database Builder" },
+      { to: "/knowledge/database/import", label: "Importar CSV / Excel" },
+    ],
+  },
 ];
+
+export const KNOWLEDGE_LEGACY_ADVANCED_GROUPS: KnowledgeAdvancedGroup[] = [
+  {
+    id: "investigar",
+    label: "Investigar",
+    description: "Explorar el conocimiento y su procedencia.",
+    tabs: [
+      { to: "/knowledge/understanding", label: "Estudio semántico" },
+      { to: "/knowledge/evaluation", label: "Evaluación" },
+    ],
+  },
+  {
+    id: "administrar",
+    label: "Administrar",
+    description: "Organizar fuentes, colecciones y conectores.",
+    tabs: [
+      { to: "/knowledge/workspaces", label: "Workspaces" },
+      { to: "/knowledge/collections", label: "Colecciones" },
+      { to: "/knowledge/documents", label: "Documentos" },
+      { to: "/connectors", label: "Conectores" },
+    ],
+  },
+  {
+    id: "diagnosticar",
+    label: "Diagnosticar",
+    description: "Ver trabajos y estado técnico.",
+    tabs: [{ to: "/knowledge/jobs", label: "Trabajos" }],
+  },
+  {
+    id: "modelar",
+    label: "Modelar datos",
+    description: "Glosario, catálogo y bases gestionadas.",
+    tabs: [
+      { to: "/knowledge/glossary", label: "Glosario" },
+      { to: "/knowledge/catalog", label: "Catálogo" },
+      { to: "/knowledge/playground", label: "Playground" },
+    ],
+  },
+];
+
+export const KNOWLEDGE_SIMPLE_ADVANCED_TABS: KnowledgeTab[] =
+  KNOWLEDGE_SIMPLE_ADVANCED_GROUPS.flatMap((group) => group.tabs);
 
 export function knowledgeTabs(simple: boolean): KnowledgeTab[] {
   return simple ? KNOWLEDGE_SIMPLE_TABS : KNOWLEDGE_PILLARS;
 }
 
+export function knowledgeAdvancedGroups(
+  simple: boolean,
+): KnowledgeAdvancedGroup[] {
+  return simple ? KNOWLEDGE_SIMPLE_ADVANCED_GROUPS : KNOWLEDGE_LEGACY_ADVANCED_GROUPS;
+}
+
 export function knowledgeAdvancedTabs(simple: boolean): KnowledgeTab[] {
-  return simple ? KNOWLEDGE_SIMPLE_ADVANCED_TABS : KNOWLEDGE_ADVANCED_TABS;
+  return knowledgeAdvancedGroups(simple).flatMap((group) => group.tabs);
 }
 
 export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [

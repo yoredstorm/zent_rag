@@ -241,6 +241,7 @@ class SourceRepository(ABC):
         knowledge_base_id: UUID | None = None,
         config_json: dict | None = None,
         workspace_id: UUID | None = None,
+        corpus_id: UUID | None = None,
     ) -> KbSource: ...
 
     @abstractmethod

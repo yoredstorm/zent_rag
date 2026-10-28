@@ -27,8 +27,9 @@ describe("wizard UI steps 3–6", () => {
     );
     expect(screen.getByRole("heading", { name: WIZARD_STEP_HEADINGS.analyze })).toBeInTheDocument();
     const ring = screen.getByTestId("analyze-ring");
-    expect(ring).toHaveAttribute("role", "progressbar");
-    expect(ring).toHaveTextContent("%");
+    expect(ring).toHaveAttribute("role", "status");
+    expect(ring).toHaveTextContent("En proceso");
+    expect(ring).not.toHaveTextContent("%");
     expect(screen.getByTestId("analyze-live")).toBeInTheDocument();
     const button = screen.getByTestId("analyze-continue");
     expect(button).toBeDisabled();
@@ -36,7 +37,7 @@ describe("wizard UI steps 3–6", () => {
     expect(onContinue).not.toHaveBeenCalled();
   });
 
-  it("Analizar muestra nube de glimpses y anillo con percent", () => {
+  it("Analizar muestra nube de glimpses sin porcentaje inventado", () => {
     render(
       <AnalysisProgressStep
         headline="Zent está leyendo tu documento"
@@ -52,14 +53,14 @@ describe("wizard UI steps 3–6", () => {
         ]}
       />
     );
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42");
-    expect(screen.getByTestId("analyze-ring")).toHaveTextContent("42%");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("analyze-ring")).toHaveTextContent("En proceso");
     expect(screen.getByTestId("analyze-cloud")).toHaveTextContent("Ah, Empresa es AIR FRANCE");
     expect(screen.getByTestId("analyze-live")).toHaveTextContent("Vi un monto: 29733");
     expect(screen.getByTestId("analyze-continue")).toBeDisabled();
   });
 
-  it("Analizar listo muestra 100% y copy de continuar", () => {
+  it("Analizar listo muestra estado revisable y continuar", () => {
     render(
       <AnalysisProgressStep
         headline="Zent está leyendo tu documento"
@@ -72,7 +73,8 @@ describe("wizard UI steps 3–6", () => {
         glimpses={[{ id: "g1", text: "Ah, Empresa es AIR FRANCE" }]}
       />
     );
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("analyze-ring")).toHaveTextContent("Listo para revisar");
     expect(screen.getByTestId("analyze-live")).toHaveTextContent(
       "Ya entendí lo suficiente. Revisa cuando quieras."
     );
@@ -102,7 +104,7 @@ describe("wizard UI steps 3–6", () => {
       />
     );
     expect(screen.getByTestId("analyze-cloud")).toHaveTextContent("Columna precio…");
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.getByTestId("analyze-ring")).toHaveAttribute("role", "status");
   });
 
   it("Revisar usa heading estable y enlaza a Semántica", () => {

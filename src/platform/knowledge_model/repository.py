@@ -2026,7 +2026,16 @@ class PostgresKnowledgeModelRepository:
                              WHERE organization_id = :org) AS sources,
                             (SELECT COUNT(*) FROM source_documents
                              WHERE organization_id = :org
-                               AND status = 'active') AS documents
+                               AND status = 'active') AS documents,
+                            (SELECT COUNT(*) FROM kb_sources s
+                             WHERE s.organization_id = :org
+                               AND (s.status = 'indexed'
+                                    OR EXISTS (
+                                        SELECT 1 FROM source_documents d
+                                        WHERE d.source_id = s.id
+                                          AND d.organization_id = :org
+                                          AND d.status = 'active'
+                                    ))) AS ready_sources
                         """
                     ),
                     {"org": organization_id},
@@ -2083,6 +2092,7 @@ class PostgresKnowledgeModelRepository:
                 "indexed": {
                     "sources": int(indexed.sources or 0),
                     "documents": int(indexed.documents or 0),
+                    "ready_sources": int(indexed.ready_sources or 0),
                 },
             }
         finally:

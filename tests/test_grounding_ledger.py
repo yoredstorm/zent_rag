@@ -89,6 +89,25 @@ async def test_recorder_skips_empty_excerpts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recorder_aligned_keeps_none_for_empty_excerpt() -> None:
+    repo = _FakeEvidenceRepo()
+    answer = GroundedAnswer(
+        answer="x",
+        citations=(
+            _citation(excerpt="   "),
+            _citation(excerpt="La penalidad es 7%."),
+        ),
+    )
+    aligned = await GroundingLedgerRecorder(repo).record_evidence_aligned(
+        organization_id=uuid4(), answer=answer
+    )
+    assert len(aligned) == 2
+    assert aligned[0] is None
+    assert aligned[1] is not None
+    assert len(repo.records) == 1
+
+
+@pytest.mark.asyncio
 async def test_recorder_db_roundtrip() -> None:
     from src.infrastructure.postgres.evidence_ledger import (
         PostgresEvidenceLedgerRepository,

@@ -152,6 +152,7 @@ class KbSource:
     type: str  # sql | file | csv | excel | web | s3 | api | gdrive
     knowledge_base_id: UUID | None = None
     workspace_id: UUID | None = None
+    corpus_id: UUID | None = None
     config_json: dict = field(default_factory=dict)
     status: str = "active"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

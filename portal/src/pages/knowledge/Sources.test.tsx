@@ -101,31 +101,24 @@ function renderSources() {
 }
 
 describe("KnowledgeSourcesPage", () => {
-  it("abre el alta con ?new=1 y ofrece las conexiones guiadas", async () => {
+  it("abre el wizard de tres pasos con ?new=1", async () => {
     stubApi([]);
     render(
       <MemoryRouter initialEntries={["/knowledge/sources?new=1"]}>
         <KnowledgeSourcesPage />
       </MemoryRouter>,
     );
-    expect(await screen.findByTestId("source-files")).toBeInTheDocument();
-    expect(screen.getByTestId("add-information-options")).toHaveTextContent(
-      "Subir archivos",
+    expect(await screen.findByTestId("knowledge-import-wizard")).toBeInTheDocument();
+    expect(screen.getByTestId("wizard-choose")).toHaveTextContent(
+      "Subir documentos",
     );
-    expect(
-      screen.getByRole("link", { name: /Conectar un sistema/ }),
-    ).toHaveAttribute("href", "/knowledge/add");
-    expect(
-      screen.getByRole("button", { name: /Usar una fuente existente/ }),
-    ).toBeInTheDocument();
-    const databaseLink = screen
-      .getAllByRole("link")
-      .find((link) => link.getAttribute("href") === "/knowledge/add?kind=database");
-    expect(databaseLink).toHaveAttribute("href", "/knowledge/add?kind=database");
-    expect(screen.getByRole("link", { name: /Google Drive/ })).toHaveAttribute(
-      "href",
-      "/knowledge/add?kind=drive",
+    expect(screen.getByTestId("wizard-choose")).toHaveTextContent(
+      "Conectar un sistema",
     );
+    expect(screen.getByTestId("wizard-choose")).toHaveTextContent(
+      "Usar una fuente existente",
+    );
+    expect(screen.queryByTestId("source-files")).not.toBeInTheDocument();
   });
 
   it("refresca la lista sola mientras la fuente está en tránsito (sin F5)", async () => {
@@ -177,10 +170,11 @@ describe("KnowledgeSourcesPage", () => {
     renderSources();
     await waitFor(() => expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0));
     await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
-    const input = await screen.findByTestId("source-files");
+    await user.click(screen.getByRole("button", { name: /Subir documentos/ }));
+    const input = await screen.findByTestId("wizard-source-files");
     const pdf = new File(["%PDF"], "cv.pdf", { type: "application/pdf" });
     await user.upload(input, pdf);
-    await user.click(screen.getByRole("button", { name: "Subir e indexar" }));
+    await user.click(screen.getByRole("button", { name: "Incorporar archivo" }));
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/files/upload-batch") && (init as RequestInit)?.method === "POST")).toBe(true);
     });
@@ -194,12 +188,13 @@ describe("KnowledgeSourcesPage", () => {
     renderSources();
     await waitFor(() => expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0));
     await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
-    const input = await screen.findByTestId("source-files");
+    await user.click(screen.getByRole("button", { name: /Subir documentos/ }));
+    const input = await screen.findByTestId("wizard-source-files");
     await user.upload(input, [
       new File(["%PDF"], "uno.pdf", { type: "application/pdf" }),
       new File(["%PDF"], "dos.pdf", { type: "application/pdf" }),
     ]);
-    await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
+    await user.click(screen.getByRole("button", { name: "Incorporar 2 archivos" }));
     await waitFor(() => {
       const uploads = fetchMock.mock.calls.filter(
         ([url, init]) => String(url).includes("/files/upload-batch") && (init as RequestInit)?.method === "POST",
@@ -267,17 +262,18 @@ describe("KnowledgeSourcesPage", () => {
       expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0),
     );
     await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
-    const input = await screen.findByTestId("source-files");
+    await user.click(screen.getByRole("button", { name: /Subir documentos/ }));
+    const input = await screen.findByTestId("wizard-source-files");
     await user.upload(input, [
       new File(["%PDF"], "grande.pdf", { type: "application/pdf" }),
       new File(["%PDF"], "chico.pdf", { type: "application/pdf" }),
     ]);
-    await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
+    await user.click(screen.getByRole("button", { name: "Incorporar 2 archivos" }));
     expect(
       await screen.findByText("Supera el máximo por archivo (25 MB). Prueba con uno más chico."),
     ).toBeInTheDocument();
     expect(uploaded).toEqual(["grande.pdf", "chico.pdf"]);
-    expect(await screen.findByText("1 archivo en aprendizaje.")).toBeInTheDocument();
+    expect(await screen.findByText("1 archivo recibido. El procesamiento sigue.")).toBeInTheDocument();
   });
 
   it("agrupa el lote en UNA sesión de aprendizaje y navega a ella", async () => {
@@ -338,15 +334,16 @@ describe("KnowledgeSourcesPage", () => {
       expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0),
     );
     await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
-    const input = await screen.findByTestId("source-files");
+    await user.click(screen.getByRole("button", { name: /Subir documentos/ }));
+    const input = await screen.findByTestId("wizard-source-files");
     await user.upload(input, [
       new File(["%PDF"], "uno.pdf", { type: "application/pdf" }),
       new File(["%PDF"], "dos.pdf", { type: "application/pdf" }),
     ]);
-    await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
+    await user.click(screen.getByRole("button", { name: "Incorporar 2 archivos" }));
 
     // Una sola sesión para todo el lote: "ZENT está aprendiendo 2 fuentes".
-    expect(await screen.findByTestId("session-route")).toBeInTheDocument();
+    expect(await screen.findByTestId("wizard-session-check")).toBeInTheDocument();
     expect(sessionBodies).toHaveLength(1);
     expect((sessionBodies[0] as { title: string }).title).toContain("2 fuentes");
     // Cada archivo viaja dentro de esa sesión.
@@ -410,10 +407,11 @@ describe("KnowledgeSourcesPage", () => {
       expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0),
     );
     await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
-    const input = await screen.findByTestId("source-files");
+    await user.click(screen.getByRole("button", { name: /Subir documentos/ }));
+    const input = await screen.findByTestId("wizard-source-files");
     const pdf = new File(["%PDF"], "cv.pdf", { type: "application/pdf" });
     await user.upload(input, pdf);
-    await user.click(screen.getByRole("button", { name: "Subir e indexar" }));
+    await user.click(screen.getByRole("button", { name: "Incorporar archivo" }));
 
     expect(await screen.findByText("Ya existe")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Abrir existente" })).toHaveAttribute(

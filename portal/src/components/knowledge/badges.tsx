@@ -108,7 +108,9 @@ export function HealthIndicator({
       style={{ width: size, height: size }}
       role="img"
       aria-label={
-        measured ? `Knowledge Health ${Math.round(value)} por ciento` : "Knowledge Health no medido"
+        measured
+          ? `Calidad del conocimiento: ${Math.round(value)} de 100`
+          : "Calidad del conocimiento no medida"
       }
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>

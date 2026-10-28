@@ -126,7 +126,7 @@ describe("LearningSessionView", () => {
     renderView();
     expect(screen.getByText(/1 necesita atención/)).toBeInTheDocument();
     expect(
-      screen.getByText(/El resto del conocimiento está disponible/),
+      screen.getByText(/El conocimiento disponible se puede consultar/),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Aprendizaje parcial").length).toBeGreaterThan(0);
   });

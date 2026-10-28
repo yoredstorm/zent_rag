@@ -162,25 +162,33 @@ export default function KnowledgeQualityPage() {
           // La salud es informativa: su fallo no oculta los problemas accionables.
         });
       if (tab === "inbox") {
-        const [qualityResult, conflictResult, gapResult, questionResult, suggestionResult, improvementResult] =
-          await Promise.allSettled([
-            fetchKnowledgeQuality(30),
-            fetchKnowledgeConflicts("open"),
-            fetchKnowledgeGaps({ status: "open", limit: 100 }),
-            fetchQuestions({ status: "pending", limit: 100 }),
-            session
-              ? api<{ suggestions: Suggestion[] }>(
-                  "/api/v1/catalog/suggestions?status=pending&limit=100",
-                  { token: session.token, organizationId: session.organizationId },
-                )
-              : Promise.resolve({ suggestions: [] as Suggestion[] }),
-            session
-              ? api<Improvement[]>("/api/v1/learning/improvements?limit=100", {
-                  token: session.token,
-                  organizationId: session.organizationId,
-                })
-              : Promise.resolve([] as Improvement[]),
-          ]);
+        const [
+          qualityResult,
+          conflictResult,
+          gapResult,
+          questionResult,
+          suggestionResult,
+          improvementResult,
+          ingestionResult,
+        ] = await Promise.allSettled([
+          fetchKnowledgeQuality(30),
+          fetchKnowledgeConflicts("open"),
+          fetchKnowledgeGaps({ status: "open", limit: 100 }),
+          fetchQuestions({ status: "pending", limit: 100 }),
+          session
+            ? api<{ suggestions: Suggestion[] }>(
+                "/api/v1/catalog/suggestions?status=pending&limit=100",
+                { token: session.token, organizationId: session.organizationId },
+              )
+            : Promise.resolve({ suggestions: [] as Suggestion[] }),
+          session
+            ? api<Improvement[]>("/api/v1/learning/improvements?limit=100", {
+                token: session.token,
+                organizationId: session.organizationId,
+              })
+            : Promise.resolve([] as Improvement[]),
+          fetchIngestionQuality("open", 100),
+        ]);
         if (qualityResult.status === "fulfilled") setQuality(qualityResult.value);
         if (conflictResult.status === "fulfilled") setConflicts(conflictResult.value.conflicts);
         if (gapResult.status === "fulfilled") setGaps(gapResult.value.gaps);
@@ -192,6 +200,9 @@ export default function KnowledgeQualityPage() {
           setImprovements(
             Array.isArray(improvementResult.value) ? improvementResult.value : [],
           );
+        }
+        if (ingestionResult.status === "fulfilled") {
+          setIngestion(ingestionResult.value);
         }
       } else if (tab === "issues") {
         setQuality(await fetchKnowledgeQuality(30));
@@ -335,15 +346,130 @@ export default function KnowledgeQualityPage() {
     }
   };
 
-  const inboxItems: { tab: QualityTab; label: string; count: number }[] = [
-    { tab: "issues", label: "Problemas de calidad", count: quality?.total ?? 0 },
-    { tab: "conflicts", label: "Información contradictoria", count: conflicts.length },
-    { tab: "gaps", label: "Información faltante", count: gaps.length },
-    { tab: "questions", label: "Aprobaciones y preguntas", count: questions.length },
-    { tab: "reviews", label: "Cola de revisión", count: suggestions.length },
-    { tab: "improvements", label: "Mejoras propuestas", count: improvements.length },
-  ];
-  const inboxTotal = inboxItems.reduce((total, item) => total + item.count, 0);
+  type InboxItem = {
+    id: string;
+    tab: QualityTab;
+    severity: "high" | "medium" | "low";
+    type: string;
+    title: string;
+    why: string;
+    evidence: string;
+    action: string;
+  };
+
+  const inboxItems: InboxItem[] = [];
+  for (const issue of quality?.issues ?? []) {
+    if (issue.kind === "conflict") continue;
+    inboxItems.push({
+      id: `quality-${issue.kind}`,
+      tab: "issues",
+      severity: issue.severity,
+      type: "Calidad",
+      title: issue.title,
+      why: `${issue.count} elemento(s) requieren una decisión o una corrección.`,
+      evidence: issue.action,
+      action: "Revisar",
+    });
+  }
+  for (const conflict of conflicts) {
+    inboxItems.push({
+      id: `conflict-${conflict.id}`,
+      tab: "conflicts",
+      severity: "high",
+      type: "Contradicción",
+      title: `${conflict.subject_label} · ${conflict.predicate}`,
+      why: "Dos fuentes afirman valores distintos; no se resuelve solo.",
+      evidence:
+        [conflict.value_a, conflict.value_b].filter(Boolean).join(" / ") ||
+        "Comparar evidencias",
+      action: "Comparar",
+    });
+  }
+  for (const gap of gaps) {
+    inboxItems.push({
+      id: `gap-${gap.id}`,
+      tab: "gaps",
+      severity:
+        gap.priority === "critical" || gap.priority === "high"
+          ? "high"
+          : gap.priority === "medium"
+            ? "medium"
+            : "low",
+      type: "Falta información",
+      title: gap.title,
+      why: gap.description || gap.question || "El conocimiento no cubre esta pregunta.",
+      evidence: `${gap.occurrences} ocurrencia(s) · impacto ${gap.impact_objects}`,
+      action: "Revisar",
+    });
+  }
+  for (const question of questions) {
+    inboxItems.push({
+      id: `question-${question.id}`,
+      tab: "questions",
+      severity: "medium",
+      type: "Pregunta",
+      title: question.title || "Pregunta pendiente",
+      why:
+        question.body ||
+        "Necesita una respuesta humana para mejorar el conocimiento.",
+      evidence: "Pregunta de negocio pendiente",
+      action: "Responder",
+    });
+  }
+  for (const suggestion of suggestions) {
+    inboxItems.push({
+      id: `suggestion-${suggestion.id}`,
+      tab: "reviews",
+      severity: suggestion.confidence === "low" ? "low" : "medium",
+      type: "Propuesta",
+      title: suggestion.title,
+      why: suggestion.description || "Propuesta pendiente de revisión humana.",
+      evidence: `${suggestion.evidence.length} evidencia(s)`,
+      action: "Revisar",
+    });
+  }
+  for (const improvement of improvements) {
+    inboxItems.push({
+      id: `improvement-${improvement.id}`,
+      tab: "improvements",
+      severity:
+        improvement.priority === "high" || improvement.priority === "critical"
+          ? "high"
+          : improvement.priority === "medium"
+            ? "medium"
+            : "low",
+      type: "Mejora",
+      title: improvement.title,
+      why: improvement.description || improvement.recommended_action || "Mejora propuesta.",
+      evidence: `${improvement.affected_queries} consulta(s) afectada(s)`,
+      action: "Ver mejora",
+    });
+  }
+  for (const issue of ingestion?.issues ?? []) {
+    inboxItems.push({
+      id: `ingestion-${issue.id}`,
+      tab: "ingestion",
+      severity: issue.severity,
+      type: "Ingesta",
+      title: issue.subject || issue.kind,
+      why:
+        issue.evidence_excerpt ||
+        "El parser o el compilador reportaron un problema de procedencia.",
+      evidence: issue.evidence_locator || "Sin locator",
+      action: "Revisar",
+    });
+  }
+  const seenInbox = new Set<string>();
+  const uniqueInbox = inboxItems.filter((item) => {
+    if (seenInbox.has(item.id)) return false;
+    seenInbox.add(item.id);
+    return true;
+  });
+  const severityOrder = { high: 0, medium: 1, low: 2 } as const;
+  const sortedInbox = uniqueInbox.sort(
+    (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
+  );
+  const inboxTotal = sortedInbox.length;
   const qualityMeasured = Boolean(
     health && health.measured_dimensions > 0 && health.overall !== null,
   );
@@ -399,20 +525,29 @@ export default function KnowledgeQualityPage() {
         {!loading && tab === "inbox" && (
           <Panel data-testid="quality-inbox">
             <PanelHeader
-              title="Bandeja de atención"
-              description="Un solo lugar para decidir qué corregir. Cada acción abre la cola existente; nada se resuelve solo."
+              title={
+                inboxTotal === 0
+                  ? "Nada requiere atención ahora"
+                  : `${inboxTotal} asunto${inboxTotal === 1 ? "" : "s"} necesita${
+                      inboxTotal === 1 ? "" : "n"
+                    } atención`
+              }
+              description="Problema, por qué importa, evidencia y acción. Nada se resuelve solo."
             />
             <div className="panel-body flex flex-col gap-2">
               {inboxTotal === 0 ? (
                 <div className="flex items-start gap-2 text-sm">
                   {qualityMeasured ? (
                     <>
-                      <ShieldCheck size={16} className="mt-0.5 text-ok" aria-hidden />
-                      <span>No hay problemas conocidos.</span>
+                      <ShieldCheck size={16} className="mt-0.5 shrink-0 text-ok" aria-hidden />
+                      <span>
+                        No hay problemas medidos. Sigue revisando la evidencia antes
+                        de usar el conocimiento en una tarea crítica.
+                      </span>
                     </>
                   ) : (
                     <>
-                      <WarningCircle size={16} className="mt-0.5 text-warn" aria-hidden />
+                      <WarningCircle size={16} className="mt-0.5 shrink-0 text-warn" aria-hidden />
                       <span>
                         Calidad aún no evaluada. No hay problemas reportados, pero
                         tampoco una medición que permita afirmar que está sana.
@@ -421,22 +556,49 @@ export default function KnowledgeQualityPage() {
                   )}
                 </div>
               ) : (
-                inboxItems
-                  .filter((item) => item.count > 0)
-                  .map((item) => (
-                    <div
-                      key={item.tab}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-border-soft px-3 py-2"
-                    >
-                      <span className="text-sm text-text">
-                        {item.label} <span className="text-muted">· {item.count}</span>
-                      </span>
-                      <Button variant="ghost" size="sm" onClick={() => setTab(item.tab)}>
-                        Abrir
+                sortedInbox.slice(0, 12).map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-sm border border-border-soft px-3 py-2.5"
+                    data-testid={`inbox-item-${item.id}`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={cn("badge", SEVERITY_TONE[item.severity])}>
+                            {SEVERITY_LABEL[item.severity]}
+                          </span>
+                          <span className="text-[10px] uppercase tracking-wide text-faint">
+                            {item.type}
+                          </span>
+                          <span className="min-w-0 truncate text-sm font-medium text-text">
+                            {item.title}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted">
+                          {item.why}
+                        </p>
+                        <p className="mt-1 text-[11px] text-faint">
+                          Evidencia: {item.evidence}
+                        </p>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setTab(item.tab)}
+                      >
+                        {item.action}
                       </Button>
                     </div>
-                  ))
+                  </div>
+                ))
               )}
+              {inboxTotal > 12 ? (
+                <p className="text-xs text-faint">
+                  Hay {inboxTotal - 12} asunto(s) más. Abre las categorías para ver
+                  el detalle completo.
+                </p>
+              ) : null}
             </div>
           </Panel>
         )}

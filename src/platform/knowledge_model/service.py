@@ -221,6 +221,7 @@ class KnowledgeModelService:
                 "sources": stats["sources"]["total"],
                 "indexed_sources": indexed["sources"],
                 "indexed_documents": indexed["documents"],
+                "sources_ready": indexed.get("ready_sources", indexed["sources"]),
                 "by_type": stats["by_kind"],
             },
             "recent": activity,
