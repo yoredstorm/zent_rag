@@ -290,21 +290,22 @@ class KnowledgeModelService:
             )
         )
 
-        # Comprensión semántica: descripciones + atributos mapeados.
+        # Completitud de descripciones: NO es comprensión del documento.
         semantic_measured = objects["total"] > 0
         described = objects["total"] - objects["undescribed"]
         semantic = _pct(described, objects["total"]) if semantic_measured else None
         dimensions.append(
             HealthDimension(
                 key=HealthDimensionKey.SEMANTIC.value,
-                label="Comprensión semántica",
+                label="Completitud de descripciones",
                 score=semantic,
                 weight=0.20,
                 measured=semantic_measured,
                 reason=(
-                    f"{described} de {objects['total']} objetos tienen descripción."
+                    f"{described} de {objects['total']} objetos tienen descripción. "
+                    "Esto mide metadatos, no comprensión del documento."
                     if semantic_measured
-                    else "Sin objetos que medir."
+                    else "Sin objetos que medir; no evalúa comprensión."
                 ),
                 formula="(objetos con descripción / objetos) * 100",
                 signals={
@@ -312,6 +313,8 @@ class KnowledgeModelService:
                     "undescribed": objects["undescribed"],
                     "attributes": attributes,
                     "entities": entities,
+                    "comprehension_evaluated": False,
+                    "metric_scope": "description_completeness",
                 },
                 missing=[] if semantic_measured else ["objetos"],
                 issues=(
