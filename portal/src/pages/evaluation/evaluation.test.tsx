@@ -178,6 +178,8 @@ describe("Evaluación · dataset sin JSON", () => {
     );
 
     await screen.findByRole("option", { name: "＋ Nuevo dataset" });
+    await user.selectOptions(screen.getByLabelText("Dataset"), "__nuevo__");
+    await screen.findByLabelText("Nombre del nuevo dataset");
     await user.type(screen.getByLabelText("Nombre del nuevo dataset"), "Recién creado");
     await user.type(screen.getByLabelText("Pregunta"), "¿Qué es la categoría 31?");
     await user.click(screen.getByRole("button", { name: "Agregar caso" }));

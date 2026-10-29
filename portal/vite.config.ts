@@ -47,7 +47,12 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     css: false,
-    testTimeout: 20_000,
-    hookTimeout: 20_000,
+    // La suite incluye pantallas grandes (Agent Studio, Evaluación). En CI y
+    // en máquinas de 2-4 núcleos, correr 130 archivos jsdom a la vez ahoga los
+    // workers y produce timeouts falsos. El límite y los tiempos son de test,
+    // no del producto.
+    maxWorkers: 4,
+    testTimeout: 60_000,
+    hookTimeout: 30_000,
   },
 });

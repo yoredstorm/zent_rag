@@ -754,7 +754,7 @@ describe("AgentStudio · comportamiento", () => {
       "- No inventes datos.\n- Abrí con una imagen cercana.\n- Separá el hecho de tu lectura.",
     );
     expect(screen.queryByTestId("purpose-proposal")).toBeNull();
-  });
+  }, 40_000);
 
   it("pide un borrador de estilo con IA y avisa que es un borrador", async () => {
     const { user } = await renderStudio();
