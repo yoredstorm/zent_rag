@@ -716,43 +716,52 @@ export default function KnowledgeExplorerPage() {
   const switchToDocument = useCallback(() => {
     setQuery("");
     setIncludeHidden(false);
-    updateParams({
-      view: null,
-      mode: null,
-      domain: null,
-      type: null,
-      status: null,
-      order: null,
-      q: null,
-      focus: null,
-    });
+    updateParams(
+      {
+        view: null,
+        mode: null,
+        domain: null,
+        type: null,
+        status: null,
+        order: null,
+        q: null,
+        focus: null,
+      },
+      false,
+    );
   }, [updateParams]);
 
   const switchToAll = useCallback(() => {
     setQuery("");
     setIncludeHidden(false);
-    updateParams({
-      view: null,
-      mode: "all",
-      type: null,
-      status: null,
-      order: null,
-      q: null,
-      focus: null,
-    });
+    updateParams(
+      {
+        view: null,
+        mode: "all",
+        type: null,
+        status: null,
+        order: null,
+        q: null,
+        focus: null,
+      },
+      false,
+    );
   }, [updateParams]);
 
   const switchToGraph = useCallback(() => {
     setQuery("");
     setIncludeHidden(false);
-    updateParams({
-      view: "graph",
-      mode: null,
-      type: null,
-      status: null,
-      order: null,
-      q: null,
-    });
+    updateParams(
+      {
+        view: "graph",
+        mode: null,
+        type: null,
+        status: null,
+        order: null,
+        q: null,
+      },
+      false,
+    );
   }, [updateParams]);
 
   useEffect(() => {
