@@ -150,8 +150,10 @@ async def test_revenue_summary_and_upgrade_events(async_client: AsyncClient) -> 
 
     summary2 = await async_client.get("/api/v1/platform/revenue/summary?days=30", headers=plat)
     body2 = summary2.json()
-    assert body2["expansion_mrr_cents"] >= 25000
-    assert body2["net_mrr_delta_cents"] >= 25000
+    # La DB de integración es compartida: medir el delta del evento de este
+    # test, no un absoluto que otras suscripciones pueden contaminar.
+    assert body2["expansion_mrr_cents"] - body["expansion_mrr_cents"] >= 25000
+    assert body2["net_mrr_delta_cents"] - body["net_mrr_delta_cents"] >= 25000
     pro = next(p for p in body2["by_plan"] if p["plan"] == "pro")
     assert pro["mrr_cents"] >= 25000
     assert pro["arr_cents"] == pro["mrr_cents"] * 12
