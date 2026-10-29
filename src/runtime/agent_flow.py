@@ -1016,7 +1016,11 @@ def verification_summary(steps: list[dict[str, Any]], flow: dict[str, Any]) -> d
         else:
             state = "blocked" if verdict == "abstain" else "warn" if verdict == "revise" else "ok"
             checks.append({"key": "answer_gate", "state": state, "detail": verdict or None})
-        if isinstance(answer_gate.get("grounded"), bool):
+        # `grounded` es el default del dataclass cuando el gate no corrió. Un
+        # gate skipped no es evidencia de falta de grounding: narrarlo como
+        # `blocked` convertía una respuesta verificada documentalmente en
+        # bloqueada. Solo se usa cuando hubo juicio real.
+        if provider != "skip" and isinstance(answer_gate.get("grounded"), bool):
             checks.append(
                 {
                     "key": "grounding",
@@ -1086,6 +1090,9 @@ def verification_summary(steps: list[dict[str, Any]], flow: dict[str, Any]) -> d
         checks,
         decision_status=str(split["decision_verification"]["status"]),
         deterministic_verified=deterministic_verified,
+        narrative_status=str(
+            (split.get("narrative_verification") or {}).get("status") or ""
+        ),
     )
     payload: dict[str, Any] = {"overall": overall}
     if checks:
@@ -1107,15 +1114,27 @@ def _verification_overall(
     *,
     decision_status: str = "",
     deterministic_verified: bool = False,
+    narrative_status: str = "",
 ) -> str:
     # P1.8: fuente única de verdad. Si el verificador determinista pasó y la
     # decisión es autoritativa, el estado global es `verified` aunque no haya
     # checks narrativos (fast path no ejecuta gate).
     if deterministic_verified and decision_status == "VERIFIED":
         return "verified"
+    states = {str(check.get("state")) for check in checks}
+    # Un gate real que declaró falta de grounding manda sobre el veredicto
+    # narrativo. Un gate skipped no produce este check (ver verification_summary).
+    if "blocked" in states:
+        return "blocked"
+    # Separación decisión/narrativa: una consulta informativa no tiene decisión
+    # aplicable. Si su narrativa fue verificada, el gate skipped no puede
+    # degradar el resultado a "blocked".
+    if decision_status != "VERIFIED" and narrative_status == "VERIFIED":
+        return "verified"
+    if decision_status != "VERIFIED" and narrative_status == "PARTIAL":
+        return "partial"
     if not checks:
         return "not_verified"
-    states = {str(check.get("state")) for check in checks}
     grounding = next((c for c in checks if c.get("key") == "grounding"), None)
     grounded_ok = grounding is not None and grounding.get("state") == "ok"
     if decision_status == "VERIFIED":
@@ -1124,8 +1143,6 @@ def _verification_overall(
         if "warn" in states or not grounded_ok:
             return "partial"
         return "verified"
-    if "blocked" in states:
-        return "blocked"
     if "warn" in states:
         return "partial"
     # Sin respaldo en fuentes declarado, el run queda "verificado parcialmente":
