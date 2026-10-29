@@ -136,6 +136,7 @@ export type HealthDimension = {
   score: number | null;
   weight: number;
   measured: boolean;
+  applicable?: boolean;
   reason: string;
   formula: string;
   signals: Record<string, unknown>;
@@ -149,6 +150,8 @@ export type KnowledgeHealth = {
   overall: number | null;
   measured_dimensions: number;
   total_dimensions: number;
+  not_applicable_dimensions?: number;
+  scoring_profile?: string;
   dimensions: HealthDimension[];
   state: string;
   computed_at: string;
@@ -701,6 +704,8 @@ export type KnowledgeExplorerInsightPayload = {
     evidence_total?: number;
     evidence_returned?: number;
     passages_available?: number;
+    passages_from_evidence?: number;
+    passages_from_structure?: number;
     revisions?: number;
     documents_total?: number;
     proposed_participants?: number;
@@ -988,6 +993,7 @@ export function confidenceTone(score: number | null | undefined): string {
 }
 
 export function measuredLabel(dimension: HealthDimension): string {
+  if (dimension.applicable === false) return "No aplica";
   if (!dimension.measured || dimension.score == null) return "No medido";
   return `${Math.round(dimension.score)}`;
 }

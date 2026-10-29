@@ -1913,6 +1913,86 @@ class PostgresKnowledgeModelRepository:
         finally:
             await session.close()
 
+    async def document_signals(self, organization_id: UUID) -> dict:
+        """Señales documentales reales para el perfil narrativo."""
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*) AS total,
+                               COUNT(*) FILTER (WHERE section_count > 0) AS with_sections,
+                               AVG(
+                                   NULLIF(
+                                       metadata->'understanding'->'quality'->>'overall_score',
+                                       ''
+                                   )::float
+                               ) AS extraction_score,
+                               AVG(
+                                   NULLIF(
+                                       metadata->'understanding'->'quality'->>'text_fidelity',
+                                       ''
+                                   )::float
+                               ) AS text_fidelity
+                        FROM structured_documents
+                        WHERE organization_id = :org
+                        """
+                    ),
+                    {"org": organization_id},
+                )
+            ).first()
+            return {
+                "total": int(row.total or 0),
+                "with_sections": int(row.with_sections or 0),
+                "extraction_score": (
+                    float(row.extraction_score)
+                    if row.extraction_score is not None
+                    else None
+                ),
+                "text_fidelity": (
+                    float(row.text_fidelity)
+                    if row.text_fidelity is not None
+                    else None
+                ),
+            }
+        finally:
+            await session.close()
+
+    async def source_genres(self, organization_id: UUID) -> dict[str, int]:
+        """Género documental por fuente, usando el perfil más reciente.
+
+        No infiere desde `document_type`: si el perfil no declara género, cuenta
+        como `unknown`. Se usa para elegir el perfil de scoring, no para
+        reclasificar ni escribir conocimiento.
+        """
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT genre, COUNT(*) AS total
+                        FROM (
+                            SELECT DISTINCT ON (source_id)
+                                   COALESCE(
+                                       metadata->'understanding'->'profile'->>'document_genre',
+                                       'unknown'
+                                   ) AS genre
+                            FROM structured_documents
+                            WHERE organization_id = :org
+                            ORDER BY source_id, updated_at DESC
+                        ) latest
+                        GROUP BY genre
+                        """
+                    ),
+                    {"org": organization_id},
+                )
+            ).fetchall()
+            return {str(row.genre or "unknown"): int(row.total or 0) for row in rows}
+        finally:
+            await session.close()
+
     async def stats(self, organization_id: UUID) -> dict:
         """Señales reales para overview/health. Cero real vs error se separa."""
         session = await get_async_session()
@@ -1974,7 +2054,10 @@ class PostgresKnowledgeModelRepository:
             evidence = (
                 await session.execute(
                     text(
-                        "SELECT COUNT(*) AS total FROM evidence_ledger "
+                        "SELECT COUNT(*) AS total, "
+                        "COUNT(*) FILTER (WHERE excerpt IS NOT NULL AND excerpt <> '') "
+                        "AS with_excerpt "
+                        "FROM evidence_ledger "
                         "WHERE organization_id = :org"
                     ),
                     {"org": organization_id},
@@ -2092,7 +2175,10 @@ class PostgresKnowledgeModelRepository:
                     "low_confidence": int(assertions.low_confidence or 0),
                     "last_updated": _iso(assertions.last_updated),
                 },
-                "evidence": {"total": int(evidence.total or 0)},
+                "evidence": {
+                    "total": int(evidence.total or 0),
+                    "with_excerpt": int(evidence.with_excerpt or 0),
+                },
                 "edges": {
                     "total": int(edges.total or 0),
                     "verified": int(edges.verified or 0),

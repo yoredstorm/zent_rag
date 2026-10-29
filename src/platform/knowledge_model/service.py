@@ -235,11 +235,19 @@ class KnowledgeModelService:
     async def health(self, organization_id: UUID, *, stats: dict | None = None) -> KnowledgeHealth:
         stats = stats or await self._repo.stats(organization_id)
         retrieval = await self._repo.retrieval_signals(organization_id)
+        genres = await self._repo.source_genres(organization_id)
+        document_signals = await self._repo.document_signals(organization_id)
         objects = stats["objects"]
         assertions = stats["assertions"]
         edges = stats["edges"]
         sources = stats["sources"]
         by_kind = stats["by_kind"]
+
+        known_genres = {genre for genre in genres if genre != "unknown"}
+        narrative_only = bool(known_genres) and all(
+            genre in {"narrative", "educational"} for genre in known_genres
+        )
+        scoring_profile = "narrative" if narrative_only else "business"
 
         entities = int(by_kind.get("entity", {}).get("total", 0))
         attributes = int(by_kind.get("attribute", {}).get("total", 0))
@@ -254,24 +262,34 @@ class KnowledgeModelService:
         dimensions: list[HealthDimension] = []
 
         # Cobertura empresarial: conocimiento con evidencia real.
-        coverage_measured = objects["total"] > 0
+        coverage_applicable = not (narrative_only and objects["total"] == 0)
+        coverage_measured = coverage_applicable and objects["total"] > 0
         coverage = _pct(
             objects["total"] - objects["unsupported"], objects["total"]
         ) if coverage_measured else None
         dimensions.append(
             HealthDimension(
                 key=HealthDimensionKey.COVERAGE.value,
-                label="Cobertura empresarial",
+                label=(
+                    "Cobertura de evidencia"
+                    if narrative_only
+                    else "Cobertura empresarial"
+                ),
                 score=coverage,
                 weight=0.20,
                 measured=coverage_measured,
+                applicable=coverage_applicable,
                 reason=(
-                    f"{objects['total'] - objects['unsupported']} de "
-                    f"{objects['total']} objetos tienen evidencia."
-                    if coverage_measured
-                    else "Todavía no hay objetos de negocio."
+                    "No aplica: el perfil narrativo mide extracción, estructura y citas."
+                    if not coverage_applicable
+                    else (
+                        f"{objects['total'] - objects['unsupported']} de "
+                        f"{objects['total']} objetos tienen evidencia."
+                        if coverage_measured
+                        else "Todavía no hay objetos evaluables."
+                    )
                 ),
-                formula="(objetos con evidencia / objetos de negocio) * 100",
+                formula="(objetos con evidencia / objetos evaluables) * 100",
                 signals={
                     "objects_total": objects["total"],
                     "objects_with_evidence": objects["total"] - objects["unsupported"],
@@ -279,6 +297,7 @@ class KnowledgeModelService:
                     "attributes": attributes,
                     "terms": terms,
                     "processes": processes,
+                    "scoring_profile": scoring_profile,
                 },
                 missing=[] if coverage_measured else ["objetos de negocio"],
                 issues=(
@@ -290,8 +309,114 @@ class KnowledgeModelService:
             )
         )
 
+        # Perfil narrativo: la calidad se mide por extracción, estructura y
+        # citas abribles, no por reglas de negocio inexistentes.
+        if narrative_only:
+            extraction_measured = (
+                document_signals["total"] > 0
+                and document_signals["extraction_score"] is not None
+            )
+            extraction_score = (
+                round(document_signals["extraction_score"] * 100, 2)
+                if extraction_measured
+                else None
+            )
+            dimensions.append(
+                HealthDimension(
+                    key=HealthDimensionKey.EXTRACTION.value,
+                    label="Calidad de extracción",
+                    score=extraction_score,
+                    weight=0.25,
+                    measured=extraction_measured,
+                    reason=(
+                        "Promedio de las dimensiones de calidad del parser "
+                        "(texto, estructura, layout) para los documentos."
+                        if extraction_measured
+                        else "Sin evaluación de extracción registrada."
+                    ),
+                    formula="promedio(overall_score de calidad documental) * 100",
+                    signals={
+                        "documents": document_signals["total"],
+                        "extraction_score": document_signals["extraction_score"],
+                        "text_fidelity": document_signals["text_fidelity"],
+                    },
+                    missing=[] if extraction_measured else ["calidad documental"],
+                    issues=[],
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            structure_measured = document_signals["total"] > 0
+            structure_score = (
+                _pct(
+                    document_signals["with_sections"],
+                    document_signals["total"],
+                )
+                if structure_measured
+                else None
+            )
+            dimensions.append(
+                HealthDimension(
+                    key=HealthDimensionKey.STRUCTURE.value,
+                    label="Estructura reconocida",
+                    score=structure_score,
+                    weight=0.15,
+                    measured=structure_measured,
+                    reason=(
+                        f"{document_signals['with_sections']} de "
+                        f"{document_signals['total']} documentos tienen secciones."
+                        if structure_measured
+                        else "Sin documentos que medir."
+                    ),
+                    formula="(documentos con secciones / documentos) * 100",
+                    signals={
+                        "documents": document_signals["total"],
+                        "with_sections": document_signals["with_sections"],
+                    },
+                    missing=[] if structure_measured else ["documentos"],
+                    issues=[],
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            citations_total = int(stats["evidence"]["total"] or 0)
+            citations_measured = citations_total > 0
+            citations_score = (
+                _pct(
+                    int(stats["evidence"].get("with_excerpt") or 0),
+                    citations_total,
+                )
+                if citations_measured
+                else None
+            )
+            dimensions.append(
+                HealthDimension(
+                    key=HealthDimensionKey.CITATIONS.value,
+                    label="Evidencia canónica",
+                    score=citations_score,
+                    weight=0.20,
+                    measured=citations_measured,
+                    reason=(
+                        f"{int(stats['evidence'].get('with_excerpt') or 0)} de "
+                        f"{citations_total} evidencias tienen un extracto abrible."
+                        if citations_measured
+                        else "Sin evidencia canónica registrada. Los pasajes del "
+                        "documento se abren desde el Explorador."
+                    ),
+                    formula="(evidencias con extracto / evidencias) * 100",
+                    signals={
+                        "evidence_total": citations_total,
+                        "with_excerpt": int(
+                            stats["evidence"].get("with_excerpt") or 0
+                        ),
+                    },
+                    missing=[] if citations_measured else ["evidencias"],
+                    issues=[],
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+
         # Completitud de descripciones: NO es comprensión del documento.
-        semantic_measured = objects["total"] > 0
+        semantic_applicable = not (narrative_only and objects["total"] == 0)
+        semantic_measured = semantic_applicable and objects["total"] > 0
         described = objects["total"] - objects["undescribed"]
         semantic = _pct(described, objects["total"]) if semantic_measured else None
         dimensions.append(
@@ -301,11 +426,17 @@ class KnowledgeModelService:
                 score=semantic,
                 weight=0.20,
                 measured=semantic_measured,
+                applicable=semantic_applicable,
                 reason=(
-                    f"{described} de {objects['total']} objetos tienen descripción. "
-                    "Esto mide metadatos, no comprensión del documento."
-                    if semantic_measured
-                    else "Sin objetos que medir; no evalúa comprensión."
+                    "No aplica: no hay objetos canónicos que describir; "
+                    "el documento se evalúa por sus pasajes."
+                    if not semantic_applicable
+                    else (
+                        f"{described} de {objects['total']} objetos tienen descripción. "
+                        "Esto mide metadatos, no comprensión del documento."
+                        if semantic_measured
+                        else "Sin objetos que medir; no evalúa comprensión."
+                    )
                 ),
                 formula="(objetos con descripción / objetos) * 100",
                 signals={
@@ -327,7 +458,8 @@ class KnowledgeModelService:
         )
 
         # Relaciones: verificadas + comprensión semántica (no solo FKs).
-        rel_measured = edges["total"] > 0
+        rel_applicable = not (narrative_only and objects["total"] == 0)
+        rel_measured = rel_applicable and edges["total"] > 0
         rel_score = None
         if rel_measured:
             verified_share = edges["verified"] / edges["total"]
@@ -340,11 +472,17 @@ class KnowledgeModelService:
                 score=rel_score,
                 weight=0.15,
                 measured=rel_measured,
+                applicable=rel_applicable,
                 reason=(
-                    f"{edges['verified']} de {edges['total']} relaciones verificadas; "
-                    f"{edges['semantic']} son semánticas/negocio."
-                    if rel_measured
-                    else "Aún no hay relaciones entre objetos."
+                    "No aplica: sin objetos canónicos; las relaciones del relato "
+                    "se muestran como propuestas en el Explorador."
+                    if not rel_applicable
+                    else (
+                        f"{edges['verified']} de {edges['total']} relaciones verificadas; "
+                        f"{edges['semantic']} son semánticas/negocio."
+                        if rel_measured
+                        else "Aún no hay relaciones entre objetos."
+                    )
                 ),
                 formula="(verificadas/total)*60 + (semánticas/total)*40",
                 signals={
@@ -353,15 +491,19 @@ class KnowledgeModelService:
                     "physical": edges["physical"],
                     "semantic": edges["semantic"],
                 },
-                missing=[] if rel_measured else ["relaciones"],
-                issues=[] if rel_measured else ["Sin relaciones descubiertas"],
+                missing=[] if (rel_measured or not rel_applicable) else ["relaciones"],
+                issues=(
+                    [] if (rel_measured or not rel_applicable) else ["Sin relaciones descubiertas"]
+                ),
                 updated_at=datetime.now(timezone.utc),
             )
         )
 
-        # Reglas y métricas.
+        # Reglas y métricas. En narrativa no aplica: una novela no debe
+        # producir reglas de negocio ni métricas para "aprobar" calidad.
         rm_total = rules + metrics
-        rm_measured = rm_total > 0
+        rm_applicable = not narrative_only
+        rm_measured = rm_applicable and rm_total > 0
         dimensions.append(
             HealthDimension(
                 key=HealthDimensionKey.RULES_METRICS.value,
@@ -369,16 +511,28 @@ class KnowledgeModelService:
                 score=_pct(rules_metrics_verified, rm_total) if rm_measured else None,
                 weight=0.15,
                 measured=rm_measured,
+                applicable=rm_applicable,
                 reason=(
-                    f"{rules_metrics_verified} de {rm_total} reglas/métricas verificadas."
-                    if rm_measured
-                    else "No hay reglas ni métricas definidas."
+                    "No aplica: el conocimiento cargado es narrativo/educativo."
+                    if not rm_applicable
+                    else (
+                        f"{rules_metrics_verified} de {rm_total} reglas/métricas verificadas."
+                        if rm_measured
+                        else "No hay reglas ni métricas definidas."
+                    )
                 ),
                 formula="(reglas+métricas verificadas / total reglas+métricas) * 100",
-                signals={"rules": rules, "metrics": metrics, "verified": rules_metrics_verified},
-                missing=[] if rm_measured else ["reglas", "métricas"],
+                signals={
+                    "rules": rules,
+                    "metrics": metrics,
+                    "verified": rules_metrics_verified,
+                    "scoring_profile": scoring_profile,
+                },
+                missing=[] if (rm_measured or not rm_applicable) else ["reglas", "métricas"],
                 issues=(
-                    ["Sin métricas definidas"] if metrics == 0 else []
+                    ["Sin métricas definidas"]
+                    if rm_applicable and rm_total > 0 and metrics == 0
+                    else []
                 ),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -457,8 +611,8 @@ class KnowledgeModelService:
             )
         )
 
-        # Validación humana.
-        validation_measured = objects["total"] > 0
+        # Validación humana: 0 verificados significa "no evaluado", no 0/100.
+        validation_measured = objects["verified"] > 0
         dimensions.append(
             HealthDimension(
                 key=HealthDimensionKey.VALIDATION.value,
@@ -469,15 +623,22 @@ class KnowledgeModelService:
                 reason=(
                     f"{objects['verified']} de {objects['total']} objetos verificados."
                     if validation_measured
-                    else "Sin objetos que validar."
+                    else (
+                        "No evaluado: aún no hay revisión humana registrada."
+                        if objects["total"] > 0
+                        else "Sin objetos que validar."
+                    )
                 ),
                 formula="(objetos verificados / objetos) * 100",
                 signals={
                     "verified": objects["verified"],
                     "assertions_verified": assertions["verified"],
                     "assertions_total": assertions["total"],
+                    "evaluation_state": (
+                        "evaluated" if validation_measured else "not_evaluated"
+                    ),
                 },
-                missing=[] if validation_measured else ["objetos"],
+                missing=[] if validation_measured else ["revisión humana"],
                 issues=(
                     ["Ningún objeto verificado por una persona"]
                     if validation_measured and objects["verified"] == 0
@@ -488,7 +649,8 @@ class KnowledgeModelService:
         )
 
         # Conflictos: 100 sin conflictos, baja con cada conflicto abierto.
-        conflicts_measured = objects["total"] > 0
+        conflicts_applicable = not (narrative_only and objects["total"] == 0)
+        conflicts_measured = conflicts_applicable and objects["total"] > 0
         conflicts_score = (
             round(max(0.0, 1.0 - min(1.0, stats["conflicts"]["open"] / 5.0)) * 100, 2)
             if conflicts_measured
@@ -501,17 +663,22 @@ class KnowledgeModelService:
                 score=conflicts_score,
                 weight=0.05,
                 measured=conflicts_measured,
+                applicable=conflicts_applicable,
                 reason=(
-                    f"{stats['conflicts']['open']} conflicto(s) abiertos."
-                    if conflicts_measured
-                    else "Sin conocimiento que pueda entrar en conflicto."
+                    "No aplica: sin objetos canónicos que puedan contradecirse."
+                    if not conflicts_applicable
+                    else (
+                        f"{stats['conflicts']['open']} conflicto(s) abiertos."
+                        if conflicts_measured
+                        else "Sin conocimiento que pueda entrar en conflicto."
+                    )
                 ),
                 formula="100 * (1 - min(1, conflictos_abiertos / 5))",
                 signals={
                     "open_conflicts": stats["conflicts"]["open"],
                     "conflicted_assertions": assertions["conflicted"],
                 },
-                missing=[] if conflicts_measured else ["objetos"],
+                missing=[] if (conflicts_measured or not conflicts_applicable) else ["objetos"],
                 issues=(
                     [f"{stats['conflicts']['open']} conflictos sin resolver"]
                     if stats["conflicts"]["open"]
@@ -522,17 +689,27 @@ class KnowledgeModelService:
         )
 
         overall, measured_count = aggregate_health(dimensions)
+        applicable_count = sum(1 for dimension in dimensions if dimension.applicable)
+        not_applicable_count = len(dimensions) - applicable_count
         state = (
             KnowledgeState.EMPTY.value
-            if objects["total"] == 0 and sources["total"] == 0
+            if objects["total"] == 0
+            and sources["total"] == 0
+            and int(stats["indexed"]["sources"] or 0) == 0
             else KnowledgeState.PARTIAL.value
         )
-        if state != KnowledgeState.EMPTY.value and measured_count == len(dimensions):
+        if (
+            state != KnowledgeState.EMPTY.value
+            and applicable_count > 0
+            and measured_count == applicable_count
+        ):
             state = KnowledgeState.READY.value
         return KnowledgeHealth(
             overall=overall,
             measured_dimensions=measured_count,
             total_dimensions=len(dimensions),
+            not_applicable_dimensions=not_applicable_count,
+            scoring_profile=scoring_profile,
             dimensions=dimensions,
             state=state,
         )

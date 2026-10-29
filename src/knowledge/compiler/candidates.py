@@ -180,7 +180,7 @@ def assess_entity_candidate(
             "HEADING_OR_INDEX",
             detail="numeración de sección, no un concepto",
         )
-    if kind in {"concept", "definition", "term", "attribute"}:
+    if kind in {"concept", "definition", "term", "attribute", "process"}:
         plain = value.lower().strip(" .,;:!…")
         if plain in _NON_TERM_LABELS or plain in _NON_TERM_PHRASES:
             return CandidateDecision(

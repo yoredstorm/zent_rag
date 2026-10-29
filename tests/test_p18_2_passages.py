@@ -113,6 +113,10 @@ def test_explorer_uses_passages_when_canonical_objects_are_zero() -> None:
     assert result["limitations"]
     assert result["structure"]
     assert result["passages"]
+    assert result["counts"]["passages_available"] >= len(result["passages"])
+    assert any(
+        "bloques estructurados" in item for item in result["limitations"]
+    )
     assert result["narrative_proposals"]["relations"]
     assert all(
         "simboliza" not in item["claim_text"].lower() for topic in result["topics"] for item in topic["insights"]

@@ -1,0 +1,878 @@
+{
+  "source_id": "da12dc0a-12c9-4a46-95f7-ab19d9c573e7",
+  "count": 109,
+  "objects": [
+    {
+      "id": "98aabfa3-1a8e-55a2-95dd-1dbe2df08ae6",
+      "kind": "concept",
+      "name": "Ac├®rcate para que te vea mejor",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "3f734b8f-2489-516c-8859-916407adc0f4",
+      "kind": "concept",
+      "name": "Adi├│s",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "796ccf18-3856-582f-b1f4-f3ec97ef7f06",
+      "kind": "concept",
+      "name": "Adi├│sÔÇª",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "5d86e5c5-c360-5085-81ca-a02858a986dd",
+      "kind": "concept",
+      "name": "Ah! Ah! ┬íMe visita un admirador!",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "1d0f7b63-4841-5391-9d6e-e146393e8d13",
+      "kind": "concept",
+      "name": "┬┐Ah s├¡?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "a8cd297a-38b8-5d8f-800e-4be466906407",
+      "kind": "concept",
+      "name": "A veces me digo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "33373cc6-405b-5a2a-babb-32edc3f472c5",
+      "kind": "concept",
+      "name": "Bebo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "058e8f78-363c-5381-a573-8c3b8917d4a9",
+      "kind": "concept",
+      "name": "Buenas noches",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "ab02bdf2-1fad-580b-b226-b3853af9e3e6",
+      "kind": "concept",
+      "name": "Buenos d├¡as",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "851e61d8-14fe-5588-9259-f4278a795efb",
+      "kind": "concept",
+      "name": "Buenosd├¡as",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "28f5d0a7-8f4e-5970-bd20-1b499090b383",
+      "kind": "concept",
+      "name": "Buenos d├¡asÔÇª buenos d├¡asÔÇª buenos d├¡asÔÇª",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "9bc0aa69-c280-582a-adea-a31ceeb7c8e1",
+      "kind": "concept",
+      "name": "Busco a los hombres",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "f654b885-0da5-50a5-aef5-74af829f6437",
+      "kind": "concept",
+      "name": "Con eso no adelanto mucho",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "9a2dcabf-24ff-5c1e-9255-0b0bf3059e53",
+      "kind": "concept",
+      "name": "Continu├│ cavilando",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "70ee51fa-7fc8-5b0c-87c1-39c6b9940a04",
+      "kind": "concept",
+      "name": "┬┐Cu├índo ser├í eso?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "3b649ce2-b5a1-5487-b5ec-ab5c28240bf3",
+      "kind": "concept",
+      "name": "Deesemodomeenter├®deunasegundacosamuyimportante",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "6c17bba3-2349-5b92-9d5b-e8b8176bb65c",
+      "kind": "concept",
+      "name": "D├®jame hacerlo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "052ab8db-0197-5834-ab73-cd47da947026",
+      "kind": "concept",
+      "name": "┬┐De qui├®n son?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "d9e9d8ef-f6b6-567f-86ef-7b942ba0d076",
+      "kind": "concept",
+      "name": "┬┐De verdad me admiras mucho?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "aa43b9d0-b1b7-563a-b949-03e86312d810",
+      "kind": "concept",
+      "name": "El desierto es hermoso",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c98c5512-cf83-5e87-875b-ff4ead00f112",
+      "kind": "concept",
+      "name": "El principito se pregunt├│",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "671d5c10-696d-5514-a147-3a0486e32d2c",
+      "kind": "concept",
+      "name": "En el libro dec├¡a",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "6cb9505b-3172-5ca2-85c2-76c7bb4c5854",
+      "kind": "concept",
+      "name": "Entonces",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "f42bcd15-3cff-5b00-867f-89ee2df74945",
+      "kind": "concept",
+      "name": "Era mejor que vinieras a la misma hora",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "2c17c6a8-4de9-5093-82ba-faf7d733bec0",
+      "kind": "concept",
+      "name": "ÔÇ£Es cuesti├│n de disciplina",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c6e6ba9b-cc05-5628-98f8-390605aa5a40",
+      "kind": "concept",
+      "name": "Es extra├▒o",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "11a2194b-3ada-591f-a301-1ddae69da44e",
+      "kind": "concept",
+      "name": "Es hermoso",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "d8f288a4-6ec3-595d-a407-d2cd29f9be88",
+      "kind": "concept",
+      "name": "Es la consigna",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "aa690f45-3268-5f16-b9e3-8197fce2846e",
+      "kind": "concept",
+      "name": "Es para saludar",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "14d74e2d-587f-52dd-a3fa-ad77a7b3e296",
+      "kind": "concept",
+      "name": "Es posible",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "b988328f-3dc2-5b9e-91a3-4e986212f475",
+      "kind": "concept",
+      "name": "Estoy aqu├¡",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "e27e59ec-e4b7-5754-be45-3aef79b4b6d2",
+      "kind": "concept",
+      "name": "Estoy empezando a entender",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "7dd20874-3046-5d5c-a2b0-576ce8777455",
+      "kind": "concept",
+      "name": "Estoy soloÔÇª estoy soloÔÇª estoy soloÔÇª",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "1683e92b-705b-59cb-8735-8f2488d6303c",
+      "kind": "concept",
+      "name": "Es un gran ahorro de tiempo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "4ffdec76-4350-5960-aa62-149afe72ceb7",
+      "kind": "concept",
+      "name": "Exacto",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "7039efb4-9b23-5db0-a0b3-b23b5a5f5a87",
+      "kind": "concept",
+      "name": "Golpea tus manos la una contra la otra",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "29b63d5b-23f5-5bc9-a47e-5992d6d70fb1",
+      "kind": "concept",
+      "name": "He sido tonta",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "e3acb09f-9cfa-55c9-8e7b-a2fc8f2a3ba1",
+      "kind": "concept",
+      "name": "La consigna no ha cambiado",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "44739ad8-d11c-5b89-b169-320f3d924217",
+      "kind": "business_rule",
+      "name": "le respondi├│ el reyÔÇö",
+      "status": "discovered",
+      "evidence_count": 3,
+      "description": "le respondi├│ el reyÔÇö. Eso es lo m├ís dif├¡cil. Es mucho m├ís dif├¡cil juzgarse a s├¡ mismo que juzgar | ÔÇ£Este es el ├║nico que"
+    },
+    {
+      "id": "0f255208-b727-5bc6-92bd-508f30ca4f49",
+      "kind": "concept",
+      "name": "Lo esencial es invisible a los ojos",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "5ab5595e-4fea-58ef-8f7d-76dce4b9d90a",
+      "kind": "concept",
+      "name": "Lo que embellece al desierto",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "4ca16cd1-2583-5347-ba79-6618fd480770",
+      "kind": "concept",
+      "name": "Lo que es importante no se ve",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "e845899e-ab78-5e9b-85d2-90d9de265578",
+      "kind": "concept",
+      "name": "Los hombres de tu tierra",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "28e24266-c79e-5bc8-a373-a60a6ff36955",
+      "kind": "concept",
+      "name": "Los hombres han olvidado esta verdad",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "2bb1b347-1f1d-5050-b86c-1d365499bc9c",
+      "kind": "concept",
+      "name": "Los libros de geograf├¡a",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c04bae8d-0317-5cbb-b9c1-5ec6185a945a",
+      "kind": "concept",
+      "name": "Me con´¼ü├│ tambi├®n",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "d02de81c-9bdb-5855-94f9-0bdf92f54eec",
+      "kind": "concept",
+      "name": "Me gustar├¡a",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c9ea1b7c-42f4-5e6c-9eb2-f29c4aaa836c",
+      "kind": "concept",
+      "name": "Me respondi├│",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c48e47b4-b15f-522f-b7d5-98d04d602bd8",
+      "kind": "concept",
+      "name": "Nada es perfecto",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "aad10187-a268-5f6c-900e-5d39a68b8d25",
+      "kind": "concept",
+      "name": "ÔÇ£No deb├¡ haberla escuchado",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "10086162-8310-5914-9710-5c72278df532",
+      "kind": "concept",
+      "name": "No entiendo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "cf05471a-10d3-551a-9c82-50c07befba49",
+      "kind": "concept",
+      "name": "No es para nada raro",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "0cd8716d-af79-5185-b7e4-82ff96291f88",
+      "kind": "concept",
+      "name": "No hay nada que entender",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "9008a6a9-dfe7-5f80-9fc7-eb3212f8d77b",
+      "kind": "concept",
+      "name": "No lo encuentranÔÇª",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c2aed6c2-8025-51af-b427-d5f8f0ced6ab",
+      "kind": "concept",
+      "name": "No puedo evitarlo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "7e67ac3e-6b38-5d82-8771-b0b4f86c89ae",
+      "kind": "concept",
+      "name": "No puedo jugar contigo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "f847cf8c-d4d4-5201-8e4e-b01f13db421b",
+      "kind": "concept",
+      "name": "No puedo saberlo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "13e47606-9c99-5b85-8302-afded6ed5b36",
+      "kind": "concept",
+      "name": "No son los mismos",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "a6bcd347-680a-5a0d-a2f2-b64cf171b18d",
+      "kind": "concept",
+      "name": "No te vayas",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "f2bd5db3-7535-5770-9380-32874ba887ef",
+      "kind": "concept",
+      "name": "No tomamos nota de las ´¼éores",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "2c1bc595-a943-526f-b067-2461450c32f1",
+      "kind": "concept",
+      "name": "Nunca se sabe",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "16a1eead-1274-58e1-bc22-32845b6021a5",
+      "kind": "concept",
+      "name": "┬íOh! Pero yo ya recorr├¡ el reino",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "f7e6f175-ccc0-50df-8886-47f53b70a775",
+      "kind": "concept",
+      "name": "Para olvidar",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "3f63c1e7-ad09-5d42-af7b-6c2a432e76b3",
+      "kind": "concept",
+      "name": "┬┐Para olvidar qu├®?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "03c04460-9ff8-5402-bc5c-3249caf1293f",
+      "kind": "concept",
+      "name": "Para olvidar que tengo pena",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "2fdd2669-0c0f-527a-af90-dcfa582a5564",
+      "kind": "concept",
+      "name": "┬íPena de beber!",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "0c804c37-19ef-5e11-b43c-5505fc79e260",
+      "kind": "concept",
+      "name": "┬┐Pena de qu├®?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "8f85ad18-3299-52f0-80ba-4b5b07929126",
+      "kind": "concept",
+      "name": "Pero los ojos son ciegos",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "3f533ecc-dd44-5b30-bbfa-75e0ef63b077",
+      "kind": "concept",
+      "name": "Pero los volcanes apagados pueden despertarse",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "a1cc0f7b-fccd-5af0-a72e-57cb7bda290d",
+      "kind": "concept",
+      "name": "planeta?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "d7276d12-2a98-5f47-a6e8-6d7420a5e356",
+      "kind": "concept",
+      "name": "┬┐Por qu├® bebes?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "a6308761-4968-54a0-bbf1-94e40104f8f5",
+      "kind": "concept",
+      "name": "Por supuesto",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "5c3ed083-d58f-5ec2-af10-a030a8d0d4ab",
+      "kind": "concept",
+      "name": "┬┐Qu├® haces aqu├¡?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "79a30bff-e9ee-535f-a098-7c73f526eab8",
+      "kind": "concept",
+      "name": "Qu├® mala suerte",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "4b894f0c-8fc9-5e9d-86e2-e7234811f573",
+      "kind": "concept",
+      "name": "Qui├®n eresÔÇª qui├®n eresÔÇª qui├®n eresÔÇª",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "bd85b25b-7552-51b2-a5a6-e8d8b7fe8c90",
+      "kind": "concept",
+      "name": "┬┐Quinientos y un millones de qu├®?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "af084488-4cec-580a-ab01-04cb1db18068",
+      "kind": "concept",
+      "name": "recuerdas?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "01138788-0d95-51cc-a133-63caab28741d",
+      "kind": "concept",
+      "name": "refut├│ el principito",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "07ef23d5-4454-5e98-a81d-e75130c441b7",
+      "kind": "concept",
+      "name": "Se dijo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c6865e89-56dd-5cf5-9257-c7e34c680f5c",
+      "kind": "concept",
+      "name": "Se├▒or",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "0b81af57-6010-5077-93b7-f18b1e08889b",
+      "kind": "concept",
+      "name": "Ser├¡a suya",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "dd47ae66-f2c2-56fb-83d8-db0e0eaabf36",
+      "kind": "concept",
+      "name": "Sin duda alguna",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "9b8bf17d-d887-58ab-af8a-d82c8fb08f85",
+      "kind": "concept",
+      "name": "ÔÇ£Si yo ordenase",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c371d8e0-9aaf-5555-9221-742573875715",
+      "kind": "concept",
+      "name": "Sobre todo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "32fb0cbb-6a1b-5189-816d-2be721dc03b6",
+      "kind": "concept",
+      "name": "┬┐Sobre todo eso?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "29917b59-f4d3-5f53-a868-c0faa5133fb8",
+      "kind": "concept",
+      "name": "Sobre todo eso",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "b91125bf-3e3f-5c05-a464-7e82dc63dae6",
+      "kind": "concept",
+      "name": "Somos las rosas",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "df30fed5-e991-5131-b097-8125950f0dff",
+      "kind": "concept",
+      "name": "Soy ge├│grafo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "21c39ac8-4a55-5008-b58e-a5a85e1fd370",
+      "kind": "concept",
+      "name": "Soy responsable de mi rosaÔÇª",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "941f89e3-64e3-580c-8f88-9d8816717c51",
+      "kind": "concept",
+      "name": "Suspir├│ con pesar y re´¼éexion├│",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "eb58ad21-2910-5f15-84a8-76f1ed0d98b3",
+      "kind": "concept",
+      "name": "Te har├® mi embajador",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "4cadaaf0-f4c1-555d-b211-a9a69b9de409",
+      "kind": "concept",
+      "name": "Te juzgar├ís entonces a ti mismo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c74a81ec-27f9-5245-ad36-1d579757e0f3",
+      "kind": "concept",
+      "name": "Tengo sed de esta agua",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "7ac6cf6f-5c48-5b5c-97ec-9181f699c9b4",
+      "kind": "concept",
+      "name": "Te ordeno que me preguntes",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "a8a3b888-9e2f-5e2f-a856-5d724e029ce2",
+      "kind": "concept",
+      "name": "Te ordeno que te sientes",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "34277210-aa07-5800-8999-013b3906adf5",
+      "kind": "concept",
+      "name": "Te puedo llevar m├ís lejos que una nave",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "aa849c48-f122-59b4-a36f-443ff3c65725",
+      "kind": "concept",
+      "name": "Tienen mucha prisa",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "923266bb-29fd-50f7-9c96-74f6ece2a093",
+      "kind": "concept",
+      "name": "Tienen suerte",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "9b2a3a57-21bb-5e94-9d5a-d1feefd76798",
+      "kind": "concept",
+      "name": "Tienes que mantener tu promesa",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "6cb506fb-e7af-5994-9a01-11a48789ff16",
+      "kind": "concept",
+      "name": "T├║ no eres de aqu├¡",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "c61562e1-e673-5263-93ed-0c16469f3843",
+      "kind": "concept",
+      "name": "Uno nunca est├í contento donde est├í",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "ad77da68-cb16-5965-8b5f-3ca1e72555a6",
+      "kind": "concept",
+      "name": "Uno solo conoce las cosas que est├ín domesticadas",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "7b94ce1d-e277-5e12-afdd-ba33d561b25b",
+      "kind": "concept",
+      "name": "Ven a jugar conmigo",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "e480847f-720c-59ce-a20b-2eb95342511b",
+      "kind": "attribute",
+      "name": "XXVI",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": ""
+    },
+    {
+      "id": "2d8b6c3b-94ef-5787-a8ed-4ecb43a4999a",
+      "kind": "attribute",
+      "name": "XXVII",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": ""
+    },
+    {
+      "id": "441bf352-0197-5a56-8369-5bc0ad9c07e3",
+      "kind": "concept",
+      "name": "┬┐Y mi puesta de sol?",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "81665169-46d8-5b25-a8e5-0cf98d40ae1d",
+      "kind": "concept",
+      "name": "Yo conozco a alguien",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "cf81a4cc-ecee-5448-8dea-ea968d58f498",
+      "kind": "concept",
+      "name": "Yo los resuelvo todos",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    },
+    {
+      "id": "e42ce858-28f5-503d-9d48-ce5d727869a4",
+      "kind": "concept",
+      "name": "Yo no soy una hierba",
+      "status": "discovered",
+      "evidence_count": 1,
+      "description": null
+    }
+  ]
+}

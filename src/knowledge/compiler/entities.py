@@ -439,6 +439,16 @@ def discover_entities(
             SemanticUnitKind.PROCEDURE_STEP.value,
             SemanticUnitKind.SECTION.value,
         }:
+            genre = (
+                ((document.metadata or {}).get("understanding") or {})
+                .get("profile", {})
+                .get("document_genre")
+                or ""
+            )
+            # En narrativa una "sección" es un párrafo o un diálogo, no un
+            # procedimiento. Nunca se promueve a entidad canónica.
+            if genre in {"narrative", "educational"}:
+                continue
             if not _usable(label, kind="process", text=unit.text):
                 continue
             entity = entity_for(label, EntityType.PROCESS.value)

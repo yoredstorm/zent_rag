@@ -482,7 +482,7 @@ export default function KnowledgeQualityPage() {
             ? KNOWLEDGE_HEADINGS.improve
             : KNOWLEDGE_HEADINGS.health
         }
-        subtitle="Qué tan sano está el conocimiento y qué necesita una decisión humana: conflictos, vacíos, baja confianza y evidencia faltante."
+        subtitle="Qué se midió, qué no aplica al tipo de documento y qué necesita una decisión humana: conflictos, vacíos, baja confianza y evidencia faltante."
         actions={
           <Link to="/knowledge/explorer" className="btn btn-secondary min-h-9 px-3 text-xs">
             Explorar conocimiento

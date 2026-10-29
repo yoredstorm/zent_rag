@@ -99,6 +99,7 @@ export function KnowledgeHero({
     : [];
   const measured = overview.health.measured_dimensions;
   const total = overview.health.total_dimensions;
+  const notApplicable = overview.health.not_applicable_dimensions ?? 0;
 
   return (
     <section className="panel kh-hero" data-testid="knowledge-hero">
@@ -176,7 +177,9 @@ export function KnowledgeHero({
             <div>
               <p className="eyebrow">Qué está medido</p>
               <p className="mt-1 text-xs text-muted">
-                {measured} de {total} señales con datos
+                {measured} de {Math.max(0, total - notApplicable)} señales
+                aplicables con datos
+                {notApplicable > 0 ? ` · ${notApplicable} no aplican` : ""}
               </p>
             </div>
             <WarningCircle
@@ -195,9 +198,11 @@ export function KnowledgeHero({
                   {dimension.label}
                 </span>
                 <span className="text-[11px] text-faint">
-                  {dimension.measured && dimension.score != null
-                    ? "medido"
-                    : "no medido"}
+                  {dimension.applicable === false
+                    ? "no aplica"
+                    : dimension.measured && dimension.score != null
+                      ? "medido"
+                      : "no medido"}
                 </span>
               </li>
             ))}

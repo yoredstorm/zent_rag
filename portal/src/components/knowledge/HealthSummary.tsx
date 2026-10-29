@@ -32,6 +32,24 @@ export function HealthSummary({
     );
   }
   if (!health) return null;
+  const notApplicable = health.not_applicable_dimensions ?? 0;
+  const unmeasured = Math.max(
+    0,
+    health.total_dimensions - health.measured_dimensions - notApplicable,
+  );
+  const narrativeProfile = health.scoring_profile === "narrative";
+  const applicableDimensions = Math.max(
+    0,
+    health.total_dimensions - notApplicable,
+  );
+  const partial =
+    health.overall != null &&
+    applicableDimensions > 0 &&
+    health.measured_dimensions / applicableDimensions < 0.6;
+  const coverageObjects = Number(
+    health.dimensions.find((dimension) => dimension.key === "coverage")?.signals
+      ?.objects_total ?? 0,
+  );
 
   return (
     <Panel className="overflow-hidden" data-testid="knowledge-health-summary">
@@ -39,37 +57,58 @@ export function HealthSummary({
         <div className="flex flex-col items-start gap-3">
           <p className="eyebrow flex items-center gap-2">
             <Heartbeat size={12} className="text-accent" aria-hidden />
-            Calidad del conocimiento
+            {narrativeProfile ? "Calidad del documento" : "Calidad del conocimiento"}
           </p>
           <div className="flex items-center gap-4">
             <HealthIndicator value={health.overall} size={92} />
             <div>
               <p className="text-h3">
                 {health.overall != null
-                  ? `Calidad medida: ${Math.round(health.overall)} de 100`
+                  ? `Calidad${partial ? " parcial" : ""} medida: ${Math.round(
+                      health.overall,
+                    )} de 100`
                   : "Sin medir"}
               </p>
               <p className="text-xs text-muted">
                 {health.measured_dimensions} de {health.total_dimensions} señales
-                medidas. Las no medidas no cuentan como cero.
+                medidas.
+                {notApplicable > 0
+                  ? ` ${notApplicable} no aplica(n) a este tipo de documento.`
+                  : ""}
+                {unmeasured > 0
+                  ? ` ${unmeasured} aún sin datos.`
+                  : ""}{" "}
+                Las no medidas no cuentan como cero.
               </p>
             </div>
           </div>
           <p className="text-[13px] leading-relaxed text-text">
             {interpretHealth(health)}
           </p>
+          {narrativeProfile ? (
+            <p className="rounded-sm border border-border-soft bg-soft px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+              Perfil narrativo: se evalúan extracción, estructura y citas. Una
+              novela no se evalúa por reglas de negocio ni métricas.
+              {coverageObjects === 0
+                ? " No hay objetos canónicos: el libro se explora por pasajes y propuestas."
+                : ""}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-2">
           {health.dimensions.map((dimension) => {
-            const measured = dimension.measured && dimension.score != null;
+            const applicable = dimension.applicable !== false;
+            const measured = applicable && dimension.measured && dimension.score != null;
             return (
               <details key={dimension.key} className="group kh-dimension">
                 <summary className="flex cursor-pointer list-none items-center gap-3 py-1.5">
                   <span className="min-w-0 flex-1 truncate text-sm text-text">
                     {dimension.label}
                   </span>
-                  {measured ? (
+                  {!applicable ? (
+                    <Badge tone="neutral">No aplica</Badge>
+                  ) : measured ? (
                     <>
                       <span className={cn("mono text-sm tabular-nums", toneFor(dimension.score))}>
                         {Math.round(dimension.score!)}
@@ -89,7 +128,7 @@ export function HealthSummary({
                 </summary>
                 <div className="pb-2 text-xs leading-relaxed text-muted">
                   <p>{dimension.reason || "Sin detalle."}</p>
-                  {dimension.formula && (
+                  {dimension.formula && applicable && (
                     <p className="mt-1">
                       Fórmula: <span className="mono">{dimension.formula}</span>
                     </p>
@@ -101,7 +140,7 @@ export function HealthSummary({
                       ))}
                     </ul>
                   )}
-                  {!measured && dimension.missing.length > 0 && (
+                  {applicable && !measured && dimension.missing.length > 0 && (
                     <p className="mt-1">Falta medir: {dimension.missing.join(", ")}.</p>
                   )}
                 </div>

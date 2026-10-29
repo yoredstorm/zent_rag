@@ -458,6 +458,9 @@ def build_explorer_insight(
     passages_available = int(
         stats.get("passages_available") or sum(1 for item in evidence if str(item.get("excerpt") or "").strip())
     )
+    structured_passages = len(passage_view.get("passages") or [])
+    if structured_passages > passages_available:
+        passages_available = structured_passages
     truncated = objects_truncated or evidence_truncated or documents_truncated or bool(stats.get("blocks_truncated"))
     if truncated:
         warnings.append(
@@ -487,7 +490,15 @@ def build_explorer_insight(
     if documents_total > len(documents):
         limitations.append(f"La fuente contiene {documents_total} documentos; esta vista prioriza {len(documents)}.")
     if not evidence:
-        limitations.append("No hay pasajes abribles registrados para esta fuente.")
+        if structured_passages:
+            limitations.append(
+                "No hay evidencias canónicas registradas; los pasajes mostrados "
+                "provienen de los bloques estructurados del documento."
+            )
+        else:
+            limitations.append(
+                "No hay pasajes abribles registrados para esta fuente."
+            )
     document_views = [
         {
             "document_id": str(item.get("id") or ""),
@@ -583,6 +594,10 @@ def build_explorer_insight(
             "evidence_total": evidence_total,
             "evidence_returned": len(evidence),
             "passages_available": passages_available,
+            "passages_from_evidence": sum(
+                1 for item in evidence if str(item.get("excerpt") or "").strip()
+            ),
+            "passages_from_structure": structured_passages,
             "revisions": hidden,
             "proposed_participants": len(passage_view.get("participants") or []),
             "proposed_themes": len(passage_view.get("themes") or []),

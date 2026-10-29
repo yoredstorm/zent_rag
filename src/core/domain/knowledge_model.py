@@ -278,6 +278,9 @@ class ConflictResolution(StrEnum):
 
 class HealthDimensionKey(StrEnum):
     COVERAGE = "coverage"
+    EXTRACTION = "extraction_quality"
+    STRUCTURE = "structure_coverage"
+    CITATIONS = "citation_coverage"
     SEMANTIC = "semantic_understanding"
     RELATIONSHIPS = "relationships"
     RULES_METRICS = "rules_metrics"
@@ -473,6 +476,7 @@ class HealthDimension:
     score: float | None
     weight: float
     measured: bool
+    applicable: bool = True
     reason: str = ""
     formula: str = ""
     signals: dict = field(default_factory=dict)
@@ -488,6 +492,7 @@ class HealthDimension:
             "score": round(self.score, 2) if self.score is not None else None,
             "weight": round(self.weight, 4),
             "measured": bool(self.measured),
+            "applicable": bool(self.applicable),
             "reason": self.reason,
             "formula": self.formula,
             "signals": self.signals,
@@ -507,6 +512,8 @@ class KnowledgeHealth:
     total_dimensions: int
     dimensions: list[HealthDimension] = field(default_factory=list)
     state: str = KnowledgeState.PARTIAL.value
+    scoring_profile: str = "business"
+    not_applicable_dimensions: int = 0
     computed_at: datetime = field(default_factory=_utcnow)
 
     def to_dict(self) -> dict:
@@ -514,6 +521,8 @@ class KnowledgeHealth:
             "overall": round(self.overall, 2) if self.overall is not None else None,
             "measured_dimensions": self.measured_dimensions,
             "total_dimensions": self.total_dimensions,
+            "not_applicable_dimensions": self.not_applicable_dimensions,
+            "scoring_profile": self.scoring_profile,
             "dimensions": [d.to_dict() for d in self.dimensions],
             "state": self.state,
             "computed_at": self.computed_at.isoformat(),
@@ -525,7 +534,11 @@ def aggregate_health(dimensions: list[HealthDimension]) -> tuple[float | None, i
 
     No medido NO es 0: se excluye del cálculo y se reporta aparte.
     """
-    measured = [d for d in dimensions if d.measured and d.score is not None]
+    measured = [
+        d
+        for d in dimensions
+        if d.applicable and d.measured and d.score is not None
+    ]
     if not measured:
         return None, 0
     total_weight = sum(max(d.weight, 0.0) for d in measured)

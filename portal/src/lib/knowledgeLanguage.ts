@@ -93,26 +93,45 @@ export function interpretHealth(health: KnowledgeHealth): string {
   if (overall == null || health.measured_dimensions === 0) {
     return "Todavía no hay suficiente conocimiento medido para evaluar la salud.";
   }
-  const unmeasured = health.total_dimensions - health.measured_dimensions;
+  const notApplicable = health.not_applicable_dimensions ?? 0;
+  const unmeasured = Math.max(
+    0,
+    health.total_dimensions - health.measured_dimensions - notApplicable,
+  );
+  const narrative = health.scoring_profile === "narrative";
   const prefix =
     overall >= 85
-      ? "El conocimiento de tu empresa está bien respaldado."
+      ? narrative
+        ? "El documento está bien estructurado y respaldado."
+        : "El conocimiento de tu empresa está bien respaldado."
       : overall >= 65
         ? "El conocimiento está estable, con puntos por reforzar."
-        : "El conocimiento necesita atención.";
+        : narrative
+          ? "La comprensión documental aún necesita refuerzo."
+          : "El conocimiento necesita atención.";
   const weak = health.dimensions
-    .filter((d) => d.measured && d.score != null && d.score < 60)
+    .filter(
+      (d) =>
+        d.applicable !== false &&
+        d.measured &&
+        d.score != null &&
+        d.score < 60,
+    )
     .map((d) => d.label.toLowerCase());
   const parts: string[] = [];
   if (weak.length > 0) parts.push(`Conviene reforzar ${weak.slice(0, 2).join(" y ")}.`);
   if (unmeasured > 0) {
     parts.push(`${unmeasured} dimensión(es) aún sin datos para medir.`);
   }
+  if (notApplicable > 0) {
+    parts.push(`${notApplicable} no aplica(n) a este tipo de documento.`);
+  }
   return parts.length > 0 ? `${prefix} ${parts.join(" ")}` : prefix;
 }
 
 /** Frase corta para una dimensión de salud. */
 export function dimensionSummary(dimension: HealthDimension): string {
+  if (dimension.applicable === false) return "No aplica";
   if (!dimension.measured || dimension.score == null) return "No medido";
   if (dimension.score >= 85) return "Sólido";
   if (dimension.score >= 65) return "Aceptable";

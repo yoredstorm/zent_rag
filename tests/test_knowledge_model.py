@@ -90,6 +90,26 @@ def test_confidence_evidence_beats_source_reliability() -> None:
     assert strong_evidence > weak_evidence
 
 
+def test_health_excludes_not_applicable_dimensions() -> None:
+    dimensions = [
+        HealthDimension(
+            key="extraction", label="Extracción", score=90.0, weight=0.5, measured=True
+        ),
+        HealthDimension(
+            key="rules_metrics",
+            label="Reglas",
+            score=0.0,
+            weight=0.5,
+            measured=True,
+            applicable=False,
+            reason="No aplica a narrativa",
+        ),
+    ]
+    overall, measured = aggregate_health(dimensions)
+    assert measured == 1
+    assert overall == 90.0
+
+
 def test_health_excludes_unmeasured_dimensions() -> None:
     dimensions = [
         HealthDimension(
