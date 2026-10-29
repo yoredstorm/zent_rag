@@ -2,7 +2,7 @@
 
 - Fecha: 2026-10-29
 - Baseline: `3c97dfb4149e61a540641a69d86f676be883bee9`
-- Código candidato: `d0b3b6750f8dbcb6810355f88d86662ab663a0d8`
+- Código candidato: `bae45c5e9d10da8458e406fe62f3c892d93d511e`
 - Rama: `master`
 - Entorno evaluado: staging local con tenants sintéticos
 - Manifiesto: `artifacts/certification/p18-3/release_manifest.json`
@@ -138,3 +138,4 @@ No se habilita canario de producción. Si en una fase posterior se autoriza:
 - Medir latencia con DB real y n≥30 por familia.
 - Limpiar la cola local de jobs `dead` antes de una nueva corrida E2E.
 - Documentar el mapa de `source_ref` para el benchmark de 40.
+

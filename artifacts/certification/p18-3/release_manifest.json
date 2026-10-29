@@ -1,7 +1,7 @@
 {
   "schema": "zent.p18_3.release_manifest/v1",
-  "generated_at": "2026-10-29T20:40:00Z",
-  "release_candidate_code_sha": "d0b3b6750f8dbcb6810355f88d86662ab663a0d8",
+  "generated_at": "2026-10-29T22:10:00Z",
+  "release_candidate_code_sha": "bae45c5e9d10da8458e406fe62f3c892d93d511e",
   "baseline_sha": "3c97dfb4149e61a540641a69d86f676be883bee9",
   "branch": "master",
   "environment": "local staging (synthetic tenants)",
@@ -146,7 +146,7 @@
   },
   "artifacts": {
     "agent_certification.json": "260da0b5ccd03a607ee782b1b1a84e9dd2aba78746e3390fd1997ad502bcfee5",
-    "baseline.json": "d6c272e6e5554b2fdafeb57076121845a9eec3a5ae93d8492537833876d64727",
+    "baseline.json": "e61c5d159f01e317527b50cba1e0cafe7fa9b997e1ca831cffe292c3e1f70117",
     "flags_inventory.json": "7fad62452c5585939e465ef0a3a3c5d06d28fe6606efa07982ca6439065de531",
     "e2e/pdf-explorer-1366.png": "0a31ec0ed4f1dfa70bc2eed34d825cf44080c097ecdc1242adcf608d743f37da",
     "e2e/pdf-explorer-390.png": "f7649e1ae69e2cdecc2b15b75ff4b5694e23e8968a361115c30372e5ced5727e"
@@ -167,5 +167,15 @@
     "Hash de artefactos calculado sobre el estado local previo al commit de certificación.",
     "No se incluyen secretos ni PII.",
     "GO_STAGING solo habilita pruebas internas; no es autorización de producción."
-  ]
+  ],
+  "ci": {
+    "run_id": 40961622229,
+    "sha": "bae45c5e9d10da8458e406fe62f3c892d93d511e",
+    "conclusion": "success",
+    "url": "https://github.com/yoredstorm/zent_rag/actions/runs/40961622229"
+  },
+  "goldset": {
+    "sha256": "f0cdb4cb8cacee35908964d542919774674930ab75762bb7f233a8a2273c4f99",
+    "status": "DRAFT_NOT_APPROVED"
+  }
 }
