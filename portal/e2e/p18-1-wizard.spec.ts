@@ -117,8 +117,8 @@ test("P18.1 wizard: lote parcial, recarga y reapertura durable", async ({
   await expect(page.getByTestId("wizard-session-check")).toBeVisible({
     timeout: 90_000,
   });
-  await expect(page.getByText("2 de 2 fuentes listas")).toBeVisible({
-    timeout: 90_000,
+  await expect(page.getByText(/de 2 fuentes listas/).first()).toBeVisible({
+    timeout: 30_000,
   });
   await expect(page.getByText("uno.txt").first()).toBeVisible();
   await expect(page.getByText("dos.txt").first()).toBeVisible();

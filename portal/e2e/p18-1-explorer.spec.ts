@@ -8,6 +8,11 @@ import { expectNoA11yViolations } from "./fixtures";
  * Sube una política pequeña, espera el indexado y comprueba que el Explorador
  * muestra el documento, su resumen y los límites de certeza sin inventar temas.
  */
+test.skip(
+  process.env.P18_1_E2E_INGEST !== "1",
+  "Requiere worker de ingesta; CI E2E no lo levanta.",
+);
+
 test("P18.1 explorador documental: fuente real, resumen y evidencia", async ({
   page,
   request,
