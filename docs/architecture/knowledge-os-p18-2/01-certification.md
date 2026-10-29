@@ -217,6 +217,8 @@ Después:
 - El PDF original no se modificó. Backup de objetos previos:
   `artifacts/certification/p18-2/principito-before-reprocess.json`.
 - Evidencia: `artifacts/certification/p18-2/narrative-quality-after.json`.
+- Capturas: `quality-narrative-1366.png` y `quality-narrative-390.png`
+  (sin overflow horizontal en 390 px).
 
 Comando ejecutado:
 
