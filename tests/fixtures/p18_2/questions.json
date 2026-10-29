@@ -1,0 +1,55 @@
+{
+  "version": "p18.2-questions-1",
+  "status": "prepared_not_executed",
+  "note": "Consultas de evaluación para corpus humano. No se usaron como certificación: requieren respuestas anotadas y ejecución con retrieval real.",
+  "families": {
+    "narrative": [
+      { "query": "¿Quiénes son los personajes que dialogan en el relato?", "expected": "answer" },
+      { "query": "¿Qué pregunta Lía al inicio?", "expected": "answer" },
+      { "query": "¿Dónde quedó la nave 7?", "expected": "answer" },
+      { "query": "¿Qué debe cuidar Lía?", "expected": "answer" },
+      { "query": "¿Quién propone encender la baliza?", "expected": "answer" },
+      { "query": "¿Qué busca Nara al día siguiente?", "expected": "answer" },
+      { "query": "¿El texto dice que el mapa simboliza la amistad?", "expected": "abstain" },
+      { "query": "¿Cuál es la política de gastos del asteroide?", "expected": "abstain" },
+      { "query": "¿El planeta 9 gira más rápido que la nave 7?", "expected": "contradiction_or_abstain" },
+      { "query": "¿Qué ocurre después de que Tomás asiente?", "expected": "answer" }
+    ],
+    "technical": [
+      { "query": "¿Cuál es la posición del campo Fare Basis?", "expected": "answer" },
+      { "query": "¿Qué longitud tiene Currency?", "expected": "answer" },
+      { "query": "¿Qué máscara usa Byte 105?", "expected": "answer" },
+      { "query": "¿Qué debe validar el registro antes de publicar?", "expected": "answer" },
+      { "query": "¿Qué campo no puede cambiar el carrier al reemitir?", "expected": "answer" },
+      { "query": "¿Cuál es el formato de Fare Basis?", "expected": "answer" },
+      { "query": "¿Cuál es el color del campo Currency?", "expected": "abstain" },
+      { "query": "¿Cuántos empleados trabajan en ATPCO?", "expected": "abstain" },
+      { "query": "¿La máscara 999 aplica a Fare Basis?", "expected": "contradiction_or_abstain" },
+      { "query": "¿Qué campo está en la posición 20?", "expected": "answer" }
+    ],
+    "policy_contract": [
+      { "query": "¿Quién debe solicitar aprobación antes del gasto?", "expected": "answer" },
+      { "query": "¿Quién autoriza el monto?", "expected": "answer" },
+      { "query": "¿Qué evidencia debe dejar el responsable?", "expected": "answer" },
+      { "query": "¿El procedimiento es obligatorio para todos?", "expected": "answer" },
+      { "query": "¿Qué obligación tiene el proveedor?", "expected": "answer" },
+      { "query": "¿Qué jurisdicción aceptan las partes?", "expected": "answer" },
+      { "query": "¿Existe una excepción para el gerente?", "expected": "answer" },
+      { "query": "¿El contrato permite cambiar el precio sin aviso?", "expected": "abstain" },
+      { "query": "¿La política aplica a visitantes externos?", "expected": "abstain" },
+      { "query": "¿La indemnización es una recomendación o una obligación?", "expected": "contradiction_or_abstain" }
+    ],
+    "tabular": [
+      { "query": "¿Cuántas filas tiene el inventario?", "expected": "answer" },
+      { "query": "¿Qué columnas tiene el archivo?", "expected": "answer" },
+      { "query": "¿Cuál es el precio de la rosa?", "expected": "answer" },
+      { "query": "¿Qué producto tiene stock cero?", "expected": "answer" },
+      { "query": "¿Cuál es el total por categoría?", "expected": "answer" },
+      { "query": "¿Qué fila tiene el precio más alto?", "expected": "answer" },
+      { "query": "¿Qué regla de negocio se deduce de la columna precio?", "expected": "abstain" },
+      { "query": "¿Quién aprobó el inventario?", "expected": "abstain" },
+      { "query": "¿La columna nombre es una regla corporativa?", "expected": "abstain" },
+      { "query": "¿Qué celdas están vacías?", "expected": "answer" }
+    ]
+  }
+}

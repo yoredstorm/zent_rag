@@ -58,11 +58,12 @@ humanamente una muestra de propuestas narrativas.
 | UX | Copy humano, CTA único, responsive CSS | PASS | tests de UI |
 | UX | Cinco usuarios no técnicos | SKIP | sin sesiones de usabilidad |
 | Métricas | “Comprensión semántica” renombrada | PASS | `test_p18_2_metrics.py` |
+| Métricas | 40 consultas preparadas (10/familia) | PASS (fixture) | `questions.json`; no ejecutadas |
 | Métricas | Evaluación de comprensión versionada | SKIP | no existe dataset humano |
 | Seguridad | Aislamiento org/workspace/corpus | PASS | `test_p18_1_corpus_scope.py` |
 | Seguridad | Cross-tenant/ACL/revocación E2E | SKIP | E2E no ejecutado |
 | E2E | Flujo real upload → indexado → abrir → preguntar | SKIP | `P18_2_E2E_INGEST` no configurado |
-| Regresión | Suites P18.1/P18.2 backend | PASS | 69 tests |
+| Regresión | Suites P18.1/P18.2 backend | PASS | 70 tests |
 | Regresión | Suites portal knowledge | PASS | 27 tests |
 | TypeScript | `tsc --noEmit` | PASS | sin salida |
 | Lint | ESLint archivos tocados | PASS | sin errores |
@@ -99,7 +100,7 @@ No se presenta como p95 de producción.
 # 64 passed
 
 .\.venv\Scripts\python.exe -m pytest tests\test_p18_2_certification.py -q
-# 5 passed
+# 6 passed
 
 # Portal
 cd portal

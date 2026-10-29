@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -191,3 +192,16 @@ def test_every_displayed_claim_opens_an_existing_excerpt() -> None:
             assert insight["object_id"] is None
     assert result["counts"]["objects_visible"] == 0
     assert result["provenance"]["evaluation_state"] == "not_evaluated"
+
+
+def test_question_set_has_ten_cases_per_family_and_abstentions() -> None:
+    payload = json.loads(
+        (ROOT / "p18_2" / "questions.json").read_text(encoding="utf-8")
+    )
+    families = payload["families"]
+    assert set(families) == {"narrative", "technical", "policy_contract", "tabular"}
+    for family, cases in families.items():
+        assert len(cases) == 10, family
+        assert any(case["expected"] != "answer" for case in cases), family
+        assert all(case["query"].strip() for case in cases), family
+    assert payload["status"] == "prepared_not_executed"
