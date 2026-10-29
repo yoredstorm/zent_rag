@@ -1777,6 +1777,8 @@ class PostgresKnowledgeModelRepository:
         min_confidence: float | None = None,
         limit_nodes: int = 120,
         limit_edges: int = 300,
+        source_id: UUID | None = None,
+        exclude_hidden: bool = False,
     ) -> dict:
         """Vecindario inicial + expansión on-demand. Deriva del modelo real."""
         session = await get_async_session()
@@ -1798,6 +1800,14 @@ class PostgresKnowledgeModelRepository:
             if min_confidence is not None:
                 edge_clauses.append("e.confidence >= :min_conf")
                 params["min_conf"] = float(min_confidence)
+            if source_id is not None:
+                edge_clauses.append("e.source_id = :source_id")
+                params["source_id"] = source_id
+            if exclude_hidden:
+                edge_clauses.append(
+                    "COALESCE(s.metadata->>'explorer_visibility', '') <> 'hidden' "
+                    "AND COALESCE(o.metadata->>'explorer_visibility', '') <> 'hidden'"
+                )
 
             if focus_id is not None:
                 edge_clauses.append(
@@ -1882,8 +1892,10 @@ class PostgresKnowledgeModelRepository:
                 object_rows = await self.list_objects(
                     organization_id,
                     kinds=kinds,
+                    source_id=source_id,
                     limit=params["limit_nodes"],
                     order_by="evidence",
+                    exclude_hidden=exclude_hidden,
                 )
                 for item in object_rows:
                     add_node(

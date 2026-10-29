@@ -111,6 +111,14 @@ function verificationLabel(status: string) {
   );
 }
 
+function nodeTone(status: string): string {
+  if (status === "verified") return "badge-ok";
+  if (status === "inferred") return "badge-pending";
+  if (status === "discovered") return "badge-info";
+  if (status === "rejected") return "badge-danger";
+  return "badge-muted";
+}
+
 function canReviewHidden(): boolean {
   const session = loadSession();
   const permissions = session?.permissions ?? [];
@@ -480,6 +488,18 @@ function GraphPanel({
   }, [payload]);
 
   const selectedNode = layout.nodes.find((node) => node.id === selected) ?? null;
+  const verifiedEdges = payload
+    ? payload.edges.filter((edge) => edge.status === "verified").length
+    : 0;
+  const unverifiedEdges = payload ? payload.edges.length - verifiedEdges : 0;
+  const selectedEdges = selectedNode
+    ? (payload?.edges ?? [])
+        .filter(
+          (edge) =>
+            edge.source === selectedNode.id || edge.target === selectedNode.id,
+        )
+        .slice(0, 6)
+    : [];
 
   if (!payload) {
     return <Skeleton className="h-[420px] rounded-lg" />;
@@ -498,7 +518,8 @@ function GraphPanel({
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted">
-          {payload.counts.nodes} nodos · {payload.counts.edges} relaciones
+          {payload.counts.nodes} nodos · {payload.counts.edges} relaciones ·{" "}
+          {verifiedEdges} verificadas · {unverifiedEdges} sin verificar
           {payload.truncated ? " (vecindario acotado)" : ""} · click para inspeccionar
         </p>
         {focusId && (
@@ -525,10 +546,18 @@ function GraphPanel({
                 y1={from.y}
                 x2={to.x}
                 y2={to.y}
-                className="kh-edge"
+                className={cn(
+                  "kh-edge",
+                  edge.status !== "verified" && "is-unverified",
+                )}
                 style={{ opacity: 0.12 + Math.min(1, edge.confidence) * 0.32 }}
               >
-                <title>{edge.predicate}</title>
+                <title>
+                  {edge.predicate} · {edge.status}
+                  {edge.status === "verified"
+                    ? ""
+                    : " (sin verificar, no es un hecho confirmado)"}
+                </title>
               </line>
             );
           })}
@@ -554,21 +583,22 @@ function GraphPanel({
               >
                 <circle
                   r={1.1 + Math.min(2.4, Math.sqrt(node.degree + 1) * 0.5)}
-                  className="kh-node-dot"
+                  className={cn("kh-node-dot", nodeTone(node.status))}
                 />
-                <title>{`${node.name} · ${objectTypeLabel(node.type)} · ${node.degree} conexiones`}</title>
+                <title>{`${node.name} · ${objectTypeLabel(node.type)} · ${node.status} · ${node.degree} conexiones`}</title>
               </g>
             );
           })}
         </svg>
       </div>
       {selectedNode && (
+        <>
         <div className="kh-pulse-detail">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-text">{selectedNode.name}</p>
             <p className="mt-0.5 text-[11px] text-muted">
-              {objectTypeLabel(selectedNode.type)} · {selectedNode.degree} conexiones ·{" "}
-              {selectedNode.evidence_count} evidencias
+              {objectTypeLabel(selectedNode.type)} · {verificationLabel(selectedNode.status).label} ·{" "}
+              {selectedNode.degree} conexiones · {selectedNode.evidence_count} evidencias
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -584,6 +614,47 @@ function GraphPanel({
             </Button>
           </div>
         </div>
+        <div className="rounded-md border border-border-soft bg-soft px-3 py-2">
+          <p className="text-[11px] font-medium text-muted">
+            Relaciones de este nodo
+          </p>
+          {selectedEdges.length === 0 ? (
+            <p className="mt-1 text-[11px] text-faint">
+              Todavía no hay relaciones verificables; puedes abrir los pasajes del
+              objeto.
+            </p>
+          ) : (
+            <ul className="mt-1 flex flex-col gap-1">
+              {selectedEdges.map((edge) => {
+                const outgoing = edge.source === selectedNode.id;
+                const otherId = outgoing ? edge.target : edge.source;
+                return (
+                  <li key={edge.id} className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="text-muted">
+                      {outgoing ? "hacia" : "desde"} {edge.predicate}{" "}
+                      {outgoing ? edge.target : edge.source}
+                    </span>
+                    <span
+                      className={cn(
+                        "badge",
+                        edge.status === "verified" ? "badge-ok" : "badge-pending",
+                      )}
+                    >
+                      {edge.status === "verified" ? "verificada" : "sin verificar"}
+                    </span>
+                    <Link
+                      to={`/knowledge/objects/${otherId}`}
+                      className="text-accent hover:underline"
+                    >
+                      Ver evidencia
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        </>
       )}
     </div>
   );
@@ -822,6 +893,8 @@ export default function KnowledgeExplorerPage() {
     void fetchKnowledgeGraph({
       focus_id: focusId ?? undefined,
       domains: domain || undefined,
+      source_id: sourceId || undefined,
+      exclude_hidden: true,
       limit_nodes: 80,
       limit_edges: 160,
     })
@@ -837,7 +910,7 @@ export default function KnowledgeExplorerPage() {
     return () => {
       cancelled = true;
     };
-  }, [view, focusId, domain]);
+  }, [view, focusId, domain, sourceId]);
 
   const selectedDomain = domains.find((item) => item.name === domain) ?? null;
   const topics = selectedDomain?.by_type ?? [];

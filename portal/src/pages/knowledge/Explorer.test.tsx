@@ -316,6 +316,67 @@ describe("KnowledgeExplorerPage — modos excluyentes", () => {
     ).toHaveAttribute("href", "/knowledge/objects/obj-1");
   });
 
+  it("en el grafo separa relaciones verificadas de no verificadas", async () => {
+    fetchKnowledgeGraph.mockResolvedValue({
+      nodes: [
+        {
+          id: "n1",
+          type: "entity",
+          name: "Lía",
+          domain: "relato",
+          status: "verified",
+          confidence: 0.9,
+          evidence_count: 2,
+          degree: 1,
+        },
+        {
+          id: "n2",
+          type: "entity",
+          name: "Tomás",
+          domain: "relato",
+          status: "inferred",
+          confidence: 0.6,
+          evidence_count: 1,
+          degree: 1,
+        },
+      ],
+      edges: [
+        {
+          id: "e1",
+          source: "n1",
+          target: "n2",
+          predicate: "dialoga con",
+          relationship_type: "semantic",
+          confidence: 0.6,
+          status: "inferred",
+          provenance: "INFERRED",
+        },
+      ],
+      counts: { nodes: 2, edges: 1 },
+      truncated: false,
+      focus_id: null,
+      depth: 1,
+    });
+
+    const user = userEvent.setup();
+    renderPage("/knowledge/explorer?view=graph&source=src-1");
+
+    await waitFor(() => expect(fetchKnowledgeGraph).toHaveBeenCalled());
+    expect(fetchKnowledgeGraph).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source_id: "src-1", exclude_hidden: true }),
+    );
+    expect(
+      screen.getByText(/0 verificadas · 1 sin verificar/),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Lía, 1 conexiones/ }));
+    expect(screen.getByText("Relaciones de este nodo")).toBeInTheDocument();
+    expect(screen.getByText("sin verificar")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Ver evidencia" }),
+    ).toHaveAttribute("href", "/knowledge/objects/n2");
+  });
+
   it("muestra la etiqueta humana del estado, no el código interno", async () => {
     fetchKnowledgeCorpora.mockResolvedValue({
       corpora: [{ id: "corpus-1", name: "Principal", slug: "principal" }],

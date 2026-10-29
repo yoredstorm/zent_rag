@@ -426,6 +426,7 @@ export type KnowledgeGraphPayload = {
     confidence: number;
     status: string;
     provenance: string;
+    evidence?: unknown[];
   }[];
   counts: { nodes: number; edges: number };
   truncated: boolean;
@@ -749,6 +750,8 @@ export function fetchKnowledgeGraph(
     min_confidence?: number;
     limit_nodes?: number;
     limit_edges?: number;
+    source_id?: string;
+    exclude_hidden?: boolean;
   } = {}
 ): Promise<KnowledgeGraphPayload> {
   const query = new URLSearchParams();
@@ -756,6 +759,8 @@ export function fetchKnowledgeGraph(
   if (params.types) query.set("types", params.types);
   if (params.domains) query.set("domains", params.domains);
   if (params.min_confidence != null) query.set("min_confidence", String(params.min_confidence));
+  if (params.source_id) query.set("source_id", params.source_id);
+  if (params.exclude_hidden) query.set("exclude_hidden", "true");
   query.set("limit_nodes", String(params.limit_nodes ?? 120));
   query.set("limit_edges", String(params.limit_edges ?? 300));
   return withSession(`/api/v1/knowledge/graph?${query.toString()}`);

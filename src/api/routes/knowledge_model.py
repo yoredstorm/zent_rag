@@ -731,6 +731,8 @@ async def knowledge_graph(
     min_confidence: float | None = Query(default=None, ge=0, le=1),
     limit_nodes: int = Query(default=120, ge=1, le=400),
     limit_edges: int = Query(default=300, ge=1, le=800),
+    source_id: UUID | None = None,
+    exclude_hidden: bool = Query(default=False),
     service=Depends(get_knowledge_model_service),
 ) -> dict:
     require_permission(request, "knowledge:read")
@@ -745,6 +747,8 @@ async def knowledge_graph(
             min_confidence=min_confidence,
             limit_nodes=limit_nodes,
             limit_edges=limit_edges,
+            source_id=source_id,
+            exclude_hidden=exclude_hidden,
         )
     except KnowledgeModelUnavailable as exc:
         raise _unavailable(exc) from exc

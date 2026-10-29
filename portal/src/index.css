@@ -3066,9 +3066,17 @@
   stroke: var(--zent-border-strong);
   stroke-width: 0.16;
 }
+.kh-edge {
+  stroke: var(--zent-accent);
+  stroke-width: 0.14;
+}
 .kh-pulse-svg .kh-edge {
   stroke: var(--zent-accent);
   stroke-width: 0.14;
+}
+.kh-edge.is-unverified {
+  stroke: var(--zent-warn);
+  stroke-dasharray: 0.9 0.7;
 }
 .kh-core-halo {
   fill: var(--zent-accent-soft);
