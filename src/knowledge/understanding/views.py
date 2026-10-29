@@ -13,6 +13,7 @@ from src.core.domain.knowledge_v2 import (
     StructuredBlockKind,
     StructuredDocument,
 )
+from src.knowledge.understanding.genre import classify_document_genre
 from src.knowledge.understanding.versions import (
     CHUNKING_VERSION,
     SEMANTIC_UNIT_VERSION,
@@ -418,13 +419,30 @@ def source_profile(
     mask_literals = [
         item for item in extracted.get("exact_literals") or [] if item.get("pattern_type") == "mask"
     ]
-    strong_spec = len(field_names) >= 2 or (len(field_names) >= 1 and (document.tables or mask_literals))
-    if strong_spec:
+    genre = classify_document_genre(document, extracted, filename=filename)
+    document_genre = genre["document_genre"]
+    strong_spec = (
+        len(field_names) >= 3
+        and (bool(document.tables) or bool(mask_literals) or bool(field_names))
+    )
+    if document_genre == "technical" and strong_spec:
         document_type = "technical_specification"
         profile_confidence = 0.74
     elif any(str(block.metadata.get("role")) == "procedure" for block in document.blocks):
         document_type = "procedure"
         profile_confidence = 0.62
+    elif document_genre == "narrative":
+        document_type = "narrative"
+        profile_confidence = genre["genre_confidence"]
+    elif document_genre == "policy":
+        document_type = "policy"
+        profile_confidence = genre["genre_confidence"]
+    elif document_genre == "legal":
+        document_type = "contract"
+        profile_confidence = genre["genre_confidence"]
+    elif document_genre == "tabular":
+        document_type = "tabular"
+        profile_confidence = genre["genre_confidence"]
     elif len(document.sections) >= 4:
         document_type = "manual"
         profile_confidence = 0.58
@@ -452,6 +470,13 @@ def source_profile(
         "title": document.title,
         "normalized_filename": (filename or document.title or "").strip(),
         "document_type": document_type,
+        "document_genre": document_genre,
+        "genre_confidence": genre["genre_confidence"],
+        "genre_scores": genre["genre_scores"],
+        "genre_evidence": genre["genre_evidence"],
+        "genre_version": genre["genre_version"],
+        "topic_domain": genre["topic_domain"],
+        "business_domain": genre["business_domain"],
         "profile_confidence": profile_confidence,
         "profile_version": SOURCE_PROFILE_VERSION,
         "major_sections": headings,

@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 
 from src.core.domain.knowledge_v2 import StructuredDocument
+from src.knowledge.compiler.candidates import assess_entity_candidate
 from src.knowledge.compiler.model import (
     AliasType,
     EntityAlias,
@@ -264,10 +265,28 @@ def discover_entities(
             document_id=document.id,
         )
 
-    def _usable(name: str) -> bool:
+    def _usable(name: str, *, kind: str = "concept", text: str = "") -> bool:
         stripped = (name or "").strip()
         if stripped.isdigit() or not any(char.isalpha() for char in stripped):
             _reject(stripped, TextQualityStatus.LOW_QUALITY_EXTRACTION.value)
+            return False
+        decision = assess_entity_candidate(
+            stripped,
+            kind=kind,
+            document=document,
+            text=text,
+        )
+        if not decision.accepted:
+            status = (
+                TextQualityStatus.SENTENCE_FRAGMENT.value
+                if decision.reason in {"QUESTION_OR_DIALOGUE", "DIALOGUE_FRAGMENT"}
+                else TextQualityStatus.LOW_QUALITY_EXTRACTION.value
+            )
+            _reject(
+                name,
+                status,
+                detail={"semantic_gate": decision.reason, "why": decision.detail},
+            )
             return False
         verdict = analyze_text_quality(
             stripped,
@@ -332,7 +351,7 @@ def discover_entities(
             continue
         if unit.kind == SemanticUnitKind.DEFINITION.value:
             primary_name, declared_alias = split_declared_alias(label)
-            if len(primary_name) < 2 or not _usable(primary_name):
+            if len(primary_name) < 2 or not _usable(primary_name, text=unit.text):
                 continue
             entity_type = infer_entity_type(primary_name)
             entity = entity_for(primary_name, entity_type)
@@ -376,7 +395,7 @@ def discover_entities(
                 )
             continue
         if unit.kind == SemanticUnitKind.FIELD.value:
-            if not _usable(label):
+            if not _usable(label, kind="field", text=unit.text):
                 continue
             entity = entity_for(label, EntityType.FIELD.value)
             entity.description = entity.description or unit.text
@@ -384,14 +403,14 @@ def discover_entities(
             entity.evidence.append(unit.evidence)
             continue
         if unit.kind == SemanticUnitKind.TABLE.value:
-            if not _usable(label):
+            if not _usable(label, kind="table"):
                 continue
             entity = entity_for(label, EntityType.TABLE.value)
             entity.confidence = max(entity.confidence, unit.confidence)
             entity.evidence.append(unit.evidence)
             continue
         if unit.kind == SemanticUnitKind.COLUMN.value:
-            if not _usable(label):
+            if not _usable(label, kind="column"):
                 continue
             table_reference = str(unit.attributes.get("table") or "").strip()
             entity_type = (
@@ -420,7 +439,7 @@ def discover_entities(
             SemanticUnitKind.PROCEDURE_STEP.value,
             SemanticUnitKind.SECTION.value,
         }:
-            if not _usable(label):
+            if not _usable(label, kind="process", text=unit.text):
                 continue
             entity = entity_for(label, EntityType.PROCESS.value)
             entity.confidence = max(entity.confidence, unit.confidence)
@@ -435,7 +454,13 @@ def _domain_from(document: StructuredDocument) -> str | None:
         return path.strip().strip("/").split("/")[0][:120]
     profile = (document.metadata.get("understanding") or {}).get("profile")
     if isinstance(profile, dict):
-        value = profile.get("domain") or profile.get("document_type")
+        # `document_type` describe la forma, no el dominio. Nunca se usa como
+        # dominio de negocio (P18.1-05).
+        value = (
+            profile.get("business_domain")
+            or profile.get("topic_domain")
+            or profile.get("domain")
+        )
         if isinstance(value, str) and value.strip():
             return value.strip()[:120]
     return None

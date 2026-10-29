@@ -1,13 +1,16 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import KnowledgeExplorerPage from "./Explorer";
 import type { KnowledgeObject } from "../../lib/knowledgeModel";
 
 const fetchKnowledgeDomains = vi.hoisted(() => vi.fn());
 const fetchKnowledgeObjects = vi.hoisted(() => vi.fn());
 const fetchKnowledgeGraph = vi.hoisted(() => vi.fn());
+const fetchKnowledgeCorpora = vi.hoisted(() => vi.fn());
+const fetchKnowledgeSources = vi.hoisted(() => vi.fn());
+const fetchKnowledgeSourceInsight = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/knowledgeModel", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/knowledgeModel")>();
@@ -16,6 +19,9 @@ vi.mock("../../lib/knowledgeModel", async (importOriginal) => {
     fetchKnowledgeDomains,
     fetchKnowledgeObjects,
     fetchKnowledgeGraph,
+    fetchKnowledgeCorpora,
+    fetchKnowledgeSources,
+    fetchKnowledgeSourceInsight,
   };
 });
 
@@ -54,10 +60,19 @@ function renderPage(path = "/knowledge/explorer") {
   );
 }
 
+beforeEach(() => {
+  fetchKnowledgeCorpora.mockResolvedValue({ corpora: [], count: 0 });
+  fetchKnowledgeSources.mockResolvedValue({ sources: [] });
+  fetchKnowledgeSourceInsight.mockResolvedValue(null);
+});
+
 afterEach(() => {
   fetchKnowledgeDomains.mockReset();
   fetchKnowledgeObjects.mockReset();
   fetchKnowledgeGraph.mockReset();
+  fetchKnowledgeCorpora.mockReset();
+  fetchKnowledgeSources.mockReset();
+  fetchKnowledgeSourceInsight.mockReset();
 });
 
 describe("KnowledgeExplorerPage", () => {
@@ -156,5 +171,74 @@ describe("KnowledgeExplorerPage", () => {
         expect.objectContaining({ domain: "ATPCO", type: "business_rule" })
       )
     );
+  });
+
+  it("muestra el resumen documental con pasaje y límites de certeza", async () => {
+    fetchKnowledgeDomains.mockResolvedValue({ domains: [], count: 0 });
+    fetchKnowledgeObjects.mockResolvedValue({ items: [], count: 0, total: 0 });
+    fetchKnowledgeCorpora.mockResolvedValue({
+      corpora: [{ id: "corpus-1", name: "Principal", slug: "principal" }],
+      count: 1,
+    });
+    fetchKnowledgeSources.mockResolvedValue({
+      sources: [
+        { id: "src-1", name: "el_principito.pdf", type: "file", status: "indexed" },
+      ],
+    });
+    fetchKnowledgeSourceInsight.mockResolvedValue({
+      contract: "knowledge_explorer_insight/v1",
+      source: {
+        source_id: "src-1",
+        name: "el_principito.pdf",
+        genre: "narrative",
+        genre_confidence: 0.71,
+        pages: 104,
+        sections: 8,
+        tables: 0,
+      },
+      summary: "Documento de naturaleza narrativa.",
+      topics: [
+        {
+          id: "personajes",
+          label: "Personajes, temas y elementos",
+          summary: "Elementos reconocidos en la narración.",
+          count: 1,
+          insights: [
+            {
+              kind: "concept",
+              object_id: "obj-1",
+              name: "El principito",
+              claim_text: "Personaje que conversa con el narrador.",
+              grounded_excerpt: "—¿Recuerdas? —preguntó el principito.",
+              evidence_ids: ["ev-1"],
+              source_locator: { page: 12, section_path: ["Capítulo 1"] },
+              verification_state: "discovered",
+              uncertainty: "media",
+            },
+          ],
+        },
+      ],
+      warnings: [
+        {
+          code: "HIDDEN_CANDIDATES",
+          message: "2 candidatos de baja utilidad se conservan en revisión.",
+          severity: "info",
+        },
+      ],
+      counts: { objects_total: 3, objects_visible: 1, objects_hidden: 2 },
+    });
+
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("knowledge-document-insight")).toBeInTheDocument()
+    );
+    expect(screen.getByText("El principito")).toBeInTheDocument();
+    expect(
+      screen.getByText(/¿Recuerdas\? —preguntó el principito/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/2 candidatos de baja utilidad/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Ver hallazgo y pasaje" })
+    ).toHaveAttribute("href", "/knowledge/objects/obj-1");
   });
 });

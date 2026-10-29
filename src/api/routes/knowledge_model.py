@@ -10,7 +10,8 @@
 # =============================================================================
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -97,6 +98,16 @@ class RebuildRequest(BaseModel):
 
 class LearnSourceRequest(BaseModel):
     trigger: str = Field(default="manual", pattern="^(manual|scheduled|onboarding)$")
+
+
+class ExplorerCleanupRequest(BaseModel):
+    dry_run: bool = True
+    action: str = Field(default="hide", pattern="^(hide|restore)$")
+    source_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    limit: int = Field(default=500, ge=1, le=2000)
+    reason: str = Field(
+        default="P18.1 non-destructive explorer review", max_length=500
+    )
 
 
 # ------------------------------------------------------ compilaciones
@@ -503,6 +514,193 @@ async def get_evidence(evidence_id: UUID, request: Request) -> dict:
 
 
 # -------------------------------------------------------------- search/graph
+@router.post(
+    "/maintenance/explorer-cleanup",
+    summary="Revisión no destructiva de objetos históricos del Explorador",
+)
+async def explorer_cleanup(
+    body: ExplorerCleanupRequest, request: Request
+) -> dict:
+    """Dry-run por defecto. Solo escribe metadata de presentación versionada.
+
+    No borra objetos, no cambia ids canónicos, no reingesta y no toca agentes
+    ni workflows. El rollback elimina las claves de presentación.
+    """
+    ctx = require_permission(request, "knowledge:write")
+    if not ctx.is_organization_admin():
+        raise HTTPException(403, "Organization admin permission required")
+    _ensure_enabled()
+    if not body.dry_run and not get_settings().KNOWLEDGE_HISTORICAL_CLEANUP_ENABLED:
+        raise HTTPException(
+            403,
+            "Historical cleanup is disabled; run dry-run or enable "
+            "KNOWLEDGE_HISTORICAL_CLEANUP_ENABLED explicitly.",
+        )
+
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.knowledge.compiler.candidates import (
+        is_isolated_number,
+        looks_like_dialogue,
+        looks_like_question,
+    )
+    from src.platform.workspaces.context import resolve_workspace
+
+    ws = await resolve_workspace(request)
+    session = await get_async_session()
+    try:
+        clauses = [
+            "organization_id = :oid",
+            "workspace_id = :wid",
+        ]
+        params: dict = {
+            "oid": ctx.organization_id,
+            "wid": ws.id,
+            "limit": body.limit,
+        }
+        if body.source_ids:
+            clauses.append("source_id = ANY(:sids)")
+            params["sids"] = [str(value) for value in body.source_ids]
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, name, display_name, kind, source_id, metadata "
+                    "FROM knowledge_canonical_objects WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY updated_at DESC LIMIT :limit"
+                ),
+                params,
+            )
+        ).fetchall()
+
+        candidates: list[dict] = []
+        for row in rows:
+            metadata = row.metadata or {}
+            name = str(row.name or row.display_name or "").strip()
+            if body.action == "restore":
+                if metadata.get("explorer_visibility") != "hidden":
+                    continue
+                reason = "restauración solicitada"
+            else:
+                if metadata.get("explorer_visibility") == "hidden":
+                    continue
+                if looks_like_question(name):
+                    reason = "pregunta o etiqueta interrogativa"
+                elif looks_like_dialogue(name):
+                    reason = "fragmento de diálogo"
+                elif is_isolated_number(name) and str(row.kind) not in {
+                    "field",
+                    "column",
+                    "table",
+                    "record",
+                }:
+                    reason = "número aislado sin contexto de esquema"
+                else:
+                    continue
+            candidates.append(
+                {
+                    "id": str(row.id),
+                    "name": name,
+                    "kind": str(row.kind),
+                    "source_id": str(row.source_id) if row.source_id else None,
+                    "reason": reason,
+                }
+            )
+
+        ids = [item["id"] for item in candidates]
+        assertion_refs = 0
+        if ids:
+            assertion_refs = int(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT COUNT(*) AS n FROM knowledge_assertions "
+                            "WHERE organization_id = :oid "
+                            "AND (subject_id = ANY(:ids) OR object_id = ANY(:ids))"
+                        ),
+                        {"oid": ctx.organization_id, "ids": ids},
+                    )
+                ).scalar_one()
+                or 0
+            )
+
+        if not body.dry_run and ids:
+            if body.action == "restore":
+                await session.execute(
+                    text(
+                        "UPDATE knowledge_canonical_objects SET metadata = "
+                        "metadata - 'explorer_visibility' - 'explorer_review_reason' "
+                        "- 'explorer_review_version' - 'explorer_review_at', "
+                        "updated_at = now() "
+                        "WHERE organization_id = :oid AND id = ANY(:ids)"
+                    ),
+                    {"oid": ctx.organization_id, "ids": ids},
+                )
+            else:
+                await session.execute(
+                    text(
+                        "UPDATE knowledge_canonical_objects SET metadata = "
+                        "metadata || CAST(:patch AS jsonb), updated_at = now() "
+                        "WHERE organization_id = :oid AND id = ANY(:ids)"
+                    ),
+                    {
+                        "oid": ctx.organization_id,
+                        "ids": ids,
+                        "patch": json.dumps(
+                            {
+                                "explorer_visibility": "hidden",
+                                "explorer_review_reason": body.reason[:500],
+                                "explorer_review_version": "p18.1-cleanup-1",
+                                "explorer_review_at": datetime.now(
+                                    timezone.utc
+                                ).isoformat(timespec="seconds"),
+                            }
+                        ),
+                    },
+                )
+            await session.commit()
+            await _audit(
+                request,
+                f"knowledge.explorer_cleanup.{body.action}",
+                "knowledge_canonical_objects",
+                None,
+            )
+        else:
+            await session.rollback()
+
+        by_source: dict[str, int] = {}
+        for item in candidates:
+            key = item["source_id"] or "sin_fuente"
+            by_source[key] = by_source.get(key, 0) + 1
+
+        return {
+            "dry_run": body.dry_run,
+            "action": body.action,
+            "workspace_id": str(ws.id),
+            "candidates": candidates,
+            "counts": {
+                "candidates": len(candidates),
+                "by_source": by_source,
+                "assertion_references": assertion_refs,
+            },
+            "rollback": {
+                "available": not body.dry_run and body.action == "hide",
+                "operation": "POST same endpoint with action=restore, dry_run=false",
+            },
+            "limits": {
+                "deletes": 0,
+                "canonical_ids_changed": 0,
+                "reingested": False,
+            },
+        }
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
 @router.get("/search", summary="Búsqueda global en el conocimiento")
 async def search_knowledge(
     request: Request,

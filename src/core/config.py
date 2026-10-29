@@ -591,6 +591,31 @@ class Settings(BaseSettings):
             "volver a false; las rutas legacy siguen."
         ),
     )
+    KNOWLEDGE_EXPLORER_V2_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Explorador documental P18.1. Rollback visual: false; los objetos "
+            "y rutas canónicas siguen disponibles."
+        ),
+    )
+    KNOWLEDGE_IMPORT_WIZARD_V2_ENABLED: bool = Field(
+        default=True,
+        description="Wizard durable P18.1. Rollback: false.",
+    )
+    KNOWLEDGE_EXPLORER_LLM_SUMMARY_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Resumen opcional con LLM para documentos ambiguos. Apagado por "
+            "defecto; nunca escribe conocimiento canónico."
+        ),
+    )
+    KNOWLEDGE_HISTORICAL_CLEANUP_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Habilita aplicar (no dry-run) el saneamiento no destructivo del "
+            "Explorador. El dry-run siempre está disponible."
+        ),
+    )
     KNOWLEDGE_MODEL_AUTO_MATERIALIZE: bool = Field(
         default=True,
         description=(

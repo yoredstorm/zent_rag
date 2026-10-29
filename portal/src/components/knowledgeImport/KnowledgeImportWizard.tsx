@@ -4,7 +4,7 @@
 // Un solo recorrido para archivos. La verdad durable sigue en Sources,
 // Knowledge Sessions y el motor canónico; este componente solo la representa.
 // =============================================================================
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -32,6 +32,7 @@ import {
   ButtonLink,
   Panel,
   PanelHeader,
+  Select,
   Textarea,
 } from "../ui";
 import {
@@ -46,6 +47,12 @@ import {
 import { uploadSourceFile } from "../../lib/sourceUploads";
 import { useLearningSession } from "../knowledgeSession/useLearningSession";
 import { sourceReadiness } from "../../pages/knowledge/sourceState";
+import {
+  batchProgressLabel,
+  canAskBatch,
+  initialWizardBatch,
+  wizardBatchReducer,
+} from "./wizardMachine";
 
 const MAX_FILES = 20;
 
@@ -116,14 +123,26 @@ export function KnowledgeImportWizard({
   const [files, setFiles] = useState<File[]>([]);
   const [items, setItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [completed, setCompleted] = useState(0);
-  const [total, setTotal] = useState(0);
+  const [batch, dispatchBatch] = useReducer(
+    wizardBatchReducer,
+    initialWizardBatch,
+  );
   const [sessionId, setSessionId] = useState<string | null>(
     initialSessionId ?? null,
   );
   const [corpusId, setCorpusId] = useState<string | null>(
     initialCorpusId ?? null,
   );
+  const [corpora, setCorpora] = useState<
+    { id: string; name: string; slug: string }[]
+  >([]);
+  const [corpusName, setCorpusName] = useState("Principal");
+  const [readySourceIds, setReadySourceIds] = useState<string[]>([]);
+  const [readyInfo, setReadyInfo] = useState({
+    total: 0,
+    ready: 0,
+    failed: 0,
+  });
   const [question, setQuestion] = useState("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -131,6 +150,8 @@ export function KnowledgeImportWizard({
   const [selectedConnector, setSelectedConnector] = useState<
     ConnectorChoice["kind"] | null
   >(null);
+  const uploadingRef = useRef(false);
+  const hydratedSessionRef = useRef<string | null>(initialSessionId ?? null);
 
   const createdItems = useMemo(
     () => items.filter((item) => item.status === "created"),
@@ -146,20 +167,76 @@ export function KnowledgeImportWizard({
       ),
     [items],
   );
+  const askableCount =
+    readySourceIds.length > 0
+      ? readySourceIds.length
+      : createdItems.filter((item) => item.source_id).length;
+  const askEnabled =
+    !uploading &&
+    askableCount > 0 &&
+    (readySourceIds.length > 0 || canAskBatch(batch));
 
   useEffect(() => {
-    if (initialSessionId) {
-      setSessionId(initialSessionId);
-      setStep("check");
-    }
+    const next = initialSessionId ?? null;
+    if (!next || next === hydratedSessionRef.current) return;
+    // Un cambio de URL durante una transferencia no mueve el paso ni pisa el
+    // lote activo. Solo una reapertura explícita fuera de transferencia hidrata.
+    if (uploadingRef.current) return;
+    hydratedSessionRef.current = next;
+    setSessionId(next);
+    setStep("check");
+  }, [initialSessionId]);
+
+  useEffect(() => {
     if (initialCorpusId) setCorpusId(initialCorpusId);
-  }, [initialSessionId, initialCorpusId]);
+  }, [initialCorpusId]);
+
+  useEffect(() => {
+    if (!open || !session?.token) return;
+    let cancelled = false;
+    void api<{ corpora: { id: string; name: string; slug: string }[] }>(
+      "/api/v1/knowledge/workspaces",
+      { token: session.token, organizationId: session.organizationId },
+    )
+      .then((data) => {
+        if (cancelled) return;
+        const corpora = data.corpora ?? [];
+        setCorpora(corpora);
+        const selected =
+          corpora.find((item) => item.id === corpusId) ??
+          corpora.find((item) => item.slug === "principal") ??
+          corpora[0];
+        setCorpusName(selected?.name ?? "Principal");
+        setCorpusId((current) => current ?? selected?.id ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCorpusName("Principal");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, session?.token, session?.organizationId, corpusId]);
 
   useEffect(() => {
     if (sessionId) onSession?.(sessionId);
     // El callback es de presentación; solo importa cuando cambia la sesión.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  const handleSessionState = useCallback(
+    (info: { readyIds: string[]; total: number; ready: number; failed: number }) => {
+      setReadySourceIds(info.readyIds);
+      setReadyInfo({ total: info.total, ready: info.ready, failed: info.failed });
+      if (sessionId) dispatchBatch({ type: "session", sessionId });
+      dispatchBatch({
+        type: "settled",
+        ready: info.ready,
+        failed: info.failed,
+        total: info.total,
+      });
+    },
+    [sessionId],
+  );
 
   if (!open) return null;
 
@@ -171,36 +248,17 @@ export function KnowledgeImportWizard({
     setItems([]);
   }
 
-  async function ensureKbId(): Promise<string | undefined> {
-    if (!session) return undefined;
-    const data = await api<{ knowledge_bases: { id: string; name: string }[] }>(
-      "/api/v1/knowledge-bases",
-      {
-        token: session.token,
-        organizationId: session.organizationId,
-      },
-    );
-    if (data.knowledge_bases?.[0]) return data.knowledge_bases[0].id;
-    const created = await api<{ id: string; name: string }>(
-      "/api/v1/knowledge-bases",
-      {
-        method: "POST",
-        token: session.token,
-        organizationId: session.organizationId,
-        body: JSON.stringify({ name: "Principal" }),
-      },
-    );
-    return created.id;
-  }
-
   async function uploadAll() {
     if (!session?.token || files.length === 0) return;
+    uploadingRef.current = true;
     setUploading(true);
     setError("");
     setMsg("");
     setItems([]);
-    setCompleted(0);
-    setTotal(files.length);
+    setReadySourceIds([]);
+    setReadyInfo({ total: 0, ready: 0, failed: 0 });
+    dispatchBatch({ type: "start", total: files.length });
+    if (sessionId) dispatchBatch({ type: "session", sessionId });
     const auth = { token: session.token, organizationId: session.organizationId };
     const results: UploadItem[] = [];
     let activeSession: string | null = sessionId;
@@ -208,7 +266,6 @@ export function KnowledgeImportWizard({
     let created = 0;
     let failed = 0;
     try {
-      const kbId = await ensureKbId();
       if (!activeSession) {
         try {
           const learningStart = await startLearningSession({
@@ -220,6 +277,7 @@ export function KnowledgeImportWizard({
           });
           activeSession = learningStart.session_id;
           setSessionId(activeSession);
+          dispatchBatch({ type: "session", sessionId: activeSession });
         } catch {
           // El upload-batch puede abrir la sesión; se captura su session_id.
         }
@@ -227,13 +285,13 @@ export function KnowledgeImportWizard({
       for (const file of files) {
         try {
           const uploaded = await uploadSourceFile(file, auth, {
-            knowledgeBaseId: kbId,
             corpusId: activeCorpus ?? undefined,
             sessionId: activeSession ?? undefined,
           });
           if (uploaded.sessionId) {
             activeSession = uploaded.sessionId;
             setSessionId(uploaded.sessionId);
+            dispatchBatch({ type: "session", sessionId: uploaded.sessionId });
           }
           if (uploaded.corpusId) {
             activeCorpus = uploaded.corpusId;
@@ -247,6 +305,10 @@ export function KnowledgeImportWizard({
           ) {
             failed += 1;
           }
+          dispatchBatch({
+            type: "uploaded",
+            ok: uploaded.item.status === "created",
+          });
         } catch (err) {
           failed += 1;
           results.push({
@@ -254,9 +316,9 @@ export function KnowledgeImportWizard({
             status: "error",
             error: uploadErrorMessage(err),
           });
+          dispatchBatch({ type: "uploaded", ok: false });
         }
         setItems([...results]);
-        setCompleted(results.length);
       }
       if (created > 0) {
         setMsg(
@@ -285,6 +347,7 @@ export function KnowledgeImportWizard({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al subir");
     } finally {
+      uploadingRef.current = false;
       setUploading(false);
     }
   }
@@ -296,12 +359,10 @@ export function KnowledgeImportWizard({
     setRetrying(item.filename);
     setError("");
     try {
-      const kbId = await ensureKbId();
       const uploaded = await uploadSourceFile(
         file,
         { token: session.token, organizationId: session.organizationId },
         {
-          knowledgeBaseId: kbId,
           corpusId: corpusId ?? undefined,
           force: true,
           sessionId: sessionId ?? undefined,
@@ -327,17 +388,31 @@ export function KnowledgeImportWizard({
   function askFirstQuestion() {
     const params = new URLSearchParams();
     if (corpusId) params.set("corpus", corpusId);
-    if (createdItems.length === 1) {
-      const sourceId = createdItems[0]?.source_id;
-      if (sourceId) params.set("source_ids", sourceId);
-    } else if (createdItems.length > 1) {
-      const ids = createdItems
-        .map((item) => item.source_id)
-        .filter((id): id is string => Boolean(id));
-      if (ids.length > 0) params.set("source_ids", ids.join(","));
-    }
+    const askableIds =
+      readySourceIds.length > 0
+        ? readySourceIds
+        : createdItems
+            .map((item) => item.source_id)
+            .filter((id): id is string => Boolean(id));
+    if (askableIds.length > 0) params.set("source_ids", askableIds.join(","));
     if (question.trim()) params.set("q", question.trim());
     navigate(`/knowledge/ask?${params.toString()}`);
+  }
+
+  function startNewBatch() {
+    // Una sesión sellada no se reutiliza. El lote nuevo abre su propia sesión
+    // cuando se confirma la primera transferencia.
+    dispatchBatch({ type: "reset" });
+    setSessionId(null);
+    setFiles([]);
+    setItems([]);
+    setReadySourceIds([]);
+    setReadyInfo({ total: 0, ready: 0, failed: 0 });
+    setQuestion("");
+    setError("");
+    setMsg("");
+    setStep("files");
+    onSession?.("");
   }
 
   return (
@@ -523,11 +598,36 @@ export function KnowledgeImportWizard({
 
         {step === "files" ? (
           <div className="flex flex-col gap-3" data-testid="wizard-files">
-            <p className="text-sm text-muted">
-              Se incorporan a la colección{" "}
-              <strong className="text-text">Principal</strong>. Puedes cambiarla
-              después en Fuentes.
-            </p>
+            <div className="rounded-md border border-border bg-soft p-3">
+              <p className="text-sm text-muted">
+                Se incorporan a{" "}
+                <strong className="text-text">{corpusName}</strong>. El destino se
+                valida en el servidor; puedes cambiarlo después en Fuentes.
+              </p>
+              {corpora.length > 1 ? (
+                <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <span>Guardar en</span>
+                  <Select
+                    aria-label="Corpus de destino"
+                    value={corpusId ?? ""}
+                    onChange={(event) => {
+                      const next = corpora.find(
+                        (item) => item.id === event.target.value,
+                      );
+                      setCorpusId(next?.id ?? null);
+                      setCorpusName(next?.name ?? "Principal");
+                    }}
+                    className="min-h-8 w-[220px]"
+                  >
+                    {corpora.map((corpus) => (
+                      <option key={corpus.id} value={corpus.id}>
+                        {corpus.name}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              ) : null}
+            </div>
             <FileDropzone
               onFiles={addFiles}
               inputTestId="wizard-source-files"
@@ -569,12 +669,12 @@ export function KnowledgeImportWizard({
                 <div className="flex items-center justify-between gap-2 text-sm">
                   <strong>Enviando archivos</strong>
                   <span className="tabular-nums">
-                    {completed} de {total}
+                    {batch.confirmed + batch.failed} de {batch.total}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-muted">
-                  Progreso por archivo recibido. El procesamiento se muestra en
-                  el siguiente paso, con eventos reales.
+                  {batchProgressLabel(batch)}. El procesamiento se muestra en el
+                  siguiente paso, con eventos reales.
                 </p>
               </div>
             ) : null}
@@ -591,6 +691,7 @@ export function KnowledgeImportWizard({
             {sessionId ? (
               <WizardSessionCheck
                 sessionId={sessionId}
+                onState={handleSessionState}
                 onOpenSession={() =>
                   navigate(`/knowledge/sessions/${sessionId}`)
                 }
@@ -631,8 +732,17 @@ export function KnowledgeImportWizard({
                   Haz tu primera pregunta
                 </p>
                 <p className="mt-1 text-xs text-muted">
-                  ZENT responderá solo con las fuentes de esta incorporación.
+                  ZENT responderá solo con las fuentes listas de esta
+                  incorporación.
                 </p>
+                {readyInfo.total > 0 && readyInfo.ready < readyInfo.total ? (
+                  <p className="mt-1 text-xs text-warn" role="status">
+                    {readyInfo.ready} de {readyInfo.total} fuentes listas.
+                    {readyInfo.failed > 0
+                      ? ` ${readyInfo.failed} necesitan revisión.`
+                      : " El resto sigue procesándose."}
+                  </p>
+                ) : null}
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <Textarea
                     aria-label="Primera pregunta"
@@ -644,9 +754,19 @@ export function KnowledgeImportWizard({
                   <Button
                     variant="primary"
                     leadingIcon={ChatCircleDots}
+                    disabled={!askEnabled}
+                    title={
+                      askEnabled
+                        ? undefined
+                        : "Esperando fuentes listas para consultar"
+                    }
                     onClick={askFirstQuestion}
                   >
-                    Preguntar
+                    {askEnabled
+                      ? `Preguntar sobre ${askableCount} fuente${
+                          askableCount === 1 ? "" : "s"
+                        }`
+                      : "Esperando fuentes listas"}
                   </Button>
                 </div>
               </div>
@@ -656,10 +776,7 @@ export function KnowledgeImportWizard({
               <Button
                 variant="secondary"
                 leadingIcon={ArrowLeft}
-                onClick={() => {
-                  setStep("files");
-                  setItems([]);
-                }}
+                onClick={startNewBatch}
               >
                 Añadir más archivos
               </Button>
@@ -677,19 +794,44 @@ export function KnowledgeImportWizard({
 function WizardSessionCheck({
   sessionId,
   onOpenSession,
+  onState,
 }: {
   sessionId: string;
   onOpenSession: () => void;
+  onState?: (info: {
+    readyIds: string[];
+    total: number;
+    ready: number;
+    failed: number;
+  }) => void;
 }) {
   const { detail, loading, error, connected, stage } = useLearningSession(
     sessionId,
     { includeGraph: false },
   );
-  const sources = detail?.sources ?? [];
+  const sources = useMemo(() => detail?.sources ?? [], [detail]);
   const total = detail?.source_count ?? 0;
-  const ready = detail
-    ? Math.min(total, detail.completed_sources + detail.available_sources)
-    : 0;
+  const readyIds = useMemo(
+    () =>
+      sources
+        .filter((source) =>
+          ["completed", "available", "indexed"].includes(source.status),
+        )
+        .map((source) => source.id),
+    [sources],
+  );
+  const ready = Math.min(total, readyIds.length);
+
+  useEffect(() => {
+    if (!detail) return;
+    onState?.({
+      readyIds,
+      total,
+      ready,
+      failed: detail.failed_sources ?? 0,
+    });
+  }, [detail, readyIds, total, ready, onState]);
+
   return (
     <div
       className="rounded-md border border-border bg-soft p-3"

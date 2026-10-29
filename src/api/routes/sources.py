@@ -149,7 +149,9 @@ async def _source_stats(organization_id: UUID, source_ids: list[UUID]) -> dict[U
         await session.close()
 
 
-async def _assert_own_kb(ctx, kb_id: UUID | None) -> None:
+async def _assert_own_kb(
+    ctx, kb_id: UUID | None, *, workspace_id: UUID | None = None
+) -> None:
     if kb_id is None:
         return
     from src.api.deps import get_kb_repo
@@ -157,6 +159,12 @@ async def _assert_own_kb(ctx, kb_id: UUID | None) -> None:
     kb = await get_kb_repo().get_kb(ctx.organization_id, kb_id)
     if kb is None:
         raise HTTPException(404, "Knowledge base not found in this organization")
+    if (
+        workspace_id is not None
+        and getattr(kb, "workspace_id", None) is not None
+        and str(kb.workspace_id) != str(workspace_id)
+    ):
+        raise HTTPException(404, "Knowledge base not found in this workspace")
 
 
 async def _resolve_upload_corpus(
@@ -168,9 +176,9 @@ async def _resolve_upload_corpus(
 ) -> UUID | None:
     """Destino consultable canónico para una carga explícita.
 
-    Usa el corpus pedido, el corpus de la colección o el corpus ``Principal``
-    del workspace (lo crea una sola vez). Sin corpus, la fuente no aparecería
-    en Preguntar aunque el indexado terminara.
+    Precedencia determinista: corpus pedido y validado, corpus de la colección
+    validado por organización y workspace, ``Principal`` exacto, creación
+    atómica. Nunca elige "el primer corpus" ni acepta una KB de otro workspace.
     """
     from src.infrastructure.postgres.session import get_async_session
 
@@ -193,49 +201,78 @@ async def _resolve_upload_corpus(
             ).fetchone()
             if row is None:
                 raise HTTPException(404, "Knowledge corpus not found in this workspace")
+            await session.commit()
             return UUID(str(row.id))
 
+        resolved: UUID | None = None
         if knowledge_base_id is not None:
-            row = (
+            kb = (
                 await session.execute(
                     text(
-                        "SELECT corpus_id FROM knowledge_bases "
+                        "SELECT corpus_id, workspace_id FROM knowledge_bases "
                         "WHERE organization_id = :oid AND id = :kid"
                     ),
                     {"oid": ctx.organization_id, "kid": knowledge_base_id},
                 )
             ).fetchone()
-            if row is not None and row.corpus_id is not None:
-                return UUID(str(row.corpus_id))
+            if kb is None:
+                raise HTTPException(404, "Knowledge base not found")
+            if kb.workspace_id is not None and str(kb.workspace_id) != str(
+                workspace_id
+            ):
+                raise HTTPException(
+                    409, "Knowledge base belongs to another workspace"
+                )
+            if kb.corpus_id is not None:
+                corpus = (
+                    await session.execute(
+                        text(
+                            "SELECT id, workspace_id FROM knowledge_corpora "
+                            "WHERE organization_id = :oid AND id = :cid"
+                        ),
+                        {
+                            "oid": ctx.organization_id,
+                            "cid": kb.corpus_id,
+                        },
+                    )
+                ).fetchone()
+                if corpus is None or str(corpus.workspace_id) != str(workspace_id):
+                    raise HTTPException(
+                        409, "Knowledge base corpus belongs to another workspace"
+                    )
+                resolved = UUID(str(corpus.id))
 
-        row = (
+        if resolved is None:
+            # `DO NOTHING` no toca updated_at y deja que la unique constraint
+            # resuelva la carrera entre dos cargas concurrentes.
             await session.execute(
                 text(
-                    "SELECT id FROM knowledge_corpora "
-                    "WHERE organization_id = :oid AND workspace_id = :wid "
-                    "ORDER BY created_at ASC LIMIT 1"
+                    "INSERT INTO knowledge_corpora "
+                    "(id, organization_id, workspace_id, name, slug, status) "
+                    "VALUES (:id, :oid, :wid, 'Principal', 'principal', 'active') "
+                    "ON CONFLICT (organization_id, workspace_id, slug) "
+                    "DO NOTHING"
                 ),
-                {"oid": ctx.organization_id, "wid": workspace_id},
+                {
+                    "id": uuid4(),
+                    "oid": ctx.organization_id,
+                    "wid": workspace_id,
+                },
             )
-        ).fetchone()
-        if row is None:
             row = (
                 await session.execute(
                     text(
-                        "INSERT INTO knowledge_corpora "
-                        "(id, organization_id, workspace_id, name, slug, status) "
-                        "VALUES (:id, :oid, :wid, 'Principal', 'principal', 'active') "
-                        "ON CONFLICT (organization_id, workspace_id, slug) "
-                        "DO UPDATE SET updated_at = now() RETURNING id"
+                        "SELECT id FROM knowledge_corpora "
+                        "WHERE organization_id = :oid AND workspace_id = :wid "
+                        "AND slug = 'principal'"
                     ),
-                    {
-                        "id": uuid4(),
-                        "oid": ctx.organization_id,
-                        "wid": workspace_id,
-                    },
+                    {"oid": ctx.organization_id, "wid": workspace_id},
                 )
             ).fetchone()
-        resolved = UUID(str(row.id))
+            if row is None:
+                raise HTTPException(500, "Could not resolve Principal corpus")
+            resolved = UUID(str(row.id))
+
         if knowledge_base_id is not None:
             await session.execute(
                 text(
@@ -987,9 +1024,9 @@ async def upload_file_source(
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "sources:write")
-    if knowledge_base_id is not None:
-        await _assert_own_kb(ctx, knowledge_base_id)
     ws = await resolve_workspace(request)
+    if knowledge_base_id is not None:
+        await _assert_own_kb(ctx, knowledge_base_id, workspace_id=ws.id)
     resolved_corpus = await _resolve_upload_corpus(
         ctx,
         workspace_id=ws.id,
@@ -1064,9 +1101,9 @@ async def upload_files_batch(
         raise HTTPException(
             422, f"Too many files per request (max {_MAX_BATCH_FILES})"
         )
-    if knowledge_base_id is not None:
-        await _assert_own_kb(ctx, knowledge_base_id)
     ws = await resolve_workspace(request)
+    if knowledge_base_id is not None:
+        await _assert_own_kb(ctx, knowledge_base_id, workspace_id=ws.id)
     resolved_corpus = await _resolve_upload_corpus(
         ctx,
         workspace_id=ws.id,

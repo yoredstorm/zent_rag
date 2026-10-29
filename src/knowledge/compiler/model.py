@@ -431,6 +431,7 @@ class RuleCandidate:
     temporal: TemporalScope = field(default_factory=TemporalScope)
     evidence: list[EvidenceRef] = field(default_factory=list)
     rule_kind: str = ""
+    claim_kind: str = ""
     semantics: dict = field(default_factory=dict)
     verification_state: str = ""
     canonical_rule_id: str = ""
@@ -447,6 +448,7 @@ class RuleCandidate:
             "temporal": self.temporal.to_dict(),
             "evidence_count": len(self.evidence),
             "rule_kind": self.rule_kind,
+            "claim_kind": self.claim_kind,
             "verification_state": self.verification_state,
             "canonical_rule_id": self.canonical_rule_id,
             "semantics": dict(self.semantics),

@@ -543,6 +543,97 @@ export function fetchKnowledgeSearch(
   );
 }
 
+// ---------------------------------------------------------------------------
+// P18.1 — Explorador documental (read model, sin autoridad canónica)
+// ---------------------------------------------------------------------------
+
+export type KnowledgeCorpusSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  source_count?: number;
+};
+
+export type KnowledgeSourceSummary = {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+};
+
+export type KnowledgeExplorerInsight = {
+  kind: string;
+  object_id?: string | null;
+  name: string;
+  claim_text: string;
+  grounded_excerpt?: string | null;
+  evidence_ids: string[];
+  source_locator?: {
+    page?: number | null;
+    section_path?: string[];
+  };
+  verification_state: string;
+  uncertainty: string;
+  confidence?: number | null;
+  why_related?: string;
+};
+
+export type KnowledgeExplorerTopic = {
+  id: string;
+  label: string;
+  summary: string;
+  count: number;
+  insights: KnowledgeExplorerInsight[];
+};
+
+export type KnowledgeExplorerInsightPayload = {
+  contract: string;
+  source: {
+    source_id: string;
+    name?: string;
+    genre: string;
+    genre_confidence?: number | null;
+    pages?: number | null;
+    sections?: number | null;
+    tables?: number | null;
+    status?: string;
+  };
+  summary: string;
+  topics: KnowledgeExplorerTopic[];
+  warnings: { code: string; message: string; severity: string }[];
+  counts: {
+    objects_total: number;
+    objects_visible: number;
+    objects_hidden: number;
+  };
+};
+
+export function fetchKnowledgeCorpora(): Promise<{
+  corpora: KnowledgeCorpusSummary[];
+  count: number;
+}> {
+  return withSession<{ corpora: KnowledgeCorpusSummary[]; count: number }>(
+    "/api/v1/knowledge/workspaces"
+  );
+}
+
+export function fetchKnowledgeSources(
+  corpusId: string
+): Promise<{ sources: KnowledgeSourceSummary[] }> {
+  return withSession<{ sources: KnowledgeSourceSummary[] }>(
+    `/api/v1/knowledge/workspaces/${corpusId}`
+  );
+}
+
+export function fetchKnowledgeSourceInsight(
+  corpusId: string,
+  sourceId: string
+): Promise<KnowledgeExplorerInsightPayload> {
+  return withSession<KnowledgeExplorerInsightPayload>(
+    `/api/v1/knowledge/workspaces/${corpusId}/sources/${sourceId}/insight`
+  );
+}
+
 export function fetchKnowledgeGraph(
   params: {
     focus_id?: string;

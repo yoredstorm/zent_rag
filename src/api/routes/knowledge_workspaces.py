@@ -106,13 +106,10 @@ async def create_workspace(
 
 @router.get("/workspaces/{corpus_id}", summary="Detalle del corpus")
 async def get_workspace(corpus_id: UUID, request: Request) -> dict:
-    from src.platform.rbac.policy import require_permission
-
-    ctx = require_permission(request, "knowledge:read")
-    meta = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
-    if meta is None:
-        raise HTTPException(404, "Knowledge workspace not found")
-    sources = await _sources_for_corpus(ctx.organization_id, corpus_id)
+    ctx, ws, meta = await _require_corpus(request, corpus_id)
+    sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
     return {"corpus": meta, "sources": sources}
 
 
@@ -123,11 +120,11 @@ async def get_workspace(corpus_id: UUID, request: Request) -> dict:
 async def list_source_documents(
     corpus_id: UUID, source_id: UUID, request: Request
 ) -> dict:
-    from src.platform.rbac.policy import require_permission
-
-    ctx = require_permission(request, "knowledge:read")
-    # Verifica que la fuente pertenezca al corpus del mismo tenant.
-    sources = await _sources_for_corpus(ctx.organization_id, corpus_id)
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
+    # Verifica que la fuente pertenezca al corpus y workspace del mismo tenant.
+    sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
     if not any(str(s["id"]) == str(source_id) for s in sources):
         raise HTTPException(404, "Source not found in this workspace")
     documents = await PostgresStructuredDocumentRepository().list_documents(
@@ -180,10 +177,11 @@ async def document_understanding(
 ) -> dict:
     from src.knowledge.reconstruction import tech_view_from_metadata
     from src.knowledge.understanding import public_understanding, understanding_views
-    from src.platform.rbac.policy import require_permission
 
-    ctx = require_permission(request, "knowledge:read")
-    sources = await _sources_for_corpus(ctx.organization_id, corpus_id)
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
+    sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
     if not any(str(item["id"]) == str(source_id) for item in sources):
         raise HTTPException(404, "Source not found in this workspace")
     row = await PostgresStructuredDocumentRepository().get_document(
@@ -197,6 +195,68 @@ async def document_understanding(
         "views": understanding_views(row.get("metadata")),
         "reconstruction": tech_view_from_metadata(row.get("metadata")),
     }
+
+
+@router.get(
+    "/workspaces/{corpus_id}/sources/{source_id}/insight",
+    summary="Proyección documental explicable (knowledge_explorer_insight/v1)",
+)
+async def source_insight(
+    corpus_id: UUID, source_id: UUID, request: Request
+) -> dict:
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.knowledge.understanding.explorer import build_explorer_insight
+
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
+    sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
+    source = next((item for item in sources if str(item["id"]) == str(source_id)), None)
+    if source is None:
+        raise HTTPException(404, "Source not found in this workspace")
+
+    documents = await PostgresStructuredDocumentRepository().list_documents(
+        ctx.organization_id, source_id, limit=1
+    )
+    document = documents[0] if documents else None
+
+    session = await get_async_session()
+    try:
+        objects = (
+            await session.execute(
+                text(
+                    "SELECT id, kind, name, display_name, description, status, "
+                    "confidence, evidence_count, metadata "
+                    "FROM knowledge_canonical_objects "
+                    "WHERE organization_id = :oid AND source_id = :sid "
+                    "ORDER BY evidence_count DESC, updated_at DESC LIMIT 1000"
+                ),
+                {"oid": ctx.organization_id, "sid": source_id},
+            )
+        ).fetchall()
+        evidence = (
+            await session.execute(
+                text(
+                    "SELECT id, canonical_id, page, section_path, excerpt, locator, "
+                    "evidence_type, strength "
+                    "FROM evidence_ledger "
+                    "WHERE organization_id = :oid AND source_id = :sid "
+                    "ORDER BY created_at DESC LIMIT 1000"
+                ),
+                {"oid": ctx.organization_id, "sid": source_id},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+
+    return build_explorer_insight(
+        source=source,
+        document=document,
+        objects=[dict(row._mapping) for row in objects],
+        evidence=[dict(row._mapping) for row in evidence],
+    )
 
 
 class LocateRequest(BaseModel):
@@ -214,10 +274,10 @@ async def locate_source(
     body: LocateRequest,
     request: Request,
 ) -> dict:
-    from src.platform.rbac.policy import require_permission
-
-    ctx = require_permission(request, "knowledge:read")
-    sources = await _sources_for_corpus(ctx.organization_id, corpus_id)
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
+    sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
     source = next((s for s in sources if str(s["id"]) == str(source_id)), None)
     if source is None:
         raise HTTPException(404, "Source not found in this workspace")
@@ -249,10 +309,10 @@ async def source_file(
 ) -> object:
     from fastapi.responses import FileResponse
 
-    from src.platform.rbac.policy import require_permission
-
-    ctx = require_permission(request, "knowledge:read")
-    sources = await _sources_for_corpus(ctx.organization_id, corpus_id)
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
+    sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
     source = next((s for s in sources if str(s["id"]) == str(source_id)), None)
     if source is None:
         raise HTTPException(404, "Source not found in this workspace")
@@ -272,11 +332,16 @@ async def source_file(
         if path.suffix.lower() == ".pdf"
         else "application/octet-stream"
     )
+    is_pdf = path.suffix.lower() == ".pdf"
     return FileResponse(
         path,
         media_type=media_type,
         filename=source.get("name") or path.name,
-        headers={"Cache-Control": "private, max-age=300"},
+        content_disposition_type="inline" if is_pdf else "attachment",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -288,15 +353,8 @@ async def source_file(
 async def workspace_chat(
     corpus_id: UUID, body: ChatRequest, request: Request
 ) -> dict:
-    from src.platform.rbac.policy import require_permission
-
-    ctx = require_permission(request, "knowledge:read")
     settings = get_settings()
-
-    ws = await resolve_workspace(request)
-    corpus = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
-    if corpus is None or corpus.get("workspace_id") != str(ws.id):
-        raise HTTPException(404, "Knowledge workspace not found")
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
 
     from src.api.deps import (
         get_embedding_provider,
@@ -315,32 +373,48 @@ async def workspace_chat(
 
         groups = list(await user_group_names(ctx.organization_id, user_id))
 
+    # El corpus es la frontera de recuperación. La UI no decide el ámbito:
+    # se resuelve aquí desde la base y nunca se cae al workspace completo.
+    corpus_sources = await _sources_for_corpus(
+        ctx.organization_id, corpus_id, workspace_id=ws.id
+    )
+    corpus_source_ids = {str(source["id"]) for source in corpus_sources}
+    ready_source_ids = {
+        str(source["id"])
+        for source in corpus_sources
+        if str(source.get("status") or "").lower() in _READY_SOURCE_STATUSES
+    }
+
     if body.source_ids:
-        from sqlalchemy import text
+        requested = [str(source_id) for source_id in body.source_ids]
+        if any(source_id not in corpus_source_ids for source_id in requested):
+            raise HTTPException(404, "Source not found in this corpus")
+        effective_source_ids = requested
+    else:
+        effective_source_ids = sorted(ready_source_ids)
 
-        from src.infrastructure.postgres.session import get_async_session
+    scope = {
+        "corpus_id": str(corpus_id),
+        "source_count": len(effective_source_ids),
+        "restricted": True,
+    }
+    if not effective_source_ids:
+        from src.rag.grounding import GroundedAnswer
 
-        db = await get_async_session()
-        try:
-            rows = (
-                await db.execute(
-                    text(
-                        "SELECT id FROM kb_sources WHERE organization_id = :oid "
-                        "AND (workspace_id = :wid OR workspace_id IS NULL) "
-                        "AND id = ANY(:ids)"
-                    ),
-                    {
-                        "oid": ctx.organization_id,
-                        "wid": ws.id,
-                        "ids": [str(source_id) for source_id in body.source_ids],
-                    },
-                )
-            ).fetchall()
-        finally:
-            await db.close()
-        allowed = {str(row.id) for row in rows}
-        if any(str(source_id) not in allowed for source_id in body.source_ids):
-            raise HTTPException(404, "Source not found in this workspace")
+        empty = GroundedAnswer(
+            answer="No tengo suficiente información para responder tu pregunta.",
+            confidence=0.0,
+        )
+        return {"grounded": empty.to_dict(), "retrieval_scope": scope}
+
+    logger.info(
+        "grounded chat corpus scope",
+        corpus_id=str(corpus_id),
+        workspace_id=str(ws.id),
+        explicit_sources=len(body.source_ids),
+        scoped_sources=len(effective_source_ids),
+        ready_sources=len(ready_source_ids),
+    )
 
     query_embedding = await get_embedding_provider().embed(body.query)
     if isinstance(query_embedding[0], list):
@@ -353,7 +427,7 @@ async def workspace_chat(
         user_id=user_id,
         groups=groups,
         workspace_id=ws.id,
-        source_ids=list(body.source_ids),
+        source_ids=[UUID(str(source_id)) for source_id in effective_source_ids],
         top_k=100,
         rerank_top_k=12,
         score_threshold=max(settings.RAG_SCORE_THRESHOLD, 0.1),
@@ -369,6 +443,24 @@ async def workspace_chat(
         rquery, V2RetrievalOptions()
     )
 
+    # Defensa en profundidad: aunque el retriever ya recibe source_ids, no
+    # dejamos pasar ningún chunk cuya fuente esté fuera del corpus resuelto.
+    allowed_context = tuple(
+        chunk
+        for chunk in assembled.context
+        if str(chunk.metadata.get("source_id") or "") in set(effective_source_ids)
+    )
+    if len(allowed_context) != len(assembled.context):
+        logger.error(
+            "retrieval returned chunks outside corpus scope",
+            corpus_id=str(corpus_id),
+            returned=len(assembled.context),
+            kept=len(allowed_context),
+        )
+        import dataclasses
+
+        assembled = dataclasses.replace(assembled, context=allowed_context)
+
     if not assembled.context:
         from src.rag.grounding import GroundedAnswer
 
@@ -376,7 +468,7 @@ async def workspace_chat(
             answer="No tengo suficiente información para responder tu pregunta.",
             confidence=0.0,
         )
-        return {"grounded": empty.to_dict()}
+        return {"grounded": empty.to_dict(), "retrieval_scope": scope}
 
     context_snippets = "\n\n---\n\n".join(
         f"[{i + 1}] {chunk.content}"
@@ -451,13 +543,7 @@ async def workspace_chat(
 async def workspace_studio(
     corpus_id: UUID, body: StudioRequest, request: Request
 ) -> dict:
-    from src.platform.rbac.policy import require_permission
-
-    ctx = require_permission(request, "knowledge:read")
-    ws = await resolve_workspace(request)
-    corpus = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
-    if corpus is None or corpus.get("workspace_id") != str(ws.id):
-        raise HTTPException(404, "Knowledge workspace not found")
+    ctx, _ws, _corpus = await _require_corpus(request, corpus_id)
 
     from src.platform.studio.service import CorpusStudioService
 
@@ -472,13 +558,7 @@ async def workspace_studio(
 
 @router.get("/workspaces/{corpus_id}/suggestions", summary="Preguntas sugeridas reales")
 async def workspace_suggestions(corpus_id: UUID, request: Request) -> dict:
-    from src.platform.rbac.policy import require_permission
-
-    ctx = require_permission(request, "knowledge:read")
-    ws = await resolve_workspace(request)
-    corpus = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
-    if corpus is None or corpus.get("workspace_id") != str(ws.id):
-        raise HTTPException(404, "Knowledge workspace not found")
+    ctx, _ws, _corpus = await _require_corpus(request, corpus_id)
 
     from src.rag.suggestions import QuestionSuggestionService
 
@@ -489,8 +569,28 @@ async def workspace_suggestions(corpus_id: UUID, request: Request) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Helpers (scoped por tenant)
+# Helpers (scoped por tenant y workspace)
 # ---------------------------------------------------------------------------
+
+# Estados de kb_sources con contenido consultable. Los estados de sesión usan
+# "available"/"completed"; la fuente subida usa "indexed". Nunca asumimos que
+# una fuente en procesamiento ya tiene chunks.
+_READY_SOURCE_STATUSES = frozenset({"indexed", "available", "completed"})
+
+
+async def _require_corpus(
+    request: Request, corpus_id: UUID
+) -> tuple[object, object, dict]:
+    """Corpus autorizado del workspace actual o 404 sin revelar existencia."""
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:read")
+    ws = await resolve_workspace(request)
+    corpus = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
+    if corpus is None or str(corpus.get("workspace_id")) != str(ws.id):
+        raise HTTPException(404, "Knowledge workspace not found")
+    return ctx, ws, corpus
+
 
 async def _corpus_source_counts(organization_id: UUID) -> dict[str, int]:
     from sqlalchemy import text
@@ -515,7 +615,10 @@ async def _corpus_source_counts(organization_id: UUID) -> dict[str, int]:
 
 
 async def _sources_for_corpus(
-    organization_id: UUID, corpus_id: UUID
+    organization_id: UUID,
+    corpus_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
 ) -> list[dict]:
     from sqlalchemy import text
 
@@ -523,15 +626,26 @@ async def _sources_for_corpus(
 
     session = await get_async_session()
     try:
+        clauses = [
+            "organization_id = :oid",
+            "corpus_id = :cid",
+        ]
+        params: dict[str, object] = {
+            "oid": organization_id,
+            "cid": str(corpus_id),
+        }
+        if workspace_id is not None:
+            clauses.append("workspace_id = :wid")
+            params["wid"] = str(workspace_id)
         rows = (
             await session.execute(
                 text(
                     "SELECT id, name, type, status, workspace_id, "
                     "(config_json->>'object_key') AS object_key "
-                    "FROM kb_sources WHERE organization_id = :oid "
-                    "AND corpus_id = :cid ORDER BY created_at DESC"
+                    "FROM kb_sources WHERE " + " AND ".join(clauses) +
+                    " ORDER BY created_at DESC"
                 ),
-                {"oid": organization_id, "cid": str(corpus_id)},
+                params,
             )
         ).fetchall()
         return [
