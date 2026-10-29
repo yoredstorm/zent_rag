@@ -1,0 +1,52 @@
+{
+  "generated_at": "2026-10-29T00:00:00+00:00",
+  "git_head": "8a2d7c46907d51faf18a21e0de86c9b6ba411ae9",
+  "organization_id": "e42d1f42-b87d-4baf-88dc-ec3da1541239",
+  "workspace_id": "074a851b-f056-4d16-9ccd-ceaddc387305",
+  "source": {
+    "id": "298fdc37-8a43-4883-b597-9f4f2d20360d",
+    "name": "el_principito.pdf",
+    "status": "indexed"
+  },
+  "document": {
+    "id": "21c6d416-2c9e-556c-9748-202a81b8bb3c",
+    "title": "7Mares_El_Principito.indd",
+    "pages": 104,
+    "sections": 8,
+    "tables": 0,
+    "blocks": 1045,
+    "document_type": "technical_specification",
+    "document_genre": null
+  },
+  "objects": {
+    "total": 110,
+    "by_kind": {
+      "concept": 105,
+      "business_rule": 3,
+      "attribute": 2
+    },
+    "visible": 0,
+    "hidden": 110
+  },
+  "evidence": {
+    "total": 215,
+    "with_excerpt": 215,
+    "pages": 43
+  },
+  "hidden_reasons": {
+    "SENTENCE_FRAGMENT": 58,
+    "NON_TERM_LABEL": 25,
+    "pregunta o diálogo": 16,
+    "NARRATIVE_CLAUSE": 5,
+    "encabezado de sección": 2,
+    "HEADING_OR_INDEX": 2,
+    "número aislado": 1,
+    "TRUNCATED_OR_CONCATENATED": 1
+  },
+  "summary": "Solo se identificaron secciones y pasajes; no podemos afirmar temas con certeza.",
+  "limits": [
+    "No se versiona ni se descarga la obra con copyright.",
+    "Las cifras provienen de la base local de staging, no de producción.",
+    "Comprensión no evaluada: no existe dataset humano versionado todavía."
+  ]
+}
