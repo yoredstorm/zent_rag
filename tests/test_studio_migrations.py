@@ -44,7 +44,7 @@ def test_latest_migration_is_current() -> None:
         for path in VERSIONS.glob("*.py")
         if path.stem.split("_", 1)[0].isdigit()
     )
-    assert numbers[-1] == 174
+    assert numbers[-1] == 176
 
 
 def test_migration_169_persists_test_reports_only() -> None:

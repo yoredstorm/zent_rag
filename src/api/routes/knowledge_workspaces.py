@@ -12,7 +12,7 @@ import re
 import time
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from src.api.deps import get_corpus_repo
@@ -46,6 +46,9 @@ class CreateCorpusRequest(BaseModel):
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=32000)
     source_ids: list[UUID] = Field(default_factory=list, max_length=32)
+    # Solo un administrador de la organización recibe candidatos de retrieval.
+    # Sirve al harness de evaluación; nunca convierte un candidato en cita.
+    debug: bool = False
 
 
 class StudioRequest(BaseModel):
@@ -284,51 +287,37 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
             ).scalar_one()
             or 0
         )
+        from src.knowledge.evidence_paging import (
+            EVIDENCE_CURSOR_VERSION,
+            EVIDENCE_ORDER_SQL,
+            encode_evidence_cursor,
+            fetch_evidence_page,
+        )
+
         evidence: list[dict] = []
-        evidence_truncated = False
-        evidence_cursor = None
+        evidence_next = None
         while len(evidence) < 10000:
-            rows = (
-                await session.execute(
-                    text(
-                        "SELECT id, canonical_id, page, section_path, excerpt, locator, "
-                        "evidence_type, strength, created_at "
-                        "FROM evidence_ledger "
-                        "WHERE organization_id = :oid AND source_id = :sid "
-                        "AND (:has_cursor = false OR "
-                        "     (COALESCE(strength, 0), created_at, id) < "
-                        "     (:c_strength, :c_created, CAST(:c_id AS uuid))) "
-                        "ORDER BY strength DESC NULLS LAST, created_at DESC, id ASC "
-                        "LIMIT 1000"
-                    ),
-                    {
-                        "oid": ctx.organization_id,
-                        "sid": source_id,
-                        "has_cursor": evidence_cursor is not None,
-                        "c_strength": evidence_cursor[0] if evidence_cursor else 0,
-                        "c_created": evidence_cursor[1] if evidence_cursor else None,
-                        "c_id": evidence_cursor[2] if evidence_cursor else None,
-                    },
-                )
-            ).fetchall()
-            if not rows:
-                break
-            evidence.extend(dict(row._mapping) for row in rows)
-            last = rows[-1]
-            evidence_cursor = (
-                float(last.strength or 0),
-                last.created_at,
-                str(last.id),
+            page = await fetch_evidence_page(
+                session,
+                organization_id=ctx.organization_id,
+                source_id=source_id,
+                cursor=evidence_next,
+                limit=min(1000, 10000 - len(evidence)),
             )
-            if len(rows) < 1000:
+            evidence.extend(page.rows)
+            evidence_next = page.next_cursor
+            if not page.has_more:
+                evidence_next = None
                 break
-        if evidence_total > len(evidence):
-            evidence_truncated = True
+        encoded_evidence_cursor = (
+            encode_evidence_cursor(evidence_next) if evidence_next is not None else None
+        )
+        evidence_truncated = bool(encoded_evidence_cursor) or evidence_total > len(evidence)
     finally:
         await session.close()
 
     elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
-    return build_explorer_insight(
+    insight = build_explorer_insight(
         source=source,
         document=document,
         documents=documents,
@@ -341,6 +330,7 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
             "objects_next_cursor": objects_cursor if objects_truncated else None,
             "evidence_total": evidence_total,
             "evidence_truncated": evidence_truncated,
+            "evidence_next_cursor": encoded_evidence_cursor,
             "passages_available": passages_available,
             "documents_total": documents_total,
             "documents_truncated": documents_total > len(documents),
@@ -354,6 +344,79 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
             },
         },
     )
+    insight["read_scope"] = {
+        "organization_id": str(ctx.organization_id),
+        "workspace_id": str(ws.id),
+        "corpus_id": str(corpus_id),
+        "source_id": str(source_id),
+        "snapshot_consistency": "false",
+        "evidence_order": EVIDENCE_ORDER_SQL,
+        "cursor_version": EVIDENCE_CURSOR_VERSION,
+    }
+    return insight
+
+
+@router.get(
+    "/workspaces/{corpus_id}/sources/{source_id}/evidence",
+    summary="Evidencias paginadas de una fuente (cursor estable)",
+)
+async def source_evidence(
+    corpus_id: UUID,
+    source_id: UUID,
+    request: Request,
+    cursor: str | None = Query(default=None, max_length=512),
+    limit: int = Query(default=1000, ge=1, le=5000),
+) -> dict:
+    from src.infrastructure.postgres.session import get_async_session
+    from src.knowledge.evidence_paging import (
+        EVIDENCE_CURSOR_VERSION,
+        EVIDENCE_ORDER_SQL,
+        decode_evidence_cursor,
+        encode_evidence_cursor,
+        fetch_evidence_page,
+    )
+
+    ctx, ws, _corpus = await _require_corpus(request, corpus_id)
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
+    if not any(str(item["id"]) == str(source_id) for item in sources):
+        raise HTTPException(404, "Source not found in this workspace")
+    parsed_cursor = None
+    if cursor:
+        try:
+            parsed_cursor = decode_evidence_cursor(cursor)
+        except ValueError:
+            raise HTTPException(400, "cursor inválido") from None
+    session = await get_async_session()
+    try:
+        page = await fetch_evidence_page(
+            session,
+            organization_id=ctx.organization_id,
+            source_id=source_id,
+            cursor=parsed_cursor,
+            limit=limit,
+        )
+    finally:
+        await session.close()
+    next_cursor = (
+        encode_evidence_cursor(page.next_cursor) if page.next_cursor is not None else None
+    )
+    return {
+        "contract": "evidence_page/v1",
+        "source_id": str(source_id),
+        "items": page.rows,
+        "total": page.total,
+        "returned": page.returned,
+        "limit": page.limit,
+        "next_cursor": next_cursor,
+        "truncated": page.has_more,
+        "read_scope": {
+            **page.read_scope,
+            "workspace_id": str(ws.id),
+            "corpus_id": str(corpus_id),
+        },
+        "order": EVIDENCE_ORDER_SQL,
+        "cursor_version": EVIDENCE_CURSOR_VERSION,
+    }
 
 
 class LocateRequest(BaseModel):
@@ -606,7 +669,38 @@ async def workspace_chat(corpus_id: UUID, body: ChatRequest, request: Request) -
     except Exception:  # noqa: BLE001 - el tracking nunca rompe el chat
         logger.warning("Failed to record knowledge usage", corpus_id=str(corpus_id))
 
-    return {"grounded": payload}
+    result: dict = {
+        "grounded": payload,
+        "retrieval_scope": scope,
+        "telemetry": {
+            "model": llm_response.model,
+            "prompt_version": "knowledge-workspace-chat-v1",
+            "prompt_tokens": llm_response.prompt_tokens,
+            "completion_tokens": llm_response.completion_tokens,
+            "total_tokens": llm_response.total_tokens,
+            "llm_latency_ms": round(float(llm_response.latency_ms or 0.0), 2),
+            "retrieval_latency_ms": round(float(assembled.retrieval_latency_ms or 0.0), 2),
+            "top_k": 100,
+            "rerank_top_k": 12,
+        },
+    }
+    if body.debug and ctx.is_organization_admin():
+        result["retrieval_debug"] = {
+            "candidates": [
+                {
+                    "document_id": str(chunk.document_id) if chunk.document_id else None,
+                    "source_id": str(chunk.metadata.get("source_id") or "") or None,
+                    "page": chunk.metadata.get("page"),
+                    "section_path": list(chunk.metadata.get("section_path") or []),
+                    "score": round(float(chunk.score or 0.0), 4),
+                    "excerpt": str(chunk.content or "")[:400],
+                }
+                for chunk in assembled.context[:100]
+            ],
+            "returned": len(assembled.context),
+            "note": "candidatos recuperados; no son citas ni evidencia verificada",
+        }
+    return result
 
 
 @router.post("/workspaces/{corpus_id}/studio", summary="Studio MVP (artefactos reales)")
