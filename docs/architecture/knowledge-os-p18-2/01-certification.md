@@ -5,6 +5,7 @@
 - Baseline: `8a2d7c46907d51faf18a21e0de86c9b6ba411ae9`
 - Implementación: `19aa5ebff513c4f0ebf69232c6eacb02076c497b`
 - Certificación: `a6a93a88ac9cfe924acb55572a228e0796bfa7ad`
+- Release candidate (código): `f5590f6cb83a79f6ecea3e392622aa8e4937bc80`
 - Alcance: P18.2-00 a P18.2-10. P18.2-11 es este informe.
 - Exclusión respetada: SOÑAR, Dream Engine, memoria paralela, aprendizaje
   autónomo, promoción automática de inferencias.
