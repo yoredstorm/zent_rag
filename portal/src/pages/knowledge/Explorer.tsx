@@ -38,6 +38,7 @@ import {
   type KnowledgeSourceSummary,
 } from "../../lib/knowledgeModel";
 import { timeAgo } from "../../lib/format";
+import { loadSession } from "../../api";
 
 const TYPE_OPTIONS = [
   { value: "", label: "Todos los tipos" },
@@ -74,17 +75,61 @@ const ORDER_OPTIONS = [
 
 const PAGE_SIZE = 40;
 
+const VERIFICATION_LABELS: Record<string, { label: string; hint: string }> = {
+  verified: {
+    label: "Verificado por una persona",
+    hint: "Una revisión humana confirmó este hallazgo.",
+  },
+  inferred: {
+    label: "Inferido con evidencia",
+    hint: "ZENT lo dedujo de pasajes; no es un hecho confirmado.",
+  },
+  discovered: {
+    label: "Detectado, sin verificar",
+    hint: "ZENT encontró el pasaje, pero nadie lo revisó todavía.",
+  },
+  draft: {
+    label: "Borrador",
+    hint: "Propuesta interna; no debe usarse como hecho.",
+  },
+  deprecated: {
+    label: "Obsoleto",
+    hint: "Se conserva por trazabilidad; no es conocimiento vigente.",
+  },
+};
+
+function verificationLabel(status: string) {
+  return (
+    VERIFICATION_LABELS[status] ?? {
+      label: status || "Sin estado",
+      hint: "Estado técnico del objeto.",
+    }
+  );
+}
+
+function canReviewHidden(): boolean {
+  const session = loadSession();
+  const permissions = session?.permissions ?? [];
+  const roles = session?.roles ?? [];
+  return (
+    permissions.includes("knowledge:write") ||
+    roles.some((role) => ["owner", "admin"].includes(role))
+  );
+}
+
 type ExplorerSource = KnowledgeSourceSummary;
 type ExplorerInsightPayload = KnowledgeExplorerInsightPayload;
 
 function DocumentInsightPanel({
   insight,
   sourceId,
+  corpusId,
   loading,
   error,
 }: {
   insight: ExplorerInsightPayload | null;
   sourceId: string | null;
+  corpusId: string | null;
   loading: boolean;
   error: string;
 }) {
@@ -140,12 +185,21 @@ function DocumentInsightPanel({
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-          <span>{insight.counts.objects_visible} hallazgos visibles</span>
-          <span>{insight.counts.objects_hidden} en revisión</span>
+          <span>{insight.counts.objects_visible} hallazgos con evidencia</span>
+          <span>{insight.counts.objects_total} objetos canónicos históricos</span>
+          {typeof insight.counts.passages_available === "number" && (
+            <span>{insight.counts.passages_available} pasajes recuperables</span>
+          )}
+          {typeof insight.counts.revisions === "number" && insight.counts.revisions > 0 && (
+            <span>{insight.counts.revisions} en revisión</span>
+          )}
           {insight.source.genre_confidence != null && (
-            <span>
-              Clasificación de género {Math.round(insight.source.genre_confidence * 100)}%
-              (no es comprensión del documento)
+            <span
+              title="Mide la confianza de la clasificación documental. No es el porcentaje del documento que ZENT comprendió."
+            >
+              Confianza de clasificación{" "}
+              {Math.round(insight.source.genre_confidence * 100)}% (no mide
+              comprensión)
             </span>
           )}
         </div>
@@ -164,11 +218,54 @@ function DocumentInsightPanel({
       </Panel>
 
       {insight.topics.length === 0 ? (
-        <Panel className="panel-body">
-          <p className="text-sm text-muted">
-            No hay una descripción fiable todavía. Puedes revisar los pasajes y
-            los objetos individuales.
-          </p>
+        <Panel className="panel-body flex flex-col gap-3" data-testid="document-insight-empty">
+          <div>
+            <h3 className="text-h3">No hay temas verificables todavía</h3>
+            <p className="prose-measure mt-1 text-sm leading-relaxed text-muted">
+              El documento está disponible y sus pasajes se pueden abrir.
+              ZENT no encontró conceptos con contexto suficiente para afirmarlos
+              como conocimiento. Eso no significa que el documento esté vacío.
+            </p>
+          </div>
+          <ul className="flex flex-col gap-1 text-xs text-muted">
+            {insight.source.pages != null && (
+              <li>{insight.source.pages} páginas procesadas.</li>
+            )}
+            {typeof insight.counts.passages_available === "number" && (
+              <li>
+                {insight.counts.passages_available} pasajes recuperables para
+                leer y preguntar.
+              </li>
+            )}
+            <li>
+              {insight.counts.objects_total} objetos canónicos históricos se
+              conservan fuera de esta vista; no se presentan como temas
+              comprendidos.
+            </li>
+          </ul>
+          <div className="flex flex-wrap gap-2">
+            {sourceId ? (
+              <ButtonLink
+                to={`/knowledge/sources/${sourceId}`}
+                variant="secondary"
+                size="sm"
+              >
+                Abrir fuente y pasajes
+              </ButtonLink>
+            ) : null}
+            {sourceId ? (
+              <ButtonLink
+                to={`/knowledge/ask?${new URLSearchParams({
+                  ...(corpusId ? { corpus: corpusId } : {}),
+                  source_ids: sourceId,
+                }).toString()}`}
+                variant="primary"
+                size="sm"
+              >
+                Preguntar sobre este documento
+              </ButtonLink>
+            ) : null}
+          </div>
         </Panel>
       ) : (
         insight.topics.map((topic) => (
@@ -192,12 +289,13 @@ function DocumentInsightPanel({
                         {item.claim_text}
                       </p>
                     </div>
-                    <span className="badge badge-muted shrink-0">
+                    <span
+                      className="badge badge-muted shrink-0"
+                      title={verificationLabel(item.verification_state).hint}
+                    >
                       {item.uncertainty === "alta"
                         ? "Certeza baja"
-                        : item.uncertainty === "media"
-                          ? "Interpretación"
-                          : "Evidencia disponible"}
+                        : verificationLabel(item.verification_state).label}
                     </span>
                   </div>
                   {item.grounded_excerpt ? (
@@ -393,6 +491,8 @@ export default function KnowledgeExplorerPage() {
   const mode = params.get("mode") === "all" ? "all" : "document";
   const sourceParam = params.get("source") ?? "";
   const focusId = params.get("focus");
+  const objectsActive = view === "list" && mode === "all";
+  const reviewAllowed = useMemo(() => canReviewHidden(), []);
 
   const [domains, setDomains] = useState<KnowledgeDomain[]>([]);
   const [items, setItems] = useState<KnowledgeObject[]>([]);
@@ -410,6 +510,7 @@ export default function KnowledgeExplorerPage() {
   const [insight, setInsight] = useState<ExplorerInsightPayload | null>(null);
   const [insightError, setInsightError] = useState("");
   const [insightLoading, setInsightLoading] = useState(false);
+  const [includeHidden, setIncludeHidden] = useState(false);
 
   const updateParams = useCallback(
     (patch: Record<string, string | null>, replace = true) => {
@@ -422,6 +523,48 @@ export default function KnowledgeExplorerPage() {
     },
     [params, setParams]
   );
+
+  const switchToDocument = useCallback(() => {
+    setQuery("");
+    setIncludeHidden(false);
+    updateParams({
+      view: null,
+      mode: null,
+      domain: null,
+      type: null,
+      status: null,
+      order: null,
+      q: null,
+      focus: null,
+    });
+  }, [updateParams]);
+
+  const switchToAll = useCallback(() => {
+    setQuery("");
+    setIncludeHidden(false);
+    updateParams({
+      view: null,
+      mode: "all",
+      type: null,
+      status: null,
+      order: null,
+      q: null,
+      focus: null,
+    });
+  }, [updateParams]);
+
+  const switchToGraph = useCallback(() => {
+    setQuery("");
+    setIncludeHidden(false);
+    updateParams({
+      view: "graph",
+      mode: null,
+      type: null,
+      status: null,
+      order: null,
+      q: null,
+    });
+  }, [updateParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -489,13 +632,13 @@ export default function KnowledgeExplorerPage() {
       return;
     }
     if (sourceId !== sourceParam) {
-      updateParams({ source: sourceId, mode: "document" }, true);
+      updateParams({ source: sourceId }, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId]);
 
   useEffect(() => {
-    if (!corpusId || !sourceId || view === "graph") {
+    if (!corpusId || !sourceId || view !== "list" || mode !== "document") {
       setInsight(null);
       return;
     }
@@ -520,7 +663,7 @@ export default function KnowledgeExplorerPage() {
     return () => {
       cancelled = true;
     };
-  }, [corpusId, sourceId, view]);
+  }, [corpusId, sourceId, view, mode]);
 
   const loadObjects = useCallback(
     async (nextOffset: number, append: boolean) => {
@@ -532,11 +675,12 @@ export default function KnowledgeExplorerPage() {
           domain: domain || undefined,
           type: type || undefined,
           status: status || undefined,
-          source_id: mode === "document" && sourceId ? sourceId : undefined,
+          source_id: undefined,
           q: query.trim() || undefined,
           order_by: orderBy,
           limit: PAGE_SIZE,
           offset: nextOffset,
+          exclude_hidden: !includeHidden,
         });
         setItems((previous) => (append ? [...previous, ...data.items] : data.items));
         setTotal(data.total);
@@ -549,12 +693,19 @@ export default function KnowledgeExplorerPage() {
         setLoadingMore(false);
       }
     },
-    [domain, type, status, query, orderBy, mode, sourceId]
+    [domain, type, status, query, orderBy, includeHidden]
   );
 
   useEffect(() => {
+    if (!objectsActive) {
+      setLoading(false);
+      setItems([]);
+      setTotal(0);
+      setOffset(0);
+      return;
+    }
     void loadObjects(0, false);
-  }, [loadObjects]);
+  }, [loadObjects, objectsActive]);
 
   useEffect(() => {
     if (view !== "graph") return;
@@ -582,7 +733,12 @@ export default function KnowledgeExplorerPage() {
 
   const selectedDomain = domains.find((item) => item.name === domain) ?? null;
   const topics = selectedDomain?.by_type ?? [];
-  const showTopics = view === "list" && Boolean(domain) && !type && !query.trim();
+  const showTopics =
+    view === "list" &&
+    mode === "all" &&
+    Boolean(domain) &&
+    !type &&
+    !query.trim();
 
   return (
     <KnowledgeLayout>
@@ -599,7 +755,7 @@ export default function KnowledgeExplorerPage() {
             size="sm"
             variant={view === "list" && mode === "document" ? "secondary" : "ghost"}
             leadingIcon={BookOpen}
-            onClick={() => updateParams({ view: null, mode: null, focus: null })}
+            onClick={switchToDocument}
           >
             Por documento
           </Button>
@@ -607,7 +763,7 @@ export default function KnowledgeExplorerPage() {
             size="sm"
             variant={view === "list" && mode === "all" ? "secondary" : "ghost"}
             leadingIcon={ListBullets}
-            onClick={() => updateParams({ view: null, mode: "all", focus: null })}
+            onClick={switchToAll}
           >
             Todos los hallazgos
           </Button>
@@ -615,7 +771,7 @@ export default function KnowledgeExplorerPage() {
             size="sm"
             variant={view === "graph" ? "secondary" : "ghost"}
             leadingIcon={Graph}
-            onClick={() => updateParams({ view: "graph" })}
+            onClick={switchToGraph}
           >
             Grafo
           </Button>
@@ -625,7 +781,13 @@ export default function KnowledgeExplorerPage() {
         </div>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <div
+        className={cn(
+          "grid gap-4",
+          mode === "all" && "lg:grid-cols-[240px_minmax(0,1fr)]"
+        )}
+      >
+        {mode === "all" ? (
         <aside className="flex flex-col gap-2">
           <Panel className="overflow-hidden">
             <div className="panel-header py-2.5">
@@ -662,10 +824,12 @@ export default function KnowledgeExplorerPage() {
             </ul>
           </Panel>
         </aside>
+        ) : null}
 
         <div className="flex min-w-0 flex-col gap-4">
           <Panel flat className="p-3">
             <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+              {objectsActive ? (
               <div className="relative min-w-0 flex-1">
                 <MagnifyingGlass
                   size={14}
@@ -680,13 +844,15 @@ export default function KnowledgeExplorerPage() {
                   aria-label="Filtrar objetos"
                 />
               </div>
+              ) : null}
               <div className="flex flex-wrap gap-2">
+                {view === "list" && mode === "document" ? (
                 <Select
                   aria-label="Documento"
                   value={sourceId}
                   onChange={(event) => {
                     setSourceId(event.target.value);
-                    updateParams({ source: event.target.value, mode: "document" });
+                    updateParams({ source: event.target.value });
                   }}
                   className="min-h-9 w-[210px]"
                   disabled={sources.length === 0}
@@ -700,6 +866,9 @@ export default function KnowledgeExplorerPage() {
                     </option>
                   ))}
                 </Select>
+                ) : null}
+                {objectsActive ? (
+                <>
                 <Select
                   aria-label="Tipo de conocimiento"
                   value={type}
@@ -736,11 +905,13 @@ export default function KnowledgeExplorerPage() {
                     </option>
                   ))}
                 </Select>
+                </>
+                ) : null}
               </div>
             </div>
           </Panel>
 
-          {(domain || type) && (
+          {mode === "all" && (domain || type) && (
             <nav
               className="flex flex-wrap items-center gap-2 text-xs"
               aria-label="Ruta de exploración"
@@ -780,15 +951,6 @@ export default function KnowledgeExplorerPage() {
 
           {error && <ErrorInline message={error} className="mb-0" />}
 
-          {view === "list" && mode === "document" ? (
-            <DocumentInsightPanel
-              insight={insight}
-              sourceId={sourceId || null}
-              loading={insightLoading}
-              error={insightError}
-            />
-          ) : null}
-
           {view === "graph" ? (
             <Panel className="panel-body">
               <GraphPanel
@@ -798,6 +960,14 @@ export default function KnowledgeExplorerPage() {
                 onClearFocus={() => updateParams({ focus: null })}
               />
             </Panel>
+          ) : mode === "document" ? (
+            <DocumentInsightPanel
+              insight={insight}
+              sourceId={sourceId || null}
+              corpusId={corpusId || null}
+              loading={insightLoading}
+              error={insightError}
+            />
           ) : showTopics ? (
             <Panel className="overflow-hidden" data-testid="knowledge-topics">
               <div className="panel-header">
@@ -886,6 +1056,31 @@ export default function KnowledgeExplorerPage() {
               </div>
             </Panel>
           ) : (
+            <div className="flex flex-col gap-3">
+              <Panel flat className="p-3" data-testid="technical-view-banner">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-text">Vista técnica</p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Objetos canónicos con IDs y estados. Pueden incluir
+                      registros históricos que no son temas comprendidos.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+                    <span>{total} objetos canónicos</span>
+                    {reviewAllowed ? (
+                      <label className="flex items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={includeHidden}
+                          onChange={(event) => setIncludeHidden(event.target.checked)}
+                        />
+                        Incluir ocultos en revisión
+                      </label>
+                    ) : null}
+                  </div>
+                </div>
+              </Panel>
             <Panel className="overflow-hidden">
               {loading ? (
                 <div className="flex flex-col gap-2 p-4" aria-busy="true">
@@ -913,8 +1108,11 @@ export default function KnowledgeExplorerPage() {
                               <span className="truncate text-sm font-medium text-text">
                                 {item.display_name || item.name}
                               </span>
-                              <span className={cn("badge shrink-0", statusTone(item.status))}>
-                                {item.status}
+                              <span
+                                className={cn("badge shrink-0", statusTone(item.status))}
+                                title={verificationLabel(item.status).hint}
+                              >
+                                {verificationLabel(item.status).label}
                               </span>
                             </span>
                             <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-faint">
@@ -935,6 +1133,7 @@ export default function KnowledgeExplorerPage() {
                   <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
                     <span className="text-xs text-muted">
                       {items.length} de {total} objetos
+                      {items.length < total ? " · resultados parciales" : ""}
                     </span>
                     {items.length < total && (
                       <Button
@@ -950,6 +1149,7 @@ export default function KnowledgeExplorerPage() {
                 </>
               )}
             </Panel>
+            </div>
           )}
         </div>
       </div>

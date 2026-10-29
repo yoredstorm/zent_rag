@@ -511,6 +511,7 @@ export function fetchKnowledgeObjects(
     order_by?: string;
     limit?: number;
     offset?: number;
+    exclude_hidden?: boolean;
   } = {}
 ): Promise<{ items: KnowledgeObject[]; count: number; total: number }> {
   const query = new URLSearchParams();
@@ -521,6 +522,7 @@ export function fetchKnowledgeObjects(
   if (params.q) query.set("q", params.q);
   if (params.min_confidence != null) query.set("min_confidence", String(params.min_confidence));
   if (params.order_by) query.set("order_by", params.order_by);
+  if (params.exclude_hidden) query.set("exclude_hidden", "true");
   query.set("limit", String(params.limit ?? 50));
   query.set("offset", String(params.offset ?? 0));
   return withSession(`/api/v1/knowledge/objects?${query.toString()}`);
@@ -605,6 +607,9 @@ export type KnowledgeExplorerInsightPayload = {
     objects_total: number;
     objects_visible: number;
     objects_hidden: number;
+    passages_available?: number;
+    revisions?: number;
+    truncated?: boolean;
   };
 };
 

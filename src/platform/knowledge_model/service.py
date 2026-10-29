@@ -717,6 +717,7 @@ class KnowledgeModelService:
             domain=filters.get("domain"),
             status=filters.get("status"),
             source_id=filters.get("source_id"),
+            exclude_hidden=bool(filters.get("exclude_hidden")),
         )
         return {"items": items, "count": len(items), "total": total}
 

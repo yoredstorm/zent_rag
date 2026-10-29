@@ -327,6 +327,10 @@ async def list_objects(
     order_by: str = Query(default="updated_at", pattern="^(updated_at|confidence|name|evidence)$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    exclude_hidden: bool = Query(
+        default=False,
+        description="Oculta objetos retirados de la vista natural (metadata.explorer_visibility=hidden).",
+    ),
     service=Depends(get_knowledge_model_service),
 ) -> dict:
     require_permission(request, "knowledge:read")
@@ -343,6 +347,7 @@ async def list_objects(
             order_by=order_by,
             limit=limit,
             offset=offset,
+            exclude_hidden=exclude_hidden,
         )
     except KnowledgeModelUnavailable as exc:
         raise _unavailable(exc) from exc

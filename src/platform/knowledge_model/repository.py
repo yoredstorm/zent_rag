@@ -1030,6 +1030,7 @@ class PostgresKnowledgeModelRepository:
         domain: str | None = None,
         status: str | None = None,
         source_id: UUID | None = None,
+        exclude_hidden: bool = False,
     ) -> int:
         session = await get_async_session()
         try:
@@ -1047,6 +1048,10 @@ class PostgresKnowledgeModelRepository:
             if source_id:
                 clauses.append("source_id = :source_id")
                 params["source_id"] = source_id
+            if exclude_hidden:
+                clauses.append(
+                    "COALESCE(metadata->>'explorer_visibility', '') <> 'hidden'"
+                )
             row = (
                 await session.execute(
                     text(
@@ -1073,6 +1078,7 @@ class PostgresKnowledgeModelRepository:
         order_by: str = "updated_at",
         limit: int = 50,
         offset: int = 0,
+        exclude_hidden: bool = False,
     ) -> list[dict]:
         session = await get_async_session()
         try:
@@ -1099,6 +1105,10 @@ class PostgresKnowledgeModelRepository:
             if min_confidence is not None:
                 clauses.append("confidence IS NOT NULL AND confidence >= :min_conf")
                 params["min_conf"] = float(min_confidence)
+            if exclude_hidden:
+                clauses.append(
+                    "COALESCE(metadata->>'explorer_visibility', '') <> 'hidden'"
+                )
             order = {
                 "confidence": "confidence DESC NULLS LAST",
                 "name": "lower(name) ASC",
