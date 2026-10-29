@@ -31,6 +31,73 @@ _SNAPSHOT_CONFIG_KEYS = (
 )
 
 
+def snapshot_from_fields(
+    *,
+    system_prompt: str | None,
+    model: str | None,
+    tools: list | tuple | None,
+    config_json: dict | None,
+) -> dict:
+    """Construye el snapshot ejecutable desde columnas de `agents`.
+
+    Es la única definición de "configuración del agente" que comparten las
+    versiones, las certificaciones de workflow y el pinning de instancias.
+    """
+    import copy
+    import json
+
+    config = copy.deepcopy(config_json or {})
+    config = json.loads(json.dumps(config, default=str))
+    return {
+        "system_prompt": system_prompt,
+        "model": model,
+        "tools": list(tools or []),
+        "config": {k: config.get(k) for k in _SNAPSHOT_CONFIG_KEYS if k in config},
+        "config_extra": {k: v for k, v in config.items() if k not in _SNAPSHOT_CONFIG_KEYS},
+        "schema_version": 2,
+    }
+
+
+def snapshot_fingerprint(snapshot: dict) -> str:
+    import hashlib
+    import json
+
+    blob = json.dumps(snapshot or {}, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def execution_fingerprints(snapshot: dict) -> dict[str, str]:
+    """Huellas separadas de modelo, tools, fuentes y propósito."""
+    import hashlib
+    import json
+
+    def _hash(value) -> str:
+        blob = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    config = dict(snapshot.get("config") or {})
+    extra = dict(snapshot.get("config_extra") or {})
+    source_scope = {
+        "source_ids": config.get("source_ids") or extra.get("source_ids"),
+        "knowledge_base_ids": config.get("knowledge_base_ids")
+        or extra.get("knowledge_base_ids"),
+    }
+    return {
+        "config_fingerprint": snapshot_fingerprint(snapshot),
+        "model_fingerprint": _hash({"model": snapshot.get("model")}),
+        "tools_fingerprint": _hash(snapshot.get("tools") or []),
+        "source_scope_fingerprint": _hash(source_scope),
+        "purpose_fingerprint": _hash(
+            {
+                "system_prompt": snapshot.get("system_prompt"),
+                "purpose": config.get("purpose") or extra.get("purpose"),
+                "instructions": config.get("instructions")
+                or extra.get("instructions"),
+            }
+        ),
+    }
+
+
 def snapshot_agent(agent: Agent) -> dict:
     """Congela la configuración ejecutable de un agente.
 
@@ -38,19 +105,12 @@ def snapshot_agent(agent: Agent) -> dict:
     sistema + prompt + modelo + tools + config relevante. schema_version 2
     incluye retrieval/guardrails/output_schema/chunking/provider/embedding.
     """
-    import copy
-    import json
-
-    config = copy.deepcopy(agent.config_json or {})
-    config = json.loads(json.dumps(config, default=str))
-    return {
-        "system_prompt": agent.system_prompt,
-        "model": agent.model,
-        "tools": list(agent.tools or []),
-        "config": {k: config.get(k) for k in _SNAPSHOT_CONFIG_KEYS if k in config},
-        "config_extra": {k: v for k, v in config.items() if k not in _SNAPSHOT_CONFIG_KEYS},
-        "schema_version": 2,
-    }
+    return snapshot_from_fields(
+        system_prompt=agent.system_prompt,
+        model=agent.model,
+        tools=agent.tools,
+        config_json=agent.config_json,
+    )
 
 
 def resolve_agent(agent: Agent, snapshot: dict) -> Agent:

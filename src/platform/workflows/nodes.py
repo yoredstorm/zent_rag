@@ -2032,6 +2032,7 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
 
         agent_role = None
         pinned = getattr(rctx.instance, "policy_snapshot", None) if rctx.instance else None
+        entry = None
         if isinstance(pinned, dict):
             entry = next(
                 (
@@ -2041,8 +2042,35 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
                 ),
                 None,
             )
-            if entry is not None:
-                agent_role = entry.get("role")
+        if entry is not None:
+            pinned_snapshot = entry.get("config_snapshot")
+            if isinstance(pinned_snapshot, dict) and pinned_snapshot:
+                from src.platform.deployments.versions import (
+                    execution_fingerprints,
+                    resolve_agent,
+                    snapshot_agent,
+                )
+
+                live_fingerprint = execution_fingerprints(
+                    snapshot_agent(agent)
+                ).get("config_fingerprint")
+                pinned_fingerprint = entry.get("config_fingerprint")
+                if pinned_fingerprint and live_fingerprint != pinned_fingerprint:
+                    logger.warning(
+                        "workflow agent config changed after instance start; "
+                        "using pinned revision",
+                        agent_id=str(agent_id),
+                        workflow_run_id=str(rctx.execution.run_id),
+                    )
+                agent = resolve_agent(agent, pinned_snapshot)
+            else:
+                logger.warning(
+                    "workflow instance has no pinned agent snapshot (legacy); "
+                    "live agent config used, do not certify this instance",
+                    agent_id=str(agent_id),
+                    workflow_run_id=str(rctx.execution.run_id),
+                )
+            agent_role = entry.get("role")
         if agent_role is None:
             agent_role = await get_agent_role(rctx.organization_id, agent_id)
         if agent_role is not None:

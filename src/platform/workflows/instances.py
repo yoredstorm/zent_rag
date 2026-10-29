@@ -767,6 +767,10 @@ async def _build_policy_snapshot(
     )
     if not agent_ids:
         return {"agents": []}
+    from src.platform.deployments.versions import (
+        execution_fingerprints,
+        snapshot_from_fields,
+    )
     from src.platform.studio.roles import get_role
 
     agents: list[dict[str, Any]] = []
@@ -776,7 +780,8 @@ async def _build_policy_snapshot(
             row = (
                 await session.execute(
                     text(
-                        "SELECT id, role_profile_id, is_active FROM agents "
+                        "SELECT id, role_profile_id, is_active, status, system_prompt, "
+                        "       model, tools, config_json FROM agents "
                         "WHERE id = :aid AND organization_id = :oid"
                     ),
                     {"aid": agent_id, "oid": organization_id},
@@ -784,6 +789,12 @@ async def _build_policy_snapshot(
             ).fetchone()
             if row is None:
                 continue
+            snapshot = snapshot_from_fields(
+                system_prompt=row.system_prompt,
+                model=row.model,
+                tools=row.tools,
+                config_json=row.config_json,
+            )
             role = (
                 await get_role(organization_id, UUID(str(row.role_profile_id)))
                 if row.role_profile_id
@@ -793,15 +804,18 @@ async def _build_policy_snapshot(
                 {
                     "agent_id": str(row.id),
                     "is_active": bool(row.is_active),
+                    "status": str(row.status),
                     "role_profile_id": (
                         str(row.role_profile_id) if row.role_profile_id else None
                     ),
                     "role": role,
+                    "config_snapshot": snapshot,
+                    **execution_fingerprints(snapshot),
                 }
             )
     finally:
         await session.close()
-    return {"agents": agents}
+    return {"agents": agents, "schema_version": 2}
 
 
 async def find_by_ingress(

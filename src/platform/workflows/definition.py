@@ -109,7 +109,8 @@ async def _certificate_row(
             await session.execute(
                 text(
                     "SELECT id, organization_id, workspace_id, workflow_id, level, state, "
-                    "graph_hash, trigger_hash, binding_fingerprint, revoked_at, expires_at "
+                    "graph_hash, trigger_hash, binding_fingerprint, agent_versions, "
+                    "role_versions, policy_version, revoked_at, expires_at "
                     "FROM workflow_certificates WHERE id = :cid AND organization_id = :oid "
                     "AND workflow_id = :wid"
                 ),
@@ -130,6 +131,9 @@ async def _certificate_row(
         "graph_hash": row.graph_hash,
         "trigger_hash": row.trigger_hash,
         "binding_fingerprint": row.binding_fingerprint,
+        "agent_versions": row.agent_versions or {},
+        "role_versions": row.role_versions or {},
+        "policy_version": row.policy_version,
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
     }
@@ -248,6 +252,23 @@ async def load_published_definition(
             raise PublishedDefinitionError(
                 "trigger_stale", "El trigger cambió desde la certificación."
             )
+        if cert and cert.get("agent_versions"):
+            from src.platform.workflows.release_policy import (
+                _agent_fingerprint,
+                agent_versions_stale,
+            )
+
+            current_agents, _roles, missing_agents = await _agent_fingerprint(
+                organization_id, graph
+            )
+            if missing_agents or agent_versions_stale(
+                cert.get("agent_versions"), current_agents
+            ):
+                raise PublishedDefinitionError(
+                    "agents_stale",
+                    "Un agente vinculado cambió desde la certificación; "
+                    "la versión publicada no puede ejecutarse con otra configuración.",
+                )
     return {
         "workflow_id": str(row.id),
         "organization_id": str(row.organization_id),

@@ -554,14 +554,20 @@ async def _agent_fingerprint(organization_id: UUID, graph: dict[str, Any]) -> tu
     agents: list[dict[str, Any]] = []
     roles: list[dict[str, Any]] = []
     if not agent_ids:
-        return {"agents": []}, {"roles": []}, missing
+        return {"schema_version": 2, "agents": []}, {"roles": []}, missing
+    from src.platform.deployments.versions import (
+        execution_fingerprints,
+        snapshot_from_fields,
+    )
+
     session = await get_async_session()
     try:
         for agent_id in agent_ids:
             row = (
                 await session.execute(
                     text(
-                        "SELECT id, is_active, role_profile_id FROM agents "
+                        "SELECT id, is_active, role_profile_id, status, system_prompt, "
+                        "       model, tools, config_json FROM agents "
                         "WHERE id = :aid AND organization_id = :oid"
                     ),
                     {"aid": agent_id, "oid": organization_id},
@@ -573,18 +579,27 @@ async def _agent_fingerprint(organization_id: UUID, graph: dict[str, Any]) -> tu
             version = (
                 await session.execute(
                     text(
-                        "SELECT version_number, status FROM agent_versions "
+                        "SELECT id, version_number, status FROM agent_versions "
                         "WHERE agent_id = :aid ORDER BY version_number DESC LIMIT 1"
                     ),
                     {"aid": agent_id},
                 )
             ).fetchone()
+            snapshot = snapshot_from_fields(
+                system_prompt=row.system_prompt,
+                model=row.model,
+                tools=row.tools,
+                config_json=row.config_json,
+            )
             agents.append(
                 {
                     "agent_id": str(row.id),
+                    "revision_id": str(version.id) if version else None,
                     "version": int(version.version_number) if version else None,
                     "status": str(version.status) if version else None,
                     "role_profile_id": str(row.role_profile_id) if row.role_profile_id else None,
+                    "status_live": str(row.status),
+                    **execution_fingerprints(snapshot),
                 }
             )
             if row.role_profile_id:
@@ -610,7 +625,51 @@ async def _agent_fingerprint(organization_id: UUID, graph: dict[str, Any]) -> tu
         logger.warning("agent fingerprint unavailable")
     finally:
         await session.close()
-    return {"agents": agents}, {"roles": roles}, missing
+    return {"schema_version": 2, "agents": agents}, {"roles": roles}, missing
+
+
+_AGENT_COMPARE_KEYS = (
+    "revision_id",
+    "version",
+    "status",
+    "role_profile_id",
+    "config_fingerprint",
+    "model_fingerprint",
+    "tools_fingerprint",
+    "source_scope_fingerprint",
+    "purpose_fingerprint",
+)
+
+
+def agent_versions_stale(
+    certified: dict[str, Any] | None,
+    current: dict[str, Any] | None,
+) -> bool:
+    """Compara huellas presentes en el certificado.
+
+    Los certificados legacy solo guardan agente/versión/rol: no se les atribuye
+    una protección de configuración que nunca tuvieron. Un certificado nuevo
+    incluye `config_fingerprint` y las huellas separadas, y cualquier deriva
+    bloquea la ejecución/ publicación.
+    """
+    certified_agents = {
+        str(item.get("agent_id")): item
+        for item in (certified or {}).get("agents") or []
+        if isinstance(item, dict)
+    }
+    current_agents = {
+        str(item.get("agent_id")): item
+        for item in (current or {}).get("agents") or []
+        if isinstance(item, dict)
+    }
+    if set(certified_agents) != set(current_agents):
+        return True
+    for agent_id, current_entry in current_agents.items():
+        certified_entry = certified_agents[agent_id]
+        for key in _AGENT_COMPARE_KEYS:
+            if key in certified_entry and certified_entry.get(key) != current_entry.get(key):
+                return True
+    return False
 
 
 def _certificate_problem(cert: dict[str, Any] | None, required_level: str) -> dict[str, str] | None:
@@ -753,7 +812,7 @@ async def _evaluate_graph(
                     "Resuelve dependencias y vuelve a certificar.",
                 )
             )
-        if certificate.get("agent_versions") not in (None, {}, agent_versions):
+        if agent_versions_stale(certificate.get("agent_versions"), agent_versions):
             blockers.append(
                 _blocker(
                     "agents_stale",
