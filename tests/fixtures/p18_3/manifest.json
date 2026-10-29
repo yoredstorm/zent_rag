@@ -1,0 +1,29 @@
+{
+  "version": "p18.3-fixtures-v1",
+  "files": {
+    "narrative_dialogue.txt": {
+      "sha256": "8a4db9fd9ed7916da9ee6d26938874d98f24659e36df18834d0d11569d0b7890",
+      "bytes": 286
+    },
+    "technical_atpco.txt": {
+      "sha256": "07a10cff3c9e19a9e68a84e55f43a3222d138bcd242afbe7ff18550ce0747edf",
+      "bytes": 369
+    },
+    "policy_expenses.txt": {
+      "sha256": "f08a4dfd8f5a9e3c43bd637d02e2b34fa4c402070ffc83c2299790c00a74a3a2",
+      "bytes": 240
+    },
+    "contract_services.txt": {
+      "sha256": "968c1ec269b5915c40ba3a550fb04cf15cbf566bfbe8fa0a527e71c938989144",
+      "bytes": 227
+    },
+    "inventory.csv": {
+      "sha256": "7405dc87e4af4020a6c49c4b4625b839d01ba7efa5e82d34038a4fd126401033",
+      "bytes": 47
+    },
+    "contradictory.txt": {
+      "sha256": "9fa9effce8c02837f898943872a7b94b46e5029ceed414a6e368070944ea3300",
+      "bytes": 158
+    }
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "schema": "zent.p18_3.release_manifest/v1",
+  "generated_at": "2026-10-29T20:40:00Z",
+  "release_candidate_code_sha": "d0b3b6750f8dbcb6810355f88d86662ab663a0d8",
+  "baseline_sha": "3c97dfb4149e61a540641a69d86f676be883bee9",
+  "branch": "master",
+  "environment": "local staging (synthetic tenants)",
+  "decision": {
+    "staging": "GO_STAGING",
+    "internal_pilot": "CONDITIONAL",
+    "customer_pilot": "NO_GO",
+    "ga": "NO_GO",
+    "production": "NO_GO",
+    "reason": "P0 fixes pass their tests, but the human gold set, 40-case benchmark, full adversarial ACL matrix, five-user UX, chaos/load and the commercial WORKFLOW vertical are not executed. Legacy backfill awaits tenant authorization.",
+    "constraints": [
+      "No aplicar backfill de legado sin autorización y checksum aprobado.",
+      "No declarar proveedor primario: solo fallback real.",
+      "No promover a producción ni GA.",
+      "No usar el gold set como humano certificado."
+    ]
+  },
+  "gates": [
+    {
+      "gate": "corpus_acl",
+      "status": "PASS",
+      "scope": "tests de aislamiento org/workspace/corpus/source y E2E adversarial acotado",
+      "evidence": [
+        "tests/test_p18_3_evidence_api.py",
+        "tests/test_knowledge_workspaces_api.py",
+        "tests/test_knowledge_evidence_api.py"
+      ],
+      "residual": "Matriz adversarial completa y caos no ejecutados."
+    },
+    {
+      "gate": "citations_40_cases",
+      "status": "NOT_RUN",
+      "scope": "harness implementado; gold set draft",
+      "evidence": [
+        "docs/architecture/knowledge-os-p18-3/02-harness.md"
+      ],
+      "blocker": "Revisión humana + corpus staging mapeado."
+    },
+    {
+      "gate": "legacy_sources",
+      "status": "BLOCKED",
+      "scope": "plan y herramienta listos; caso real sin autorización",
+      "evidence": [
+        "artifacts/certification/p18-3/legacy_source_plan.jsonl",
+        "docs/architecture/knowledge-os-p18-3/04-legacy-backfill.md"
+      ],
+      "blocker": "BLOCKED_AUTHORIZATION del titular del tenant."
+    },
+    {
+      "gate": "wizard_worker_e2e",
+      "status": "PASS",
+      "scope": "PDF+CSV, MIME rechazado, sesión durable, Explorer 390/1366",
+      "evidence": [
+        "portal/e2e/p18-3-e2e.spec.ts",
+        "artifacts/certification/p18-3/e2e/pdf-explorer-1366.png"
+      ],
+      "residual": "Visor PDF con página resaltada y chat dentro del mismo E2E no cubiertos."
+    },
+    {
+      "gate": "semantic_quality",
+      "status": "BLOCKED",
+      "scope": "gold set 40 casos draft_not_approved",
+      "evidence": [
+        "tests/fixtures/p18_3/goldset_v1.jsonl"
+      ],
+      "blocker": "BLOCKED_HUMAN_REVIEW."
+    },
+    {
+      "gate": "agent_to_knowledge",
+      "status": "FAIL",
+      "scope": "CONDITIONAL_REAL_PROVIDER; 1/5 casos con verificación partial",
+      "evidence": [
+        "artifacts/certification/p18-3/agent_certification.json"
+      ],
+      "residual": "Answer Gate puede quedar skip si JEV no está disponible."
+    },
+    {
+      "gate": "agent_pinned_to_workflow",
+      "status": "PASS",
+      "scope": "A→B no cambia V1; instancia usa snapshot",
+      "evidence": [
+        "tests/test_p18_3_agent_pinning.py",
+        "tests/test_workflow_published_snapshot.py"
+      ],
+      "residual": "Instancias legacy sin snapshot se marcan no certificables."
+    },
+    {
+      "gate": "workflow_wait_resume",
+      "status": "PASS",
+      "scope": "suites de durabilidad, idempotencia y publicación",
+      "evidence": [
+        "tests/test_workflow_durable_instances.py",
+        "tests/certification/workflows/test_durability_restart.py"
+      ],
+      "residual": "Vertical comercial completo no ejecutado."
+    },
+    {
+      "gate": "provider_integrations",
+      "status": "FAIL",
+      "scope": "primario 403; fallback real",
+      "evidence": [
+        "artifacts/certification/p18-3/agent_certification.json"
+      ],
+      "residual": "No se certifica el modelo primario."
+    },
+    {
+      "gate": "ux_five_users",
+      "status": "NOT_RUN",
+      "scope": "sin participantes",
+      "evidence": [
+        "docs/architecture/knowledge-os-p18-3/12-usability.md"
+      ],
+      "blocker": "Reclutamiento y consentimiento."
+    },
+    {
+      "gate": "observability_rollback",
+      "status": "PASS",
+      "scope": "migraciones aditivas, rollback de backfill y tests",
+      "evidence": [
+        "tests/test_p18_3_legacy_backfill.py",
+        "src/infrastructure/db_init/versions/175_evidence_ledger_paging.py"
+      ],
+      "residual": "Drill de caos/restauración no ejecutado."
+    },
+    {
+      "gate": "chaos_load",
+      "status": "NOT_RUN",
+      "scope": "sin ventana aprobada",
+      "evidence": [
+        "docs/architecture/knowledge-os-p18-3/11-chaos.md"
+      ],
+      "blocker": "Ventana y entorno."
+    }
+  ],
+  "p0_invariants": {
+    "acl": "PASS_TESTED",
+    "duplicate_effects": "PASS_TESTED",
+    "unauthorized_version": "PASS_TESTED",
+    "fabricated_citations": "PASS_TESTED_AGENT_ONLY",
+    "historical_data_loss": "PASS_TOOL_TESTED",
+    "rollback": "PASS_TOOL_TESTED"
+  },
+  "artifacts": {
+    "agent_certification.json": "260da0b5ccd03a607ee782b1b1a84e9dd2aba78746e3390fd1997ad502bcfee5",
+    "baseline.json": "d6c272e6e5554b2fdafeb57076121845a9eec3a5ae93d8492537833876d64727",
+    "flags_inventory.json": "7fad62452c5585939e465ef0a3a3c5d06d28fe6606efa07982ca6439065de531",
+    "e2e/pdf-explorer-1366.png": "0a31ec0ed4f1dfa70bc2eed34d825cf44080c097ecdc1242adcf608d743f37da",
+    "e2e/pdf-explorer-390.png": "f7649e1ae69e2cdecc2b15b75ff4b5694e23e8968a361115c30372e5ced5727e"
+  },
+  "tests": {
+    "p18_3_suite": "38 passed",
+    "workflow_regression": "59 passed",
+    "agent_flow_regression": "77 passed",
+    "e2e_p18_3": "1 passed (5.0m)",
+    "e2e_p18_2": "1 passed (50.2s)"
+  },
+  "provider": {
+    "primary": "FAIL_403_NOT_ENOUGH_BALANCE",
+    "fallback": "PASS_REAL",
+    "effective_model": "openai/deepseek-ai/DeepSeek-V4.1-Flash"
+  },
+  "notes": [
+    "Hash de artefactos calculado sobre el estado local previo al commit de certificación.",
+    "No se incluyen secretos ni PII.",
+    "GO_STAGING solo habilita pruebas internas; no es autorización de producción."
+  ]
+}

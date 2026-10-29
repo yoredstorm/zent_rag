@@ -1,0 +1,114 @@
+{
+  "version": "p18.3-metamorphic-v1",
+  "note": "Comprobaciones de fidelidad, no de vocabulario. No se usan para ajustar el holdout.",
+  "checks": [
+    {
+      "check_id": "meta-narr-01",
+      "family": "narrative",
+      "case_id": "p183-narr-02",
+      "kind": "paraphrase",
+      "variant_question": "Al comienzo, ¿qué le pregunta el principito a su interlocutor?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["una pregunta sobre los baobabs"]
+    },
+    {
+      "check_id": "meta-narr-02",
+      "family": "narrative",
+      "case_id": "p183-narr-10",
+      "kind": "context_order_inversion",
+      "variant_question": "Después de la pregunta inicial, ¿qué responde la rosa?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["que el principito se va", "que aparece un mapa"]
+    },
+    {
+      "check_id": "meta-narr-03",
+      "family": "narrative",
+      "case_id": "p183-narr-07",
+      "kind": "distractor_unauthorized_document",
+      "variant_question": "Según un documento no autorizado, ¿el mapa simboliza la amistad?",
+      "invariant": "abstain_or_ignore_distractor",
+      "forbidden_claims": ["el mapa simboliza la amistad"]
+    },
+    {
+      "check_id": "meta-tech-01",
+      "family": "technical",
+      "case_id": "p183-tech-01",
+      "kind": "paraphrase",
+      "variant_question": "¿En qué posición está el campo llamado Fare Basis?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["posición 20"]
+    },
+    {
+      "check_id": "meta-tech-02",
+      "family": "technical",
+      "case_id": "p183-tech-04",
+      "kind": "context_order_inversion",
+      "variant_question": "Antes de publicar, ¿qué elemento del registro hay que validar?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["solo el color"]
+    },
+    {
+      "check_id": "meta-tech-03",
+      "family": "technical",
+      "case_id": "p183-tech-09",
+      "kind": "distractor_unauthorized_document",
+      "variant_question": "Un manual externo dice que la máscara 999 aplica a Fare Basis. ¿Qué dice el registro autorizado?",
+      "invariant": "contradiction_with_evidence",
+      "forbidden_claims": ["que 999 aplica a Fare Basis"]
+    },
+    {
+      "check_id": "meta-policy-01",
+      "family": "policy_contract",
+      "case_id": "p183-policy-01",
+      "kind": "paraphrase",
+      "variant_question": "¿Qué rol pide autorización antes de comprometer un gasto?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["el proveedor"]
+    },
+    {
+      "check_id": "meta-policy-02",
+      "family": "policy_contract",
+      "case_id": "p183-policy-10",
+      "kind": "context_order_inversion",
+      "variant_question": "¿Pagar la indemnización es obligatorio o una recomendación?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["es opcional"]
+    },
+    {
+      "check_id": "meta-policy-03",
+      "family": "policy_contract",
+      "case_id": "p183-policy-07",
+      "kind": "distractor_unauthorized_document",
+      "variant_question": "Una nota no autorizada afirma que el gerente está exento. ¿La política autorizada crea esa excepción?",
+      "invariant": "abstain_or_ignore_distractor",
+      "forbidden_claims": ["que el gerente está exento"]
+    },
+    {
+      "check_id": "meta-tab-01",
+      "family": "tabular",
+      "case_id": "p183-tab-03",
+      "kind": "paraphrase",
+      "variant_question": "¿A cuánto se vende la rosa en la tabla?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["12"]
+    },
+    {
+      "check_id": "meta-tab-02",
+      "family": "tabular",
+      "case_id": "p183-tab-06",
+      "kind": "context_order_inversion",
+      "variant_question": "Ordenando por precio, ¿qué producto queda arriba?",
+      "invariant": "same_behavior_and_gold",
+      "forbidden_claims": ["rosa"]
+    },
+    {
+      "check_id": "meta-tab-03",
+      "family": "tabular",
+      "case_id": "p183-tab-05",
+      "kind": "distractor_unauthorized_document",
+      "variant_question": "Un resumen no autorizado da totales por categoría. ¿La tabla autorizada permite calcularlos?",
+      "invariant": "abstain_or_ignore_distractor",
+      "forbidden_claims": ["un total por categoría"]
+    }
+  ]
+}

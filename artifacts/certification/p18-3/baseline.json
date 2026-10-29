@@ -1,0 +1,319 @@
+{
+  "schema": "zent.p18_3.baseline/v1",
+  "generated_at": "2026-10-29T20:02:45+00:00",
+  "git_head": "3c97dfb4149e61a540641a69d86f676be883bee9",
+  "branch": "master",
+  "worktree_clean_at_start": true,
+  "p18_3_implementations_found": 0,
+  "environment": {
+    "python_local": "3.11.16",
+    "python_container": "3.11.17",
+    "node": "22.22.1",
+    "npm": "11.17.0",
+    "docker": "29.8.2",
+    "docker_compose": "5.6.0",
+    "migration_at_start": "174",
+    "migration_after_fixes": "176"
+  },
+  "services": [
+    {
+      "name": "api",
+      "state": "healthy",
+      "port": 8000
+    },
+    {
+      "name": "portal",
+      "state": "healthy",
+      "port": 8080
+    },
+    {
+      "name": "postgres",
+      "state": "healthy",
+      "port": 5432
+    },
+    {
+      "name": "qdrant",
+      "state": "running",
+      "port": 6333,
+      "collection": "rag_documents",
+      "points": 11585,
+      "vectors": 11616,
+      "status": "green"
+    },
+    {
+      "name": "redis",
+      "state": "healthy",
+      "port": 6379
+    },
+    {
+      "name": "ingestion-worker",
+      "state": "running",
+      "port": null
+    },
+    {
+      "name": "prometheus",
+      "state": "running",
+      "port": 9090
+    },
+    {
+      "name": "grafana",
+      "state": "running",
+      "port": 3000
+    },
+    {
+      "name": "loki",
+      "state": "running",
+      "port": 3100
+    },
+    {
+      "name": "promtail",
+      "state": "running",
+      "port": null
+    },
+    {
+      "name": "alertmanager",
+      "state": "running",
+      "port": 9093
+    }
+  ],
+  "database_at_start": {
+    "organizations": 6111,
+    "workspaces": 5915,
+    "kb_sources": 451,
+    "kb_sources_with_corpus": 169,
+    "kb_sources_null_corpus": 282,
+    "kb_sources_null_corpus_missing_workspace": 83,
+    "kb_sources_null_corpus_with_candidate_corpora": 199,
+    "structured_documents": 134,
+    "evidence_ledger": 737,
+    "knowledge_canonical_objects": 814,
+    "agents": 961,
+    "workflows": 2309,
+    "workflow_versions": 1095,
+    "workflow_instances": 90858,
+    "workflow_certificates": 395,
+    "knowledge_corpora": 177,
+    "knowledge_sessions": 326,
+    "ingestion_jobs": 393,
+    "users": 6151,
+    "memberships": 5802
+  },
+  "database_after_tests": {
+    "organizations": 6184,
+    "workspaces": 5983,
+    "kb_sources": 467,
+    "kb_sources_null_corpus": 282,
+    "structured_documents": 150,
+    "evidence_ledger": 821,
+    "knowledge_canonical_objects": 844,
+    "agents": 980,
+    "workflows": 2367,
+    "workflow_instances": 91610
+  },
+  "provider": {
+    "primary_model": "openai/deepseek/deepseek-v4.1-flash",
+    "primary_status": "DEGRADED",
+    "primary_error": "HTTP 403 NOT_ENOUGH_BALANCE",
+    "fallback_model": "openai/deepseek-ai/DeepSeek-V4.1-Flash",
+    "fallback_status": "OK",
+    "probe_latency_ms": 2698.8,
+    "probe_tokens": 15,
+    "note": "Métricas LLM del baseline son de fallback, no del primario."
+  },
+  "ci": {
+    "provider": "github_actions",
+    "run_id": 40926693734,
+    "sha": "3c97dfb4149e61a540641a69d86f676be883bee9",
+    "conclusion": "success",
+    "jobs": 16,
+    "url": "https://github.com/yoredstorm/zent_rag/actions/runs/40926693734"
+  },
+  "datasets": {
+    "questions_p18_2": {
+      "cases": 40,
+      "status": "prepared_not_executed"
+    },
+    "goldset_v1": {
+      "cases": 40,
+      "by_family": {
+        "narrative": 10,
+        "technical": 10,
+        "policy_contract": 10,
+        "tabular": 10
+      },
+      "by_split": {
+        "dev": 29,
+        "holdout": 11
+      },
+      "annotation_status": "draft_not_approved",
+      "reviewer_ids": 0,
+      "metamorphic_checks": 12,
+      "validation_status": "DRAFT_NOT_APPROVED",
+      "strict_human_status": "BLOCKED_HUMAN_REVIEW",
+      "sha256": "44128e15e15fb9778739e0c31abc00081991ea587804a7a50a7a83d879e53c70",
+      "fixtures_manifest_sha256": "89d1d79e113c6a9e2afd46685352cc2effae0b67d14d0ffd7ec35592e28f84b4"
+    }
+  },
+  "executed_checks": [
+    {
+      "name": "p18_2_targeted",
+      "command": "pytest tests/test_p18_2_certification.py tests/test_p18_2_insight_sql.py tests/test_p18_2_read_model.py tests/test_p18_2_session_integrity.py tests/test_p18_2_genre.py tests/test_p18_2_passages.py -q",
+      "result": "27 passed"
+    },
+    {
+      "name": "p18_3_paging",
+      "command": "pytest tests/test_p18_3_evidence_paging.py -q",
+      "result": "8 passed"
+    },
+    {
+      "name": "p18_3_legacy_backfill",
+      "command": "pytest tests/test_p18_3_legacy_backfill.py -q",
+      "result": "7 passed"
+    },
+    {
+      "name": "p18_3_goldset",
+      "command": "pytest tests/test_p18_3_goldset.py -q",
+      "result": "3 passed"
+    },
+    {
+      "name": "p18_3_eval_harness",
+      "command": "pytest tests/test_p18_3_eval_harness.py -q",
+      "result": "6 passed"
+    },
+    {
+      "name": "p18_3_agent_pinning",
+      "command": "pytest tests/test_p18_3_agent_pinning.py -q",
+      "result": "4 passed"
+    },
+    {
+      "name": "p18_3_evidence_api",
+      "command": "pytest tests/test_p18_3_evidence_api.py -q",
+      "result": "1 passed"
+    },
+    {
+      "name": "p18_3_verification_contract",
+      "command": "pytest tests/test_p18_3_verification_contract.py tests/test_narrative_verification_bridge.py tests/test_agent_flow_v2.py tests/test_traceability.py tests/test_verification_split.py -q",
+      "result": "77 passed"
+    },
+    {
+      "name": "workflow_regression",
+      "command": "pytest tests/test_workflow_published_snapshot.py tests/test_workflow_publication_gate.py tests/test_workflow_durable_instances.py tests/test_workflow_agent_context.py tests/test_p18_3_agent_pinning.py -q",
+      "result": "59 passed"
+    },
+    {
+      "name": "e2e_p18_2",
+      "command": "P18_2_E2E_INGEST=1 E2E_EXTERNAL=1 npm run e2e -- e2e/p18-2-explorer.spec.ts",
+      "result": "PASS_REAL_E2E",
+      "duration_s": 50.2
+    },
+    {
+      "name": "e2e_p18_3_pdf",
+      "command": "P18_3_E2E_INGEST=1 E2E_EXTERNAL=1 npm run e2e -- e2e/p18-3-e2e.spec.ts",
+      "result": "PASS_REAL_E2E",
+      "duration_s": 138
+    },
+    {
+      "name": "agent_knowledge",
+      "command": "python -m src.scripts.certify_agent_knowledge",
+      "result": "CONDITIONAL_REAL_PROVIDER",
+      "note": "Fallback real; una verificación documental quedó blocked y el Answer Gate no siempre juzgó."
+    },
+    {
+      "name": "legacy_plan_orphan",
+      "command": "python -m src.scripts.legacy_source_corpus_backfill plan --org 02e24672-c74c-45dd-b806-90320bd041ff",
+      "result": "2 orphan, 0 apply"
+    },
+    {
+      "name": "legacy_plan_needs_resolution",
+      "command": "python -m src.scripts.legacy_source_corpus_backfill plan --org 0186014c-7871-4c24-bfc7-abe4419fcff9",
+      "result": "1 needs_resolution, 0 apply"
+    }
+  ],
+  "coverage_matrix": {
+    "backend_unit": "PASS_SELECTIVE",
+    "api_integration": "PASS",
+    "postgres_real": "PASS",
+    "qdrant_real": "PASS_INGEST_RETRIEVAL",
+    "browser": "PASS",
+    "provider_llm": "PARTIAL_FALLBACK",
+    "human_review": "NOT_RUN",
+    "chaos": "NOT_RUN",
+    "security_adversarial": "PARTIAL",
+    "production": "NOT_RUN"
+  },
+  "p0_findings": [
+    {
+      "id": "P0-01",
+      "title": "Workflow no pinneaba configuración ejecutable del agente",
+      "status_at_baseline": "FAIL_REPRODUCED",
+      "remediation": "P18.3-09",
+      "status_after": "FIXED_AND_TESTED"
+    },
+    {
+      "id": "P0-02",
+      "title": "Cursor de evidencias omitía empates y NULL",
+      "status_at_baseline": "FAIL_REPRODUCED",
+      "remediation": "P18.3-06",
+      "status_after": "FIXED_AND_TESTED"
+    },
+    {
+      "id": "P0-03",
+      "title": "282 fuentes históricas sin corpus",
+      "status_at_baseline": "FAIL_REPRODUCED",
+      "remediation": "P18.3-04",
+      "status_after": "TOOL_READY_AUTHORIZATION_PENDING"
+    },
+    {
+      "id": "P0-04",
+      "title": "Respuesta entregada con verification.overall=blocked",
+      "status_at_baseline": "FAIL_REPRODUCED",
+      "remediation": "P18.3-03",
+      "status_after": "FIXED_AND_TESTED"
+    }
+  ],
+  "p1_findings": [
+    {
+      "id": "P1-01",
+      "title": "Answer Gate skipped con mode=on",
+      "status": "OPEN_DEPENDS_ON_PROVIDER"
+    },
+    {
+      "id": "P1-02",
+      "title": "Gold set sin revisión humana",
+      "status": "BLOCKED_HUMAN_REVIEW"
+    },
+    {
+      "id": "P1-03",
+      "title": "Proveedor primario sin balance",
+      "status": "DEGRADED_FALLBACK_ONLY"
+    },
+    {
+      "id": "P1-04",
+      "title": "E2E de chat/visor PDF exacto incompleto",
+      "status": "PARTIAL"
+    },
+    {
+      "id": "P1-05",
+      "title": "Vertical comercial con WAIT/RESUME no ejecutado",
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "P1-06",
+      "title": "Caos y carga no ejecutados",
+      "status": "NOT_RUN"
+    }
+  ],
+  "p0_invariants": [
+    "cero_fugas_org_workspace_corpus_source_acl",
+    "cero_efectos_duplicados",
+    "cero_ejecucion_de_version_no_autorizada",
+    "cero_citas_o_metricas_inventadas",
+    "cero_perdida_de_datos_historicos",
+    "reversion_comprobable"
+  ],
+  "notes": [
+    "Los conteos de DB son de la base local de staging, no de producción.",
+    "No se incluyen secretos, tokens, correos ni nombres de personas.",
+    "El gold set no se declara humano hasta completar dos revisores y árbitro."
+  ]
+}

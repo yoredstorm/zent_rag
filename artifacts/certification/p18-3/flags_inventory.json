@@ -1,0 +1,812 @@
+{
+  "flags": [
+    {
+      "flag": "RAG_ADAPTIVE_RAG_CACHE_TTL_SECONDS",
+      "field": "ADAPTIVE_RAG_CACHE_TTL_SECONDS",
+      "default": "600",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_CANARY_PERCENTAGE",
+      "field": "ADAPTIVE_RAG_CANARY_PERCENTAGE",
+      "default": "0",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_EVIDENCE_MIN_COVERAGE",
+      "field": "ADAPTIVE_RAG_EVIDENCE_MIN_COVERAGE",
+      "default": "0.25",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_EVIDENCE_MIN_SCORE",
+      "field": "ADAPTIVE_RAG_EVIDENCE_MIN_SCORE",
+      "default": "0.25",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_FAST_PATH",
+      "field": "ADAPTIVE_RAG_FAST_PATH",
+      "default": "True",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_JEV_EVIDENCE",
+      "field": "ADAPTIVE_RAG_JEV_EVIDENCE",
+      "default": "True",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_MAX_RETRIEVAL_ATTEMPTS",
+      "field": "ADAPTIVE_RAG_MAX_RETRIEVAL_ATTEMPTS",
+      "default": "3",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_MODE",
+      "field": "ADAPTIVE_RAG_MODE",
+      "default": "off",
+      "purpose": "off = pipeline actual. shadow = planifica sin cambiar retrieval. active = aplica estrategia/top_k/retry. canary = porcentaje.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_REWRITE",
+      "field": "ADAPTIVE_RAG_REWRITE",
+      "default": "True",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_TOP_K_COMPARE",
+      "field": "ADAPTIVE_RAG_TOP_K_COMPARE",
+      "default": "8",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_TOP_K_LOOKUP",
+      "field": "ADAPTIVE_RAG_TOP_K_LOOKUP",
+      "default": "3",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_TOP_K_MAX",
+      "field": "ADAPTIVE_RAG_TOP_K_MAX",
+      "default": "12",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_TOP_K_MIN",
+      "field": "ADAPTIVE_RAG_TOP_K_MIN",
+      "default": "3",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_ADAPTIVE_RAG_TOP_K_MULTI",
+      "field": "ADAPTIVE_RAG_TOP_K_MULTI",
+      "default": "12",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_BATCH_MODE",
+      "field": "DECISION_BATCH_MODE",
+      "default": "off",
+      "purpose": "off = una llamada JEV por modulo (comportamiento previo). shadow = ejecuta legacy + batch y guarda el diff sin cambiar la ejecucion. on = una llamada por fase (PRE_RETRIEVAL, POST_RETRIEVAL, POST_GENERATION, AGENT_STEP) con cache por request.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_CLAIMS",
+      "field": "DECISION_CLAIMS",
+      "default": "True",
+      "purpose": "on = verificacion por claim contra evidencia (supported/unsupported/contradicted/not_verifiable) reutilizando el Claim Ledger cuando hay tenant.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_CLAIMS_LEDGER",
+      "field": "DECISION_CLAIMS_LEDGER",
+      "default": "True",
+      "purpose": "on = registra claims verificados en el Claim Ledger (best-effort).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_CLAIMS_MAX",
+      "field": "DECISION_CLAIMS_MAX",
+      "default": "6",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_COMPLEX_MODEL",
+      "field": "DECISION_COMPLEX_MODEL",
+      "default": "",
+      "purpose": "Reasoning LLM when JEV confidence is low and the request is complex.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_FALLBACK_MODEL",
+      "field": "DECISION_FALLBACK_MODEL",
+      "default": "",
+      "purpose": "Small LLM fallback (Novita/LiteLLM). Vacío = GATEWAY_CHEAP_MODEL.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_JUDGMENT_CACHE_TTL_SECONDS",
+      "field": "DECISION_JUDGMENT_CACHE_TTL_SECONDS",
+      "default": "120.0",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_NOUL_NO",
+      "field": "DECISION_NOUL_NO",
+      "default": "0.35",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_NOUL_YES",
+      "field": "DECISION_NOUL_YES",
+      "default": "0.65",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_PASSAGE_JUDGE",
+      "field": "DECISION_PASSAGE_JUDGE",
+      "default": "True",
+      "purpose": "on = JEV juzga passages individuales solo en la zona incierta, top candidatos, conflictos y casos sensibles (deterministico primero).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_PASSAGE_MAX",
+      "field": "DECISION_PASSAGE_MAX",
+      "default": "5",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_CRITICAL_CHOICE",
+      "field": "DECISION_RISK_CRITICAL_CHOICE",
+      "default": "0.9",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_CRITICAL_FALLBACK",
+      "field": "DECISION_RISK_CRITICAL_FALLBACK",
+      "default": "human_review",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_CRITICAL_WARRANT",
+      "field": "DECISION_RISK_CRITICAL_WARRANT",
+      "default": "0.75",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_CRITICAL_WARRANT_REQUIRED",
+      "field": "DECISION_RISK_CRITICAL_WARRANT_REQUIRED",
+      "default": "True",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_HIGH_CHOICE",
+      "field": "DECISION_RISK_HIGH_CHOICE",
+      "default": "0.8",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_HIGH_FALLBACK",
+      "field": "DECISION_RISK_HIGH_FALLBACK",
+      "default": "human_review",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_HIGH_WARRANT",
+      "field": "DECISION_RISK_HIGH_WARRANT",
+      "default": "0.65",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_HIGH_WARRANT_REQUIRED",
+      "field": "DECISION_RISK_HIGH_WARRANT_REQUIRED",
+      "default": "True",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_LOW_CHOICE",
+      "field": "DECISION_RISK_LOW_CHOICE",
+      "default": "0.6",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_LOW_FALLBACK",
+      "field": "DECISION_RISK_LOW_FALLBACK",
+      "default": "respond_directly",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_MAX_SELECTABLE",
+      "field": "DECISION_RISK_MAX_SELECTABLE",
+      "default": "high",
+      "purpose": "Riesgo máximo auto-seleccionable; critical exige habilitación explícita.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_MEDIUM_CHOICE",
+      "field": "DECISION_RISK_MEDIUM_CHOICE",
+      "default": "0.7",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_RISK_MEDIUM_FALLBACK",
+      "field": "DECISION_RISK_MEDIUM_FALLBACK",
+      "default": "ask_clarification",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_ROUTING_MODE",
+      "field": "DECISION_ROUTING_MODE",
+      "default": "legacy",
+      "purpose": "legacy = RAG actual. shadow = compara JEV sin cambiar ejecución. jev = Decision Engine activo. hybrid = canary por porcentaje.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_DECISION_TARGET_SELECTION",
+      "field": "DECISION_TARGET_SELECTION",
+      "default": "off",
+      "purpose": "off = el target de agent/workflow/tool debe venir explícito. shadow = resuelve candidatos y observa la elección JEV sin ejecutar. on = JEV elige dentro del CandidateSet autorizado y la política re-autoriza antes de ejecutar.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_EMBEDDING_DENSE_REPRESENTATION",
+      "field": "EMBEDDING_DENSE_REPRESENTATION",
+      "default": "content",
+      "purpose": "Fase 10: texto que se embebe (dense) por retrieval unit. content = comportamiento actual; semantic = contextual embedding con el Semantic Fabric; concept/question quedan para benchmark. Cambiar la representación invalida SOLO el embedding (reindex).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_EMBEDDING_FALLBACK_API_BASE",
+      "field": "EMBEDDING_FALLBACK_API_BASE",
+      "default": "https://api.deepinfra.com/v1/openai",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_EMBEDDING_FALLBACK_MODEL",
+      "field": "EMBEDDING_FALLBACK_MODEL",
+      "default": "openai/BAAI/bge-m3",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_EMBEDDING_LATE_CHUNKING",
+      "field": "EMBEDDING_LATE_CHUNKING",
+      "default": "auto",
+      "purpose": "Fase 10: late chunking REAL. auto = se usa solo si el registry declaró la capacidad del modelo y el provider expone embed_late_chunking; si falla, contextual embedding. off = nunca.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_EMBEDDING_LATE_CHUNKING_MODELS",
+      "field": "EMBEDDING_LATE_CHUNKING_MODELS",
+      "default": "",
+      "purpose": "Modelos de embedding cuyo API soporta late chunking (coma). Vacío = solo el mapa builtin conservador. Nunca se asume soporte.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_EMBEDDING_MODEL",
+      "field": "EMBEDDING_MODEL",
+      "default": "openai/baai/bge-m3",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_GATEWAY_CHEAP_MODEL",
+      "field": "GATEWAY_CHEAP_MODEL",
+      "default": "",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_GATEWAY_FALLBACK_API_BASE",
+      "field": "GATEWAY_FALLBACK_API_BASE",
+      "default": "",
+      "purpose": "Base OpenAI-compatible del proveedor del fallback. Vacío = la primaria.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_GATEWAY_FALLBACK_MODEL",
+      "field": "GATEWAY_FALLBACK_MODEL",
+      "default": "",
+      "purpose": "Modelo real si el primary falla. Vacío = sin fallback.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_GATEWAY_FAST_MODEL",
+      "field": "GATEWAY_FAST_MODEL",
+      "default": "",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_GATEWAY_QUALITY_MODEL",
+      "field": "GATEWAY_QUALITY_MODEL",
+      "default": "",
+      "purpose": "Primary para alias zent-quality. Vacío = LITELLM_DEFAULT_MODEL.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_JEV_BASE_URL",
+      "field": "JEV_BASE_URL",
+      "default": "https://api.typesafe.ai",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_JEV_CANARY_MODEL",
+      "field": "JEV_CANARY_MODEL",
+      "default": "",
+      "purpose": "Modelo candidato/canary de JEV. Vacío = solo JEV_MODEL. El modelo efectivo queda en traces/usage.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_JEV_CANARY_PERCENTAGE",
+      "field": "JEV_CANARY_PERCENTAGE",
+      "default": "0",
+      "purpose": "Porcentaje de requests que usa JEV_CANARY_MODEL (0 = off).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_JEV_CIRCUIT_FAILURE_THRESHOLD",
+      "field": "JEV_CIRCUIT_FAILURE_THRESHOLD",
+      "default": "3",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_JEV_CIRCUIT_RECOVERY_SECONDS",
+      "field": "JEV_CIRCUIT_RECOVERY_SECONDS",
+      "default": "30.0",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_JEV_MODEL",
+      "field": "JEV_MODEL",
+      "default": "jev-latest",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_JEV_ROUTING_HIGH_CONFIDENCE",
+      "field": "JEV_ROUTING_HIGH_CONFIDENCE",
+      "default": "0.9",
+      "purpose": "",
+      "aliases": [
+        "JEV_ROUTING_HIGH_CONFIDENCE",
+        "RAG_JEV_ROUTING_HIGH_CONFIDENCE"
+      ]
+    },
+    {
+      "flag": "RAG_JEV_ROUTING_LOW_CONFIDENCE",
+      "field": "JEV_ROUTING_LOW_CONFIDENCE",
+      "default": "0.65",
+      "purpose": "",
+      "aliases": [
+        "JEV_ROUTING_LOW_CONFIDENCE",
+        "RAG_JEV_ROUTING_LOW_CONFIDENCE"
+      ]
+    },
+    {
+      "flag": "RAG_JEV_SHADOW_MODE",
+      "field": "JEV_SHADOW_MODE",
+      "default": "False",
+      "purpose": "Si true, JEV observa el tráfico real y no cambia la ejecución.",
+      "aliases": [
+        "JEV_SHADOW_MODE",
+        "RAG_JEV_SHADOW_MODE"
+      ]
+    },
+    {
+      "flag": "RAG_JEV_TIMEOUT_SECONDS",
+      "field": "JEV_TIMEOUT_SECONDS",
+      "default": "8.0",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_LLM_DISABLE_THINKING",
+      "field": "LLM_DISABLE_THINKING",
+      "default": "False",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_NARRATIVE_MAX_COVERAGE_ROUNDS",
+      "field": "NARRATIVE_MAX_COVERAGE_ROUNDS",
+      "default": "1",
+      "purpose": "Rondas extra de Narrative Coverage Closure despues del top-k inicial. 1 = como maximo una busqueda dirigida a conceptos faltantes. 0 = no.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RAG_JEV_PREFLIGHT_MODE",
+      "field": "RAG_JEV_PREFLIGHT_MODE",
+      "default": "off",
+      "purpose": "off = sin juicio previo (comportamiento previo). shadow = JEV decide que HARIA; la ejecucion legacy manda. on = la decision compuesta controla la generacion. canary = on para RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE de requests.",
+      "aliases": [
+        "JEV_PREFLIGHT_MODE",
+        "RAG_JEV_PREFLIGHT_MODE",
+        "RAG_RAG_JEV_PREFLIGHT_MODE"
+      ]
+    },
+    {
+      "flag": "RAG_RUNTIME_AGENT_JEV_LOOP",
+      "field": "RUNTIME_AGENT_JEV_LOOP",
+      "default": "on",
+      "purpose": "off = sin juicio por paso (comportamiento previo). shadow = una llamada JEV por paso, veredicto registrado, sin cambiar el comportamiento. on = el veredicto manda: elige herramienta, pide otra busqueda con consulta refinada cuando falta evidencia, y decide si ya se puede responder. canary = on para RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE de runs.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE",
+      "field": "RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE",
+      "default": "0",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS",
+      "field": "RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS",
+      "default": "2",
+      "purpose": "Rondas de busqueda que el loop JEV puede pedir por run cuando falta evidencia para lo que la pregunta nombra (0 = sin re-consultas).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_AGENT_MAX_SEARCHES",
+      "field": "RUNTIME_AGENT_MAX_SEARCHES",
+      "default": "3",
+      "purpose": "Tope de busquedas a la knowledge base por corrida de agente (modelo + JEV). Evita que el ciclo gaste el presupuesto re-buscando y termine sin responder. 0 = sin tope.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_ANSWER_FACT_CHECK",
+      "field": "RUNTIME_ANSWER_FACT_CHECK",
+      "default": "on",
+      "purpose": "Verificacion determinista de fechas y anios de la respuesta contra la evidencia consultada: 'on' = corrige una vez y deja registro; 'off' = no verifica. No inventa ni borra texto: pide la correccion al modelo.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_ANSWER_GATE",
+      "field": "RUNTIME_ANSWER_GATE",
+      "default": "off",
+      "purpose": "on = JEV verifica el borrador de respuesta del agente antes de finalizar (una revision maximo). shadow = solo observa.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_ANSWER_MAX_TOKENS",
+      "field": "RUNTIME_ANSWER_MAX_TOKENS",
+      "default": "4096",
+      "purpose": "Tope de tokens POR LLAMADA de respuesta del agente (loop y finalize). No es el techo del run (ese es limits.max_tokens del agente): es lo que se le manda al modelo en cada generacion. Con modelos de razonamiento el thinking oculto consume este tope y 1024 cortaba las explicaciones a mitad de frase.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_BUILD_GIT_SHA",
+      "field": "RUNTIME_BUILD_GIT_SHA",
+      "default": "",
+      "purpose": "SHA del commit desplegado, inyectado en build/deploy. Se publica en la traza del run (build.git_sha) para comprobar el contenedor.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_BUILD_TIMESTAMP",
+      "field": "RUNTIME_BUILD_TIMESTAMP",
+      "default": "",
+      "purpose": "Timestamp ISO del build desplegado; se publica en build.build_timestamp de la traza del run.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_COMPOSER_MAX_TOKENS",
+      "field": "RUNTIME_COMPOSER_MAX_TOKENS",
+      "default": "400",
+      "purpose": "Tope de tokens de salida de la llamada de redaccion (presentacion). Target 100-400: no es una respuesta completa de pipeline.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_COMPOSER_MODEL",
+      "field": "RUNTIME_COMPOSER_MODEL",
+      "default": "",
+      "purpose": "Modelo barato para la redaccion de presentacion. Vacio = usa GATEWAY_FAST_MODEL / GATEWAY_CHEAP_MODEL; si no hay, el modelo del agente. Nunca se usa un reasoning model caro si hay fast/cheap.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_CONFIG_ACK_DANGEROUS",
+      "field": "RUNTIME_CONFIG_ACK_DANGEROUS",
+      "default": "",
+      "purpose": "Acknowledgement explícito de combinaciones DANGEROUS (P1-E): códigos de `src/core/config_rules` separados por coma (`dangerous_gate_phase_skipped`, ...). En producción una combinación dangerous sin acknowledgement no arranca. Las INVALID nunca se reconocen.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_DETERMINISTIC_RENDER_MODE",
+      "field": "RUNTIME_DETERMINISTIC_RENDER_MODE",
+      "default": "adaptive",
+      "purpose": "Modo de redaccion de presentacion del fast path determinista: strict=0 llamadas LLM; polish=1 llamada pequena cuando el agente tiene personalidad; adaptive (default)=0 para respuestas triviales y 1 cuando la personalidad y el caso lo piden. La decision SIEMPRE la calcula el codigo (LLM_DECISION_CALLS=0).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_EFFICIENCY_COST_WEIGHT",
+      "field": "RUNTIME_EFFICIENCY_COST_WEIGHT",
+      "default": "0.25",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_EFFICIENCY_FALLBACK_WEIGHT",
+      "field": "RUNTIME_EFFICIENCY_FALLBACK_WEIGHT",
+      "default": "0.15",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_EFFICIENCY_LATENCY_WEIGHT",
+      "field": "RUNTIME_EFFICIENCY_LATENCY_WEIGHT",
+      "default": "0.2",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_EFFICIENCY_QUALITY_WEIGHT",
+      "field": "RUNTIME_EFFICIENCY_QUALITY_WEIGHT",
+      "default": "0.4",
+      "purpose": "",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_EVIDENCE_BUDGET_CHARS",
+      "field": "RUNTIME_EVIDENCE_BUDGET_CHARS",
+      "default": "12000",
+      "purpose": "Presupuesto de contexto de EVIDENCIA (caracteres) del run. El selector reparte ese presupuesto por relevancia (entidad exacta > nombre de fuente > entity pin > seccion > lexico > semantico) y el MISMO texto va al generador y a JEV: reemplaza el recorte ciego por posicion (tool: 3000, gate: 1500 chars por observacion).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FAILED_TOOL_GUARD",
+      "field": "RUNTIME_FAILED_TOOL_GUARD",
+      "default": "True",
+      "purpose": "on = una tool que fallo para la pregunta no se reintenta; la observacion guia al LLM a usar otra herramienta o responder.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FAST_PATH",
+      "field": "RUNTIME_FAST_PATH",
+      "default": "on",
+      "purpose": "Deterministic Fast Path: una consulta ejecutable con autoridad completa (regla SUPPORTED + premisas SATISFIED + envelope) se responde sin LLM. 'off' conserva el pipeline normal.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FAST_PATH_ESTIMATED_TOKENS",
+      "field": "RUNTIME_FAST_PATH_ESTIMATED_TOKENS",
+      "default": "0",
+      "purpose": "Estimacion de tokens evitados por fast path para telemetria de ahorro. 0 = no se declara ahorro de tokens (UNKNOWN != ZERO).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FAST_PATH_POLISH",
+      "field": "RUNTIME_FAST_PATH_POLISH",
+      "default": "False",
+      "purpose": "Fast path con UNA llamada pequena de estilo opcional. El modelo recibe headline, resultado, checks y citas; no puede cambiar la decision y el texto vuelve a pasar por FINAL_AUTHORITY_LOCK. Legacy: si RUNTIME_DETERMINISTIC_RENDER_MODE=adaptive y este flag es true, se fuerza polish.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FINALIZATION_ENFORCE",
+      "field": "RUNTIME_FINALIZATION_ENFORCE",
+      "default": "termination_trigger,draft_gate",
+      "purpose": "Etapas donde la política de finalización manda sobre la ruta vigente (enforcement del shadow): un trigger que cierra cuando la política resuelve RETRIEVE_MORE espera y sigue reuniendo evidencia (una vez por etapa). Vacio u 'off' = solo shadow. Etapas: termination_trigger, draft_gate, answer_gate.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FINALIZATION_ENFORCE_BY_ENV",
+      "field": "RUNTIME_FINALIZATION_ENFORCE_BY_ENV",
+      "default": "",
+      "purpose": "Override del enforcement por environment: 'production=etapas;staging=etapas'. Aplica cuando RAG_ENVIRONMENT coincide.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FINALIZATION_ENFORCE_ORGS",
+      "field": "RUNTIME_FINALIZATION_ENFORCE_ORGS",
+      "default": "",
+      "purpose": "Override del enforcement por organización: 'org=etapas;org2' (clave sin valor = etapas globales). Prioridad: agente > org > environment > global.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_FINALIZE_MAX_TOKENS",
+      "field": "RUNTIME_FINALIZE_MAX_TOKENS",
+      "default": "0",
+      "purpose": "Presupuesto de tokens de la respuesta final del agente (0 = derivado del agente: min(limits.max_tokens, RUNTIME_ANSWER_MAX_TOKENS)). Un presupuesto corto trunca el JSON y el usuario veria el envoltorio crudo.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_JEV_ANSWER_APPROVE",
+      "field": "RUNTIME_JEV_ANSWER_APPROVE",
+      "default": "0.66",
+      "purpose": "Score minimo para aprobar la respuesta sin cambios.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_JEV_ANSWER_REVISE",
+      "field": "RUNTIME_JEV_ANSWER_REVISE",
+      "default": "0.4",
+      "purpose": "Score minimo para pedir una revision; debajo, abstencion.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_JEV_MIN_TOOLS",
+      "field": "RUNTIME_JEV_MIN_TOOLS",
+      "default": "3",
+      "purpose": "Minimo de herramientas disponibles para consultar a JEV en el routing. Con menos, passthrough y decide el LLM. 1 = siempre.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_JEV_SKIP_PHASES",
+      "field": "RUNTIME_JEV_SKIP_PHASES",
+      "default": "",
+      "purpose": "Fases JEV que se saltan por calibracion (redundant_rate): answer_gate,agent_step,termination. Vacio = JEV corre siempre.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_JEV_SKIP_SHADOW",
+      "field": "RUNTIME_JEV_SKIP_SHADOW",
+      "default": "off",
+      "purpose": "on = no llama al juez en fases shadow (un veredicto shadow no decide): ahorro puro durante el rollout.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_JEV_STATE_MAX_CHARS",
+      "field": "RUNTIME_JEV_STATE_MAX_CHARS",
+      "default": "30000",
+      "purpose": "Presupuesto de estado (caracteres) que recibe JEV por juicio.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_JEV_TOOL_CONFIDENCE",
+      "field": "RUNTIME_JEV_TOOL_CONFIDENCE",
+      "default": "0.6",
+      "purpose": "Score minimo para que JEV imponga su eleccion de herramienta.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_NARRATIVE_FAST_PATH",
+      "field": "RUNTIME_NARRATIVE_FAST_PATH",
+      "default": "on",
+      "purpose": "on = consultas informacionales puras usan una busqueda por codigo y una generacion (sin loop ReAct). off = loop normal con tools.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_NARRATIVE_GENERATION_TIMEOUT_SECONDS",
+      "field": "RUNTIME_NARRATIVE_GENERATION_TIMEOUT_SECONDS",
+      "default": "0.0",
+      "purpose": "Timeout opcional de la generacion narrativa (0 = sin timeout). Si el proveedor primario no entrega a tiempo, se intenta GATEWAY_FALLBACK_MODEL y se registra provider_fallback/primary_latency/fallback_latency.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_RUN_GUARDS_ENFORCE",
+      "field": "RUNTIME_RUN_GUARDS_ENFORCE",
+      "default": "off",
+      "purpose": "on = el veredicto de la tabla de run_guards manda en ejecución (una tool que el guard deniega no se ejecuta). off = solo shadow medible (zent_guard_divergence_total).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_RUN_STATE_STRICT",
+      "field": "RUNTIME_RUN_STATE_STRICT",
+      "default": "off",
+      "purpose": "on = modo estricto global del estado del run: una violación de invariante crítico (autoridad contradicha/reemplazada, cierre no autorizado por la política) reemplaza la respuesta por el mensaje no concluyente. off = las violaciones se registran y se publican sin bloquear (default).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_RUN_STATE_STRICT_ORGS",
+      "field": "RUNTIME_RUN_STATE_STRICT_ORGS",
+      "default": "",
+      "purpose": "Canary del modo estricto por organización (ids separados por coma): esas orgs corren fail-closed por invariantes aunque el global esté apagado. La configuración del agente solo puede REFORZAR el piso (P1-D): no puede apagarlo.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_SHADOW_SAMPLE_RATE",
+      "field": "RUNTIME_SHADOW_SAMPLE_RATE",
+      "default": "0.0",
+      "purpose": "Optional sample of JEV decisions compared with the previous provider.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_SOURCE_AWARE_TOOLS",
+      "field": "RUNTIME_SOURCE_AWARE_TOOLS",
+      "default": "True",
+      "purpose": "on = el runtime quita tools que no aplican a las fuentes del agente (SQL sin fuentes de datos, tabular sin CSV/Excel, call_api sin allowlist).",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TERMINATION_GATE",
+      "field": "RUNTIME_TERMINATION_GATE",
+      "default": "off",
+      "purpose": "on = extra Noul gate after tool use; max_steps still hard-stops.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TOOL_ROUTING_MODE",
+      "field": "RUNTIME_TOOL_ROUTING_MODE",
+      "default": "off",
+      "purpose": "experimental = JEV Choice selects a subset of agent tools.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TURN_FAST_MODEL",
+      "field": "RUNTIME_TURN_FAST_MODEL",
+      "default": "",
+      "purpose": "Modelo barato opcional para turnos conversacionales directos (saludo, agradecimiento, despedida, charla). Vacio = modelo del agente.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TURN_INTENT",
+      "field": "RUNTIME_TURN_INTENT",
+      "default": "on",
+      "purpose": "off = sin capa conversacional (comportamiento previo). rules = solo reglas, sin JEV. on = reglas para lo obvio y JEV para la ambiguedad semantica.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TURN_INTENT_ACTION_FLOOR",
+      "field": "RUNTIME_TURN_INTENT_ACTION_FLOOR",
+      "default": "0.35",
+      "purpose": "Probabilidad de action_request a partir de la cual decide el route TOOL.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TURN_INTENT_AMBIGUOUS_FLOOR",
+      "field": "RUNTIME_TURN_INTENT_AMBIGUOUS_FLOOR",
+      "default": "0.45",
+      "purpose": "Confianza por debajo de la cual una distribucion plana se trata como ambigua (aclaracion o contexto), nunca como fallo.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TURN_INTENT_CONVERSATIONAL_FLOOR",
+      "field": "RUNTIME_TURN_INTENT_CONVERSATIONAL_FLOOR",
+      "default": "0.6",
+      "purpose": "Masa de probabilidad de las familias conversacionales para una respuesta directa.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TURN_INTENT_KNOWLEDGE_FLOOR",
+      "field": "RUNTIME_TURN_INTENT_KNOWLEDGE_FLOOR",
+      "default": "0.3",
+      "purpose": "Probabilidad de knowledge_question a partir de la cual la intencion material manda sobre una conversacional secundaria.",
+      "aliases": []
+    },
+    {
+      "flag": "RAG_RUNTIME_TURN_INTENT_RULES_CONFIDENCE",
+      "field": "RUNTIME_TURN_INTENT_RULES_CONFIDENCE",
+      "default": "0.8",
+      "purpose": "Confianza minima de las reglas para no consultar a JEV.",
+      "aliases": []
+    }
+  ],
+  "drift": {
+    "en_env_sin_setting": [],
+    "setting_sin_env_example": []
+  }
+}
