@@ -277,6 +277,46 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
         finally:
             await session.close()
 
+    async def list_blocks(
+        self,
+        organization_id: UUID,
+        document_id: UUID,
+        *,
+        limit: int = 5000,
+    ) -> list[dict]:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, kind, text, page_number, order_index, "
+                    "section_path, parent_id, heading, metadata, "
+                    "char_start, char_end, bbox "
+                    "FROM structured_blocks "
+                    "WHERE organization_id = :oid AND document_id = :did "
+                    "ORDER BY order_index ASC LIMIT :limit"
+                ),
+                {
+                    "oid": str(organization_id),
+                    "did": str(document_id),
+                    "limit": max(1, min(int(limit), 20000)),
+                },
+            )
+            rows = []
+            for row in result.fetchall():
+                metadata = row.metadata if isinstance(row.metadata, dict) else {}
+                rows.append(
+                    {
+                        **dict(row._mapping),
+                        "id": str(row.id),
+                        "parent_id": str(row.parent_id) if row.parent_id else None,
+                        "metadata": metadata,
+                        "section_path": (list(row.section_path) if isinstance(row.section_path, (list, tuple)) else []),
+                    }
+                )
+            return rows
+        finally:
+            await session.close()
+
     async def delete_for_source(self, organization_id: UUID, source_id: UUID) -> None:
         session = await get_async_session()
         try:

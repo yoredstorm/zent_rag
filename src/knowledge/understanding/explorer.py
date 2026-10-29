@@ -15,6 +15,7 @@ from src.knowledge.compiler.candidates import (
     looks_like_dialogue,
     looks_like_question,
 )
+from src.knowledge.understanding.passages import build_passage_understanding
 from src.knowledge.understanding.versions import SOURCE_PROFILE_VERSION
 
 CONTRACT = "knowledge_explorer_insight/v2"
@@ -175,6 +176,7 @@ def build_explorer_insight(
     generated_at: str | None = None,
     documents: list[dict] | None = None,
     read_stats: dict | None = None,
+    blocks: list[dict] | None = None,
 ) -> dict:
     metadata = (document or {}).get("metadata") or {}
     understanding = metadata.get("understanding") or {}
@@ -183,6 +185,24 @@ def build_explorer_insight(
     genre = str(profile.get("document_genre") or "unknown")
     genre_confidence = profile.get("genre_confidence")
     documents = documents or ([document] if document else [])
+    passage_view = (
+        build_passage_understanding(
+            document=document,
+            blocks=blocks or [],
+            genre=genre,
+        )
+        if blocks
+        else {
+            "method": "none",
+            "narrative_signal": False,
+            "structure": [],
+            "passages": [],
+            "participants": [],
+            "themes": [],
+            "relations": [],
+            "mentions_scanned": 0,
+        }
+    )
 
     # La evidencia más fuerte primero. No se elige "la primera" por fecha como
     # si fuera la mejor: eso mezclaba causalidad de consulta con calidad.
@@ -293,7 +313,91 @@ def build_explorer_insight(
                 "section_path": locator.get("section_path") or [],
             }
 
+    proposals: list[dict] = []
+    for participant in passage_view.get("participants") or []:
+        proposals.append(
+            {
+                "kind": "character",
+                "object_id": None,
+                "name": participant["label"],
+                "claim_text": (
+                    f"Participa en diálogos y aparece en {participant['mentions']} "
+                    "pasajes. Es una propuesta derivada del texto, no un objeto "
+                    "canónico verificado."
+                ),
+                "grounded_excerpt": participant.get("excerpt") or None,
+                "evidence_ids": [],
+                "source_locator": {
+                    "page": participant.get("page"),
+                    "section_path": [],
+                    "locator": None,
+                },
+                "verification_state": "proposed",
+                "uncertainty": "media",
+                "confidence": None,
+                "why_related": "Atribución de diálogo detectada en el pasaje.",
+                "method": passage_view.get("method"),
+            }
+        )
+    for theme in passage_view.get("themes") or []:
+        proposals.append(
+            {
+                "kind": "theme",
+                "object_id": None,
+                "name": theme["label"],
+                "claim_text": (
+                    f"Se repite en {theme['mentions']} pasajes. Es un elemento "
+                    "del relato, no una afirmación verificada."
+                ),
+                "grounded_excerpt": theme.get("excerpt") or None,
+                "evidence_ids": [],
+                "source_locator": {
+                    "page": theme.get("page"),
+                    "section_path": [],
+                    "locator": None,
+                },
+                "verification_state": "proposed",
+                "uncertainty": "alta",
+                "confidence": None,
+                "why_related": "Término recurrente en pasajes del documento.",
+                "method": passage_view.get("method"),
+            }
+        )
+    if proposals:
+        topics["passages"] = {
+            "id": "passages",
+            "label": "Personajes y elementos propuestos",
+            "summary": (
+                "Detectados por contexto de pasajes. Son propuestas abribles, "
+                "no conocimiento verificado ni hechos del dominio."
+            ),
+            "scope": "documento",
+            "source_locator": next(
+                (
+                    {
+                        "page": item["source_locator"]["page"],
+                        "section_path": [],
+                    }
+                    for item in proposals
+                    if item["source_locator"]["page"]
+                ),
+                None,
+            ),
+            "verification_state": "proposed",
+            "insights": proposals,
+            "count": len(proposals),
+        }
+        insights.extend(proposals)
+
     warnings: list[dict] = []
+    if proposals:
+        warnings.append(
+            {
+                "code": "PROPOSALS_NOT_VERIFIED",
+                "message": (f"{len(proposals)} elementos se proponen desde pasajes; no son hechos verificados."),
+                "severity": "info",
+            }
+        )
     if not objects:
         warnings.append(
             {
@@ -329,7 +433,9 @@ def build_explorer_insight(
                 "severity": "warning",
             }
         )
-    if visible and not any(item.get("grounded_excerpt") for item in insights):
+    if visible and not any(
+        item.get("grounded_excerpt") and item.get("verification_state") != "proposed" for item in insights
+    ):
         warnings.append(
             {
                 "code": "NO_OPENABLE_EVIDENCE",
@@ -352,7 +458,7 @@ def build_explorer_insight(
     passages_available = int(
         stats.get("passages_available") or sum(1 for item in evidence if str(item.get("excerpt") or "").strip())
     )
-    truncated = objects_truncated or evidence_truncated or documents_truncated
+    truncated = objects_truncated or evidence_truncated or documents_truncated or bool(stats.get("blocks_truncated"))
     if truncated:
         warnings.append(
             {
@@ -367,6 +473,21 @@ def build_explorer_insight(
     source_fingerprint = (document or {}).get("content_hash") or source.get("content_hash")
     profile_version = str(profile.get("profile_version") or "")
     is_stale = not profile_version or profile_version != SOURCE_PROFILE_VERSION or genre == "unknown"
+    limitations: list[str] = []
+    if is_stale:
+        limitations.append(
+            "El perfil del documento es anterior o incompleto; la clasificación puede cambiar al reprocesarlo."
+        )
+    if proposals:
+        limitations.append(
+            "Los personajes y temas propuestos se derivan de pasajes y no son hechos verificados ni objetos canónicos."
+        )
+    if truncated:
+        limitations.append("La lectura fue parcial; los conteos indican qué falta.")
+    if documents_total > len(documents):
+        limitations.append(f"La fuente contiene {documents_total} documentos; esta vista prioriza {len(documents)}.")
+    if not evidence:
+        limitations.append("No hay pasajes abribles registrados para esta fuente.")
     document_views = [
         {
             "document_id": str(item.get("id") or ""),
@@ -402,10 +523,26 @@ def build_explorer_insight(
             "characters": None,
         },
         "documents": document_views,
-        "summary": _summary(genre, visible, insights, warnings),
+        "structure": passage_view.get("structure") or [],
+        "passages": passage_view.get("passages") or [],
+        "narrative_proposals": {
+            "method": passage_view.get("method"),
+            "narrative_signal": bool(passage_view.get("narrative_signal")),
+            "participants": passage_view.get("participants") or [],
+            "themes": passage_view.get("themes") or [],
+            "relations": passage_view.get("relations") or [],
+        },
+        "summary": _summary(
+            genre,
+            visible,
+            [item for item in insights if item.get("verification_state") != "proposed"],
+            warnings,
+            proposals=proposals,
+        ),
         "topics": ordered_topics,
         "insights": insights[:200],
         "warnings": warnings,
+        "limitations": limitations,
         "provenance": {
             "source_fingerprint": source_fingerprint,
             "document_id": str((document or {}).get("id") or "") or None,
@@ -447,6 +584,9 @@ def build_explorer_insight(
             "evidence_returned": len(evidence),
             "passages_available": passages_available,
             "revisions": hidden,
+            "proposed_participants": len(passage_view.get("participants") or []),
+            "proposed_themes": len(passage_view.get("themes") or []),
+            "proposals": len(proposals),
             "insights": len(insights),
             "topics": len(ordered_topics),
             "documents_total": documents_total,
@@ -461,9 +601,17 @@ def _summary(
     visible: list[dict],
     insights: list[dict],
     warnings: list[dict],
+    *,
+    proposals: list[dict] | None = None,
 ) -> str:
+    proposal_count = len(proposals or [])
     if not visible:
-        return "Solo se identificaron secciones y pasajes; no podemos afirmar temas con certeza."
+        text = "Solo se identificaron secciones y pasajes."
+        if proposal_count:
+            text += f" ZENT propone {proposal_count} elementos desde esos pasajes; no son hechos verificados."
+        else:
+            text += " No podemos afirmar temas con certeza."
+        return text
     grounded = sum(1 for item in insights if item.get("grounded_excerpt"))
     genre_label = {
         "narrative": "narrativa",
@@ -480,6 +628,8 @@ def _summary(
         f"ZENT encontró {len(visible)} hallazgos visibles; "
         f"{grounded} tienen un pasaje abrible."
     )
+    if proposal_count:
+        text += f" Además, {proposal_count} elementos se proponen desde pasajes y no están verificados."
     if any(item.get("code") == "GENRE_UNKNOWN" for item in warnings):
         text += " La clasificación de género es provisional."
     return text

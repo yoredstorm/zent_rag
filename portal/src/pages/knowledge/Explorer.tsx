@@ -96,6 +96,10 @@ const VERIFICATION_LABELS: Record<string, { label: string; hint: string }> = {
     label: "Obsoleto",
     hint: "Se conserva por trazabilidad; no es conocimiento vigente.",
   },
+  proposed: {
+    label: "Propuesta desde pasajes",
+    hint: "ZENT la detectó en el texto, pero no es un hecho verificado.",
+  },
 };
 
 function verificationLabel(status: string) {
@@ -202,6 +206,9 @@ function DocumentInsightPanel({
           {(insight.counts.objects_not_evaluated ?? 0) > 0 && (
             <span>{insight.counts.objects_not_evaluated} objetos no leídos</span>
           )}
+          {(insight.counts.proposals ?? 0) > 0 && (
+            <span>{insight.counts.proposals} propuestas desde pasajes</span>
+          )}
           {insight.source.genre_confidence != null && (
             <span
               title="Mide la confianza de la clasificación documental. No es el porcentaje del documento que ZENT comprendió."
@@ -225,6 +232,59 @@ function DocumentInsightPanel({
           </ul>
         )}
       </Panel>
+
+      {(insight.limitations?.length ?? 0) > 0 ? (
+        <Panel flat className="p-3" data-testid="document-limitations">
+          <details>
+            <summary className="cursor-pointer text-xs font-medium text-muted">
+              Lo que no podemos asegurar
+            </summary>
+            <ul className="mt-2 flex list-disc flex-col gap-1 pl-4 text-[11px] leading-relaxed text-muted">
+              {insight.limitations!.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </details>
+        </Panel>
+      ) : null}
+
+      {(insight.structure?.length ?? 0) > 0 ? (
+        <Panel className="overflow-hidden" data-testid="document-structure">
+          <div className="panel-header">
+            <div>
+              <h3 className="text-h3">Cómo está organizado</h3>
+              <p className="mt-0.5 text-xs text-muted">
+                Secciones detectadas en el documento. Los pasajes se abren en la
+                fuente original.
+              </p>
+            </div>
+            <span className="mono text-xs text-faint">
+              {insight.structure!.length}
+            </span>
+          </div>
+          <ul className="flex flex-col divide-y divide-border-soft">
+            {insight.structure!.slice(0, 8).map((section, index) => (
+              <li key={`${section.heading}-${index}`} className="px-4 py-2.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-medium text-text">
+                    {section.heading}
+                  </p>
+                  {section.page != null ? (
+                    <span className="text-[11px] text-faint">
+                      página {section.page}
+                    </span>
+                  ) : null}
+                </div>
+                {section.excerpt ? (
+                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
+                    {section.excerpt}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
 
       {insight.topics.length === 0 ? (
         <Panel className="panel-body flex flex-col gap-3" data-testid="document-insight-empty">
@@ -345,6 +405,45 @@ function DocumentInsightPanel({
           </Panel>
         ))
       )}
+
+      {(insight.passages?.length ?? 0) > 0 ? (
+        <Panel className="overflow-hidden" data-testid="document-passages">
+          <details>
+            <summary className="panel-header cursor-pointer list-none">
+              <div>
+                <h3 className="text-h3">Pasajes que puedes abrir</h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Extractos del documento para verificar o preguntar. No son
+                  temas verificados.
+                </p>
+              </div>
+              <span className="mono text-xs text-faint">
+                {insight.passages!.length}
+              </span>
+            </summary>
+            <ul className="flex flex-col divide-y divide-border-soft">
+              {insight.passages!.slice(0, 6).map((passage, index) => (
+                <li key={`${passage.passage_id ?? index}`} className="px-4 py-3">
+                  <p className="line-clamp-3 text-xs leading-relaxed text-muted">
+                    “{passage.excerpt}”
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-faint">
+                    {passage.page != null ? <span>página {passage.page}</span> : null}
+                    {sourceId ? (
+                      <Link
+                        to={`/knowledge/sources/${sourceId}`}
+                        className="text-accent hover:underline"
+                      >
+                        Ver en la fuente
+                      </Link>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </Panel>
+      ) : null}
     </div>
   );
 }

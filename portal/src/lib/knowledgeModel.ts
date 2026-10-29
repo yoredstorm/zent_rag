@@ -618,6 +618,50 @@ export type KnowledgeExplorerInsightPayload = {
     primary: boolean;
   }[];
   summary: string;
+  limitations?: string[];
+  structure?: {
+    heading: string;
+    page?: number | null;
+    section_path?: string[];
+    excerpt?: string;
+    method?: string;
+  }[];
+  passages?: {
+    passage_id?: string;
+    excerpt: string;
+    page?: number | null;
+    section_path?: string[];
+    kind?: string;
+    score?: number;
+  }[];
+  narrative_proposals?: {
+    method?: string;
+    narrative_signal?: boolean;
+    participants?: {
+      name: string;
+      label: string;
+      mentions: number;
+      pages: number[];
+      page?: number | null;
+      excerpt?: string;
+    }[];
+    themes?: {
+      name: string;
+      label: string;
+      mentions: number;
+      pages: number[];
+      page?: number | null;
+      excerpt?: string;
+    }[];
+    relations?: {
+      subject: string;
+      predicate: string;
+      object: string;
+      evidence_excerpt?: string;
+      page?: number | null;
+      status?: string;
+    }[];
+  };
   topics: KnowledgeExplorerTopic[];
   warnings: { code: string; message: string; severity: string }[];
   provenance?: {
@@ -658,6 +702,9 @@ export type KnowledgeExplorerInsightPayload = {
     passages_available?: number;
     revisions?: number;
     documents_total?: number;
+    proposed_participants?: number;
+    proposed_themes?: number;
+    proposals?: number;
     truncated?: boolean;
   };
   read_model?: {

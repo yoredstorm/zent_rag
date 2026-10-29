@@ -202,6 +202,13 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
     documents = await PostgresStructuredDocumentRepository().list_documents(ctx.organization_id, source_id, limit=20)
     documents_total = await PostgresStructuredDocumentRepository().count_documents(ctx.organization_id, source_id)
     document = documents[0] if documents else None
+    blocks: list[dict] = []
+    blocks_truncated = False
+    if document is not None:
+        blocks = await PostgresStructuredDocumentRepository().list_blocks(
+            ctx.organization_id, document["id"], limit=5000
+        )
+        blocks_truncated = int(document.get("block_count") or 0) > len(blocks)
 
     session = await get_async_session()
     try:
@@ -323,6 +330,7 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
         documents=documents,
         objects=objects,
         evidence=evidence,
+        blocks=blocks,
         read_stats={
             "objects_total": objects_total,
             "objects_truncated": objects_truncated,
@@ -332,11 +340,13 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
             "passages_available": passages_available,
             "documents_total": documents_total,
             "documents_truncated": documents_total > len(documents),
+            "blocks_truncated": blocks_truncated,
             "timing": {
                 "elapsed_ms": elapsed_ms,
                 "documents_read": len(documents),
                 "objects_read": len(objects),
                 "evidence_read": len(evidence),
+                "blocks_read": len(blocks),
             },
         },
     )
