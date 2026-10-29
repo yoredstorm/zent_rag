@@ -142,10 +142,10 @@ test("P18.1 explorador documental: fuente real, resumen y evidencia", async ({
     });
     await expect(page.getByText("politica-gastos.txt").first()).toBeVisible();
     await expect(page.getByText(/Documento de naturaleza/)).toBeVisible();
-    await expect(page.getByText(/hallazgos visibles/).first()).toBeVisible();
+    await expect(page.getByText(/hallazgos con evidencia/).first()).toBeVisible();
     await expect(page.getByText("Documento de naturaleza política.")).toBeVisible();
     await expect(
-      page.getByText(/no es comprensión del documento/i),
+      page.getByText(/no mide\s+comprensión/i),
     ).toBeVisible();
     const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
     expect(bodyWidth, `${viewport.name}px sin overflow`).toBeLessThanOrEqual(

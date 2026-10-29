@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-10-29T09:38:00+00:00",
+  "git_head": "PENDING_COMMIT",
+  "source": {
+    "id": "298fdc37-8a43-4883-b597-9f4f2d20360d",
+    "name": "el_principito.pdf",
+    "document_id": "21c6d416-2c9e-556c-9748-202a81b8bb3c"
+  },
+  "summary": "Solo se identificaron secciones y pasajes. ZENT propone 22 elementos desde esos pasajes; no son hechos verificados.",
+  "counts": {
+    "objects_total": 110,
+    "objects_returned": 110,
+    "objects_visible": 0,
+    "objects_hidden": 110,
+    "objects_not_evaluated": 0,
+    "evidence_total": 215,
+    "evidence_returned": 215,
+    "passages_available": 215,
+    "revisions": 110,
+    "proposed_participants": 12,
+    "proposed_themes": 10,
+    "proposals": 22,
+    "topics": 1,
+    "documents_total": 1,
+    "truncated": false
+  },
+  "topics": [
+    {
+      "id": "passages",
+      "label": "Personajes y elementos propuestos",
+      "count": 22,
+      "verification_state": "proposed"
+    }
+  ],
+  "structure_sections": 6,
+  "passages": 10,
+  "participants": 12,
+  "themes": 10,
+  "limitations": [
+    "El perfil del documento es anterior o incompleto; la clasificación puede cambiar al reprocesarlo.",
+    "Los personajes y temas propuestos se derivan de pasajes y no son hechos verificados ni objetos canónicos.",
+    "No se versiona la obra con copyright; el source_id apunta a la base local de staging.",
+    "La fuente histórica no tiene corpus_id; el endpoint por corpus no la alcanza sin backfill.",
+    "La comprensión no está evaluada con corpus humano versionado."
+  ],
+  "warnings": [
+    "PROPOSALS_NOT_VERIFIED",
+    "ONLY_LOW_UTILITY",
+    "HIDDEN_CANDIDATES",
+    "GENRE_UNKNOWN"
+  ],
+  "timing_ms": {
+    "sample_size": 5,
+    "runs": [93.3, 78.1, 79.3, 78.5, 75.6],
+    "median": 78.5,
+    "p95": 93.3,
+    "scope": "build_explorer_insight in-process, blocks/evidence loaded; excludes DB I/O"
+  }
+}

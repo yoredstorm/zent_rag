@@ -21,6 +21,12 @@
 El caso real está reproducido: **110 objetos → 0 visibles → 110 ocultos**, y no
 es un problema de la fuente ni de los pasajes. Los pasajes están disponibles.
 
+Hallazgo adicional de alcance: la fuente histórica tiene `workspace_id` pero
+`corpus_id = NULL`. El endpoint
+`/workspaces/{corpus_id}/sources/{source_id}/insight` no puede alcanzarla sin
+un backfill autorizado. El baseline se obtuvo por lectura directa del read
+model; la ruta de UI queda marcada como pendiente en certificación.
+
 ### Distribución de rechazos (ejecución real)
 
 | Razón | Objetos |
