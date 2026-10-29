@@ -48,18 +48,12 @@ def quality_report(
                 scores.append(0.45)
         text_fidelity = sum(scores) / len(scores)
     else:
-        usable = [
-            block
-            for block in document.blocks
-            if (block.text or "").strip() and not block.metadata.get("chrome")
-        ]
+        usable = [block for block in document.blocks if (block.text or "").strip() and not block.metadata.get("chrome")]
         covered = sum(min(len(block.text), 80) for block in usable)
         text_fidelity = 0.0 if not usable else min(1.0, covered / (80 * len(usable)))
 
     indexable = [
-        block
-        for block in document.blocks
-        if not block.metadata.get("chrome") and not block.metadata.get("superseded")
+        block for block in document.blocks if not block.metadata.get("chrome") and not block.metadata.get("superseded")
     ]
     if not indexable:
         structure_confidence = 0.0
@@ -177,9 +171,7 @@ def pipeline_state(quality: dict) -> str:
 
 def _owned_blocks(document: StructuredDocument, section_id: object) -> list[StructuredBlock]:
     owned = [
-        block
-        for block in document.blocks
-        if str(block.metadata.get("parent_section_id") or "") == str(section_id)
+        block for block in document.blocks if str(block.metadata.get("parent_section_id") or "") == str(section_id)
     ]
     if owned:
         return sorted(owned, key=lambda block: block.order)
@@ -416,14 +408,11 @@ def source_profile(
     terms = [item["term"] for item in extracted.get("definitions") or []][:20]
     field_names = [item["name"] for item in extracted.get("technical_fields") or []][:20]
     literals = [item["value"] for item in extracted.get("exact_literals") or []][:12]
-    mask_literals = [
-        item for item in extracted.get("exact_literals") or [] if item.get("pattern_type") == "mask"
-    ]
+    mask_literals = [item for item in extracted.get("exact_literals") or [] if item.get("pattern_type") == "mask"]
     genre = classify_document_genre(document, extracted, filename=filename)
     document_genre = genre["document_genre"]
-    strong_spec = (
-        len(field_names) >= 3
-        and (bool(document.tables) or bool(mask_literals) or bool(field_names))
+    strong_spec = (len(field_names) >= 3 and (bool(document.tables) or bool(mask_literals) or bool(field_names))) or (
+        document_genre == "technical" and int(genre.get("technical_shape") or 0) >= 2
     )
     if document_genre == "technical" and strong_spec:
         document_type = "technical_specification"
@@ -460,9 +449,7 @@ def source_profile(
     paths = [" / ".join(section.section_path) for section in document.sections if section.section_path][:24]
     captions = [table.caption for table in document.tables if table.caption][:12]
     references = [
-        item.get("target_candidate")
-        for item in extracted.get("cross_references") or []
-        if item.get("target_candidate")
+        item.get("target_candidate") for item in extracted.get("cross_references") or [] if item.get("target_candidate")
     ][:12]
     scopes = list(dict.fromkeys(headings))[:24]
     return {
@@ -475,6 +462,8 @@ def source_profile(
         "genre_scores": genre["genre_scores"],
         "genre_evidence": genre["genre_evidence"],
         "genre_version": genre["genre_version"],
+        "genre_segments": genre.get("genre_segments") or [],
+        "technical_shape": genre.get("technical_shape", 0),
         "topic_domain": genre["topic_domain"],
         "business_domain": genre["business_domain"],
         "profile_confidence": profile_confidence,
@@ -541,11 +530,7 @@ def canonical_digest(ast: dict, document: StructuredDocument) -> str:
 
     def stable(node):
         if isinstance(node, dict):
-            return {
-                key: stable(value)
-                for key, value in node.items()
-                if key not in {"id", "block_id"}
-            }
+            return {key: stable(value) for key, value in node.items() if key not in {"id", "block_id"}}
         if isinstance(node, list):
             return [stable(item) for item in node]
         return node
@@ -599,10 +584,7 @@ def retrieval_digest(units: list) -> str:
 
 
 def parsed_digest(document: StructuredDocument) -> str:
-    lines = [
-        f"{block.page}|{block.order}|{block.kind.value}|{block.text}"
-        for block in document.blocks
-    ]
+    lines = [f"{block.page}|{block.order}|{block.kind.value}|{block.text}" for block in document.blocks]
     return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
 
 

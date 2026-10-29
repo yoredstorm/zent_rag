@@ -1,0 +1,10 @@
+Política de control de registros
+
+El empleado debe registrar cada cambio antes del cierre.
+El responsable autorizará la excepción y dejará evidencia.
+
+Especificación del registro
+
+Campo Código | posición 1 | longitud 4 | máscara 9999
+Campo Estado | posición 5 | longitud 2 | formato alfanumérico
+El registro debe validar la máscara antes de publicar.

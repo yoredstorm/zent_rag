@@ -19,13 +19,9 @@ from src.core.domain.knowledge_v2 import StructuredBlockKind, StructuredDocument
 
 _GENRE_VERSION = "p18.1-genre-1"
 
-_DIALOGUE_MARKS = re.compile(
-    r"[“”«»]|(?:^|\n)\s*[—–]\s*|(?:^|\n)\s*-\s+"
-)
+_DIALOGUE_MARKS = re.compile(r"[“”«»]|(?:^|\n)\s*[—–]\s*|(?:^|\n)\s*-\s+")
 _QUESTION = re.compile(r"[¿?]")
-_FIRST_PERSON = re.compile(
-    r"\b(yo|mi|mis|me|conmigo|nosotros|nuestro|nuestra)\b", re.IGNORECASE
-)
+_FIRST_PERSON = re.compile(r"\b(yo|mi|mis|me|conmigo|nosotros|nuestro|nuestra)\b", re.IGNORECASE)
 _NARRATIVE_VERBS = re.compile(
     r"\b(era|eran|fue|dijo|respondió|preguntó|miró|vio|pensó|recordó|"
     r"exclamó|susurró|contó|había)\b",
@@ -47,6 +43,11 @@ _TECHNICAL = re.compile(
     r"\b(especificación|especificacion|api|endpoint|campo|byte|bit|"
     r"posición|posicion|máscara|mascara|schema|registro|columna|"
     r"formato|validación|validacion)\b",
+    re.IGNORECASE,
+)
+_TECHNICAL_LAYOUT = re.compile(
+    r"(?:campo|field|byte|posici[oó]n|longitud|m[aá]scara|formato|columna)"
+    r"[^\n]{0,100}(?:\d|\|)",
     re.IGNORECASE,
 )
 _EDUCATIONAL = re.compile(
@@ -85,11 +86,7 @@ def _sample(document: StructuredDocument) -> tuple[str, list[str], int]:
         }
     ]
     text = "\n".join((block.text or "").strip() for block in blocks if block.text)
-    headings = [
-        section.heading
-        for section in document.sections
-        if getattr(section, "heading", None)
-    ][:24]
+    headings = [section.heading for section in document.sections if getattr(section, "heading", None)][:24]
     lines = max(1, len([line for line in text.splitlines() if line.strip()]))
     return text[:20000], headings, lines
 
@@ -99,6 +96,44 @@ def _folder_domain(document: StructuredDocument) -> str | None:
     if isinstance(path, str) and path.strip():
         return path.strip().strip("/").split("/")[0][:120] or None
     return None
+
+
+def _segment_genres(document: StructuredDocument) -> list[dict]:
+    """Género por sección cuando el documento mezcla formas.
+
+    Heurística explicable, no una segunda autoridad: solo se publica si una
+    sección tiene señales propias y conserva su encabezado como evidencia.
+    """
+    by_section: dict[str, list[str]] = {}
+    for block in document.blocks:
+        parent = str(block.metadata.get("parent_section_id") or "")
+        if parent and (block.text or "").strip():
+            by_section.setdefault(parent, []).append(block.text.strip())
+    segments: list[dict] = []
+    for section in document.sections[:12]:
+        heading = str(getattr(section, "heading", "") or "").strip()
+        owned = by_section.get(str(section.id), [])[:4]
+        sample = "\n".join([heading, *owned])[:1200]
+        if len(sample.strip()) < 10:
+            continue
+        counts = {
+            "narrative": len(_NARRATIVE_VERBS.findall(sample)) + len(_DIALOGUE_MARKS.findall(sample)),
+            "technical": len(_TECHNICAL.findall(sample)) + len(_TECHNICAL_LAYOUT.findall(sample)),
+            "policy": len(_NORMATIVE.findall(sample)),
+            "legal": len(_LEGAL.findall(sample)),
+        }
+        genre, score = max(counts.items(), key=lambda item: item[1])
+        if score < 2:
+            genre = "unknown"
+        segments.append(
+            {
+                "heading": heading or f"Sección {section.order + 1}",
+                "genre": genre,
+                "score": int(score),
+                "evidence": (owned[0][:180] if owned else heading)[:180],
+            }
+        )
+    return segments
 
 
 def classify_document_genre(
@@ -116,14 +151,8 @@ def classify_document_genre(
         for item in extracted.get("technical_fields") or []
         if str(item.get("name") or "").strip()
     ]
-    mask_literals = [
-        item
-        for item in extracted.get("exact_literals") or []
-        if item.get("pattern_type") == "mask"
-    ]
-    code_blocks = sum(
-        1 for block in document.blocks if block.kind is StructuredBlockKind.CODE
-    )
+    mask_literals = [item for item in extracted.get("exact_literals") or [] if item.get("pattern_type") == "mask"]
+    code_blocks = sum(1 for block in document.blocks if block.kind is StructuredBlockKind.CODE)
     dialogue = len(_DIALOGUE_MARKS.findall(text))
     questions = len(_QUESTION.findall(text))
     first_person = len(_FIRST_PERSON.findall(text))
@@ -131,6 +160,8 @@ def classify_document_genre(
     normative = len(_NORMATIVE.findall(text))
     legal = len(_LEGAL.findall(text))
     technical_terms = len(_TECHNICAL.findall(lower))
+    technical_shape = len(_TECHNICAL_LAYOUT.findall(text))
+    table_rows = sum(1 for line in text.splitlines() if line.count("|") >= 2)
     educational = len(_EDUCATIONAL.findall(lower))
     heading_count = len(headings) + len(_HEADING.findall(text))
 
@@ -176,9 +207,7 @@ def classify_document_genre(
         )
     if mask_literals:
         schema_score += 0.2
-        signals.append(
-            GenreSignal("mask_literals", 0.2, f"{len(mask_literals)} máscaras")
-        )
+        signals.append(GenreSignal("mask_literals", 0.2, f"{len(mask_literals)} máscaras"))
     if code_blocks:
         schema_score += min(0.1 + code_blocks / 20, 0.25)
         signals.append(
@@ -191,6 +220,26 @@ def classify_document_genre(
                 "technical_vocabulary",
                 min(technical_terms / 40, 0.2),
                 f"{technical_terms} términos técnicos",
+            )
+        )
+    if technical_shape >= 2:
+        weight = min(0.2 + technical_shape / 20, 0.4)
+        schema_score += weight
+        signals.append(
+            GenreSignal(
+                "technical_layout",
+                weight,
+                f"{technical_shape} declaraciones campo/posición/máscara",
+            )
+        )
+    if table_rows >= 2:
+        weight = min(0.1 + table_rows / 40, 0.2)
+        schema_score += weight
+        signals.append(
+            GenreSignal(
+                "layout_table_rows",
+                weight,
+                f"{table_rows} filas con columnas",
             )
         )
     scores["technical"] = min(schema_score, 0.95)
@@ -218,27 +267,18 @@ def classify_document_genre(
         )
     if questions >= 2:
         narrative += min(questions / 40, 0.15)
-        signals.append(
-            GenreSignal("questions", min(questions / 40, 0.15), f"{questions} preguntas")
-        )
+        signals.append(GenreSignal("questions", min(questions / 40, 0.15), f"{questions} preguntas"))
     if first_person >= 3 and narrative_verbs >= 2:
         narrative += 0.1
-        signals.append(
-            GenreSignal("first_person", 0.1, f"{first_person} marcas de primera persona")
-        )
+        signals.append(GenreSignal("first_person", 0.1, f"{first_person} marcas de primera persona"))
     scores["narrative"] = min(narrative, 0.95)
 
     # Política: contexto normativo + vocabulario de gobierno.
     policy = 0.0
     if normative >= 3:
         policy += min(normative / 25, 0.55)
-        signals.append(
-            GenreSignal("normative_language", min(normative / 25, 0.55), f"{normative} marcas normativas")
-        )
-    if any(
-        re.search(r"pol[ií]tica|procedimiento|norma|control interno", str(h), re.IGNORECASE)
-        for h in headings
-    ):
+        signals.append(GenreSignal("normative_language", min(normative / 25, 0.55), f"{normative} marcas normativas"))
+    if any(re.search(r"pol[ií]tica|procedimiento|norma|control interno", str(h), re.IGNORECASE) for h in headings):
         policy += 0.25
         signals.append(GenreSignal("policy_heading", 0.25, "encabezado normativo"))
     if re.search(r"empleado|aprobaci[oó]n|autorizaci[oó]n", lower):
@@ -260,9 +300,7 @@ def classify_document_genre(
     legal_score = 0.0
     if legal >= 3:
         legal_score += min(legal / 20, 0.6)
-        signals.append(
-            GenreSignal("legal_language", min(legal / 20, 0.6), f"{legal} términos legales")
-        )
+        signals.append(GenreSignal("legal_language", min(legal / 20, 0.6), f"{legal} términos legales"))
     if any(re.search(r"contrato|cl[aá]usula|acuerdo", str(h), re.IGNORECASE) for h in headings):
         legal_score += 0.25
         signals.append(GenreSignal("legal_heading", 0.25, "encabezado contractual"))
@@ -283,7 +321,7 @@ def classify_document_genre(
     if top_score < 0.35:
         genre = "unknown"
         confidence = round(max(top_score, 0.2), 3)
-    elif second_score >= 0.55 and abs(top_score - second_score) <= 0.08:
+    elif second_score >= 0.50 and abs(top_score - second_score) <= 0.12:
         genre = "mixed"
         confidence = round((top_score + second_score) / 2, 3)
     else:
@@ -291,7 +329,15 @@ def classify_document_genre(
         confidence = round(top_score, 3)
 
     # Un manual técnico con muchas secciones y campos sigue siendo técnico.
-    if genre == "technical" and len(field_names) < 2 and not document.tables:
+    # Solo se degrada cuando no hay NINGUNA señal de esquema, ni en metadatos
+    # extraídos ni en el propio texto (evita números/preguntas de un cuento).
+    if (
+        genre == "technical"
+        and len(field_names) < 2
+        and not document.tables
+        and technical_shape < 2
+        and not mask_literals
+    ):
         genre = "unknown"
         confidence = min(confidence, 0.34)
 
@@ -304,6 +350,8 @@ def classify_document_genre(
         "topic_domain": _folder_domain(document),
         "business_domain": (document.metadata or {}).get("business_domain") or None,
         "heading_count": heading_count,
+        "technical_shape": technical_shape,
+        "genre_segments": _segment_genres(document),
     }
 
 

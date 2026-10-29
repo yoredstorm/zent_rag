@@ -1,0 +1,30 @@
+{
+  "narrative_journey.txt": {
+    "genre": "narrative",
+    "document_type": "narrative",
+    "forbidden_genres": ["technical", "policy", "legal", "tabular"],
+    "expected_participants": ["lía", "tomás", "nara"],
+    "forbidden_labels": ["¿recuerdas?", "52", "planeta?", "nave 7"]
+  },
+  "technical_manual.txt": {
+    "genre": "technical",
+    "document_type": "technical_specification",
+    "expected_fields": ["Fare Basis", "Currency", "Byte 105"]
+  },
+  "mixed_policy_technical.txt": {
+    "genre": "mixed",
+    "segments_required": true
+  },
+  "inventory.csv": {
+    "genre": "tabular",
+    "document_type": "tabular"
+  },
+  "contract_services.txt": {
+    "genre": "legal",
+    "document_type": "contract"
+  },
+  "policy_expenses.txt": {
+    "genre": "policy",
+    "document_type": "policy"
+  }
+}
