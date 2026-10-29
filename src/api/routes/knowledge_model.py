@@ -545,11 +545,7 @@ async def explorer_cleanup(
     from sqlalchemy import text
 
     from src.infrastructure.postgres.session import get_async_session
-    from src.knowledge.compiler.candidates import (
-        is_isolated_number,
-        looks_like_dialogue,
-        looks_like_question,
-    )
+    from src.knowledge.understanding.cleanup import classify_historical_object
     from src.platform.workspaces.context import resolve_workspace
 
     ws = await resolve_workspace(request)
@@ -570,7 +566,8 @@ async def explorer_cleanup(
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, name, display_name, kind, source_id, metadata "
+                    "SELECT id, name, display_name, kind, source_id, metadata, "
+                    "evidence_count "
                     "FROM knowledge_canonical_objects WHERE "
                     + " AND ".join(clauses)
                     + " ORDER BY updated_at DESC LIMIT :limit"
@@ -578,8 +575,35 @@ async def explorer_cleanup(
                 params,
             )
         ).fetchall()
+        genre_by_source: dict[str, str] = {}
+        source_values = sorted({str(row.source_id) for row in rows if row.source_id})
+        if source_values:
+            profile_rows = (
+                await session.execute(
+                    text(
+                        "SELECT DISTINCT ON (source_id) source_id, "
+                        "metadata->'understanding'->'profile' AS profile "
+                        "FROM structured_documents "
+                        "WHERE organization_id = :oid AND source_id = ANY(:sids) "
+                        "ORDER BY source_id, updated_at DESC"
+                    ),
+                    {"oid": ctx.organization_id, "sids": source_values},
+                )
+            ).fetchall()
+            for profile_row in profile_rows:
+                profile = profile_row.profile
+                if isinstance(profile, str):
+                    try:
+                        profile = json.loads(profile)
+                    except Exception:  # noqa: BLE001
+                        profile = {}
+                if isinstance(profile, dict) and profile.get("document_genre"):
+                    genre_by_source[str(profile_row.source_id)] = str(
+                        profile["document_genre"]
+                    )
 
         candidates: list[dict] = []
+        classification_counts: dict[str, int] = {}
         for row in rows:
             metadata = row.metadata or {}
             name = str(row.name or row.display_name or "").strip()
@@ -587,22 +611,24 @@ async def explorer_cleanup(
                 if metadata.get("explorer_visibility") != "hidden":
                     continue
                 reason = "restauración solicitada"
+                classification = "restored"
             else:
                 if metadata.get("explorer_visibility") == "hidden":
                     continue
-                if looks_like_question(name):
-                    reason = "pregunta o etiqueta interrogativa"
-                elif looks_like_dialogue(name):
-                    reason = "fragmento de diálogo"
-                elif is_isolated_number(name) and str(row.kind) not in {
-                    "field",
-                    "column",
-                    "table",
-                    "record",
-                }:
-                    reason = "número aislado sin contexto de esquema"
-                else:
+                result = classify_historical_object(
+                    name=name,
+                    kind=str(row.kind or "concept"),
+                    description=str(getattr(row, "description", "") or ""),
+                    evidence_count=int(row.evidence_count or 0),
+                    document_genre=genre_by_source.get(str(row.source_id or "")),
+                )
+                classification = result["classification"]
+                classification_counts[classification] = (
+                    classification_counts.get(classification, 0) + 1
+                )
+                if not body.dry_run and not result["safe_to_hide"]:
                     continue
+                reason = result["why"]
             candidates.append(
                 {
                     "id": str(row.id),
@@ -610,6 +636,7 @@ async def explorer_cleanup(
                     "kind": str(row.kind),
                     "source_id": str(row.source_id) if row.source_id else None,
                     "reason": reason,
+                    "classification": classification,
                 }
             )
 
@@ -687,6 +714,17 @@ async def explorer_cleanup(
             "counts": {
                 "candidates": len(candidates),
                 "by_source": by_source,
+                "by_classification": classification_counts,
+                "review_required": sum(
+                    count
+                    for key, count in classification_counts.items()
+                    if key
+                    in {
+                        "potentially_valid",
+                        "requires_human_review",
+                        "misclassified_genre",
+                    }
+                ),
                 "assertion_references": assertion_refs,
             },
             "rollback": {
@@ -697,6 +735,17 @@ async def explorer_cleanup(
                 "deletes": 0,
                 "canonical_ids_changed": 0,
                 "reingested": False,
+                "automatic_promotions": 0,
+                "safe_categories": [
+                    "invalid_label",
+                    "needs_context",
+                    "weak_evidence",
+                ],
+                "review_categories": [
+                    "potentially_valid",
+                    "requires_human_review",
+                    "misclassified_genre",
+                ],
             },
         }
     except Exception:
