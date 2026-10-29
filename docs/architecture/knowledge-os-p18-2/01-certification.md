@@ -5,7 +5,7 @@
 - Baseline: `8a2d7c46907d51faf18a21e0de86c9b6ba411ae9`
 - Implementación: `19aa5ebff513c4f0ebf69232c6eacb02076c497b`
 - Certificación: `a6a93a88ac9cfe924acb55572a228e0796bfa7ad`
-- Release candidate (código): `f5590f6cb83a79f6ecea3e392622aa8e4937bc80`
+- Release candidate (código): `f0cc145539b592bc83204929ba27accb0ee09d0d`
 - Alcance: P18.2-00 a P18.2-10. P18.2-11 es este informe.
 - Exclusión respetada: SOÑAR, Dream Engine, memoria paralela, aprendizaje
   autónomo, promoción automática de inferencias.
@@ -63,7 +63,8 @@ humanamente una muestra de propuestas narrativas.
 | Seguridad | Aislamiento org/workspace/corpus | PASS | `test_p18_1_corpus_scope.py` |
 | Seguridad | Cross-tenant/ACL/revocación E2E | SKIP | E2E no ejecutado |
 | E2E | Flujo real upload → indexado → abrir → preguntar | SKIP | `P18_2_E2E_INGEST` no configurado |
-| Regresión | Suites P18.1/P18.2 backend | PASS | 70 tests |
+| Docker | Imágenes reconstruidas y API/portal sirviendo código nuevo | PASS | verificación 2026-10-29 |
+| Regresión | Suites P18.1/P18.2 backend | PASS | 71 tests |
 | Regresión | Suites portal knowledge | PASS | 27 tests |
 | TypeScript | `tsc --noEmit` | PASS | sin salida |
 | Lint | ESLint archivos tocados | PASS | sin errores |
@@ -163,7 +164,34 @@ npx playwright test e2e/p18-2-explorer.spec.ts
 5. No hay cambios en documentos originales, objetos canónicos, agentes,
    workflows, policies, ACL ni facturación.
 
-## 7. Decisión por fase
+## 7. Verificación Docker local
+
+El stack local estaba atrasado: `rag-portal` no contenía `Qué contiene este
+documento` y `rag-api` no contenía `build_passage_understanding` ni la
+migración `174`. Se reconstruyeron `api`, `ingestion-worker` y `portal`.
+
+Verificación posterior:
+
+```powershell
+docker compose build api ingestion-worker portal
+docker compose up -d api ingestion-worker portal
+docker exec rag-portal sh -lc "grep -Rl 'Qué contiene este documento' /usr/share/nginx/html"
+docker exec rag-api sh -lc "grep -Rl 'build_passage_understanding' /app/src"
+docker exec rag-postgres psql -U rag_user -d rag_platform -c "\d knowledge_learning_session_sources"
+```
+
+Resultado:
+- Portal contiene el bundle nuevo.
+- API contiene `passages.py` y migración `174`.
+- Columna `idempotency_key` existe.
+- Flujo real por API: signup, corpus, upload, indexado, `GET .../insight` → 200,
+  contrato `knowledge_explorer_insight/v2`, género `technical`,
+  `document_type=technical_specification`.
+- Bug encontrado y corregido: cursor de objetos con `:cursor IS NULL` producía
+  `AmbiguousParameterError` en asyncpg. Fix `f0cc145`, regresión
+  `test_p18_2_insight_sql.py`.
+
+## 8. Decisión por fase
 
 | Fase | Estado | Condición |
 |---|---|---|
