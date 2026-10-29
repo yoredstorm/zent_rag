@@ -71,7 +71,8 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _fixture_text(case: dict[str, Any], errors: list[str]) -> str | None:
-    path = Path(str(case.get("source_fixture") or ""))
+    value = str(case.get("source_fixture") or "").replace("\\", "/")
+    path = Path(value)
     if not path.is_absolute():
         path = (ROOT / path).resolve()
     try:

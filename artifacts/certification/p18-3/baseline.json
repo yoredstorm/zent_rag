@@ -150,7 +150,7 @@
       "metamorphic_checks": 12,
       "validation_status": "DRAFT_NOT_APPROVED",
       "strict_human_status": "BLOCKED_HUMAN_REVIEW",
-      "sha256": "44128e15e15fb9778739e0c31abc00081991ea587804a7a50a7a83d879e53c70",
+      "sha256": "f0cdb4cb8cacee35908964d542919774674930ab75762bb7f233a8a2273c4f99",
       "fixtures_manifest_sha256": "89d1d79e113c6a9e2afd46685352cc2effae0b67d14d0ffd7ec35592e28f84b4"
     }
   },
@@ -317,3 +317,4 @@
     "El gold set no se declara humano hasta completar dos revisores y árbitro."
   ]
 }
+

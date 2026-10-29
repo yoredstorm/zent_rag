@@ -34,7 +34,7 @@ status: DRAFT_NOT_APPROVED
 cases: 40
 errors: []
 metamorphic_checks: 12
-goldset_sha256: 44128e15e15fb9778739e0c31abc00081991ea587804a7a50a7a83d879e53c70
+goldset_sha256: f0cdb4cb8cacee35908964d542919774674930ab75762bb7f233a8a2273c4f99
 ```
 
 ```text
@@ -56,3 +56,4 @@ falla la validación.
 
 Sin esos pasos, el dataset sirve para desarrollo y detección de defectos, no
 para una afirmación de calidad humana.
+
