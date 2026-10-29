@@ -89,6 +89,10 @@ def _subject_for(
         candidate = normalize_term(part)
         if not candidate:
             continue
+        # Un encabezado numérico ("14", "4.1") no es el sujeto de una regla:
+        # el enunciado real vive en el cuerpo. Se usa el fallback siguiente.
+        if candidate.replace(".", "").isdigit():
+            continue
         if title_key and (candidate in title_key or title_key in candidate):
             continue
         return part[:200]
