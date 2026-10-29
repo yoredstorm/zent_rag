@@ -23,20 +23,30 @@ from uuid import UUID
 class LearningSessionStatus(StrEnum):
     """Ciclo de vida de la sesión de aprendizaje."""
 
-    PREPARING = "preparing"      # sesión creada, fuentes aceptadas
-    LEARNING = "learning"        # al menos una fuente en lectura/comprensión
-    AVAILABLE = "available"      # ya se puede consultar; quedan fuentes vivos
-    OPTIMIZING = "optimizing"    # todas consultables; conocimiento derivado corre
-    COMPLETED = "completed"     # aprendizaje terminado
-    PARTIAL = "partial"         # terminó con fuentes parcialmente aprendidas
+    PREPARING = "preparing"  # sesión creada, fuentes aceptadas
+    LEARNING = "learning"  # al menos una fuente en lectura/comprensión
+    AVAILABLE = "available"  # ya se puede consultar; quedan fuentes vivos
+    OPTIMIZING = "optimizing"  # todas consultables; conocimiento derivado corre
+    COMPLETED = "completed"  # aprendizaje terminado
+    PARTIAL = "partial"  # terminó con fuentes parcialmente aprendidas
     FAILED = "failed"
     CANCELED = "canceled"
+
+
+class SessionSealedError(RuntimeError):
+    """La sesión ya fue sellada: no admite fuentes nuevas por este lote."""
+
+    code = "session_sealed"
+
+    def __init__(self, session_id: object) -> None:
+        super().__init__(f"Learning session {session_id} is sealed")
+        self.session_id = str(session_id)
 
 
 class SourceLearningStatus(StrEnum):
     PENDING = "pending"
     LEARNING = "learning"
-    AVAILABLE = "available"   # consultable, aunque siga enriqueciéndose
+    AVAILABLE = "available"  # consultable, aunque siga enriqueciéndose
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -44,12 +54,12 @@ class SourceLearningStatus(StrEnum):
 class LearningStage(StrEnum):
     """Etapas humanas del aprendizaje (con sub-etiqueta técnica en la UI)."""
 
-    READING = "reading"              # Leyendo
+    READING = "reading"  # Leyendo
     UNDERSTANDING = "understanding"  # Entendiendo
-    ORGANIZING = "organizing"        # Organizando
-    CONNECTING = "connecting"        # Conectando
-    VERIFYING = "verifying"          # Verificando
-    LEARNED = "learned"              # Aprendido
+    ORGANIZING = "organizing"  # Organizando
+    CONNECTING = "connecting"  # Conectando
+    VERIFYING = "verifying"  # Verificando
+    LEARNED = "learned"  # Aprendido
 
 
 # Orden canónico de etapas (la UI deriva el progreso de aquí).
@@ -120,6 +130,7 @@ HIGH_FREQUENCY_EVENTS: frozenset[str] = frozenset(
         SessionEventType.RULE_DISCOVERED.value,
     }
 )
+
 
 # Categorías de aprendizaje (requisito 14: nuevo/reforzado/actualizado/...).
 class KnowledgeChangeCategory(StrEnum):
@@ -328,10 +339,7 @@ class LearningSession:
                     LearningSessionStatus.AVAILABLE.value,
                     LearningSessionStatus.OPTIMIZING.value,
                 )
-                or (
-                    self.status == LearningSessionStatus.COMPLETED.value
-                    and int(self.failed_sources or 0) == 0
-                )
+                or (self.status == LearningSessionStatus.COMPLETED.value and int(self.failed_sources or 0) == 0)
             ),
         }
 

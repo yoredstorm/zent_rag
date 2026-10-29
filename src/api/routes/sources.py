@@ -20,6 +20,7 @@ from src.api.deps import (
     get_source_repo,
 )
 from src.core.config import get_settings
+from src.core.domain.knowledge_session import SessionSealedError
 from src.core.ports import IngestionJobRepository, SourceRepository
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import PostgresAuditLogRepository
@@ -42,7 +43,8 @@ def _audit() -> AuditLogService:
 class CreateSourceRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     type: str = Field(
-        ..., pattern=r"^(sql|file|csv|excel|web|s3|api|gdrive)$",
+        ...,
+        pattern=r"^(sql|file|csv|excel|web|s3|api|gdrive)$",
         description="Tipo de fuente: sql, file, csv, excel, web, s3, api, gdrive",
     )
     knowledge_base_id: UUID | None = None
@@ -149,9 +151,7 @@ async def _source_stats(organization_id: UUID, source_ids: list[UUID]) -> dict[U
         await session.close()
 
 
-async def _assert_own_kb(
-    ctx, kb_id: UUID | None, *, workspace_id: UUID | None = None
-) -> None:
+async def _assert_own_kb(ctx, kb_id: UUID | None, *, workspace_id: UUID | None = None) -> None:
     if kb_id is None:
         return
     from src.api.deps import get_kb_repo
@@ -209,26 +209,20 @@ async def _resolve_upload_corpus(
             kb = (
                 await session.execute(
                     text(
-                        "SELECT corpus_id, workspace_id FROM knowledge_bases "
-                        "WHERE organization_id = :oid AND id = :kid"
+                        "SELECT corpus_id, workspace_id FROM knowledge_bases WHERE organization_id = :oid AND id = :kid"
                     ),
                     {"oid": ctx.organization_id, "kid": knowledge_base_id},
                 )
             ).fetchone()
             if kb is None:
                 raise HTTPException(404, "Knowledge base not found")
-            if kb.workspace_id is not None and str(kb.workspace_id) != str(
-                workspace_id
-            ):
-                raise HTTPException(
-                    409, "Knowledge base belongs to another workspace"
-                )
+            if kb.workspace_id is not None and str(kb.workspace_id) != str(workspace_id):
+                raise HTTPException(409, "Knowledge base belongs to another workspace")
             if kb.corpus_id is not None:
                 corpus = (
                     await session.execute(
                         text(
-                            "SELECT id, workspace_id FROM knowledge_corpora "
-                            "WHERE organization_id = :oid AND id = :cid"
+                            "SELECT id, workspace_id FROM knowledge_corpora WHERE organization_id = :oid AND id = :cid"
                         ),
                         {
                             "oid": ctx.organization_id,
@@ -237,9 +231,7 @@ async def _resolve_upload_corpus(
                     )
                 ).fetchone()
                 if corpus is None or str(corpus.workspace_id) != str(workspace_id):
-                    raise HTTPException(
-                        409, "Knowledge base corpus belongs to another workspace"
-                    )
+                    raise HTTPException(409, "Knowledge base corpus belongs to another workspace")
                 resolved = UUID(str(corpus.id))
 
         if resolved is None:
@@ -313,9 +305,7 @@ async def list_sources(
 
     ctx = require_permission(request, "sources:read")
     ws = await resolve_workspace(request)
-    sources = await repo.list_sources(
-        ctx.organization_id, knowledge_base_id, workspace_id=ws.id
-    )
+    sources = await repo.list_sources(ctx.organization_id, knowledge_base_id, workspace_id=ws.id)
     stats = await _source_stats(ctx.organization_id, [s.id for s in sources])
     return {
         "sources": [_source_response(s, stats.get(s.id)) for s in sources],
@@ -365,7 +355,10 @@ async def create_source(
         workspace_id=ws.id,
     )
     await _audit().write(
-        ctx, "source.created", "source", source.id,
+        ctx,
+        "source.created",
+        "source",
+        source.id,
         metadata={"name": source.name, "type": source.type},
     )
     return _source_response(source)
@@ -396,7 +389,10 @@ async def create_kb_source(
         workspace_id=ws.id,
     )
     await _audit().write(
-        ctx, "source.created", "source", source.id,
+        ctx,
+        "source.created",
+        "source",
+        source.id,
         metadata={"name": source.name, "type": source.type, "kb_id": kb_id},
     )
     return _source_response(source)
@@ -447,11 +443,7 @@ async def source_usage(
     )
     if source.knowledge_base_id is not None:
         params["kid"] = str(source.knowledge_base_id)
-        query = (
-            select
-            + " OR config_json->'knowledge_base_ids' @> "
-            "to_jsonb(ARRAY[:kid]::text[])"
-        )
+        query = select + " OR config_json->'knowledge_base_ids' @> to_jsonb(ARRAY[:kid]::text[])"
     else:
         query = select
     query += ") ORDER BY is_active DESC, name"
@@ -624,16 +616,12 @@ def _representations_payload(metadata: dict) -> dict[str, object] | None:
     document_parser = metadata.get("document_parser")
     summary = (
         document_parser.get("representations")
-        if isinstance(document_parser, dict)
-        and isinstance(document_parser.get("representations"), dict)
+        if isinstance(document_parser, dict) and isinstance(document_parser.get("representations"), dict)
         else None
     )
     bundle = metadata.get("representations")
     bundle_block = (
-        bundle
-        if isinstance(bundle, dict)
-        and bundle.get("schema_version") == "parsed-document-bundle-1"
-        else None
+        bundle if isinstance(bundle, dict) and bundle.get("schema_version") == "parsed-document-bundle-1" else None
     )
     if summary is None and bundle_block is None:
         return None
@@ -641,20 +629,14 @@ def _representations_payload(metadata: dict) -> dict[str, object] | None:
     llm_markdown = bool(source.get("llm_markdown")) or bool(
         isinstance(bundle_block, dict) and bundle_block.get("llm_markdown")
     )
-    markdown_artifact = (
-        bundle_block.get("llm_markdown") if isinstance(bundle_block, dict) else None
-    )
+    markdown_artifact = bundle_block.get("llm_markdown") if isinstance(bundle_block, dict) else None
     return {
         "canonical": "structured_json",
         "structured_json": True,
         "llm_markdown": llm_markdown,
         "markdown_ref": (
             source.get("markdown_ref")
-            or (
-                markdown_artifact.get("ref")
-                if isinstance(markdown_artifact, dict)
-                else None
-            )
+            or (markdown_artifact.get("ref") if isinstance(markdown_artifact, dict) else None)
         ),
         "markdown_sections": source.get("markdown_sections"),
         "crosswalk_coverage": source.get("crosswalk_coverage"),
@@ -682,9 +664,7 @@ async def update_source(
     if body.knowledge_base_id is not None:
         await _assert_own_kb(ctx, body.knowledge_base_id)
     try:
-        source = await repo.update_source(
-            ctx.organization_id, sid, **body.model_dump(exclude_none=True)
-        )
+        source = await repo.update_source(ctx.organization_id, sid, **body.model_dump(exclude_none=True))
     except ValueError:
         raise HTTPException(404, "Source not found")
     await _audit().write(ctx, "source.updated", "source", sid, metadata={"name": source.name})
@@ -820,10 +800,7 @@ async def discover_source(
     return {
         "source_id": str(sid),
         "type": source.type,
-        "items": [
-            {"external_id": i.external_id, "label": i.label, **i.extra}
-            for i in items[:200]
-        ],
+        "items": [{"external_id": i.external_id, "label": i.label, **i.extra} for i in items[:200]],
         "count": len(items),
     }
 
@@ -837,7 +814,11 @@ async def _open_learning_session(
     origin: str,
     workspace_id: UUID | None,
 ):
-    """Sesión existente (por id) o nueva. Fail-soft: sin sesión, la ingesta sigue."""
+    """Sesión abierta para adjuntar. Una sesión sellada NUNCA se reutiliza.
+
+    Si el cliente pide una sesión ya sellada, se abre un lote derivado y se
+    devuelve su id. El sellado anterior permanece inmutable.
+    """
     if sessions is None:
         return None
     try:
@@ -845,19 +826,30 @@ async def _open_learning_session(
         if session_id is not None:
             existing = await sessions.get_session(ctx.organization_id, session_id)
             if existing is not None:
-                return existing
+                if existing.sealed_at is None:
+                    return existing
+                logger.info(
+                    "Learning session sealed; opening derived batch",
+                    previous_session_id=str(session_id),
+                )
+                return await sessions.start_session(
+                    ctx.organization_id,
+                    title=title[:255],
+                    origin=origin[:32],
+                    workspace_id=workspace_id,
+                )
         return await sessions.start_session(
             ctx.organization_id,
             title=title,
             origin=origin,
             workspace_id=workspace_id,
         )
-    except Exception as exc:  # noqa: BLE001 — la observabilidad no bloquea
+    except Exception as exc:  # noqa: BLE001 - la observabilidad no bloquea
         logger.warning("Learning session not created", error=str(exc)[:200])
         return None
 
 
-def _session_attach_hook(sessions, session, source):
+def _session_attach_hook(sessions, session, source, *, idempotency_key=None):
     """Callback que registra fuente+job en la sesión ANTES del encolado."""
     if sessions is None or session is None:
         return None
@@ -869,6 +861,7 @@ def _session_attach_hook(sessions, session, source):
             job_id=job.id,
             name=source.name,
             source_type=source.type,
+            idempotency_key=idempotency_key,
         )
 
     return _attach
@@ -901,9 +894,7 @@ async def sync_source(
         origin="sync",
         workspace_id=source.workspace_id,
     )
-    job = await enqueue_source_sync(
-        ctx, jobs, source, on_created=_session_attach_hook(sessions, session, source)
-    )
+    job = await enqueue_source_sync(ctx, jobs, source, on_created=_session_attach_hook(sessions, session, source))
     if session is not None:
         await sessions.seal_session(ctx.organization_id, session.id)
     return {
@@ -937,6 +928,7 @@ async def _store_uploaded_file(
     corpus_id: UUID | None = None,
     session=None,
     sessions=None,
+    idempotency_key: str | None = None,
 ):
     """Crea fuente + job para un archivo. Lanza HTTPException 413/415/409."""
     if len(data) > _MAX_UPLOAD_BYTES:
@@ -952,19 +944,25 @@ async def _store_uploaded_file(
     if source_type is None:
         source_type = detected
 
+    # Replay idempotente: mismo lote + misma clave devuelve la fuente y el job
+    # ya creados, sin re-subir ni duplicar.
+    if session is not None and sessions is not None and idempotency_key:
+        attached = await sessions.find_attached_source(ctx.organization_id, session.id, idempotency_key)
+        if attached is not None and attached.source_id:
+            existing_source = await repo.get_source(ctx.organization_id, attached.source_id)
+            existing_job = await jobs.get_job(ctx.organization_id, attached.job_id) if attached.job_id else None
+            if existing_source is not None and existing_job is not None:
+                return existing_source, existing_job
+
     # Duplicados por nombre+extensión (cualquier documento): avisa y reusa la
     # fuente existente salvo force=true. Detecta el sufijo "(1)" del navegador.
-    duplicate = await find_duplicate_source(
-        repo, ctx.organization_id, name or filename
-    )
+    duplicate = await find_duplicate_source(repo, ctx.organization_id, name or filename)
     if duplicate is not None and not force:
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "duplicate_name",
-                "message": (
-                    f"Ya existe una fuente con el mismo nombre: {duplicate.name}"
-                ),
+                "message": (f"Ya existe una fuente con el mismo nombre: {duplicate.name}"),
                 "existing_source_id": str(duplicate.id),
                 "existing_name": duplicate.name,
                 "hint": "Abre la fuente existente o repite con force=true para copia.",
@@ -992,12 +990,41 @@ async def _store_uploaded_file(
         corpus_id=corpus_id,
     )
     await _audit().write(
-        ctx, "source.created", "source", source.id,
+        ctx,
+        "source.created",
+        "source",
+        source.id,
         metadata={"name": source.name, "type": source.type, "object_key": object_key},
     )
-    job = await enqueue_source_sync(
-        ctx, jobs, source, on_created=_session_attach_hook(sessions, session, source)
-    )
+    try:
+        job = await enqueue_source_sync(
+            ctx,
+            jobs,
+            source,
+            on_created=_session_attach_hook(sessions, session, source, idempotency_key=idempotency_key),
+            strict_attach=True,
+        )
+    except SessionSealedError:
+        # Carrera seal vs attach: el sello ganó. La fuente no pertenece a este
+        # lote. Se retira el archivo recién creado para no dejar duplicados y
+        # el cliente abre un lote nuevo.
+        try:
+            await repo.delete_source(ctx.organization_id, source.id)
+        except Exception as exc:  # noqa: BLE001 - conservar el 409 original
+            logger.warning(
+                "Could not roll back source after sealed attach",
+                source_id=str(source.id),
+                error=str(exc)[:200],
+            )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_sealed",
+                "message": "La sesión ya está cerrada; abre un lote nuevo.",
+                "session_id": str(session.id) if session else None,
+                "retryable": True,
+            },
+        ) from None
     return source, job
 
 
@@ -1016,6 +1043,11 @@ async def upload_file_source(
     session_id: UUID | None = Query(
         default=None,
         description="Sesión de aprendizaje a la que pertenece la fuente.",
+    ),
+    idempotency_key: str | None = Query(
+        default=None,
+        max_length=120,
+        description="Clave estable del archivo dentro del lote para reintentos.",
     ),
     repo: SourceRepository = Depends(get_source_repo),
     jobs: IngestionJobRepository = Depends(get_job_repo),
@@ -1055,6 +1087,7 @@ async def upload_file_source(
         corpus_id=resolved_corpus,
         session=session,
         sessions=sessions,
+        idempotency_key=idempotency_key,
     )
     return _source_response(
         source,
@@ -1084,6 +1117,11 @@ async def upload_files_batch(
         default=None,
         description="Sesión de aprendizaje existente (opcional).",
     ),
+    idempotency_key: str | None = Query(
+        default=None,
+        max_length=120,
+        description="Clave del lote; el lote puede contener varios archivos.",
+    ),
     repo: SourceRepository = Depends(get_source_repo),
     jobs: IngestionJobRepository = Depends(get_job_repo),
     sessions=Depends(get_knowledge_session_service),
@@ -1098,9 +1136,7 @@ async def upload_files_batch(
 
     ctx = require_permission(request, "sources:write")
     if len(files) > _MAX_BATCH_FILES:
-        raise HTTPException(
-            422, f"Too many files per request (max {_MAX_BATCH_FILES})"
-        )
+        raise HTTPException(422, f"Too many files per request (max {_MAX_BATCH_FILES})")
     ws = await resolve_workspace(request)
     if knowledge_base_id is not None:
         await _assert_own_kb(ctx, knowledge_base_id, workspace_id=ws.id)
@@ -1139,6 +1175,7 @@ async def upload_files_batch(
                 corpus_id=resolved_corpus,
                 session=session,
                 sessions=sessions,
+                idempotency_key=(f"{idempotency_key}:{filename}" if idempotency_key else None),
             )
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {}
@@ -1160,9 +1197,7 @@ async def upload_files_batch(
             )
             continue
         except Exception as exc:  # noqa: BLE001 — el lote no se corta
-            logger.warning(
-                "Batch upload failed", filename=filename, error=str(exc)[:200]
-            )
+            logger.warning("Batch upload failed", filename=filename, error=str(exc)[:200])
             items.append(
                 {
                     "filename": filename,
@@ -1191,6 +1226,7 @@ async def upload_files_batch(
         "session_id": str(session.id) if session else None,
         "corpus_id": str(resolved_corpus) if resolved_corpus else None,
     }
+
 
 @router.post("/sources/{source_id}/profile", summary="Perfilizar fuente (SQL: null rates, cardinalidad, PII)")
 async def profile_source(
@@ -1245,9 +1281,7 @@ async def profile_source(
             try:
                 profile = await profile_table(session, schema_name, table_name)
             except Exception as exc:
-                logger.warning(
-                    "Profile failed for table", table=table_name, error=str(exc)
-                )
+                logger.warning("Profile failed for table", table=table_name, error=str(exc))
                 continue
             profiled_tables.append({"name": profile["name"], "columns": profile["columns"]})
             profiled_columns.extend(profile["columns"])
@@ -1274,7 +1308,10 @@ async def profile_source(
     finally:
         await session.close()
     await _audit().write(
-        ctx, "source.profiled", "source", sid,
+        ctx,
+        "source.profiled",
+        "source",
+        sid,
         metadata={"tables": len(profiled_tables), "columns": len(profiled_columns)},
     )
     return {"source_id": str(sid), "status": "profiled", "tables": profiled_tables}
@@ -1305,9 +1342,7 @@ async def get_source_tabular(source_id: str, request: Request):
     try:
         exists = (
             await session.execute(
-                _text(
-                    "SELECT 1 FROM kb_sources WHERE id = :sid AND organization_id = :oid"
-                ),
+                _text("SELECT 1 FROM kb_sources WHERE id = :sid AND organization_id = :oid"),
                 {"sid": sid, "oid": ctx.organization_id},
             )
         ).fetchone()
@@ -1319,14 +1354,10 @@ async def get_source_tabular(source_id: str, request: Request):
     repository = PostgresTabularRepository()
     workbooks = await repository.list_workbooks(ctx.organization_id, sid)
     tables = await repository.list_tables(ctx.organization_id, sid)
-    filename_by_workbook = {
-        workbook["id"]: workbook.get("filename") for workbook in workbooks
-    }
+    filename_by_workbook = {workbook["id"]: workbook.get("filename") for workbook in workbooks}
     from src.knowledge.tabular.map import build_tabular_map, render_tabular_map_text
 
-    tabular_map = await build_tabular_map(
-        repository, ctx.organization_id, source_ids=[sid]
-    )
+    tabular_map = await build_tabular_map(repository, ctx.organization_id, source_ids=[sid])
     return {
         "source_id": str(sid),
         "workbooks": workbooks,
@@ -1358,17 +1389,13 @@ class SourceSqlRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
 
 
-async def _materialized_table_names(
-    organization_id: UUID, source_id: UUID
-) -> set[str]:
+async def _materialized_table_names(organization_id: UUID, source_id: UUID) -> set[str]:
     """Tablas materializadas (`zent_*`) de una fuente, en minúsculas."""
     from src.infrastructure.postgres.tabular import PostgresTabularRepository
 
     names: set[str] = set()
     try:
-        workbooks = await PostgresTabularRepository().list_workbooks(
-            organization_id, source_id
-        )
+        workbooks = await PostgresTabularRepository().list_workbooks(organization_id, source_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Materialized table lookup failed", error=str(exc)[:200])
         return names
@@ -1399,12 +1426,7 @@ async def _org_materialized_table_names(organization_id: UUID) -> set[str]:
 
 
 def _jsonable_row(row) -> list:
-    return [
-        value
-        if isinstance(value, (int, float, str, bool, type(None)))
-        else str(value)
-        for value in row
-    ]
+    return [value if isinstance(value, (int, float, str, bool, type(None))) else str(value) for value in row]
 
 
 @router.get(
@@ -1436,9 +1458,7 @@ async def source_table_preview(
     if table_names:
         from src.platform.managed_db.service import open_managed_query_session
 
-        session = await open_managed_query_session(
-            ctx.organization_id, source.workspace_id
-        )
+        session = await open_managed_query_session(ctx.organization_id, source.workspace_id)
         if session is not None:
             table_name = sorted(table_names)[0]
             try:
@@ -1476,12 +1496,9 @@ async def source_table_preview(
         }
     table = tables[0]
     schema = await repository.get_table(ctx.organization_id, UUID(table["id"]))
-    rows = await repository.fetch_rows(
-        ctx.organization_id, UUID(table["id"]), limit=int(limit)
-    )
+    rows = await repository.fetch_rows(ctx.organization_id, UUID(table["id"]), limit=int(limit))
     columns = [
-        column.get("original_name") or column.get("normalized_name")
-        for column in (schema or {}).get("columns", [])
+        column.get("original_name") or column.get("normalized_name") for column in (schema or {}).get("columns", [])
     ]
     normalized = [column.get("normalized_name") for column in (schema or {}).get("columns", [])]
     return {
@@ -1489,9 +1506,7 @@ async def source_table_preview(
         "origin": "tabular",
         "table": table["name"],
         "columns": columns,
-        "rows": [
-            [row.get("values", {}).get(name, "") for name in normalized] for row in rows
-        ],
+        "rows": [[row.get("values", {}).get(name, "") for name in normalized] for row in rows],
         "count": len(rows),
     }
 
@@ -1550,10 +1565,7 @@ async def source_sql(
     import sqlglot
 
     try:
-        referenced = {
-            table.name.lower()
-            for table in sqlglot.parse_one(sql).find_all(sqlglot.exp.Table)
-        }
+        referenced = {table.name.lower() for table in sqlglot.parse_one(sql).find_all(sqlglot.exp.Table)}
     except Exception:  # noqa: BLE001
         raise HTTPException(400, "SQL inválido") from None
     if not referenced:
@@ -1562,8 +1574,7 @@ async def source_sql(
     if unknown:
         raise HTTPException(
             403,
-            "Solo puedes consultar tablas materializadas de la organización: "
-            + ", ".join(sorted(allowed_tables)),
+            "Solo puedes consultar tablas materializadas de la organización: " + ", ".join(sorted(allowed_tables)),
         )
 
     from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
@@ -1579,9 +1590,7 @@ async def source_sql(
         await apply_readonly_transaction(session, timeout_seconds)
         if not _re.search(r"\bLIMIT\s+\d+\s*$", sql, _re.IGNORECASE):
             sql = f"{sql} LIMIT {max_rows}"
-        result = await asyncio.wait_for(
-            session.execute(_text(sql)), timeout=timeout_seconds
-        )
+        result = await asyncio.wait_for(session.execute(_text(sql)), timeout=timeout_seconds)
         rows = result.fetchall()
         columns = list(result.keys()) if rows else []
     except TimeoutError:

@@ -69,9 +69,7 @@ class LearningSessionService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Knowledge session tables unavailable", error=str(exc)[:200])
 
-    async def get_session(
-        self, organization_id: UUID, session_id: UUID
-    ) -> LearningSession | None:
+    async def get_session(self, organization_id: UUID, session_id: UUID) -> LearningSession | None:
         return await self._repo.get_session(organization_id, session_id)
 
     async def seal_session(self, organization_id: UUID, session_id: UUID) -> None:
@@ -83,9 +81,7 @@ class LearningSessionService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Learning session seal failed", error=str(exc)[:200])
 
-    async def rename_session(
-        self, organization_id: UUID, session_id: UUID, title: str
-    ) -> None:
+    async def rename_session(self, organization_id: UUID, session_id: UUID, title: str) -> None:
         """Título vivo (p. ej. "Aprendiendo 3 fuentes" mientras se suben)."""
         try:
             await self._repo.update_session(session_id, title=(title or "")[:255])
@@ -169,6 +165,7 @@ class LearningSessionService:
         job_id: UUID | None,
         name: str,
         source_type: str,
+        idempotency_key: str | None = None,
     ):
         source_row = await self._repo.add_source(
             session.organization_id,
@@ -177,17 +174,24 @@ class LearningSessionService:
             job_id=job_id,
             name=name,
             source_type=source_type,
+            idempotency_key=idempotency_key,
         )
         await self._repo.refresh_session_rollup(session.organization_id, session.id)
         return source_row
+
+    async def find_attached_source(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        idempotency_key: str,
+    ):
+        return await self._repo.get_source_by_idempotency(organization_id, session_id, idempotency_key)
 
     async def list_sessions(self, organization_id: UUID, *, limit: int = 20) -> list[dict]:
         sessions = await self._repo.list_sessions(organization_id, limit=limit)
         return [session.to_dict() for session in sessions]
 
-    async def get_session_detail(
-        self, organization_id: UUID, session_id: UUID
-    ) -> dict | None:
+    async def get_session_detail(self, organization_id: UUID, session_id: UUID) -> dict | None:
         session = await self._repo.get_session(organization_id, session_id)
         if session is None:
             return None
@@ -256,9 +260,7 @@ class LearningSessionService:
                 available_at=datetime.now(timezone.utc),
                 stage=LearningStage.VERIFYING.value,
             )
-            await self._repo.refresh_session_rollup(
-                observer.organization_id, observer.session_id
-            )
+            await self._repo.refresh_session_rollup(observer.organization_id, observer.session_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Learning session source available failed", error=str(exc)[:200])
 
@@ -285,25 +287,17 @@ class LearningSessionService:
             else:
                 from .semantics import humanize_error
 
-                await observer.source_failed(
-                    error or humanize_error(technical), technical=technical
-                )
+                await observer.source_failed(error or humanize_error(technical), technical=technical)
                 await self._repo.update_source(
                     observer.source_row_id,
                     status=SourceLearningStatus.FAILED.value,
                     error=error or humanize_error(technical),
                     completed_at=datetime.now(timezone.utc),
                 )
-                await self._repo.update_session(
-                    observer.session_id, errors=self._errors_plus(observer)
-                )
+                await self._repo.update_session(observer.session_id, errors=self._errors_plus(observer))
             await observer.close()
-            await self._repo.refresh_session_rollup(
-                observer.organization_id, observer.session_id
-            )
-            await self._maybe_finalize(
-                observer.organization_id, observer.session_id
-            )
+            await self._repo.refresh_session_rollup(observer.organization_id, observer.session_id)
+            await self._maybe_finalize(observer.organization_id, observer.session_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Learning session finish failed", error=str(exc)[:200])
 
@@ -349,17 +343,13 @@ class LearningSessionService:
             stage=LearningStage.CONNECTING.value,
         )
         try:
-            task = asyncio.get_running_loop().create_task(
-                self._optimize(organization_id, session_id)
-            )
+            task = asyncio.get_running_loop().create_task(self._optimize(organization_id, session_id))
             _BACKGROUND_TASKS.add(task)
             task.add_done_callback(_BACKGROUND_TASKS.discard)
         except RuntimeError:  # sin loop: ejecutar en línea
             await self._optimize(organization_id, session_id)
 
-    def _schedule_fallback_finalize(
-        self, organization_id: UUID, session_id: UUID
-    ) -> None:
+    def _schedule_fallback_finalize(self, organization_id: UUID, session_id: UUID) -> None:
         """Cierra la sesión aunque el cliente nunca llame a ``seal``."""
         key = str(session_id)
         if key in _FALLBACKS:
@@ -371,9 +361,7 @@ class LearningSessionService:
                 await self._repo.seal_session(organization_id, session_id)
                 await self._maybe_finalize(organization_id, session_id)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Learning session fallback finalize failed", error=str(exc)[:200]
-                )
+                logger.warning("Learning session fallback finalize failed", error=str(exc)[:200])
             finally:
                 _FALLBACKS.discard(key)
 
@@ -400,9 +388,7 @@ class LearningSessionService:
             delta.totals_after = totals_after
             delta.conflicts = int(delta.conflicts) + found
             status = (
-                LearningSessionStatus.PARTIAL.value
-                if session.failed_sources
-                else LearningSessionStatus.COMPLETED.value
+                LearningSessionStatus.PARTIAL.value if session.failed_sources else LearningSessionStatus.COMPLETED.value
             )
             await self._repo.update_session(
                 session_id,
@@ -429,9 +415,7 @@ class LearningSessionService:
             except Exception:  # noqa: BLE001
                 pass
 
-    async def _sweep_cross_source_conflicts(
-        self, organization_id: UUID, source_ids: list[UUID]
-    ) -> int:
+    async def _sweep_cross_source_conflicts(self, organization_id: UUID, source_ids: list[UUID]) -> int:
         """Barrido real de contradicciones entre lo nuevo y lo ya conocido."""
         if not source_ids:
             return 0
@@ -566,9 +550,7 @@ class LearningSessionService:
         )
 
     # ------------------------------------------------------------------ emisión
-    async def _emit(
-        self, session: LearningSession, event_type: str, *, payload: dict | None = None
-    ) -> None:
+    async def _emit(self, session: LearningSession, event_type: str, *, payload: dict | None = None) -> None:
         try:
             event = await self._repo.append_event(
                 session.organization_id,
@@ -616,11 +598,7 @@ def _pulse_metrics(metrics: dict, sources: list[dict] | None = None) -> dict:
         result[alias] = sum(int(result.get(key, 0)) for key in keys)
     if sources is not None:
         result["sources"] = len(sources)
-        result["sources_available"] = sum(
-            1
-            for source in sources
-            if source.get("status") in ("available", "completed")
-        )
+        result["sources_available"] = sum(1 for source in sources if source.get("status") in ("available", "completed"))
     return result
 
 
@@ -640,11 +618,7 @@ def group_discoveries(events: list[dict], *, limit: int = 60) -> list[dict]:
         payload = dict(event.get("payload") or {})
         count = int(payload.get("count") or 1)
         key = (event_type, str(event.get("source_id") or ""), str(event.get("stage") or ""))
-        if (
-            current is not None
-            and current["key"] == key
-            and len(current["items"]) < 5
-        ):
+        if current is not None and current["key"] == key and len(current["items"]) < 5:
             current["count"] += count
             current["items"].append(payload)
             current["at"] = event.get("created_at") or current["at"]

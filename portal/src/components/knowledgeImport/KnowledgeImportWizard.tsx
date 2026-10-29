@@ -44,12 +44,12 @@ import {
   startLearningSession,
   sealLearningSession,
 } from "../../lib/knowledgeSessions";
-import { uploadSourceFile } from "../../lib/sourceUploads";
+import { uploadSourceFile, resyncSource } from "../../lib/sourceUploads";
+import { isApiError } from "../../lib/errors";
 import { useLearningSession } from "../knowledgeSession/useLearningSession";
 import { sourceReadiness } from "../../pages/knowledge/sourceState";
 import {
   batchProgressLabel,
-  canAskBatch,
   initialWizardBatch,
   wizardBatchReducer,
 } from "./wizardMachine";
@@ -100,6 +100,10 @@ function formatStatus(status: string): string {
   if (status === "failed") return "Necesita atención";
   if (status === "pending") return "Recibido";
   return sourceReadiness(status).label;
+}
+
+function idempotencyKeyFor(file: File): string {
+  return `${file.name}:${file.size}:${file.lastModified}`.slice(0, 120);
 }
 
 export function KnowledgeImportWizard({
@@ -167,14 +171,8 @@ export function KnowledgeImportWizard({
       ),
     [items],
   );
-  const askableCount =
-    readySourceIds.length > 0
-      ? readySourceIds.length
-      : createdItems.filter((item) => item.source_id).length;
-  const askEnabled =
-    !uploading &&
-    askableCount > 0 &&
-    (readySourceIds.length > 0 || canAskBatch(batch));
+  const askableCount = readySourceIds.length;
+  const askEnabled = !uploading && askableCount > 0;
 
   useEffect(() => {
     const next = initialSessionId ?? null;
@@ -287,6 +285,7 @@ export function KnowledgeImportWizard({
           const uploaded = await uploadSourceFile(file, auth, {
             corpusId: activeCorpus ?? undefined,
             sessionId: activeSession ?? undefined,
+            idempotencyKey: idempotencyKeyFor(file),
           });
           if (uploaded.sessionId) {
             activeSession = uploaded.sessionId;
@@ -354,20 +353,72 @@ export function KnowledgeImportWizard({
 
   async function retry(item: UploadItem) {
     if (!session?.token) return;
-    const file = files.find((candidate) => candidate.name === item.filename);
-    if (!file) return;
+    const auth = { token: session.token, organizationId: session.organizationId };
     setRetrying(item.filename);
     setError("");
-    try {
-      const uploaded = await uploadSourceFile(
-        file,
-        { token: session.token, organizationId: session.organizationId },
-        {
-          corpusId: corpusId ?? undefined,
-          force: true,
-          sessionId: sessionId ?? undefined,
-        },
+
+    // Si el archivo ya se recibió, se reprocesa el job existente. No se
+    // vuelven a subir bytes ni se crea una fuente duplicada.
+    if (item.source_id && item.status !== "duplicate") {
+      try {
+        const job = await resyncSource(item.source_id, auth);
+        setItems((prev) =>
+          prev.map((candidate) =>
+            candidate.filename === item.filename
+              ? { ...candidate, status: "created", error: null }
+              : candidate,
+          ),
+        );
+        if (job.session_id) {
+          setSessionId(job.session_id);
+          dispatchBatch({ type: "session", sessionId: job.session_id });
+        }
+        setMsg("Reprocesando el archivo recibido. No se volvió a subir.");
+        setStep("check");
+      } catch (err) {
+        setError(uploadErrorMessage(err));
+      } finally {
+        setRetrying("");
+      }
+      return;
+    }
+
+    const file = files.find((candidate) => candidate.name === item.filename);
+    if (!file) {
+      setError(
+        "El archivo ya no está en esta pestaña. Vuelve a seleccionarlo para reintentar la transferencia.",
       );
+      setRetrying("");
+      return;
+    }
+
+    let targetSession = sessionId;
+    try {
+      const uploadOnce = () =>
+        uploadSourceFile(file, auth, {
+          corpusId: corpusId ?? undefined,
+          force: item.status === "duplicate",
+          sessionId: targetSession ?? undefined,
+          idempotencyKey: idempotencyKeyFor(file),
+        });
+      let uploaded: Awaited<ReturnType<typeof uploadSourceFile>>;
+      try {
+        uploaded = await uploadOnce();
+      } catch (err) {
+        if (!(isApiError(err) && err.status === 409 && err.code === "session_sealed")) {
+          throw err;
+        }
+        // La sesión se selló entre la subida y el reintento: se abre un lote
+        // derivado. El lote anterior no se reabre.
+        const derived = await startLearningSession({
+          title: `Reintento: ${file.name}`,
+          origin: "upload_retry",
+        });
+        targetSession = derived.session_id;
+        setSessionId(derived.session_id);
+        dispatchBatch({ type: "session", sessionId: derived.session_id });
+        uploaded = await uploadOnce();
+      }
       if (uploaded.sessionId) setSessionId(uploaded.sessionId);
       if (uploaded.corpusId) setCorpusId(uploaded.corpusId);
       setItems((prev) =>
@@ -388,12 +439,7 @@ export function KnowledgeImportWizard({
   function askFirstQuestion() {
     const params = new URLSearchParams();
     if (corpusId) params.set("corpus", corpusId);
-    const askableIds =
-      readySourceIds.length > 0
-        ? readySourceIds
-        : createdItems
-            .map((item) => item.source_id)
-            .filter((id): id is string => Boolean(id));
+    const askableIds = readySourceIds;
     if (askableIds.length > 0) params.set("source_ids", askableIds.join(","));
     if (question.trim()) params.set("q", question.trim());
     navigate(`/knowledge/ask?${params.toString()}`);
@@ -692,6 +738,13 @@ export function KnowledgeImportWizard({
               <WizardSessionCheck
                 sessionId={sessionId}
                 onState={handleSessionState}
+                onRetrySource={(source) =>
+                  void retry({
+                    filename: source.name,
+                    status: "error",
+                    source_id: source.source_id,
+                  })
+                }
                 onOpenSession={() =>
                   navigate(`/knowledge/sessions/${sessionId}`)
                 }
@@ -795,6 +848,7 @@ function WizardSessionCheck({
   sessionId,
   onOpenSession,
   onState,
+  onRetrySource,
 }: {
   sessionId: string;
   onOpenSession: () => void;
@@ -804,6 +858,7 @@ function WizardSessionCheck({
     ready: number;
     failed: number;
   }) => void;
+  onRetrySource?: (source: { name: string; source_id: string | null }) => void;
 }) {
   const { detail, loading, error, connected, stage } = useLearningSession(
     sessionId,
@@ -817,7 +872,8 @@ function WizardSessionCheck({
         .filter((source) =>
           ["completed", "available", "indexed"].includes(source.status),
         )
-        .map((source) => source.id),
+        .map((source) => source.source_id)
+        .filter((id): id is string => Boolean(id)),
     [sources],
   );
   const ready = Math.min(total, readyIds.length);
@@ -877,6 +933,20 @@ function WizardSessionCheck({
                 <span className="text-faint">{formatStatus(source.status)}</span>
                 {source.error ? (
                   <span className="text-danger">{source.error}</span>
+                ) : null}
+                {source.status === "failed" && source.source_id && onRetrySource ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      onRetrySource({
+                        name: source.name,
+                        source_id: source.source_id,
+                      })
+                    }
+                  >
+                    Reprocesar
+                  </Button>
                 ) : null}
               </li>
             ))}

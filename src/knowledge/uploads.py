@@ -79,11 +79,15 @@ async def enqueue_source_sync(
     source,
     *,
     on_created=None,
+    strict_attach: bool = False,
 ):
     """Crea el job de sync y lo encola.
 
     ``on_created(job)`` corre ANTES de encolar: permite registrar el job en su
     sesión de aprendizaje antes de que el worker pueda tomarlo (sin carrera).
+
+    ``strict_attach=True`` no traga errores del hook: si la sesión está sellada,
+    no se encola un trabajo que pertenece a un lote cerrado.
     """
     job = await jobs.create_job(
         ctx.organization_id,
@@ -94,15 +98,29 @@ async def enqueue_source_sync(
     if on_created is not None:
         try:
             await on_created(job)
-        except Exception as exc:  # noqa: BLE001 — la observabilidad no bloquea
-            logger.warning(
-                "Source sync on_created hook failed", error=str(exc)[:200]
-            )
+        except Exception as exc:  # noqa: BLE001
+            if strict_attach:
+                try:
+                    await jobs.update_job(
+                        job.id,
+                        status="failed",
+                        error_summary={
+                            "code": "session_sealed",
+                            "message": "Learning session sealed before attach",
+                        },
+                    )
+                except Exception:  # noqa: BLE001 - conservar el error original
+                    pass
+                raise
+            logger.warning("Source sync on_created hook failed", error=str(exc)[:200])
     from src.knowledge.queue import enqueue_knowledge_job
 
     await enqueue_knowledge_job(str(job.id))
     await audit_service().write(
-        ctx, "source.sync_enqueued", "source", source.id,
+        ctx,
+        "source.sync_enqueued",
+        "source",
+        source.id,
         metadata={"job_id": str(job.id), "name": source.name},
     )
     return job

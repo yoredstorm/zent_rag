@@ -17,6 +17,7 @@ from src.core.domain.knowledge_session import (
     LearningSession,
     LearningSessionSource,
     LearningSessionStatus,
+    SessionSealedError,
     SourceLearningStatus,
 )
 from src.infrastructure.observability.logging_config import get_logger
@@ -106,8 +107,8 @@ _CREATE_TABLES = [
     )
     """,
     # Dev/test: bases creadas por una versión previa del DDL.
-    "ALTER TABLE knowledge_learning_sessions "
-    "ADD COLUMN IF NOT EXISTS sealed_at TIMESTAMPTZ",
+    "ALTER TABLE knowledge_learning_sessions ADD COLUMN IF NOT EXISTS sealed_at TIMESTAMPTZ",
+    "ALTER TABLE knowledge_learning_session_sources ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(120)",
 ]
 
 _CREATE_INDEXES = [
@@ -123,6 +124,10 @@ _CREATE_INDEXES = [
     "ON knowledge_learning_session_events(session_id, seq ASC)",
     "CREATE INDEX IF NOT EXISTS idx_knowledge_learning_session_events_org_created "
     "ON knowledge_learning_session_events(organization_id, created_at DESC)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_learning_session_sources_idem "
+    "ON knowledge_learning_session_sources"
+    "(organization_id, session_id, idempotency_key) "
+    "WHERE idempotency_key IS NOT NULL",
 ]
 
 
@@ -204,9 +209,7 @@ class PostgresKnowledgeSessionRepository:
         finally:
             await session.close()
 
-    async def get_session(
-        self, organization_id: UUID, session_id: UUID
-    ) -> LearningSession | None:
+    async def get_session(self, organization_id: UUID, session_id: UUID) -> LearningSession | None:
         session: AsyncSession = await get_async_session()
         try:
             row = (
@@ -248,9 +251,7 @@ class PostgresKnowledgeSessionRepository:
         finally:
             await session.close()
 
-    async def list_sessions(
-        self, organization_id: UUID, *, limit: int = 20
-    ) -> list[LearningSession]:
+    async def list_sessions(self, organization_id: UUID, *, limit: int = 20) -> list[LearningSession]:
         session: AsyncSession = await get_async_session()
         try:
             rows = (
@@ -267,9 +268,7 @@ class PostgresKnowledgeSessionRepository:
         finally:
             await session.close()
 
-    async def find_session_for_job(
-        self, organization_id: UUID, job_id: UUID
-    ) -> LearningSession | None:
+    async def find_session_for_job(self, organization_id: UUID, job_id: UUID) -> LearningSession | None:
         session: AsyncSession = await get_async_session()
         try:
             row = (
@@ -296,10 +295,22 @@ class PostgresKnowledgeSessionRepository:
 
     async def update_session(self, session_id: UUID, **fields) -> None:
         allowed = {
-            "status", "stage", "title", "metrics", "knowledge_delta",
-            "totals_before", "totals_after", "warnings", "errors",
-            "source_count", "available_sources", "completed_sources",
-            "failed_sources", "started_at", "available_at", "completed_at",
+            "status",
+            "stage",
+            "title",
+            "metrics",
+            "knowledge_delta",
+            "totals_before",
+            "totals_after",
+            "warnings",
+            "errors",
+            "source_count",
+            "available_sources",
+            "completed_sources",
+            "failed_sources",
+            "started_at",
+            "available_at",
+            "completed_at",
         }
         updates = {key: value for key, value in fields.items() if key in allowed}
         if not updates:
@@ -340,16 +351,51 @@ class PostgresKnowledgeSessionRepository:
         job_id: UUID | None,
         name: str,
         source_type: str,
+        idempotency_key: str | None = None,
     ) -> LearningSessionSource:
         session: AsyncSession = await get_async_session()
         try:
+            # Serializa seal vs attach sobre la MISMA fila de sesión. Si el
+            # sello gana, este adjunto se rechaza; si el adjunto gana, el sello
+            # espera y la fuente queda dentro del lote.
+            lock = (
+                await session.execute(
+                    text(
+                        "SELECT sealed_at FROM knowledge_learning_sessions "
+                        "WHERE organization_id = :oid AND id = :sid FOR UPDATE"
+                    ),
+                    {"oid": organization_id, "sid": session_id},
+                )
+            ).fetchone()
+            if lock is None:
+                raise ValueError("Learning session not found")
+            if lock.sealed_at is not None:
+                raise SessionSealedError(session_id)
+
+            idem = (idempotency_key or "").strip()[:120] or None
+            if idem is not None:
+                existing = (
+                    await session.execute(
+                        text(
+                            f"SELECT {_SOURCE_COLS} FROM knowledge_learning_session_sources "  # noqa: S608
+                            "WHERE organization_id = :oid AND session_id = :sid "
+                            "AND idempotency_key = :idem LIMIT 1"
+                        ),
+                        {"oid": organization_id, "sid": session_id, "idem": idem},
+                    )
+                ).fetchone()
+                if existing is not None:
+                    await session.commit()
+                    return self._source_row(existing)
+
             row = (
                 await session.execute(
                     text(
                         f"INSERT INTO knowledge_learning_session_sources "  # noqa: S608 — SQL construido solo con columnas constantes
                         f"(organization_id, session_id, source_id, job_id, name, "
-                        f"source_type, status, stage) "
-                        f"VALUES (:oid, :sid, :src, :jid, :name, :stype, 'pending', 'reading') "
+                        f"source_type, status, stage, idempotency_key) "
+                        f"VALUES (:oid, :sid, :src, :jid, :name, :stype, 'pending', "
+                        f"'reading', :idem) "
                         f"RETURNING {_SOURCE_COLS}"  # noqa: S608
                     ),
                     {
@@ -359,6 +405,7 @@ class PostgresKnowledgeSessionRepository:
                         "jid": job_id,
                         "name": (name or "")[:512],
                         "stype": (source_type or "file")[:32],
+                        "idem": idem,
                     },
                 )
             ).fetchone()
@@ -378,9 +425,7 @@ class PostgresKnowledgeSessionRepository:
         finally:
             await session.close()
 
-    async def list_sources(
-        self, organization_id: UUID, session_id: UUID
-    ) -> list[LearningSessionSource]:
+    async def list_sources(self, organization_id: UUID, session_id: UUID) -> list[LearningSessionSource]:
         session: AsyncSession = await get_async_session()
         try:
             rows = (
@@ -397,9 +442,29 @@ class PostgresKnowledgeSessionRepository:
         finally:
             await session.close()
 
-    async def get_source_by_job(
-        self, organization_id: UUID, job_id: UUID
+    async def get_source_by_idempotency(
+        self, organization_id: UUID, session_id: UUID, idempotency_key: str
     ) -> LearningSessionSource | None:
+        key = (idempotency_key or "").strip()[:120]
+        if not key:
+            return None
+        session: AsyncSession = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        f"SELECT {_SOURCE_COLS} FROM knowledge_learning_session_sources "  # noqa: S608
+                        "WHERE organization_id = :oid AND session_id = :sid "
+                        "AND idempotency_key = :idem LIMIT 1"
+                    ),
+                    {"oid": organization_id, "sid": session_id, "idem": key},
+                )
+            ).fetchone()
+            return self._source_row(row) if row else None
+        finally:
+            await session.close()
+
+    async def get_source_by_job(self, organization_id: UUID, job_id: UUID) -> LearningSessionSource | None:
         session: AsyncSession = await get_async_session()
         try:
             row = (
@@ -418,7 +483,12 @@ class PostgresKnowledgeSessionRepository:
 
     async def update_source(self, source_row_id: UUID, **fields) -> None:
         allowed = {
-            "status", "stage", "stats", "error", "available_at", "completed_at",
+            "status",
+            "stage",
+            "stats",
+            "error",
+            "available_at",
+            "completed_at",
         }
         updates = {key: value for key, value in fields.items() if key in allowed}
         if not updates:
@@ -599,9 +669,7 @@ class PostgresKnowledgeSessionRepository:
         )
         return event[0]
 
-    async def append_events(
-        self, organization_id: UUID, *, events: list[dict]
-    ) -> list[dict]:
+    async def append_events(self, organization_id: UUID, *, events: list[dict]) -> list[dict]:
         """Inserta un lote de eventos en una sola sentencia con RETURNING.
 
         Los lotes son chicos (el observer agrega por ventanas), así que se
@@ -617,9 +685,7 @@ class PostgresKnowledgeSessionRepository:
             params[f"sid{index}"] = item.get("session_id")
             params[f"src{index}"] = item.get("source_id")
             params[f"etype{index}"] = str(item.get("event_type") or "")[:60]
-            params[f"stage{index}"] = (
-                str(item["stage"])[:24] if item.get("stage") else None
-            )
+            params[f"stage{index}"] = str(item["stage"])[:24] if item.get("stage") else None
             params[f"sev{index}"] = str(item.get("severity") or "info")[:10]
             params[f"msg{index}"] = str(item.get("message") or "")[:2000]
             params[f"payload{index}"] = _json(item.get("payload"))
@@ -635,9 +701,7 @@ class PostgresKnowledgeSessionRepository:
                 text(
                     "INSERT INTO knowledge_learning_session_events "  # noqa: S608 — SQL construido solo con columnas constantes
                     "(organization_id, session_id, source_id, event_type, stage, "
-                    "severity, message, payload, aggregate) VALUES "
-                    + ", ".join(tuples)
-                    + " RETURNING " + _EVENT_COLS  # noqa: S608 — cols constantes
+                    "severity, message, payload, aggregate) VALUES " + ", ".join(tuples) + " RETURNING " + _EVENT_COLS  # noqa: S608 — cols constantes
                 ),
                 params,
             )

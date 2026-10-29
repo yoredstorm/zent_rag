@@ -8,6 +8,7 @@ export type SingleUploadOptions = {
   corpusId?: string;
   force?: boolean;
   sessionId?: string;
+  idempotencyKey?: string;
 };
 
 export type SingleUploadResult = {
@@ -32,6 +33,7 @@ export async function uploadSourceFile(
   if (opts.corpusId) params.set("corpus_id", opts.corpusId);
   if (opts.force) params.set("force", "true");
   if (opts.sessionId) params.set("session_id", opts.sessionId);
+  if (opts.idempotencyKey) params.set("idempotency_key", opts.idempotencyKey);
 
   const out = await api<{
     items: UploadItem[];
@@ -54,4 +56,19 @@ export async function uploadSourceFile(
     sessionId: out.session_id ?? opts.sessionId,
     corpusId: out.corpus_id ?? opts.corpusId,
   };
+}
+
+/** Reprocesa una fuente ya recibida, sin volver a subir bytes. */
+export async function resyncSource(
+  sourceId: string,
+  auth: UploadAuth,
+): Promise<{ job_id: string; session_id?: string | null }> {
+  return api<{ job_id: string; session_id?: string | null }>(
+    `/api/v1/sources/${sourceId}/sync`,
+    {
+      method: "POST",
+      token: auth.token,
+      organizationId: auth.organizationId,
+    },
+  );
 }
