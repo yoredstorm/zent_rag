@@ -1,0 +1,77 @@
+{
+  "generated_at": "2026-10-29T12:25:00+00:00",
+  "scope": "local staging",
+  "source": {
+    "id": "da12dc0a-12c9-4a46-95f7-ab19d9c573e7",
+    "name": "el_principito.pdf",
+    "genre": "narrative",
+    "document_type": "narrative"
+  },
+  "before": {
+    "objects": 109,
+    "undescribed": 108,
+    "rules": 1,
+    "metrics": 0,
+    "verified": 0,
+    "edges": 2,
+    "evidence": 108,
+    "quality_overall": 37,
+    "quality_profile": "business",
+    "measured_dimensions": 6,
+    "main_penalties": {
+      "description_completeness": 1,
+      "rules_metrics": 0,
+      "human_validation": 0,
+      "relationships": 40
+    }
+  },
+  "actions": {
+    "code_fix": "narrative entities skip sections/procedures; genre-aware health",
+    "reprocess_command": "python -m src.scripts.knowledge_reprocess --org <org> --source <source> --purge --requeue",
+    "reprocess_purged": {
+      "objects": 109,
+      "assertions": 106,
+      "edges": 2,
+      "evidence": 108,
+      "compilations": 1
+    },
+    "source_file_preserved": true,
+    "backup_objects": "artifacts/certification/p18-2/principito-before-reprocess.json"
+  },
+  "after": {
+    "objects": 0,
+    "undescribed": 0,
+    "evidence_canonical": 0,
+    "quality_overall": 83.12,
+    "quality_profile": "narrative",
+    "measured_dimensions": 2,
+    "total_dimensions": 11,
+    "not_applicable_dimensions": 5,
+    "dimensions": {
+      "extraction_quality": 73,
+      "structure_coverage": 100,
+      "citation_coverage": null,
+      "description_completeness": null,
+      "relationships": null,
+      "rules_metrics": null,
+      "human_validation": null,
+      "retrieval_quality": null,
+      "freshness": null,
+      "conflicts": null
+    },
+    "explorer": {
+      "structure_sections": 6,
+      "passages_from_structure": 10,
+      "proposals": 22,
+      "participants": 12,
+      "themes": 10,
+      "canonical_objects": 0
+    }
+  },
+  "interpretation": [
+    "El 37 anterior era un promedio de negocios: reglas 0 y validación 0 castigaban una novela.",
+    "El 83 actual es calidad documental parcial: extracción 73 + estructura 100 + citas canónicas sin evaluar.",
+    "No se declara comprensión: 0 objetos canónicos; el libro se explora por 22 propuestas y 10 pasajes.",
+    "La fuente original no se modificó."
+  ]
+}

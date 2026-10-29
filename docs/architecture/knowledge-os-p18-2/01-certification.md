@@ -58,14 +58,16 @@ humanamente una muestra de propuestas narrativas.
 | UX | Copy humano, CTA único, responsive CSS | PASS | tests de UI |
 | UX | Cinco usuarios no técnicos | SKIP | sin sesiones de usabilidad |
 | Métricas | “Comprensión semántica” renombrada | PASS | `test_p18_2_metrics.py` |
+| Métricas | Libro narrativo no se castiga por reglas de negocio | PASS | `scoring_profile=narrative`, 37→83 parcial |
+| Extracción | Diálogos/secciones de novela no se vuelven entidades | PASS | `test_p18_2_narrative_entities.py` |
 | Métricas | 40 consultas preparadas (10/familia) | PASS (fixture) | `questions.json`; no ejecutadas |
 | Métricas | Evaluación de comprensión versionada | SKIP | no existe dataset humano |
 | Seguridad | Aislamiento org/workspace/corpus | PASS | `test_p18_1_corpus_scope.py` |
 | Seguridad | Cross-tenant/ACL/revocación E2E | SKIP | E2E no ejecutado |
 | E2E | Flujo real upload → indexado → abrir → preguntar | SKIP | `P18_2_E2E_INGEST` no configurado |
 | Docker | Imágenes reconstruidas y API/portal sirviendo código nuevo | PASS | verificación 2026-10-29 |
-| Regresión | Suites P18.1/P18.2 backend | PASS | 71 tests |
-| Regresión | Suites portal knowledge | PASS | 27 tests |
+| Regresión | Suites P18.1/P18.2 backend | PASS | 80 tests |
+| Regresión | Suites portal knowledge | PASS | 28 tests |
 | TypeScript | `tsc --noEmit` | PASS | sin salida |
 | Lint | ESLint archivos tocados | PASS | sin errores |
 
@@ -98,7 +100,7 @@ No se presenta como p95 de producción.
   tests\test_p18_2_genre.py tests\test_p18_2_passages.py `
   tests\test_p18_2_cleanup.py tests\test_p18_2_metrics.py `
   tests\test_knowledge_sessions.py -q
-# 64 passed
+# 80 passed
 
 .\.venv\Scripts\python.exe -m pytest tests\test_p18_2_certification.py -q
 # 6 passed
@@ -110,7 +112,7 @@ npx vitest run src/pages/knowledge/Explorer.test.tsx `
   src/pages/knowledge/SourceDetail.test.tsx src/pages/knowledge/Ask.test.tsx `
   src/pages/knowledge/Home.test.tsx src/pages/knowledge/Quality.test.tsx `
   src/pages/knowledge/ObjectView.test.tsx src/pages/knowledge/Map.test.tsx
-# 27 passed
+# 28 passed
 ```
 
 E2E previsto (no ejecutado en este entorno):
@@ -191,7 +193,45 @@ Resultado:
   `AmbiguousParameterError` en asyncpg. Fix `f0cc145`, regresión
   `test_p18_2_insight_sql.py`.
 
-## 8. Decisión por fase
+## 8. Perfil narrativo y reproceso del libro
+
+El caso reportado (`37/100` en un libro) se reprodujo y corrigió.
+
+Antes:
+- 109 objetos canónicos, 108 sin descripción.
+- 1 regla, 0 métricas, 0 verificados, 2 relaciones.
+- Score 37: promedio de señales de negocio, incluyendo `Reglas y métricas = 0`
+  y `Validación humana = 0`, que no aplican a una novela.
+
+Después:
+- Se impidió que secciones/diálogos narrativos se promuevan a entidades.
+- Reproceso local con purga de conocimiento del compilador y reingesta del PDF.
+- Resultado: **0 objetos canónicos basura**, 6 secciones, 10 pasajes,
+  22 propuestas (12 personajes + 10 temas).
+- Health: `scoring_profile=narrative`, `overall=83.12` **parcial**,
+  2 de 11 señales medidas, 5 no aplican.
+  - Calidad de extracción: 73.
+  - Estructura reconocida: 100.
+  - Evidencia canónica: no medida (0 evidencias canónicas).
+  - Reglas/métricas, descripciones, relaciones y conflictos: no aplican.
+- El PDF original no se modificó. Backup de objetos previos:
+  `artifacts/certification/p18-2/principito-before-reprocess.json`.
+- Evidencia: `artifacts/certification/p18-2/narrative-quality-after.json`.
+
+Comando ejecutado:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.scripts.knowledge_reprocess `
+  --org e42d1f42-b87d-4baf-88dc-ec3da1541239 `
+  --source da12dc0a-12c9-4a46-95f7-ab19d9c573e7 `
+  --purge --requeue
+```
+
+El 83 no significa “comprensión 83%”. Es calidad documental parcial:
+extracción y estructura. La evidencia canónica y la recuperación siguen
+`No medido`.
+
+## 9. Decisión por fase
 
 | Fase | Estado | Condición |
 |---|---|---|
