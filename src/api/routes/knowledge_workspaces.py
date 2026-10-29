@@ -228,6 +228,10 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
         objects_cursor: str | None = None
         objects_truncated = False
         while len(objects) < 10000:
+            cursor_clause = (
+                "AND id > CAST(:cursor AS uuid) " if objects_cursor else ""
+            )
+            cursor_params = {"cursor": objects_cursor} if objects_cursor else {}
             rows = (
                 await session.execute(
                     text(
@@ -235,13 +239,13 @@ async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> 
                         "confidence, evidence_count, metadata "
                         "FROM knowledge_canonical_objects "
                         "WHERE organization_id = :oid AND source_id = :sid "
-                        "AND (:cursor IS NULL OR id > CAST(:cursor AS uuid)) "
-                        "ORDER BY id ASC LIMIT 1000"
+                        + cursor_clause
+                        + "ORDER BY id ASC LIMIT 1000"
                     ),
                     {
                         "oid": ctx.organization_id,
                         "sid": source_id,
-                        "cursor": objects_cursor,
+                        **cursor_params,
                     },
                 )
             ).fetchall()
