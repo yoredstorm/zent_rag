@@ -30,7 +30,6 @@ _DOCUMENT_COLUMNS = (
 
 
 class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
-
     # ------------------------------------------------------------------
     # Writers
     # ------------------------------------------------------------------
@@ -94,10 +93,7 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
             await self._record_version(session, document, change_kind)
             # Reemplazo del árbol: delete + insert idempotente.
             await session.execute(
-                text(
-                    "DELETE FROM structured_blocks "
-                    "WHERE document_id = :did AND organization_id = :oid"
-                ),
+                text("DELETE FROM structured_blocks WHERE document_id = :did AND organization_id = :oid"),
                 {"did": str(document.id), "oid": str(document.organization_id)},
             )
             rows = _blocks_to_rows(document)
@@ -111,9 +107,7 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
                 )
                 placeholders = _placeholder_sql(columns)
                 await session.execute(
-                    text(
-                        f"INSERT INTO structured_blocks ({columns}) VALUES {placeholders}"
-                    ),
+                    text(f"INSERT INTO structured_blocks ({columns}) VALUES {placeholders}"),
                     [row for row in rows],
                 )
             await session.commit()
@@ -134,10 +128,7 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
         session = await get_async_session()
         try:
             await session.execute(
-                text(
-                    "UPDATE structured_documents SET content_hash = :hash "
-                    "WHERE id = :did AND organization_id = :oid"
-                ),
+                text("UPDATE structured_documents SET content_hash = :hash WHERE id = :did AND organization_id = :oid"),
                 {
                     "hash": f"needs-reindex:{uuid4().hex[:8]}",
                     "did": str(document_id),
@@ -151,9 +142,7 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
         finally:
             await session.close()
 
-    async def set_runtime_metadata(
-        self, organization_id: UUID, document_id: UUID, values: dict
-    ) -> None:
+    async def set_runtime_metadata(self, organization_id: UUID, document_id: UUID, values: dict) -> None:
         """Merge aditivo de metadata runtime (fingerprint indexado, nutrición).
 
         `metadata || values`: nunca reemplaza la metadata del documento.
@@ -187,10 +176,7 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
         from src.core.domain.knowledge_v2 import DocumentChangeKind
 
         result = await session.execute(
-            text(
-                "SELECT content_hash FROM structured_documents "
-                "WHERE id = :did AND organization_id = :oid"
-            ),
+            text("SELECT content_hash FROM structured_documents WHERE id = :did AND organization_id = :oid"),
             {"did": str(document.id), "oid": str(document.organization_id)},
         )
         row = result.fetchone()
@@ -239,15 +225,12 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
     # ------------------------------------------------------------------
     # Readers (todas scoped por organization_id)
     # ------------------------------------------------------------------
-    async def get_document(
-        self, organization_id: UUID, document_id: UUID
-    ) -> dict | None:
+    async def get_document(self, organization_id: UUID, document_id: UUID) -> dict | None:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
-                    f"SELECT {_DOCUMENT_COLUMNS} FROM structured_documents "
-                    "WHERE id = :did AND organization_id = :oid"
+                    f"SELECT {_DOCUMENT_COLUMNS} FROM structured_documents WHERE id = :did AND organization_id = :oid"
                 ),
                 {"did": str(document_id), "oid": str(organization_id)},
             )
@@ -278,14 +261,27 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
         finally:
             await session.close()
 
+    async def count_documents(self, organization_id: UUID, source_id: UUID) -> int:
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) AS total FROM structured_documents "
+                        "WHERE organization_id = :oid AND source_id = :sid"
+                    ),
+                    {"oid": str(organization_id), "sid": str(source_id)},
+                )
+            ).first()
+            return int(row.total or 0)
+        finally:
+            await session.close()
+
     async def delete_for_source(self, organization_id: UUID, source_id: UUID) -> None:
         session = await get_async_session()
         try:
             await session.execute(
-                text(
-                    "DELETE FROM structured_documents "
-                    "WHERE organization_id = :oid AND source_id = :sid"
-                ),
+                text("DELETE FROM structured_documents WHERE organization_id = :oid AND source_id = :sid"),
                 {"oid": str(organization_id), "sid": str(source_id)},
             )
             await session.commit()
@@ -318,10 +314,7 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
                 )
             else:
                 result = await session.execute(
-                    text(
-                        "DELETE FROM structured_documents "
-                        "WHERE organization_id = :oid AND source_id = :sid"
-                    ),
+                    text("DELETE FROM structured_documents WHERE organization_id = :oid AND source_id = :sid"),
                     {"oid": str(organization_id), "sid": str(source_id)},
                 )
             await session.commit()
@@ -336,6 +329,7 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
 # ---------------------------------------------------------------------------
 # Helpers de mapeo (domain → rows)
 # ---------------------------------------------------------------------------
+
 
 def _uuid_or_none(value: UUID | None) -> str | None:
     return str(value) if value is not None else None

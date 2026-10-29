@@ -182,6 +182,12 @@ function DocumentInsightPanel({
               <span>{insight.source.sections} secciones</span>
             )}
             {insight.source.tables != null && <span>{insight.source.tables} tablas</span>}
+            {(insight.source.document_count ?? 0) > 1 && (
+              <span>{insight.source.document_count} documentos</span>
+            )}
+            {insight.counts.truncated ? (
+              <span className="text-warn">lectura parcial</span>
+            ) : null}
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
@@ -192,6 +198,9 @@ function DocumentInsightPanel({
           )}
           {typeof insight.counts.revisions === "number" && insight.counts.revisions > 0 && (
             <span>{insight.counts.revisions} en revisión</span>
+          )}
+          {(insight.counts.objects_not_evaluated ?? 0) > 0 && (
+            <span>{insight.counts.objects_not_evaluated} objetos no leídos</span>
           )}
           {insight.source.genre_confidence != null && (
             <span

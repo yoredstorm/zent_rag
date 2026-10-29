@@ -15,9 +15,10 @@ from src.knowledge.compiler.candidates import (
     looks_like_dialogue,
     looks_like_question,
 )
+from src.knowledge.understanding.versions import SOURCE_PROFILE_VERSION
 
-CONTRACT = "knowledge_explorer_insight/v1"
-MODEL_VERSION = "deterministic-explorer-1"
+CONTRACT = "knowledge_explorer_insight/v2"
+MODEL_VERSION = "deterministic-explorer-2"
 
 _GROUP_BY_GENRE: dict[str, list[tuple[set[str], str, str]]] = {
     "technical": [
@@ -153,15 +154,11 @@ def _visible_object(obj: dict, document: dict | None = None) -> tuple[bool, str]
         return False, "pregunta o diálogo"
     if name.isdigit() and kind not in {"field", "column", "table", "record"}:
         return False, "número aislado"
-    profile = ((document or {}).get("metadata") or {}).get("understanding", {}).get(
-        "profile"
-    ) or {}
+    profile = ((document or {}).get("metadata") or {}).get("understanding", {}).get("profile") or {}
     genre = str(profile.get("document_genre") or "unknown")
     if name.casefold() in _HEADING_NAMES and genre in {"narrative", "unknown"}:
         return False, "encabezado de sección"
-    if kind in {"business_rule", "rule"} and not _NORMATIVE_TEXT.search(
-        str(obj.get("description") or "")
-    ):
+    if kind in {"business_rule", "rule"} and not _NORMATIVE_TEXT.search(str(obj.get("description") or "")):
         return False, "regla sin contexto normativo"
     decision = assess_entity_candidate(name, kind=kind)
     if not decision.accepted:
@@ -176,6 +173,8 @@ def build_explorer_insight(
     objects: list[dict],
     evidence: list[dict],
     generated_at: str | None = None,
+    documents: list[dict] | None = None,
+    read_stats: dict | None = None,
 ) -> dict:
     metadata = (document or {}).get("metadata") or {}
     understanding = metadata.get("understanding") or {}
@@ -183,9 +182,26 @@ def build_explorer_insight(
     report = understanding.get("report") or {}
     genre = str(profile.get("document_genre") or "unknown")
     genre_confidence = profile.get("genre_confidence")
+    documents = documents or ([document] if document else [])
 
+    # La evidencia más fuerte primero. No se elige "la primera" por fecha como
+    # si fuera la mejor: eso mezclaba causalidad de consulta con calidad.
+    evidence = sorted(
+        evidence,
+        key=lambda item: (
+            float(item.get("strength") or 0),
+            str(item.get("created_at") or ""),
+        ),
+        reverse=True,
+    )
     evidence_by_object: dict[str, list[dict]] = {}
+    seen_evidence: set[str] = set()
     for item in evidence:
+        item_id = str(item.get("id") or "")
+        if item_id and item_id in seen_evidence:
+            continue
+        if item_id:
+            seen_evidence.add(item_id)
         canonical_id = item.get("canonical_id")
         if canonical_id:
             evidence_by_object.setdefault(str(canonical_id), []).append(item)
@@ -193,7 +209,13 @@ def build_explorer_insight(
     visible: list[dict] = []
     hidden = 0
     hidden_reasons: dict[str, int] = {}
+    seen_objects: set[str] = set()
     for obj in objects:
+        object_id = str(obj.get("id") or "")
+        if object_id and object_id in seen_objects:
+            continue
+        if object_id:
+            seen_objects.add(object_id)
         ok, reason = _visible_object(obj, document)
         if not ok:
             hidden += 1
@@ -211,9 +233,7 @@ def build_explorer_insight(
         identity = (kind, " ".join(name.split()))
         if identity in seen_identity:
             hidden += 1
-            hidden_reasons["duplicado de presentación"] = (
-                hidden_reasons.get("duplicado de presentación", 0) + 1
-            )
+            hidden_reasons["duplicado de presentación"] = hidden_reasons.get("duplicado de presentación", 0) + 1
             continue
         seen_identity.add(identity)
         deduped.append(obj)
@@ -252,9 +272,7 @@ def build_explorer_insight(
             "name": name,
             "claim_text": claim_text,
             "grounded_excerpt": (first.get("excerpt") or None) if has_evidence else None,
-            "evidence_ids": [
-                str(item.get("id")) for item in evidence_items if item.get("id")
-            ][:8],
+            "evidence_ids": [str(item.get("id")) for item in evidence_items if item.get("id")][:8],
             "source_locator": {
                 "page": first.get("page"),
                 "section_path": first.get("section_path") or [],
@@ -289,8 +307,7 @@ def build_explorer_insight(
             {
                 "code": "ONLY_LOW_UTILITY",
                 "message": (
-                    "Los hallazgos detectados no tienen autonomía semántica "
-                    "suficiente; puedes revisar los pasajes."
+                    "Los hallazgos detectados no tienen autonomía semántica suficiente; puedes revisar los pasajes."
                 ),
                 "severity": "warning",
             }
@@ -321,18 +338,53 @@ def build_explorer_insight(
             }
         )
 
-    ordered_topics = sorted(
-        topics.values(), key=lambda item: (-item["count"], item["label"])
-    )[:6]
+    ordered_topics = sorted(topics.values(), key=lambda item: (-item["count"], item["label"]))[:6]
     for topic in ordered_topics:
         topic["insights"] = topic["insights"][:40]
 
+    stats = read_stats or {}
+    objects_total = int(stats.get("objects_total") or len(objects))
+    evidence_total = int(stats.get("evidence_total") or len(evidence))
+    documents_total = int(stats.get("documents_total") or len(documents))
+    objects_truncated = bool(stats.get("objects_truncated")) or objects_total > len(objects)
+    evidence_truncated = bool(stats.get("evidence_truncated")) or evidence_total > len(evidence)
+    documents_truncated = bool(stats.get("documents_truncated")) or documents_total > len(documents)
+    passages_available = int(
+        stats.get("passages_available") or sum(1 for item in evidence if str(item.get("excerpt") or "").strip())
+    )
+    truncated = objects_truncated or evidence_truncated or documents_truncated
+    if truncated:
+        warnings.append(
+            {
+                "code": "READ_TRUNCATED",
+                "message": (
+                    "Esta lectura no cubre todo el documento; los conteos indican qué se leyó y qué quedó fuera."
+                ),
+                "severity": "warning",
+            }
+        )
+
     source_fingerprint = (document or {}).get("content_hash") or source.get("content_hash")
+    profile_version = str(profile.get("profile_version") or "")
+    is_stale = not profile_version or profile_version != SOURCE_PROFILE_VERSION or genre == "unknown"
+    document_views = [
+        {
+            "document_id": str(item.get("id") or ""),
+            "title": item.get("title"),
+            "content_hash": item.get("content_hash"),
+            "pages": item.get("page_count"),
+            "sections": item.get("section_count"),
+            "tables": item.get("table_count"),
+            "status": item.get("status"),
+            "updated_at": item.get("updated_at"),
+            "primary": index == 0,
+        }
+        for index, item in enumerate(documents[:20])
+    ]
     return {
         "contract": CONTRACT,
         "model_version": MODEL_VERSION,
-        "generated_at": generated_at
-        or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": {
             "source_id": str(source.get("id") or source.get("source_id") or ""),
             "document_id": str((document or {}).get("id") or "") or None,
@@ -343,29 +395,64 @@ def build_explorer_insight(
             "genre_confidence": genre_confidence,
             "genre_evidence": profile.get("genre_evidence") or [],
             "document_type": profile.get("document_type"),
+            "document_count": documents_total,
             "pages": report.get("pages") or (document or {}).get("page_count"),
             "sections": report.get("sections") or (document or {}).get("section_count"),
             "tables": report.get("tables") or (document or {}).get("table_count"),
             "characters": None,
         },
+        "documents": document_views,
         "summary": _summary(genre, visible, insights, warnings),
         "topics": ordered_topics,
         "insights": insights[:200],
         "warnings": warnings,
         "provenance": {
             "source_fingerprint": source_fingerprint,
-            "source_profile_version": profile.get("profile_version"),
+            "document_id": str((document or {}).get("id") or "") or None,
+            "source_profile_version": profile_version or None,
+            "model_version": MODEL_VERSION,
+            "generated_at": generated_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "evaluation_state": "not_evaluated",
+            "is_stale": is_stale,
             "contract": CONTRACT,
             "method": "deterministic",
             "authority": "read_model",
         },
+        "pagination": {
+            "documents": {
+                "total": documents_total,
+                "returned": len(document_views),
+                "truncated": documents_truncated,
+            },
+            "objects": {
+                "total": objects_total,
+                "returned": len(objects),
+                "truncated": objects_truncated,
+                "next_cursor": stats.get("objects_next_cursor"),
+            },
+            "evidence": {
+                "total": evidence_total,
+                "returned": len(evidence),
+                "truncated": evidence_truncated,
+                "next_cursor": stats.get("evidence_next_cursor"),
+            },
+        },
         "counts": {
-            "objects_total": len(objects),
+            "objects_total": objects_total,
+            "objects_returned": len(objects),
             "objects_visible": len(visible),
             "objects_hidden": hidden,
+            "objects_not_evaluated": max(0, objects_total - len(objects)),
+            "evidence_total": evidence_total,
+            "evidence_returned": len(evidence),
+            "passages_available": passages_available,
+            "revisions": hidden,
             "insights": len(insights),
             "topics": len(ordered_topics),
+            "documents_total": documents_total,
+            "truncated": truncated,
         },
+        "read_model": stats.get("timing") or {},
     }
 
 
@@ -400,10 +487,7 @@ def _summary(
 
 def _slug(value: str) -> str:
     return (
-        "".join(char.lower() if char.isalnum() else "-" for char in value)
-        .strip("-")
-        .replace("--", "-")[:60]
-        or "tema"
+        "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-").replace("--", "-")[:60] or "tema"
     )
 
 

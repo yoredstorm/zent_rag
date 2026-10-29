@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+import time
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -55,15 +56,14 @@ class StudioRequest(BaseModel):
 # Home: list/crear corpora (workspace-scoped)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/workspaces", summary="Knowledge corpora del workspace")
 async def list_workspaces(request: Request) -> dict:
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "knowledge:read")
     ws = await resolve_workspace(request)
-    corpora = await get_corpus_repo().list_corpora(
-        ctx.organization_id, workspace_id=ws.id
-    )
+    corpora = await get_corpus_repo().list_corpora(ctx.organization_id, workspace_id=ws.id)
     counts = await _corpus_source_counts(ctx.organization_id)
     return {
         "corpora": [
@@ -80,9 +80,7 @@ async def list_workspaces(request: Request) -> dict:
 
 
 @router.post("/workspaces", status_code=201, summary="Crear corpus")
-async def create_workspace(
-    body: CreateCorpusRequest, request: Request
-) -> dict:
+async def create_workspace(body: CreateCorpusRequest, request: Request) -> dict:
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "knowledge:write")
@@ -104,12 +102,11 @@ async def create_workspace(
 # Detalle del workspace: corpus + fuentes + documentos estructurados
 # ---------------------------------------------------------------------------
 
+
 @router.get("/workspaces/{corpus_id}", summary="Detalle del corpus")
 async def get_workspace(corpus_id: UUID, request: Request) -> dict:
     ctx, ws, meta = await _require_corpus(request, corpus_id)
-    sources = await _sources_for_corpus(
-        ctx.organization_id, corpus_id, workspace_id=ws.id
-    )
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
     return {"corpus": meta, "sources": sources}
 
 
@@ -117,19 +114,13 @@ async def get_workspace(corpus_id: UUID, request: Request) -> dict:
     "/workspaces/{corpus_id}/sources/{source_id}/documents",
     summary="Documentos estructurados de una fuente",
 )
-async def list_source_documents(
-    corpus_id: UUID, source_id: UUID, request: Request
-) -> dict:
+async def list_source_documents(corpus_id: UUID, source_id: UUID, request: Request) -> dict:
     ctx, ws, _corpus = await _require_corpus(request, corpus_id)
     # Verifica que la fuente pertenezca al corpus y workspace del mismo tenant.
-    sources = await _sources_for_corpus(
-        ctx.organization_id, corpus_id, workspace_id=ws.id
-    )
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
     if not any(str(s["id"]) == str(source_id) for s in sources):
         raise HTTPException(404, "Source not found in this workspace")
-    documents = await PostgresStructuredDocumentRepository().list_documents(
-        ctx.organization_id, source_id
-    )
+    documents = await PostgresStructuredDocumentRepository().list_documents(ctx.organization_id, source_id)
     public = [_public_structured_document(row) for row in documents]
     return {"documents": public, "count": len(public)}
 
@@ -172,21 +163,15 @@ def _public_structured_document(row: dict) -> dict:
     "/workspaces/{corpus_id}/sources/{source_id}/documents/{document_id}/understanding",
     summary="Informe, árbol, markdown y AST canónicos",
 )
-async def document_understanding(
-    corpus_id: UUID, source_id: UUID, document_id: UUID, request: Request
-) -> dict:
+async def document_understanding(corpus_id: UUID, source_id: UUID, document_id: UUID, request: Request) -> dict:
     from src.knowledge.reconstruction import tech_view_from_metadata
     from src.knowledge.understanding import public_understanding, understanding_views
 
     ctx, ws, _corpus = await _require_corpus(request, corpus_id)
-    sources = await _sources_for_corpus(
-        ctx.organization_id, corpus_id, workspace_id=ws.id
-    )
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
     if not any(str(item["id"]) == str(source_id) for item in sources):
         raise HTTPException(404, "Source not found in this workspace")
-    row = await PostgresStructuredDocumentRepository().get_document(
-        ctx.organization_id, document_id
-    )
+    row = await PostgresStructuredDocumentRepository().get_document(ctx.organization_id, document_id)
     if row is None or str(row.get("source_id")) != str(source_id):
         raise HTTPException(404, "Document not found")
     return {
@@ -201,61 +186,159 @@ async def document_understanding(
     "/workspaces/{corpus_id}/sources/{source_id}/insight",
     summary="Proyección documental explicable (knowledge_explorer_insight/v1)",
 )
-async def source_insight(
-    corpus_id: UUID, source_id: UUID, request: Request
-) -> dict:
+async def source_insight(corpus_id: UUID, source_id: UUID, request: Request) -> dict:
     from sqlalchemy import text
 
     from src.infrastructure.postgres.session import get_async_session
     from src.knowledge.understanding.explorer import build_explorer_insight
 
     ctx, ws, _corpus = await _require_corpus(request, corpus_id)
-    sources = await _sources_for_corpus(
-        ctx.organization_id, corpus_id, workspace_id=ws.id
-    )
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
     source = next((item for item in sources if str(item["id"]) == str(source_id)), None)
     if source is None:
         raise HTTPException(404, "Source not found in this workspace")
 
-    documents = await PostgresStructuredDocumentRepository().list_documents(
-        ctx.organization_id, source_id, limit=1
-    )
+    start = time.perf_counter()
+    documents = await PostgresStructuredDocumentRepository().list_documents(ctx.organization_id, source_id, limit=20)
+    documents_total = await PostgresStructuredDocumentRepository().count_documents(ctx.organization_id, source_id)
     document = documents[0] if documents else None
 
     session = await get_async_session()
     try:
-        objects = (
-            await session.execute(
-                text(
-                    "SELECT id, kind, name, display_name, description, status, "
-                    "confidence, evidence_count, metadata "
-                    "FROM knowledge_canonical_objects "
-                    "WHERE organization_id = :oid AND source_id = :sid "
-                    "ORDER BY evidence_count DESC, updated_at DESC LIMIT 1000"
-                ),
-                {"oid": ctx.organization_id, "sid": source_id},
+        objects_total = int(
+            (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) AS total FROM knowledge_canonical_objects "
+                        "WHERE organization_id = :oid AND source_id = :sid"
+                    ),
+                    {"oid": ctx.organization_id, "sid": source_id},
+                )
+            ).scalar_one()
+            or 0
+        )
+        objects: list[dict] = []
+        objects_cursor: str | None = None
+        objects_truncated = False
+        while len(objects) < 10000:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, kind, name, display_name, description, status, "
+                        "confidence, evidence_count, metadata "
+                        "FROM knowledge_canonical_objects "
+                        "WHERE organization_id = :oid AND source_id = :sid "
+                        "AND (:cursor IS NULL OR id > CAST(:cursor AS uuid)) "
+                        "ORDER BY id ASC LIMIT 1000"
+                    ),
+                    {
+                        "oid": ctx.organization_id,
+                        "sid": source_id,
+                        "cursor": objects_cursor,
+                    },
+                )
+            ).fetchall()
+            if not rows:
+                break
+            objects.extend(dict(row._mapping) for row in rows)
+            objects_cursor = str(rows[-1].id)
+            if len(rows) < 1000:
+                break
+        if objects_total > len(objects):
+            objects_truncated = True
+        objects_total = max(objects_total, len(objects))
+
+        evidence_total = int(
+            (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) AS total FROM evidence_ledger "
+                        "WHERE organization_id = :oid AND source_id = :sid"
+                    ),
+                    {"oid": ctx.organization_id, "sid": source_id},
+                )
+            ).scalar_one()
+            or 0
+        )
+        passages_available = int(
+            (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) AS total FROM evidence_ledger "
+                        "WHERE organization_id = :oid AND source_id = :sid "
+                        "AND excerpt IS NOT NULL AND excerpt <> ''"
+                    ),
+                    {"oid": ctx.organization_id, "sid": source_id},
+                )
+            ).scalar_one()
+            or 0
+        )
+        evidence: list[dict] = []
+        evidence_truncated = False
+        evidence_cursor = None
+        while len(evidence) < 10000:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, canonical_id, page, section_path, excerpt, locator, "
+                        "evidence_type, strength, created_at "
+                        "FROM evidence_ledger "
+                        "WHERE organization_id = :oid AND source_id = :sid "
+                        "AND (:has_cursor = false OR "
+                        "     (COALESCE(strength, 0), created_at, id) < "
+                        "     (:c_strength, :c_created, CAST(:c_id AS uuid))) "
+                        "ORDER BY strength DESC NULLS LAST, created_at DESC, id ASC "
+                        "LIMIT 1000"
+                    ),
+                    {
+                        "oid": ctx.organization_id,
+                        "sid": source_id,
+                        "has_cursor": evidence_cursor is not None,
+                        "c_strength": evidence_cursor[0] if evidence_cursor else 0,
+                        "c_created": evidence_cursor[1] if evidence_cursor else None,
+                        "c_id": evidence_cursor[2] if evidence_cursor else None,
+                    },
+                )
+            ).fetchall()
+            if not rows:
+                break
+            evidence.extend(dict(row._mapping) for row in rows)
+            last = rows[-1]
+            evidence_cursor = (
+                float(last.strength or 0),
+                last.created_at,
+                str(last.id),
             )
-        ).fetchall()
-        evidence = (
-            await session.execute(
-                text(
-                    "SELECT id, canonical_id, page, section_path, excerpt, locator, "
-                    "evidence_type, strength "
-                    "FROM evidence_ledger "
-                    "WHERE organization_id = :oid AND source_id = :sid "
-                    "ORDER BY created_at DESC LIMIT 1000"
-                ),
-                {"oid": ctx.organization_id, "sid": source_id},
-            )
-        ).fetchall()
+            if len(rows) < 1000:
+                break
+        if evidence_total > len(evidence):
+            evidence_truncated = True
     finally:
         await session.close()
 
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
     return build_explorer_insight(
         source=source,
         document=document,
-        objects=[dict(row._mapping) for row in objects],
-        evidence=[dict(row._mapping) for row in evidence],
+        documents=documents,
+        objects=objects,
+        evidence=evidence,
+        read_stats={
+            "objects_total": objects_total,
+            "objects_truncated": objects_truncated,
+            "objects_next_cursor": objects_cursor if objects_truncated else None,
+            "evidence_total": evidence_total,
+            "evidence_truncated": evidence_truncated,
+            "passages_available": passages_available,
+            "documents_total": documents_total,
+            "documents_truncated": documents_total > len(documents),
+            "timing": {
+                "elapsed_ms": elapsed_ms,
+                "documents_read": len(documents),
+                "objects_read": len(objects),
+                "evidence_read": len(evidence),
+            },
+        },
     )
 
 
@@ -275,9 +358,7 @@ async def locate_source(
     request: Request,
 ) -> dict:
     ctx, ws, _corpus = await _require_corpus(request, corpus_id)
-    sources = await _sources_for_corpus(
-        ctx.organization_id, corpus_id, workspace_id=ws.id
-    )
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
     source = next((s for s in sources if str(s["id"]) == str(source_id)), None)
     if source is None:
         raise HTTPException(404, "Source not found in this workspace")
@@ -304,15 +385,11 @@ async def locate_source(
     "/workspaces/{corpus_id}/sources/{source_id}/file",
     summary="Archivo original de la fuente (para el Source Viewer)",
 )
-async def source_file(
-    corpus_id: UUID, source_id: UUID, request: Request
-) -> object:
+async def source_file(corpus_id: UUID, source_id: UUID, request: Request) -> object:
     from fastapi.responses import FileResponse
 
     ctx, ws, _corpus = await _require_corpus(request, corpus_id)
-    sources = await _sources_for_corpus(
-        ctx.organization_id, corpus_id, workspace_id=ws.id
-    )
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
     source = next((s for s in sources if str(s["id"]) == str(source_id)), None)
     if source is None:
         raise HTTPException(404, "Source not found in this workspace")
@@ -327,11 +404,7 @@ async def source_file(
         raise HTTPException(400, str(exc)) from exc
     if not path.exists():
         raise HTTPException(404, "File not found on storage")
-    media_type = (
-        "application/pdf"
-        if path.suffix.lower() == ".pdf"
-        else "application/octet-stream"
-    )
+    media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
     is_pdf = path.suffix.lower() == ".pdf"
     return FileResponse(
         path,
@@ -349,10 +422,9 @@ async def source_file(
 # Chat grounded sobre el corpus (requiere retina V2 activa)
 # ---------------------------------------------------------------------------
 
+
 @router.post("/workspaces/{corpus_id}/chat", summary="Chat grounded V2")
-async def workspace_chat(
-    corpus_id: UUID, body: ChatRequest, request: Request
-) -> dict:
+async def workspace_chat(corpus_id: UUID, body: ChatRequest, request: Request) -> dict:
     settings = get_settings()
     ctx, ws, _corpus = await _require_corpus(request, corpus_id)
 
@@ -375,9 +447,7 @@ async def workspace_chat(
 
     # El corpus es la frontera de recuperación. La UI no decide el ámbito:
     # se resuelve aquí desde la base y nunca se cae al workspace completo.
-    corpus_sources = await _sources_for_corpus(
-        ctx.organization_id, corpus_id, workspace_id=ws.id
-    )
+    corpus_sources = await _sources_for_corpus(ctx.organization_id, corpus_id, workspace_id=ws.id)
     corpus_source_ids = {str(source["id"]) for source in corpus_sources}
     ready_source_ids = {
         str(source["id"])
@@ -439,16 +509,12 @@ async def workspace_chat(
         },
         query_embedding=list(query_embedding),
     )
-    assembled = await get_knowledge_retriever().retrieve(
-        rquery, V2RetrievalOptions()
-    )
+    assembled = await get_knowledge_retriever().retrieve(rquery, V2RetrievalOptions())
 
     # Defensa en profundidad: aunque el retriever ya recibe source_ids, no
     # dejamos pasar ningún chunk cuya fuente esté fuera del corpus resuelto.
     allowed_context = tuple(
-        chunk
-        for chunk in assembled.context
-        if str(chunk.metadata.get("source_id") or "") in set(effective_source_ids)
+        chunk for chunk in assembled.context if str(chunk.metadata.get("source_id") or "") in set(effective_source_ids)
     )
     if len(allowed_context) != len(assembled.context):
         logger.error(
@@ -470,10 +536,7 @@ async def workspace_chat(
         )
         return {"grounded": empty.to_dict(), "retrieval_scope": scope}
 
-    context_snippets = "\n\n---\n\n".join(
-        f"[{i + 1}] {chunk.content}"
-        for i, chunk in enumerate(assembled.context)
-    )
+    context_snippets = "\n\n---\n\n".join(f"[{i + 1}] {chunk.content}" for i, chunk in enumerate(assembled.context))
     prompt = (
         f"{prompt_evidence_block(context_snippets).render()}\n\n"
         f"<user_question>\n{body.query}\n</user_question>\n\n"
@@ -483,8 +546,7 @@ async def workspace_chat(
     llm_response = await get_llm_provider().generate(
         prompt,
         system_prompt=(
-            "You are a grounded enterprise assistant. Never invent facts; "
-            "answer only from the provided context."
+            "You are a grounded enterprise assistant. Never invent facts; answer only from the provided context."
         ),
     )
     grounded = GroundingService().ground(llm_response.content, assembled)
@@ -497,19 +559,13 @@ async def workspace_chat(
         from src.api.deps import get_evidence_ledger_repo
         from src.rag.grounding.recorder import GroundingLedgerRecorder
 
-        evidence_ids = await GroundingLedgerRecorder(
-            get_evidence_ledger_repo()
-        ).record_evidence_aligned(
+        evidence_ids = await GroundingLedgerRecorder(get_evidence_ledger_repo()).record_evidence_aligned(
             organization_id=ctx.organization_id,
             answer=grounded,
             workspace_id=ws.id,
         )
-        payload["evidence_ids"] = [
-            str(eid) for eid in evidence_ids if eid is not None
-        ]
-        payload["citation_evidence_ids"] = [
-            str(eid) if eid is not None else None for eid in evidence_ids
-        ]
+        payload["evidence_ids"] = [str(eid) for eid in evidence_ids if eid is not None]
+        payload["citation_evidence_ids"] = [str(eid) if eid is not None else None for eid in evidence_ids]
     except Exception:  # noqa: BLE001 - el ledger nunca rompe el chat
         logger.warning("Failed to record grounded evidence", corpus_id=str(corpus_id))
 
@@ -540,9 +596,7 @@ async def workspace_chat(
 
 
 @router.post("/workspaces/{corpus_id}/studio", summary="Studio MVP (artefactos reales)")
-async def workspace_studio(
-    corpus_id: UUID, body: StudioRequest, request: Request
-) -> dict:
+async def workspace_studio(corpus_id: UUID, body: StudioRequest, request: Request) -> dict:
     ctx, _ws, _corpus = await _require_corpus(request, corpus_id)
 
     from src.platform.studio.service import CorpusStudioService
@@ -550,9 +604,7 @@ async def workspace_studio(
     artifacts = None
     if body.artifact:
         artifacts = (body.artifact,)
-    result = await CorpusStudioService().build(
-        ctx.organization_id, corpus_id, artifacts=artifacts
-    )
+    result = await CorpusStudioService().build(ctx.organization_id, corpus_id, artifacts=artifacts)
     return result.to_dict()
 
 
@@ -562,9 +614,7 @@ async def workspace_suggestions(corpus_id: UUID, request: Request) -> dict:
 
     from src.rag.suggestions import QuestionSuggestionService
 
-    questions = await QuestionSuggestionService().suggest(
-        ctx.organization_id, corpus_id
-    )
+    questions = await QuestionSuggestionService().suggest(ctx.organization_id, corpus_id)
     return {"suggestions": [q.to_dict() for q in questions]}
 
 
@@ -578,9 +628,7 @@ async def workspace_suggestions(corpus_id: UUID, request: Request) -> dict:
 _READY_SOURCE_STATUSES = frozenset({"indexed", "available", "completed"})
 
 
-async def _require_corpus(
-    request: Request, corpus_id: UUID
-) -> tuple[object, object, dict]:
+async def _require_corpus(request: Request, corpus_id: UUID) -> tuple[object, object, dict]:
     """Corpus autorizado del workspace actual o 404 sin revelar existencia."""
     from src.platform.rbac.policy import require_permission
 
@@ -642,8 +690,7 @@ async def _sources_for_corpus(
                 text(
                     "SELECT id, name, type, status, workspace_id, "
                     "(config_json->>'object_key') AS object_key "
-                    "FROM kb_sources WHERE " + " AND ".join(clauses) +
-                    " ORDER BY created_at DESC"
+                    "FROM kb_sources WHERE " + " AND ".join(clauses) + " ORDER BY created_at DESC"
                 ),
                 params,
             )

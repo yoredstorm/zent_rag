@@ -590,26 +590,81 @@ export type KnowledgeExplorerTopic = {
 
 export type KnowledgeExplorerInsightPayload = {
   contract: string;
+  model_version?: string;
+  generated_at?: string;
   source: {
     source_id: string;
+    document_id?: string | null;
     name?: string;
     genre: string;
     genre_confidence?: number | null;
+    genre_evidence?: { signal?: string; weight?: number; detail?: string }[];
+    document_type?: string | null;
+    document_count?: number;
     pages?: number | null;
     sections?: number | null;
     tables?: number | null;
     status?: string;
   };
+  documents?: {
+    document_id: string;
+    title?: string;
+    content_hash?: string;
+    pages?: number | null;
+    sections?: number | null;
+    tables?: number | null;
+    status?: string;
+    updated_at?: string;
+    primary: boolean;
+  }[];
   summary: string;
   topics: KnowledgeExplorerTopic[];
   warnings: { code: string; message: string; severity: string }[];
+  provenance?: {
+    source_fingerprint?: string | null;
+    document_id?: string | null;
+    source_profile_version?: string | null;
+    model_version?: string;
+    generated_at?: string;
+    evaluation_state?: string;
+    is_stale?: boolean;
+    contract?: string;
+    method?: string;
+    authority?: string;
+  };
+  pagination?: {
+    documents?: { total: number; returned: number; truncated: boolean };
+    objects?: {
+      total: number;
+      returned: number;
+      truncated: boolean;
+      next_cursor?: string | null;
+    };
+    evidence?: {
+      total: number;
+      returned: number;
+      truncated: boolean;
+      next_cursor?: string | null;
+    };
+  };
   counts: {
     objects_total: number;
+    objects_returned?: number;
     objects_visible: number;
     objects_hidden: number;
+    objects_not_evaluated?: number;
+    evidence_total?: number;
+    evidence_returned?: number;
     passages_available?: number;
     revisions?: number;
+    documents_total?: number;
     truncated?: boolean;
+  };
+  read_model?: {
+    elapsed_ms?: number;
+    documents_read?: number;
+    objects_read?: number;
+    evidence_read?: number;
   };
 };
 
