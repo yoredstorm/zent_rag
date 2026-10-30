@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { isApiError } from "../lib/errors";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
 import {
@@ -163,13 +164,11 @@ export default function WorkflowStudioPage() {
   const historyStampRef = useRef(0);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [run, setRun] = useState<RunDetail | null>(null);
-  // El dock de prueba es la hoja móvil: en desktop el panel ya vive en la columna derecha,
-  // así que `?panel=test` no debe abrir un scrim que bloquee el lienzo.
-  const [dockOpen, setDockOpen] = useState(
-    panel === "test" &&
-      typeof window !== "undefined" &&
-      !window.matchMedia("(min-width: 1024px)").matches
-  );
+  const isDesktop = useMediaQuery("(min-width: 1024px)", true);
+  // Un solo panel activo: aside en desktop, hoja inferior en móvil. El drawer
+  // conserva su contenido montado para no perder el resultado al seleccionar
+  // un nodo del lienzo.
+  const [dockOpen, setDockOpen] = useState(false);
   const [patchOpen, setPatchOpen] = useState(false);
   const [pinnedNodes, setPinnedNodes] = useState<string[]>([]);
   const [partialBusy, setPartialBusy] = useState("");
@@ -182,6 +181,20 @@ export default function WorkflowStudioPage() {
   const saveRef = useRef<() => Promise<boolean>>(async () => false);
 
   const status = detail?.status ?? "draft";
+
+  useEffect(() => {
+    if (panel === "test" && !isDesktop) setDockOpen(true);
+  }, [panel, isDesktop]);
+
+  useEffect(() => {
+    if (isDesktop) setDockOpen(false);
+  }, [isDesktop]);
+
+  // Un workflow distinto no debe heredar el overlay del anterior.
+  useEffect(() => {
+    setRun(null);
+    setSelectedNode(null);
+  }, [id]);
 
   const signature = useMemo(
     () => JSON.stringify({ name, description, graph: graph ? prepareGraphForSave(graph) : null }),
@@ -698,7 +711,7 @@ export default function WorkflowStudioPage() {
   return (
     // El shell pone la ruta en modo full-bleed (ver `fullBleed` en App.tsx):
     // aquí solo repartimos la altura entre cabecera, lienzo y dock.
-    <div className="flex h-[calc(100dvh-5.5rem)] min-h-[34rem] min-w-0 flex-col gap-2 lg:h-[calc(100dvh-1.5rem)]">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border pb-3">
         <IconButton
           label="Volver a workflows"
@@ -802,7 +815,11 @@ export default function WorkflowStudioPage() {
             variant="ghost"
             size="sm"
             className="lg:hidden"
-            onClick={() => setDockOpen(true)}
+            aria-expanded={dockOpen}
+            onClick={() => {
+              // Deja terminar el click antes de montar el overlay del drawer.
+              window.setTimeout(() => setDockOpen(true), 0);
+            }}
             data-testid="wf-open-dock"
           >
             Probar
@@ -903,8 +920,8 @@ export default function WorkflowStudioPage() {
             partialBusy={partialBusy}
           />
         </div>
-        {id && (
-          <aside className="hidden w-80 shrink-0 lg:flex xl:w-[22rem]">
+        {id && isDesktop && (
+          <aside className="flex min-h-0 w-80 shrink-0 flex-col xl:w-[22rem]">
             <WorkflowTestPanel
               workflowId={id}
               status={status}
@@ -922,15 +939,14 @@ export default function WorkflowStudioPage() {
       </div>
 
       {/* Mobile: el dock de prueba es una hoja inferior. */}
-      {id && (
+      {id && !isDesktop && (
         <Drawer
           open={dockOpen}
           onOpenChange={setDockOpen}
           title="Probar"
           description="Simula y ejecuta el flujo sin salir del lienzo."
           side="bottom"
-          className="lg:hidden"
-          overlayClassName="lg:hidden"
+          keepMounted
         >
           <div className="grid h-[66dvh] w-full max-w-3xl" data-testid="wf-dock-sheet">
             <WorkflowTestPanel

@@ -98,7 +98,12 @@ const RUN_STATUS_META: Record<string, { status: string; label?: string }> = {
   skipped: { status: "skipped" },
   pending: { status: "pending" },
   running: { status: "running" },
-  simulated: { status: "succeeded", label: "Simulado" },
+  simulated: { status: "simulated" },
+  waiting: { status: "waiting" },
+  preview: { status: "preview" },
+  passed: { status: "passed" },
+  unverified: { status: "unverified" },
+  blocked: { status: "blocked" },
   pending_approval: { status: "pending_approval" },
   approved: { status: "approved" },
 };

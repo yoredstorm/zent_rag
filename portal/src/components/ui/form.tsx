@@ -3,6 +3,7 @@ import * as SwitchPrimitive from "@radix-ui/react-switch";
 import { Check, CircleNotch, Eye, EyeSlash, type Icon } from "@phosphor-icons/react";
 import {
   createContext,
+  forwardRef,
   useContext,
   useId,
   useState,
@@ -134,19 +135,22 @@ export function Input({ icon: IconEl, className, id, ...rest }: InputProps) {
   );
 }
 
-export function Textarea({ className, id, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  const ctx = useFieldContext();
-  return (
-    <textarea
-      id={ctx.id ?? id}
-      aria-describedby={ctx.describedBy}
-      aria-invalid={ctx.invalid || undefined}
-      aria-required={ctx.required || undefined}
-      className={cn("input min-h-20 resize-y leading-relaxed", className)}
-      {...rest}
-    />
-  );
-}
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function Textarea({ className, id, ...rest }, ref) {
+    const ctx = useFieldContext();
+    return (
+      <textarea
+        ref={ref}
+        id={ctx.id ?? id}
+        aria-describedby={ctx.describedBy}
+        aria-invalid={ctx.invalid || undefined}
+        aria-required={ctx.required || undefined}
+        className={cn("input min-h-20 resize-y leading-relaxed", className)}
+        {...rest}
+      />
+    );
+  },
+);
 
 export type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
   children: ReactNode;

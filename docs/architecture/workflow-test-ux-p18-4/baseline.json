@@ -1,0 +1,83 @@
+{
+  "program": "P18.4",
+  "phase": "P18.4-00",
+  "baseline_requested": "bd142c480219eac56df020ca5a8642d513977fd2",
+  "head": "bd142c480219eac56df020ca5a8642d513977fd2",
+  "branch_at_audit": "master",
+  "working_tree_clean": true,
+  "ci": {
+    "status": "NOT_VERIFIED",
+    "reason": "GitHub CLI no disponible; no se consultó el run remoto"
+  },
+  "tests_at_audit": {
+    "portal_typecheck": { "status": "PASS", "errors": 0 },
+    "portal_lint": { "status": "PASS", "errors": 0, "warnings": 26 },
+    "workflow_test_panel": { "status": "PASS", "passed": 13, "failed": 0 },
+    "backend_test_studio": { "status": "PASS", "passed": 10, "failed": 0 },
+    "portal_full_suite": { "status": "NOT_RUN" },
+    "portal_build": { "status": "NOT_RUN" }
+  },
+  "final_verification": {
+    "portal_typecheck": { "status": "PASS", "errors": 0 },
+    "touched_files_lint": { "status": "PASS", "errors": 0, "warnings": 2, "note": "warnings preexistentes" },
+    "workflow_test_panel": { "status": "PASS", "passed": 27, "failed": 0 },
+    "workflow_test_session_and_presentation": { "status": "PASS", "passed": 20, "failed": 0 },
+    "workflow_run_inspector": { "status": "PASS", "passed": 1, "failed": 0 },
+    "backend_test_studio": { "status": "PASS", "passed": 10, "failed": 0 },
+    "portal_build": { "status": "PASS" },
+    "browser_e2e_workflows": { "status": "PASS", "passed": 2, "scope": "e2e/workflows.spec.ts contra vite preview" },
+    "visual_capture": { "status": "PASS", "passed": 1, "scope": "e2e/p18-4-visual.spec.ts, 8 PNG" },
+    "mobile_drawer_e2e": { "status": "PASS", "passed": 1, "scope": "e2e/p18-4-dock.spec.ts" },
+    "modes_e2e": { "status": "PASS", "passed": 1, "scope": "e2e/p18-4-modes.spec.ts" },
+    "approval_e2e": { "status": "PASS", "passed": 1, "scope": "e2e/p18-4-approval.spec.ts" },
+    "wait_resume_e2e": { "status": "PASS", "passed": 1, "scope": "e2e/p18-4-wait.spec.ts" },
+    "real_effect_e2e": { "status": "PASS", "passed": 1, "scope": "e2e/p18-4-effects.spec.ts, notify in-app" },
+    "panel_axe": { "status": "PASS", "scope": "1440 setup/result y 390 setup, sin serious/critical" },
+    "portal_full_suite": { "status": "NOT_CLEAN", "passed": 619, "worker_shutdown_errors": 22 },
+    "screen_reader": { "status": "NOT_RUN" },
+    "human_study": { "status": "NOT_RUN" },
+    "remote_ci": { "status": "NOT_VERIFIED" }
+  },
+  "surface": {
+    "panel_file": "portal/src/components/workflowStudio/WorkflowTestPanel.tsx",
+    "panel_lines_before": 674,
+    "panel_lines_after": 302,
+    "runner_file": "portal/src/components/workflowStudio/useWorkflowTestRunner.ts",
+    "runner_lines": 276,
+    "studio_file": "portal/src/pages/WorkflowStudio.tsx",
+    "studio_lines": 1059,
+    "inspector_file": "portal/src/components/WorkflowRunInspector.tsx",
+    "inspector_lines": 525,
+    "test_file": "portal/src/components/workflowStudio/WorkflowTestPanel.test.tsx",
+    "test_lines": 639
+  },
+  "endpoints": [
+    { "method": "POST", "path": "/api/v1/workflows/{id}/test", "permission": "workflows:run" },
+    { "method": "POST", "path": "/api/v1/workflows/{id}/run", "permission": "workflows:run" },
+    { "method": "GET", "path": "/api/v1/workflows/{id}/runs", "permission": "workflow_runs:read" },
+    { "method": "GET", "path": "/api/v1/workflows/runs/{run_id}", "permission": "workflow_runs:read" },
+    { "method": "GET", "path": "/api/v1/workflows/{id}/sample-outputs", "permission": "workflow_runs:read" },
+    { "method": "GET", "path": "/api/v1/workflows/{id}/test-reports", "permission": "workflow_runs:read" },
+    { "method": "GET", "path": "/api/v1/workflows/{id}/readiness", "permission": "workflows:read" },
+    { "method": "POST", "path": "/api/v1/workflows/instances/{id}/signal", "permission": "workflows:run" }
+  ],
+  "preserved_semantics": [
+    "requested_level !== effective_level",
+    "provider_verified only from backend",
+    "PREVIEW is not PASSED",
+    "sandbox capped to simulation is not a sandbox pass",
+    "POST /run is real execution, not a test",
+    "save-before-run blocks stale graph execution",
+    "onRun syncs canvas overlay",
+    "onSelectNode selects canvas node",
+    "normalizeTestPayload preserves free text and JSON object"
+  ],
+  "known_risks": [
+    "P18.3 resolve_agent empty-tools fallback remains a P0",
+    "run detail and sample outputs are organization-scoped, not workspace-scoped",
+    "history does not compare the current graph hash",
+    "full portal suite has Vitest worker shutdown errors on the first pass",
+    "real effect E2E covers in-app notification only, not external effects",
+    "screen reader and five-user study remain NOT_RUN"
+  ]
+}

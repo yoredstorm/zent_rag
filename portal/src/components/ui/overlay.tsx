@@ -255,6 +255,8 @@ export type DrawerProps = {
   /** Clases del scrim (permite ocultarlo por breakpoint cuando el panel es solo móvil). */
   overlayClassName?: string;
   closeLabel?: string;
+  /** Conserva el contenido montado al cerrar (evita perder estado local). */
+  keepMounted?: boolean;
 } & Omit<HTMLAttributes<HTMLDivElement>, "children">;
 
 const DRAWER_SIDE: Record<NonNullable<DrawerProps["side"]>, string> = {
@@ -281,21 +283,26 @@ export function Drawer({
   className,
   overlayClassName,
   closeLabel = "Cerrar panel",
+  keepMounted = false,
   ...rest
 }: DrawerProps) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <DialogPrimitive.Portal>
+      <DialogPrimitive.Portal forceMount={keepMounted || undefined}>
         <DialogPrimitive.Overlay
+          forceMount={keepMounted || undefined}
           className={cn(
             "fixed inset-0 z-[var(--z-drawer)] animate-fade-in bg-scrim data-[state=closed]:animate-fade-out",
+            keepMounted && "data-[state=closed]:hidden",
             overlayClassName
           )}
         />
         <DialogPrimitive.Content
+          forceMount={keepMounted || undefined}
           className={cn(
             "fixed z-[var(--z-drawer)] flex flex-col border-border bg-overlay shadow-pop outline-none",
             DRAWER_SIDE[side],
+            keepMounted && "data-[state=closed]:hidden",
             className
           )}
           style={side === "bottom" ? undefined : { maxWidth: width }}
