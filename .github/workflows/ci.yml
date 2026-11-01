@@ -11,9 +11,23 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Permisos minimos: el workflow solo lee el repositorio. Los jobs que suben
+# SARIF (gitleaks) declaran el permiso adicional a nivel de job.
+permissions:
+  contents: read
+
+env:
+  # Unica fuente del numero de shards de pytest. La matriz de abajo lo repite
+  # como literal porque `strategy.matrix` no acepta el contexto `env`; el paso
+  # de merge lo recibe por `--splits ${{ env.PYTEST_SHARDS }}`.
+  PYTEST_SHARDS: "6"
+
 jobs:
   secrets-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,12 +72,13 @@ jobs:
           pip-audit --skip-editable
 
   test-shard:
-    name: test (${{ matrix.shard }}/4)
+    name: test (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     env:
       RAG_POSTGRES_HOST: localhost
       RAG_POSTGRES_PORT: "5432"
@@ -123,20 +138,22 @@ jobs:
           python-version: "3.11"
 
       - name: Init DB schema
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-          export PGPASSWORD=zent_ci_password
-          # Baseline scripts only (01–31). Incremental schema (Alembic 002+,
-          # e.g. organizations.primary_region_id) is applied after uv sync via
-          # `alembic upgrade head`, matching Dockerfile.api / docker compose.
+          # psql del contenedor: evita `apt-get update/install` por job y usa
+          # exactamente el cliente de la misma version que el servidor.
           for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
-            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
+            docker exec -i "$PG_CONTAINER" psql -U rag_user -d rag_platform \
+              -v ON_ERROR_STOP=1 < "$f"
           done
 
       - name: Seed dev key (CI-only, mirrors 07-dev-seed.sh)
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          PGPASSWORD=zent_ci_password psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
+          docker exec -i "$PG_CONTAINER" psql -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
 
       - name: Install deps (lock reproducible)
         run: |
@@ -148,6 +165,8 @@ jobs:
 
       - name: Architecture invariants (fast, required)
         if: matrix.shard == 1
+        env:
+          CI_NODE_MANIFEST: artifacts/nodeids-invariants.txt
         run: |
           # Invariantes de arquitectura y contratos: rápido y obligatorio en PR.
           # Un fallo acá es un cambio de contrato, no un test flaky.
@@ -198,7 +217,9 @@ jobs:
             done
           fi
 
-      - name: Run tests (shard ${{ matrix.shard }}/4)
+      - name: Run tests (shard ${{ matrix.shard }}/6)
+        env:
+          CI_NODE_MANIFEST: artifacts/nodeids-shard-${{ matrix.shard }}.txt
         run: |
           set -o pipefail
           # PR: fail-fast (-x) para feedback corto. Push a master: cada shard
@@ -208,9 +229,19 @@ jobs:
           else
             XFLAG=""
           fi
+          # Los tests de invariantes ya corrieron arriba (junit-invariants.xml).
+          # Se excluyen por archivo para que cada test pertenezca a un solo
+          # shard y se ejecute exactamente una vez. La lista se deriva del
+          # propio paso de invariantes para que no pueda divergir.
+          INVARIANT_IGNORES=$(uv run --frozen --no-sync \
+            python scripts/cert/run_invariants.py --list-ignores)
+          # shellcheck disable=SC2086
           uv run --frozen --no-sync pytest tests/ -q --tb=short --timeout=300 \
             --ignore=tests/certification/workflows \
-            --splits 4 --group ${{ matrix.shard }} --durations-path .test_durations \
+            $INVARIANT_IGNORES \
+            --splits 6 --group ${{ matrix.shard }} \
+            --splitting-algorithm least_duration \
+            --durations-path .test_durations \
             $XFLAG --junitxml=artifacts/junit-tests-shard-${{ matrix.shard }}.xml \
             2>&1 | tee /tmp/pytest-shard-${{ matrix.shard }}.log
 
@@ -231,7 +262,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-ci-shard-${{ matrix.shard }}
-          path: artifacts/junit-*.xml
+          path: |
+            artifacts/junit-*.xml
+            artifacts/nodeids-*.txt
           if-no-files-found: ignore
 
   certification:
@@ -292,17 +325,20 @@ jobs:
           python-version: "3.11"
 
       - name: Init DB schema
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-          export PGPASSWORD=zent_ci_password
           for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
-            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
+            docker exec -i "$PG_CONTAINER" psql -U rag_user -d rag_platform \
+              -v ON_ERROR_STOP=1 < "$f"
           done
 
       - name: Seed dev key (CI-only, mirrors 07-dev-seed.sh)
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          PGPASSWORD=zent_ci_password psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
+          docker exec -i "$PG_CONTAINER" psql -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
 
       - name: Install deps (lock reproducible)
         run: |
@@ -339,7 +375,7 @@ jobs:
           path: artifacts/junit-*.xml
           if-no-files-found: ignore
 
-  # Fusiona los JUnit de los 4 shards en el artifact historico `junit-ci`.
+  # Fusiona los JUnit de los 6 shards en el artifact historico `junit-ci`.
   # `scripts/cert/fetch_ci_evidence.py` sigue extrayendo junit-tests.xml y
   # junit-invariants.xml sin cambios.
   test-evidence:
@@ -347,6 +383,7 @@ jobs:
     needs: [test-shard]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -362,34 +399,93 @@ jobs:
         run: |
           python scripts/cert/merge_junit_shards.py \
             --input-dir artifacts/shards \
+            --splits "${PYTEST_SHARDS}" \
+            --invariants artifacts/shards/junit-invariants.xml \
             --out artifacts/junit-tests.xml
+      - name: Verify JUnit covers the full collection
+        run: |
+          python scripts/cert/verify_junit_coverage.py \
+            --junit artifacts/junit-tests.xml \
+            --manifests-dir artifacts/shards \
+            --splits "${PYTEST_SHARDS}"
       - name: Upload certification evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: junit-ci
           path: |
             artifacts/junit-tests.xml
             artifacts/shards/junit-invariants.xml
+          if-no-files-found: error
+      - name: Preserve shard evidence on merge failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-ci-merge-failure
+          path: artifacts/shards/**
           if-no-files-found: ignore
 
-  # Gate con el nombre `test`: mantiene el required check y `build.needs`.
+  # Gate obligatorio con el nombre `test`: conserva el required check de
+  # branch protection y se ejecuta aunque una dependencia falle u omita, para
+  # evaluar TODOS los resultados y no solo el primero.
   test:
     name: test
-    needs: [test-shard, certification, test-evidence]
+    needs:
+      - test-shard
+      - certification
+      - test-evidence
+      - lint
+      - pip-audit
+      - secrets-scan
+      - sdk-python
+      - sdk-node
+      - portal
+      - portal-e2e
+      - kustomize
+      - build
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Require all test jobs
+      - name: Require every quality gate
         env:
           SHARDS: ${{ needs.test-shard.result }}
           CERTIFICATION: ${{ needs.certification.result }}
           EVIDENCE: ${{ needs.test-evidence.result }}
+          LINT: ${{ needs.lint.result }}
+          PIP_AUDIT: ${{ needs.pip-audit.result }}
+          SECRETS_SCAN: ${{ needs.secrets-scan.result }}
+          SDK_PYTHON: ${{ needs.sdk-python.result }}
+          SDK_NODE: ${{ needs.sdk-node.result }}
+          PORTAL: ${{ needs.portal.result }}
+          PORTAL_E2E: ${{ needs.portal-e2e.result }}
+          KUSTOMIZE: ${{ needs.kustomize.result }}
+          BUILD: ${{ needs.build.result }}
         run: |
-          echo "shards=$SHARDS certification=$CERTIFICATION evidence=$EVIDENCE"
-          test "$SHARDS" = "success"
-          test "$CERTIFICATION" = "success"
-          test "$EVIDENCE" = "success"
+          set -uo pipefail
+          status=0
+          for pair in \
+            "test-shard=$SHARDS" \
+            "certification=$CERTIFICATION" \
+            "test-evidence=$EVIDENCE" \
+            "lint=$LINT" \
+            "pip-audit=$PIP_AUDIT" \
+            "secrets-scan=$SECRETS_SCAN" \
+            "sdk-python=$SDK_PYTHON" \
+            "sdk-node=$SDK_NODE" \
+            "portal=$PORTAL" \
+            "portal-e2e=$PORTAL_E2E" \
+            "kustomize=$KUSTOMIZE" \
+            "build=$BUILD"; do
+            name=${pair%%=*}
+            result=${pair#*=}
+            echo "$name=$result"
+            if [ "$result" != "success" ]; then
+              echo "::error::quality gate '$name' no termino en success ($result)"
+              status=1
+            fi
+          done
+          exit "$status"
 
   sdk-python:
     runs-on: ubuntu-latest
@@ -431,8 +527,14 @@ jobs:
       - run: npm run test
       - run: npm run build
 
-  portal-e2e:
+  portal-e2e-shard:
+    name: portal-e2e (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
       RAG_POSTGRES_HOST: localhost
       RAG_POSTGRES_PORT: "5432"
@@ -494,18 +596,27 @@ jobs:
           cache: npm
           cache-dependency-path: portal/package-lock.json
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('portal/package-lock.json') }}
+
       - name: Init DB schema
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-          export PGPASSWORD=zent_ci_password
           for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
-            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
+            docker exec -i "$PG_CONTAINER" psql -U rag_user -d rag_platform \
+              -v ON_ERROR_STOP=1 < "$f"
           done
 
       - name: Seed dev key (mirrors 07-dev-seed.sh)
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          PGPASSWORD=zent_ci_password psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
+          docker exec -i "$PG_CONTAINER" psql -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
 
       - name: Install deps (lock reproducible)
         run: |
@@ -530,11 +641,11 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Run E2E (smoke + axe)
+      - name: Run E2E (shard ${{ matrix.shard }}/2, smoke + axe)
         working-directory: portal
         run: |
           set -o pipefail
-          npx playwright test 2>&1 | tee /tmp/e2e.log
+          npx playwright test --shard=${{ matrix.shard }}/2 2>&1 | tee /tmp/e2e.log
 
       - name: Annotate E2E failures
         if: failure()
@@ -548,9 +659,32 @@ jobs:
             echo "::error::$(echo "$line" | cut -c1-220)"
           done
 
-      - name: Upload API log on failure
-        if: failure()
-        run: cat /tmp/api.log || true
+      - name: Upload E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portal-e2e-diagnostics-${{ matrix.shard }}
+          path: |
+            portal/test-results
+            /tmp/e2e.log
+            /tmp/api.log
+          if-no-files-found: ignore
+
+  # Agregador con el nombre historico `portal-e2e`: si cualquiera de los dos
+  # shards falla u omite, este check falla y el gate `test` bloquea el merge.
+  portal-e2e:
+    name: portal-e2e
+    needs: [portal-e2e-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require both E2E shards
+        env:
+          E2E_RESULT: ${{ needs.portal-e2e-shard.result }}
+        run: |
+          echo "portal-e2e-shard=$E2E_RESULT"
+          test "$E2E_RESULT" = "success"
 
   kustomize:
     runs-on: ubuntu-latest
@@ -566,7 +700,10 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test, sdk-python, sdk-node, portal]
+    timeout-minutes: 20
+    # La imagen se construye en paralelo con los tests: `push: false`, no se
+    # publica ni se despliega. El gate `test` exige que build y SBOM terminen
+    # en success antes de autorizar el release.
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

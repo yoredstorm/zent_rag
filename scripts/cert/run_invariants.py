@@ -36,7 +36,18 @@ def invariant_targets() -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Invariantes de arquitectura (lista CI)")
     parser.add_argument("--out-dir", default="")
+    parser.add_argument(
+        "--list-ignores",
+        action="store_true",
+        help="Imprime un flag --ignore=<archivo> por target y termina (lo usa CI).",
+    )
     args = parser.parse_args()
+
+    targets = invariant_targets()
+    if args.list_ignores:
+        for target in targets:
+            print(f"--ignore={target}")
+        return 0
 
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True
@@ -44,7 +55,6 @@ def main() -> int:
     out_dir = Path(args.out_dir) if args.out_dir else ROOT / "artifacts" / "certification" / sha / "invariants"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    targets = invariant_targets()
     junit = out_dir / "junit-invariants.xml"
     log = out_dir / "pytest-invariants.log"
     command = [sys.executable, "-m", "pytest", *targets, "-q", "--no-header", f"--junitxml={junit}"]

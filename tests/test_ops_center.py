@@ -64,6 +64,26 @@ async def _platform_admin(client: AsyncClient, email: str) -> dict:
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
+async def _backdate_detected_at(incident_id: str, seconds: int) -> None:
+    """Retrasa detected_at para probar MTTR sin un sleep real."""
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "UPDATE incidents SET detected_at = detected_at - make_interval(secs => :secs) "
+                "WHERE id = :iid"
+            ),
+            {"iid": UUID(incident_id), "secs": seconds},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+
 @pytest.mark.asyncio
 async def test_runbooks_seeded_and_crud(async_client: AsyncClient) -> None:
     plat = await _platform_admin(async_client, f"padmin-ops-{uuid4().hex[:8]}@zent.example")
@@ -126,9 +146,8 @@ async def test_incident_lifecycle_ack_resolve_mttr(async_client: AsyncClient) ->
     ack = await async_client.post(f"/api/v1/platform/ops/incidents/{incident_id}/ack", headers=plat)
     assert ack.status_code == 200, ack.text
 
-    import asyncio
-
-    await asyncio.sleep(1.1)
+    # MTTR determinista: detected_at 2s en el pasado en vez de dormir 1.1s.
+    await _backdate_detected_at(incident_id, 2)
     resolved = await async_client.post(
         f"/api/v1/platform/ops/incidents/{incident_id}/resolve?resolution=rotado+modelo",
         headers=plat,
@@ -226,22 +245,7 @@ async def test_escalation_policy_fires_once(async_client: AsyncClient) -> None:
     incident_id = opened.json()["id"]
 
     # Retroceder detected_at para que los pasos ya estén vencidos.
-    from sqlalchemy import text
-
-    from src.infrastructure.postgres.session import get_async_session
-
-    session = await get_async_session()
-    try:
-        await session.execute(
-            text(
-                "UPDATE incidents SET detected_at = NOW() - interval '30 minutes' "
-                "WHERE id = :iid"
-            ),
-            {"iid": UUID(incident_id)},
-        )
-        await session.commit()
-    finally:
-        await session.close()
+    await _backdate_detected_at(incident_id, 30 * 60)
 
     check1 = await async_client.post("/api/v1/platform/ops/escalations/check", headers=plat)
     assert check1.status_code == 200, check1.text

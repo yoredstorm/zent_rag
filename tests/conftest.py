@@ -382,3 +382,18 @@ async def choose_start_mode(
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def pytest_collection_finish(session) -> None:
+    """Escribe los nodeids seleccionados para verificar la evidencia JUnit.
+
+    Solo se activa en CI (`CI_NODE_MANIFEST`). pytest-split ya aplico su
+    seleccion, asi que la union de manifiestos de todos los shards debe ser
+    exactamente la suite recolectada. No agrega una segunda coleccion.
+    """
+    manifest = os.environ.get("CI_NODE_MANIFEST")
+    if not manifest:
+        return
+    path = Path(manifest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(item.nodeid for item in session.items), encoding="utf-8")
