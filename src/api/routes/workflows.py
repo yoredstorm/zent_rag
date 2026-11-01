@@ -1893,6 +1893,18 @@ class IntentRouteTestIn(BaseModel):
     config: dict = Field(default_factory=dict)
 
 
+class PublishDataQueryIn(BaseModel):
+    connector_ref: str = Field(..., max_length=120)
+    resource_ref: str = Field(..., max_length=200)
+    operation: str = Field(default="get_one", pattern="^(get_one|list|count)$")
+    projection: list[str] = Field(..., min_length=1, max_length=50)
+    parameter: dict | None = None
+    required_predicates: list[dict] = Field(default_factory=list, max_length=20)
+    max_rows: int = Field(default=1, ge=1, le=500)
+    capability_ref: str | None = Field(default=None, max_length=120)
+    label: str | None = Field(default=None, max_length=200)
+
+
 def _data_source_http_error(exc: Any) -> HTTPException:
     return HTTPException(
         exc.status_code,
@@ -2026,6 +2038,35 @@ async def tenant_data_query_plans(request: Request):
     return await list_data_query_plans(
         ctx.organization_id, workspace_id, permissions=ctx.permissions
     )
+
+
+@router.post(
+    "/data-query/plans",
+    summary="Publicar una consulta autorizada desde un conector",
+)
+async def tenant_publish_data_query_plan(body: PublishDataQueryIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_sources import (
+        DataSourceError,
+        publish_data_query_plan,
+    )
+
+    ctx = require_permission(request, "workflows:update")
+    workspace_id = await _workspace_id(request)
+    if workspace_id is None:
+        raise HTTPException(
+            400,
+            detail={"error_code": "WORKSPACE_REQUIRED", "message": "X-Workspace-Id requerido"},
+        )
+    try:
+        return await publish_data_query_plan(
+            ctx.organization_id,
+            workspace_id,
+            body.model_dump(exclude_none=True),
+            permissions=ctx.permissions,
+        )
+    except DataSourceError as exc:
+        raise _data_source_http_error(exc) from exc
 
 
 @router.post(

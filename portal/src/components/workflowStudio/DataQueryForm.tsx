@@ -12,6 +12,7 @@ import { useAuth } from "../../auth";
 import type { ParameterLevel } from "../../lib/businessSchema";
 import type { DataFieldOption, DataSourceOption } from "../../lib/dataPicker";
 import { DataPicker } from "./DataPicker";
+import { PublishQueryModal } from "./PublishQueryModal";
 import { Button, Field, Input, Select, StatusBadge } from "../ui";
 
 export type DataQueryParameter = {
@@ -98,6 +99,7 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   useEffect(() => {
     if (!session) return;
@@ -204,13 +206,28 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
 
   if (plans.length === 0) {
     return (
-      <div className="rounded-md border border-border bg-soft/50 p-3" data-testid="wf-dq-empty">
-        <p className="text-[12px] font-medium text-text">No hay consultas publicadas</p>
-        <p className="mt-1 text-[12px] text-muted">
-          Pide a un administrador que publique una vista o tabla autorizada. Después podrás
-          elegirla aquí sin escribir SQL.
-        </p>
-      </div>
+      <>
+        <div className="rounded-md border border-border bg-soft/50 p-3" data-testid="wf-dq-empty">
+          <p className="text-[12px] font-medium text-text">No hay consultas publicadas</p>
+          <p className="mt-1 text-[12px] text-muted">
+            Publica una tabla autorizada de tu conector. Después podrás usarla aquí sin escribir SQL.
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="mt-2"
+            onClick={() => setPublishOpen(true)}
+            data-testid="wf-dq-publish"
+          >
+            Publicar una consulta
+          </Button>
+        </div>
+        <PublishQueryModal
+          open={publishOpen}
+          onOpenChange={setPublishOpen}
+          onPublished={() => window.location.reload()}
+        />
+      </>
     );
   }
 

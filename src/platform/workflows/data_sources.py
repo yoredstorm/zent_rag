@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 
@@ -117,7 +117,157 @@ async def list_data_query_plans(
     return {"plans": plans}
 
 
-async def _managed_source(organization_id: UUID, workspace_id: UUID, source_id: UUID) -> Any:
+async def publish_data_query_plan(
+    organization_id: UUID,
+    workspace_id: UUID,
+    body: dict[str, Any],
+    *,
+    permissions: frozenset[str] | set[str] | None = None,
+) -> dict[str, Any]:
+    """Publica un plan canónico desde una tabla descubierta del conector."""
+    from src.connectors.plugin import get_plugin
+    from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
+    from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+    from src.platform.workflows.bindings import upsert_binding
+
+    source_ref = str(body.get("connector_ref") or "")
+    source_kind, connector_id = _parse_source_ref(source_ref)
+    if source_kind != "connector":
+        raise DataSourceError(400, "INVALID_PARAMS", "solo conectores externos por ahora")
+    connector = await PostgresConnectorRepository().get_connector(
+        organization_id, connector_id
+    )
+    if connector is None or str(connector.status or "").lower() != "active":
+        raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "conector no expuesto")
+    if connector.workspace_id and str(connector.workspace_id) != str(workspace_id):
+        raise DataSourceError(403, "PERMISSION_DENIED", "conector de otro workspace")
+    resource_ref = str(body.get("resource_ref") or "")
+    if "." not in resource_ref:
+        raise DataSourceError(400, "INVALID_PARAMS", "resource_ref debe ser schema.tabla")
+    schema_name, table_name = resource_ref.split(".", 1)
+    operation = str(body.get("operation") or "get_one")
+    if operation not in ("get_one", "list", "count"):
+        raise DataSourceError(400, "INVALID_PARAMS", "operación no permitida")
+    projection = body.get("projection")
+    if not isinstance(projection, list) or not projection:
+        raise DataSourceError(400, "INVALID_PARAMS", "projection requerida")
+    projection = [str(column) for column in projection][:50]
+
+    config_json = connector.config_json if isinstance(connector.config_json, dict) else {}
+    secrets = await get_secret_store().get(organization_id, connector_id)
+    try:
+        plugin = get_plugin(connector.type, config_json, secrets or {})
+    except ValueError as exc:
+        raise DataSourceError(400, "PROVIDER_NOT_SUPPORTED", str(exc)) from exc
+    try:
+        discovery = await plugin.discover()
+    except Exception as exc:  # noqa: BLE001
+        raise DataSourceError(409, "CONNECTION_FAILED", "no se pudo descubrir el schema") from exc
+    finally:
+        try:
+            await plugin.close()
+        except Exception:
+            pass
+    table = next(
+        (
+            item
+            for item in discovery.tables
+            if str(item.schema or "public") == schema_name and item.name == table_name
+        ),
+        None,
+    )
+    if table is None:
+        raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "tabla no expuesta")
+    columns = {str(column.name): column for column in table.columns}
+    if not set(projection).issubset(columns):
+        raise DataSourceError(400, "INVALID_PARAMS", "proyección con columnas inexistentes")
+    parameter = body.get("parameter")
+    parameters: list[dict[str, Any]] = []
+    if parameter:
+        if not isinstance(parameter, dict):
+            raise DataSourceError(400, "INVALID_PARAMS", "parameter inválido")
+        field = str(parameter.get("field") or "")
+        name = str(parameter.get("name") or field)
+        if field not in columns or not name:
+            raise DataSourceError(400, "INVALID_PARAMS", "parámetro con columna inexistente")
+        parameters.append(
+            {
+                "name": name,
+                "field": field,
+                "operator": str(parameter.get("operator") or "eq"),
+                "type": str(parameter.get("type") or "string"),
+                "required": bool(parameter.get("required", True)),
+            }
+        )
+    predicates = body.get("required_predicates")
+    required = []
+    for item in predicates or []:
+        if not isinstance(item, dict) or str(item.get("field") or "") not in columns:
+            raise DataSourceError(400, "INVALID_PARAMS", "predicado inválido")
+        required.append(
+            {
+                "field": str(item["field"]),
+                "op": str(item.get("op") or "eq"),
+                "source": "binding",
+                "value": item.get("value"),
+            }
+        )
+    allowed = set(projection) | {item["field"] for item in parameters}
+    allowed |= {item["field"] for item in required}
+    try:
+        max_rows = int(body.get("max_rows") or (1 if operation == "get_one" else 50))
+    except (TypeError, ValueError):
+        max_rows = 50
+    max_rows = min(max(max_rows, 1), 500)
+    suffix = uuid4().hex[:8]
+    capability_ref = str(
+        body.get("capability_ref")
+        or f"data.{schema_name}.{table_name}.{operation}.{suffix}"
+    )[:120]
+    plan = {
+        "schema": "zent.data.query.binding/v1",
+        "scope": "workspace",
+        "connection_ref": str(connector_id),
+        "resource": {
+            "schema": schema_name,
+            "name": table_name,
+            "kind": "view" if table.is_view else "table",
+        },
+        "operation": operation,
+        "projection": projection,
+        "allowed_columns": sorted(allowed),
+        "required_predicates": required,
+        "parameters": parameters,
+        "policy": {"max_rows": max_rows, "timeout_ms": 3000, "read_only": True},
+        "resource_ref": str(body.get("label") or f"{schema_name}/{table_name}"),
+        "column_types": {
+            column: str(columns[column].data_type)
+            for column in allowed
+            if column in columns
+        },
+    }
+    binding = await upsert_binding(
+        organization_id,
+        capability_ref,
+        "connected_db",
+        config=plan,
+        workspace_id=workspace_id,
+    )
+    invalidate_data_catalog(organization_id, workspace_id)
+    return {
+        "binding_ref": str(binding.get("id") or ""),
+        "capability_ref": capability_ref,
+        "resource_ref": plan["resource_ref"],
+        "operation": operation,
+        "projection": projection,
+        "parameters": parameters,
+        "max_rows": max_rows,
+    }
+
+
+async def _managed_source(
+    organization_id: UUID, workspace_id: UUID, source_id: UUID
+) -> Any:
     session = await get_async_session()
     try:
         row = (
