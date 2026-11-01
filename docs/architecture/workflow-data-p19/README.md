@@ -8,8 +8,9 @@ conversacionales sobre datos reales.
 | Fase | Estado | Documento |
 |---|---|---|
 | P19-00 Auditoría y baseline | COMPLETADO | [00-audit-baseline.md](./00-audit-baseline.md) |
-| P19-01 Motor declarativo seguro | BLOQUEADO hasta aprobar ADR | [00-adr-query-node.md](./00-adr-query-node.md) |
-| P19-02 a P19-14 | No iniciadas | — |
+| P19-01 Motor declarativo seguro | COMPLETADO (backend) | [01-declarative-query-engine.md](./01-declarative-query-engine.md) |
+| P19-02 Catálogo de recursos | PENDIENTE | — |
+| P19-03 a P19-14 | No iniciadas | — |
 
 ## Artefactos P19-00
 
@@ -29,9 +30,11 @@ conversacionales sobre datos reales.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_workflow_data_p19_audit.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_workflow_data_p19_query.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_workflow_data_p19_query_integration.py -q
 pnpm --dir portal exec vitest run src/lib/workflowGraph.p19.test.ts
 ```
 
-Los 8 casos `xfail(strict=True)` son hallazgos P19-00; deben convertirse en PASS
-en P19-01 sin debilitar los asserts. No se declara PASS de seguridad ni GO de
-producción.
+P19-01 convirtió los 8 `xfail` de P19-00 en PASS con rechazo explícito
+(`UNEXPECTED_PARAMETER`/`INVALID_PARAMS`), no relajando los asserts. No se
+declara PASS de seguridad global ni GO de producción.

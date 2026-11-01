@@ -311,6 +311,10 @@ No se aprueba P19-03 por analogía con el editor actual.
 apruebe la ADR y acepte que los P0 anteriores son el alcance de cierre. No se
 declara PASS de seguridad ni GO de producción.
 
+> **Actualización posterior:** la ADR fue aprobada. P19-01 quedó COMPLETADO en
+> backend y convirtió los 8 `xfail` en PASS. Ver
+> `01-declarative-query-engine.md`.
+
 ## 9. Superficie de cambio y rollback
 
 Archivos añadidos por P19-00:

@@ -1,5 +1,10 @@
 # P19-00 — Evidencia de pruebas y baseline reproducible
 
+> **Actualización P19-01:** este documento conserva la evidencia histórica del
+> baseline. Los 8 casos `xfail` fueron convertidos en PASS por P19-01 con rechazo
+> explícito de claves de autoridad. La evidencia vigente está en
+> `01-declarative-query-engine.md`.
+
 - **Fecha:** 2026-11-01
 - **Rama:** `feat/p19-workflow-data-orchestration`
 - **Base:** `47fa8a09fa9f99ab7d77aa9ae555aa3528169253` (master)

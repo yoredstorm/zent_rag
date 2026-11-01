@@ -1,7 +1,9 @@
 # P19-00 — ADR: consulta de datos como capacidad de primera clase
 
-- **Estado:** Propuesta para aprobación humana. No implementada.
-- **Fase:** P19-00 (auditoría). Habilita P19-01.
+- **Estado:** Aprobada. ADR-001/002 implementadas parcialmente en P19-01
+  (`data_query` backend: `get_one`, `list`, `count`). El nodo visual llega en
+  P19-03.
+- **Fase:** P19-00 (decisión). Habilita P19-01.
 - **Decisores requeridos:** Principal Workflow Architect, Security Architect,
   Data Platform Lead.
 - **Contexto reproducible:** `00-audit-baseline.md`, tests
