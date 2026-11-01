@@ -154,5 +154,14 @@
       "result": "PASS",
       "passed": 1
     }
+  },
+  "ci": {
+    "workflow": "CI",
+    "run_id": 41274066260,
+    "head_sha": "1bbe4b4b8e6148cbbddd3437223c92367bd1412a",
+    "status": "success",
+    "jobs_total": 16,
+    "jobs_success": 16,
+    "jobs_failed": 0
   }
 }

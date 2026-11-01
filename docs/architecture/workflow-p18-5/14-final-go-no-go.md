@@ -83,6 +83,9 @@ un LLM. Por tanto no se declara usabilidad certificada.
   contra Docker `:8080` con migración 177 aplicada).
 - Docker local actualizado: API `rag-api` healthy, portal `rag-portal` healthy,
   worker arriba; `alembic current` = `177 (head)`.
+- CI GitHub del commit `1bbe4b4` (run `41274066260`): 16/16 jobs success,
+  incluidos `test (1/4..4/4)`, `certification`, `portal`, `portal-e2e`, `lint`,
+  `secrets-scan`, `pip-audit`, `kustomize` y SDKs.
 
 ## STOP de expansión
 
