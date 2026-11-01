@@ -3,6 +3,7 @@
 ## Identidad
 
 - Rama: `fix/p18-5-security-execution-live-studio`
+- Merge a master: `8893fac` (no-ff)
 - Commits: `3b859f9`, `e23b2ed`, `732e25e`, `7730264`
 - Baseline: `e6c42c2579df0e997ef2a0a0d0916f05dc735bef`
 

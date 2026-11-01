@@ -135,5 +135,7 @@
     "GO_CUSTOMER_PILOT",
     "GO_GENERAL_AVAILABILITY",
     "Operaciones irreversibles reales"
-  ]
+  ],
+  "merge_sha": "8893fac",
+  "merged_to": "master"
 }
