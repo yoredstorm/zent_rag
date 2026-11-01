@@ -102,7 +102,7 @@ def main() -> int:
         print(f"run {run['id']} todavía {run['status']}")
         return 3
 
-    jobs = _api(f"actions/runs/{run['id']}/jobs?per_page=30", token)["jobs"]
+    jobs = _api(f"actions/runs/{run['id']}/jobs?per_page=100&filter=all", token)["jobs"]
     test_job = next((j for j in jobs if j["name"] == "test"), None)
 
     out_dir = ROOT / "artifacts" / "certification" / args.sha / "ci"
@@ -141,7 +141,7 @@ def main() -> int:
                 "schema": "zent.cert.suite-run/3",
                 **common,
                 "label": "ci-full-suite",
-                "command": "CI job `test`: uv run pytest tests/ -v --tb=short --timeout=300",
+                "command": "CI job `test`: 6 shards (file-level LPT) + architecture invariants; junit-ci artifact",
                 "exit_code": 0 if run["conclusion"] == "success" else 1,
                 "result": "pass" if run["conclusion"] == "success" else "fail",
                 "junit": str(tests_junit),

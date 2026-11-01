@@ -180,14 +180,23 @@ suma.
 | Diseño | Shards | Tests por shard | Tiempo estimado por shard | Spread | Runner-min de tests (aprox.) |
 |---|---:|---|---:|---:|---:|
 | `duration_based_chunks` (actual) | 4 | 2.302 / 973 / 2.016 / 725 | 11,85 / 11,33 / 11,12 / 7,87 min (real) | 3,98 min | 45,9 |
-| `least_duration` + duraciones refresh | 4 | 1.510 / 1.502 / 1.502 / 1.502 | 9,96 min cada uno | ~0 s | 44–46 |
-| `least_duration` + duraciones refresh | 6 | 1.009 / 1.000 / 1.001 / 1.002 / 1.002 / 1.002 | 6,64 min cada uno | ~0 s | 52–55 |
-| `least_duration` + duraciones refresh | 8 | ~750 cada uno | 4,98 min cada uno | ~0 s | 62–66 |
+| LPT por archivo + duraciones refresh | 4 | n/a (archivos completos) | 9,96 min cada uno | ~0 s | 44–46 |
+| LPT por archivo + duraciones refresh | 6 | 1.364 / 790 / 872 / 783 / 980 / 830 (real #503) | 6,64 min estimado; 7,31 / 4,83 / 5,84 / 7,25 / 6,18 / 6,88 real | 2,48 min real | 52–55 |
+| LPT por archivo + duraciones refresh | 8 | n/a (archivos completos) | 4,98 min cada uno | ~0 s | 62–66 |
 
-Con el `.test_durations` **sin refresh**, `least_duration` a 6 shards también
+Con el `.test_durations` **sin refresh**, LPT a nivel test a 6 shards también
 mejora el desbalance (predicción 6,41–6,75 min reales por shard, spread 0,34
 min) porque mezcla tests de todo el archivo en lugar de cortar bloques
 contiguos. El refresh reduce el spread a ~0.
+
+**Hallazgo de implementación:** `least_duration` a nivel test se probó en el
+run #499 y se descartó. Al asignar tests individuales, separó
+`test_policies_seeded_and_revision` del resto de
+`tests/test_governance.py`; `test_governance_dashboard` quedó en otro shard y
+falló (`organizations_governing = 0`). La unidad segura de sharding es el
+**archivo completo**, no el test individual. El planificador final hace LPT
+sobre la duración total de cada archivo; conserva el balance y el estado
+intra-archivo. Ver `docs/ci-optimization-results.md`.
 
 Costo/beneficio: 4→6 shards baja el shard más lento de ~10,0 a ~6,6 min
 (−34 %) con un aumento de runner-minutes de tests de ~7 min. 6→8 shards baja
@@ -306,7 +315,7 @@ necesario; riesgo = probabilidad de romper cobertura/contratos.
 
 | Prioridad | Cambio | Impacto estimado | Complejidad | Riesgo | Estado |
 |---|---|---|---:|---|---|
-| P0 | `--splitting-algorithm least_duration` + refresh de `.test_durations` desde JUnit de CI | Shard más lento 11,85 → ~6,6 min; spread ~0 | Baja | Bajo | Fase 2 |
+| P0 | LPT por archivo + refresh de `.test_durations` desde JUnit de CI (en vez de `least_duration` a nivel test) | Shard más lento 11,85 → ~7,3 min de test; spread real 2,5 min | Baja | Bajo | Fase 2 (implementado) |
 | P0 | 6 shards en lugar de 4 | Wall de tests ~−34 %; runner-min +~7 | Baja | Bajo | Fase 2 |
 | P0 | Excluir los 34 archivos de invariantes de los shards y fusionar `junit-invariants.xml` una sola vez | −0,6 min y elimina 407 duplicados | Media | Bajo | Fase 2 |
 | P0 | `build` sin `needs` (paralelo, `push: false`) | −1,4 min de ruta crítica | Baja | Bajo | Fase 4 |
