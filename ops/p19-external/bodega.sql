@@ -32,6 +32,19 @@ CREATE TABLE IF NOT EXISTS bodega.stock_movements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS bodega.stock_reservations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_number TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    status TEXT NOT NULL DEFAULT 'active',
+    idempotency_key TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    committed_at TIMESTAMPTZ,
+    released_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS bodega.orders (
     order_number TEXT PRIMARY KEY,
     customer_ref TEXT NOT NULL,
@@ -126,4 +139,4 @@ END $$;
 GRANT USAGE ON SCHEMA bodega TO p19_reader, p19_writer;
 GRANT SELECT ON ALL TABLES IN SCHEMA bodega TO p19_reader;
 GRANT SELECT ON bodega.products, bodega.order_items, bodega.product_catalog_v TO p19_writer;
-GRANT SELECT, INSERT, UPDATE ON bodega.stock, bodega.stock_movements, bodega.orders TO p19_writer;
+GRANT SELECT, INSERT, UPDATE ON bodega.stock, bodega.stock_movements, bodega.stock_reservations, bodega.orders TO p19_writer;

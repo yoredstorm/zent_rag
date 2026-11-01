@@ -52,13 +52,28 @@ def main() -> None:
                     },
                 },
                 {
+                    "id": "reserve",
+                    "type": "capability_call",
+                    "label": "Reservar stock",
+                    "config": {
+                        "capability": "bodega.stock.reserve",
+                        "inputs": {
+                            "order_number": "{{trigger.order_number}}",
+                            "sku": "{{trigger.sku}}",
+                            "quantity": "{{trigger.quantity}}",
+                            "ttl_seconds": 900,
+                        },
+                    },
+                },
+                {
                     "id": "approval",
                     "type": "human_approval",
                     "label": "Aprobar pedido",
                     "config": {
                         "action": f"Aprobar pedido {ORDER}",
                         "summary": (
-                            "Pedido {{trigger.order_number}} · SKU {{trigger.sku}} · cantidad {{trigger.quantity}}"
+                            "Pedido {{trigger.order_number}} · SKU {{trigger.sku}} · "
+                            "cantidad {{trigger.quantity}}"
                         ),
                         "data": {
                             "order_number": "{{trigger.order_number}}",
@@ -69,16 +84,43 @@ def main() -> None:
                     },
                 },
                 {
+                    "id": "decision",
+                    "type": "condition",
+                    "label": "¿Aprobado?",
+                    "config": {
+                        "field": "{{nodes.approval.output.decision}}",
+                        "operator": "==",
+                        "value": "approved",
+                    },
+                    "output_ports": [
+                        {"name": "out", "type": "boolean"},
+                        {"name": "then", "type": "json"},
+                        {"name": "else", "type": "json"},
+                    ],
+                },
+                {
                     "id": "commit",
                     "type": "capability_call",
-                    "label": "Descontar stock",
+                    "label": "Confirmar stock",
                     "config": {
                         "capability": "bodega.stock.commit",
                         "inputs": {
                             "order_number": "{{nodes.approval.output.data.order_number}}",
                             "sku": "{{nodes.approval.output.data.sku}}",
                             "quantity": "{{nodes.approval.output.data.quantity}}",
-                            "idempotency_key": "{{nodes.approval.output.data.order_number}}-{{nodes.approval.output.data.sku}}",  # noqa: E501
+                        },
+                    },
+                },
+                {
+                    "id": "release",
+                    "type": "capability_call",
+                    "label": "Liberar reserva",
+                    "config": {
+                        "capability": "bodega.stock.release",
+                        "inputs": {
+                            "order_number": "{{nodes.approval.output.data.order_number}}",
+                            "sku": "{{nodes.approval.output.data.sku}}",
+                            "quantity": "{{nodes.approval.output.data.quantity}}",
                         },
                     },
                 },
@@ -101,10 +143,14 @@ def main() -> None:
             ],
             "edges": [
                 {"id": "e1", "from_node": "t", "from_port": "out", "to_node": "hold", "to_port": "in"},
-                {"id": "e2", "from_node": "hold", "from_port": "out", "to_node": "approval", "to_port": "in"},
-                {"id": "e3", "from_node": "approval", "from_port": "out", "to_node": "commit", "to_port": "in"},
-                {"id": "e4", "from_node": "commit", "from_port": "out", "to_node": "notify", "to_port": "in"},
-                {"id": "e5", "from_node": "notify", "from_port": "out", "to_node": "end", "to_port": "in"},
+                {"id": "e2", "from_node": "hold", "from_port": "out", "to_node": "reserve", "to_port": "in"},
+                {"id": "e3", "from_node": "reserve", "from_port": "out", "to_node": "approval", "to_port": "in"},
+                {"id": "e4", "from_node": "approval", "from_port": "out", "to_node": "decision", "to_port": "in"},
+                {"id": "e5", "from_node": "decision", "from_port": "then", "to_node": "commit", "to_port": "in"},
+                {"id": "e6", "from_node": "decision", "from_port": "else", "to_node": "release", "to_port": "in"},
+                {"id": "e7", "from_node": "commit", "from_port": "out", "to_node": "notify", "to_port": "in"},
+                {"id": "e8", "from_node": "release", "from_port": "out", "to_node": "end", "to_port": "in"},
+                {"id": "e9", "from_node": "notify", "from_port": "out", "to_node": "end", "to_port": "in"},
             ],
             "variables": {},
             "entrypoints": ["t"],

@@ -1406,14 +1406,15 @@ async def _execute_inventory_action(
     *,
     workspace_id: UUID | None,
 ) -> dict[str, Any]:
-    """Acción de inventario gobernada: commit de stock con idempotencia."""
+    """Inventario gobernado: reserva temporal, commit o release."""
     from urllib.parse import quote_plus
 
     from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
     from src.infrastructure.secrets.secret_store_resolver import get_secret_store
 
     config = binding.get("config") or {}
-    if str(config.get("action") or "") != "commit_stock":
+    action = str(config.get("action") or "")
+    if action not in ("reserve_stock", "commit_stock", "release_stock"):
         raise BindingError("PROVIDER_NOT_SUPPORTED", "acción de inventario no soportada")
     if config.get("write") is not True:
         raise BindingError("PERMISSION_DENIED", "el conector no está habilitado para escritura")
@@ -1433,9 +1434,10 @@ async def _execute_inventory_action(
         raise BindingError("INVALID_PARAMS", "quantity inválida") from exc
     if quantity < 1 or quantity > int(config.get("max_quantity") or 100):
         raise BindingError("INVALID_PARAMS", "quantity fuera de rango")
-    idempotency_key = str(
-        payload.get("idempotency_key") or f"commit:{order_number}:{sku}"
-    )[:160]
+    try:
+        ttl_seconds = min(max(int(payload.get("ttl_seconds") or 900), 30), 3600)
+    except (TypeError, ValueError):
+        ttl_seconds = 900
 
     connector = await PostgresConnectorRepository().get_connector(
         organization_id, connector_id
@@ -1463,10 +1465,21 @@ async def _execute_inventory_action(
     engine = create_async_engine(dsn, pool_size=1, max_overflow=0, pool_pre_ping=True)
     try:
         async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "WITH expired AS ("
+                    " UPDATE bodega.stock_reservations SET status = 'expired', released_at = NOW() "
+                    " WHERE status = 'active' AND expires_at <= NOW() "
+                    " RETURNING sku, quantity"
+                    "), agg AS (SELECT sku, SUM(quantity) AS qty FROM expired GROUP BY sku) "
+                    "UPDATE bodega.stock s SET reserved = GREATEST(s.reserved - agg.qty, 0) "
+                    "FROM agg WHERE s.sku = agg.sku"
+                )
+            )
             order = (
                 await conn.execute(
                     text(
-                        "SELECT status, payment_status FROM bodega.orders "
+                        "SELECT status FROM bodega.orders "
                         "WHERE order_number = :on FOR UPDATE"
                     ),
                     {"on": order_number},
@@ -1485,13 +1498,105 @@ async def _execute_inventory_action(
             ).fetchone()
             if stock is None:
                 raise BindingError("RESOURCE_NOT_EXPOSED", "SKU no expuesto")
+            reservation_key = f"reserve:{order_number}:{sku}"
+
+            if action == "reserve_stock":
+                existing = (
+                    await conn.execute(
+                        text(
+                            "SELECT id, status, expires_at FROM bodega.stock_reservations "
+                            "WHERE idempotency_key = :key"
+                        ),
+                        {"key": reservation_key},
+                    )
+                ).fetchone()
+                if existing is not None:
+                    return {
+                        "status": "ALREADY_RESERVED" if existing.status == "active" else existing.status.upper(),
+                        "order_number": order_number,
+                        "sku": sku,
+                        "quantity": quantity,
+                        "expires_at": existing.expires_at.isoformat() if existing.expires_at else None,
+                        "reservation_id": str(existing.id),
+                    }
+                available = int(stock.on_hand) - int(stock.reserved)
+                if available < quantity:
+                    raise BindingError("CONFLICT", "stock insuficiente para reservar")
+                reservation = (
+                    await conn.execute(
+                        text(
+                            "INSERT INTO bodega.stock_reservations "
+                            "(order_number, sku, quantity, status, idempotency_key, expires_at) "
+                            "VALUES (:on, :sku, :qty, 'active', :key, NOW() + (:ttl || ' seconds')::interval) "
+                            "RETURNING id, expires_at"
+                        ),
+                        {
+                            "on": order_number,
+                            "sku": sku,
+                            "qty": quantity,
+                            "key": reservation_key,
+                            "ttl": str(ttl_seconds),
+                        },
+                    )
+                ).fetchone()
+                await conn.execute(
+                    text(
+                        "UPDATE bodega.stock SET reserved = reserved + :qty, "
+                        "version = version + 1 WHERE sku = :sku"
+                    ),
+                    {"qty": quantity, "sku": sku},
+                )
+                return {
+                    "status": "RESERVED",
+                    "order_number": order_number,
+                    "sku": sku,
+                    "quantity": quantity,
+                    "expires_at": reservation.expires_at.isoformat(),
+                    "reservation_id": str(reservation.id),
+                    "available": available,
+                }
+
+            if action == "release_stock":
+                reservation = (
+                    await conn.execute(
+                        text(
+                            "SELECT id, status, quantity FROM bodega.stock_reservations "
+                            "WHERE order_number = :on AND sku = :sku AND status = 'active' "
+                            "FOR UPDATE"
+                        ),
+                        {"on": order_number, "sku": sku},
+                    )
+                ).fetchone()
+                if reservation is None:
+                    return {"status": "NO_ACTIVE_RESERVATION", "order_number": order_number, "sku": sku}
+                await conn.execute(
+                    text(
+                        "UPDATE bodega.stock_reservations SET status = 'released', released_at = NOW() "
+                        "WHERE id = :rid"
+                    ),
+                    {"rid": reservation.id},
+                )
+                await conn.execute(
+                    text(
+                        "UPDATE bodega.stock SET reserved = GREATEST(reserved - :qty, 0), "
+                        "version = version + 1 WHERE sku = :sku"
+                    ),
+                    {"qty": int(reservation.quantity), "sku": sku},
+                )
+                return {
+                    "status": "RELEASED",
+                    "order_number": order_number,
+                    "sku": sku,
+                    "quantity": int(reservation.quantity),
+                }
+
             existing = (
                 await conn.execute(
                     text(
                         "SELECT id, after_on_hand FROM bodega.stock_movements "
                         "WHERE idempotency_key = :key"
                     ),
-                    {"key": idempotency_key},
+                    {"key": f"commit:{order_number}:{sku}"},
                 )
             ).fetchone()
             if existing is not None:
@@ -1503,6 +1608,34 @@ async def _execute_inventory_action(
                     "on_hand": int(existing.after_on_hand),
                     "movement_id": str(existing.id),
                 }
+            reservation = (
+                await conn.execute(
+                    text(
+                        "SELECT id, status, quantity, expires_at FROM bodega.stock_reservations "
+                        "WHERE order_number = :on AND sku = :sku AND status = 'active' "
+                        "FOR UPDATE"
+                    ),
+                    {"on": order_number, "sku": sku},
+                )
+            ).fetchone()
+            if reservation is None:
+                raise BindingError("CONFLICT", "no hay reserva activa para el pedido")
+            if reservation.expires_at <= datetime.now(timezone.utc):
+                await conn.execute(
+                    text(
+                        "UPDATE bodega.stock_reservations SET status = 'expired', released_at = NOW() "
+                        "WHERE id = :rid"
+                    ),
+                    {"rid": reservation.id},
+                )
+                await conn.execute(
+                    text(
+                        "UPDATE bodega.stock SET reserved = GREATEST(reserved - :qty, 0) "
+                        "WHERE sku = :sku"
+                    ),
+                    {"qty": int(reservation.quantity), "sku": sku},
+                )
+                raise BindingError("RESERVATION_EXPIRED", "la reserva expiró")
             before = int(stock.on_hand)
             if before < quantity:
                 raise BindingError("CONFLICT", "stock insuficiente")
@@ -1520,7 +1653,7 @@ async def _execute_inventory_action(
                         "on": order_number,
                         "sku": sku,
                         "qty": quantity,
-                        "key": idempotency_key,
+                        "key": f"commit:{order_number}:{sku}",
                         "before": before,
                         "after": after,
                     },
@@ -1533,6 +1666,13 @@ async def _execute_inventory_action(
                     "WHERE sku = :sku"
                 ),
                 {"after": after, "qty": quantity, "sku": sku},
+            )
+            await conn.execute(
+                text(
+                    "UPDATE bodega.stock_reservations SET status = 'committed', committed_at = NOW() "
+                    "WHERE id = :rid"
+                ),
+                {"rid": reservation.id},
             )
             await conn.execute(
                 text(

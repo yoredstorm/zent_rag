@@ -156,10 +156,10 @@ def _bodega_plan(connector_id: UUID) -> dict:
     }
 
 
-def _inventory_binding(connector_id: UUID) -> dict:
+def _inventory_binding(connector_id: UUID, action: str) -> dict:
     return {
         "connector_id": str(connector_id),
-        "action": "commit_stock",
+        "action": action,
         "write": True,
         "max_quantity": 100,
     }
@@ -221,16 +221,31 @@ async def main() -> None:
             config=config,
             workspace_id=workspace_id,
         )
-    await upsert_binding(
-        org_id,
-        "bodega.stock.commit",
-        "inventory",
-        config=_inventory_binding(writer.id),
-        workspace_id=workspace_id,
-    )
+    for ref, action in (
+        ("bodega.stock.reserve", "reserve_stock"),
+        ("bodega.stock.commit", "commit_stock"),
+        ("bodega.stock.release", "release_stock"),
+    ):
+        await upsert_binding(
+            org_id,
+            ref,
+            "inventory",
+            config=_inventory_binding(writer.id, action),
+            workspace_id=workspace_id,
+        )
     print(f"connector_id={connector.id}")  # noqa: T201
     print(f"writer_connector_id={writer.id}")  # noqa: T201
-    print("bindings=" + ",".join([*plans, "bodega.stock.commit"]))  # noqa: T201
+    print(  # noqa: T201
+        "bindings="
+        + ",".join(
+            [
+                *plans,
+                "bodega.stock.reserve",
+                "bodega.stock.commit",
+                "bodega.stock.release",
+            ]
+        )
+    )  # noqa: T201
 
 
 if __name__ == "__main__":
