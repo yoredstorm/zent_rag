@@ -3857,8 +3857,12 @@ async def _exec_stop(rctx: NodeContext) -> NodeOutcome:
 
 async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
-    action = str(cfg.get("action") or "acción sensible")
-    summary = str(cfg.get("summary") or cfg.get("message") or "")
+    action = str(
+        _resolve_ref(cfg.get("action") or "acción sensible", rctx) or "acción sensible"
+    )
+    summary = str(
+        _resolve_ref(cfg.get("summary") or cfg.get("message") or "", rctx) or ""
+    )
     expires_minutes = int(cfg.get("expires_minutes", 1440) or 1440)
     requested_by = rctx.execution.actor_id
     snapshot = _approval_context_snapshot(rctx)

@@ -42,6 +42,19 @@ def main() -> None:
                     "output_ports": [{"name": "out", "type": "json"}],
                 },
                 {
+                    "id": "hold",
+                    "type": "state_set",
+                    "label": "Guardar pedido",
+                    "config": {
+                        "path": "order",
+                        "value": {
+                            "order_number": "{{trigger.order_number}}",
+                            "sku": "{{trigger.sku}}",
+                            "quantity": "{{trigger.quantity}}",
+                        },
+                    },
+                },
+                {
                     "id": "approval",
                     "type": "human_approval",
                     "label": "Aprobar pedido",
@@ -61,10 +74,10 @@ def main() -> None:
                     "config": {
                         "capability": "bodega.stock.commit",
                         "inputs": {
-                            "order_number": "{{trigger.order_number}}",
-                            "sku": "{{trigger.sku}}",
-                            "quantity": "{{trigger.quantity}}",
-                            "idempotency_key": "{{trigger.order_number}}-{{trigger.sku}}",
+                            "order_number": "{{instance.state.order.order_number}}",
+                            "sku": "{{instance.state.order.sku}}",
+                            "quantity": "{{instance.state.order.quantity}}",
+                            "idempotency_key": "{{instance.state.order.order_number}}-{{instance.state.order.sku}}",
                         },
                     },
                 },
@@ -86,10 +99,11 @@ def main() -> None:
                 },
             ],
             "edges": [
-                {"id": "e1", "from_node": "t", "from_port": "out", "to_node": "approval", "to_port": "in"},
-                {"id": "e2", "from_node": "approval", "from_port": "out", "to_node": "commit", "to_port": "in"},
-                {"id": "e3", "from_node": "commit", "from_port": "out", "to_node": "notify", "to_port": "in"},
-                {"id": "e4", "from_node": "notify", "from_port": "out", "to_node": "end", "to_port": "in"},
+                {"id": "e1", "from_node": "t", "from_port": "out", "to_node": "hold", "to_port": "in"},
+                {"id": "e2", "from_node": "hold", "from_port": "out", "to_node": "approval", "to_port": "in"},
+                {"id": "e3", "from_node": "approval", "from_port": "out", "to_node": "commit", "to_port": "in"},
+                {"id": "e4", "from_node": "commit", "from_port": "out", "to_node": "notify", "to_port": "in"},
+                {"id": "e5", "from_node": "notify", "from_port": "out", "to_node": "end", "to_port": "in"},
             ],
             "variables": {},
             "entrypoints": ["t"],
@@ -124,7 +138,13 @@ def main() -> None:
         run.raise_for_status()
         body = run.json()
         print(json.dumps(body, indent=2, ensure_ascii=False)[:2500])  # noqa: T201
-        run_id = body.get("run_id")
+        run_id = (
+            body.get("run_id")
+            or (body.get("result") or {}).get("run_id")
+            or ((body.get("context") or {}).get("identity") or {}).get("run_id")
+        )
+        if not run_id:
+            raise SystemExit("run id missing")
         approvals = client.get(f"/api/v1/workflows/runs/{run_id}/approvals", headers=headers)
         approvals.raise_for_status()
         approval_list = approvals.json().get("approvals") or []
