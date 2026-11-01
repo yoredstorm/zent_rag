@@ -112,6 +112,7 @@
     }
   ],
   "not_run": [
+    "Suite completa de 6057 tests backend (se ejecutaron 150 tests de workflow + suites P18.5; la suite total excede la ventana de esta sesión)",
     "E2E adversarial de aprobación, replay, workspace, historial y accesibilidad",
     "Axe / lector de pantalla real",
     "Chaos Redis/Postgres/worker/provider",

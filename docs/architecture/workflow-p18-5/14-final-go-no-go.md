@@ -35,6 +35,9 @@ proveedor sandbox y caos.
 - No hay prueba de usuario real.
 - No hay baseline de rendimiento ni SLO medido.
 - No se probó rollback con tráfico real.
+- La suite backend completa (6057 tests) no se ejecutó de punta a punta en esta
+  sesión; se ejecutaron 150 tests de workflow, todas las suites P18.5 y la suite
+  completa del portal. Se declara **NOT_RUN** el agregado, no PASS.
 
 ### P2
 
