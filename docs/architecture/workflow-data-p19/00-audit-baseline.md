@@ -19,6 +19,7 @@
 | Diff `47fa8a09..9b8641c9` | 18 archivos, solo CI, docs de CI, `.test_durations`, `scripts/cert/*`, `scripts/ci/*`, tests de evidencia CI y un ajuste de unmount del portal |
 | Cambios de runtime de workflows | Ninguno |
 | Rama P19 creada | `feat/p19-workflow-data-orchestration` desde `master` (`47fa8a09`) |
+| Commits P19-00 | `597df9f` (tests rojos), `face0d0` (documentación) |
 | Árbol de trabajo inicial | limpio |
 | Fecha de auditoría | 2026-11-01 |
 
