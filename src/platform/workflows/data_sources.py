@@ -69,14 +69,14 @@ def _source_ref(database_id: Any) -> str:
     return f"managed_db:{database_id}"
 
 
-def _parse_source_ref(source_ref: str) -> UUID:
-    prefix = "managed_db:"
-    if not source_ref.startswith(prefix):
-        raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "fuente no expuesta")
-    try:
-        return UUID(source_ref[len(prefix) :])
-    except (TypeError, ValueError) as exc:
-        raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "fuente no expuesta") from exc
+def _parse_source_ref(source_ref: str) -> tuple[str, UUID]:
+    for prefix, kind in (("managed_db:", "managed_db"), ("connector:", "connector")):
+        if source_ref.startswith(prefix):
+            try:
+                return kind, UUID(source_ref[len(prefix) :])
+            except (TypeError, ValueError) as exc:
+                raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "fuente no expuesta") from exc
+    raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "fuente no expuesta")
 
 
 async def list_data_query_plans(
@@ -134,6 +134,21 @@ async def _managed_source(organization_id: UUID, workspace_id: UUID, source_id: 
     return row
 
 
+async def _source_exists(
+    organization_id: UUID, workspace_id: UUID, kind: str, source_id: UUID
+) -> bool:
+    if kind == "managed_db":
+        return await _managed_source(organization_id, workspace_id, source_id) is not None
+    from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
+
+    connector = await PostgresConnectorRepository().get_connector(organization_id, source_id)
+    if connector is None:
+        return False
+    if connector.workspace_id and str(connector.workspace_id) != str(workspace_id):
+        return False
+    return str(connector.status or "").lower() == "active"
+
+
 async def list_data_sources(
     organization_id: UUID,
     workspace_id: UUID,
@@ -184,6 +199,33 @@ async def list_data_sources(
                 "provider": str(row.provider or "managed"),
             }
         )
+    session = await get_async_session()
+    try:
+        connector_rows = (
+            await session.execute(
+                text(
+                    "SELECT id, name, type, status FROM connectors "
+                    "WHERE organization_id = :oid AND workspace_id = :wid "
+                    "AND type IN ('postgres', 'postgresql') ORDER BY name"
+                ),
+                {"oid": str(organization_id), "wid": str(workspace_id)},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    for row in connector_rows:
+        status = "CONNECTED" if str(row.status or "").lower() == "active" else "DEGRADED"
+        sources.append(
+            {
+                "ref": f"connector:{row.id}",
+                "label": str(row.name or "PostgreSQL externo"),
+                "provider_kind": "connected_db",
+                "status": status,
+                "read_only": True,
+                "capabilities": ["select", "count"],
+                "provider": str(row.type or "postgres"),
+            }
+        )
     payload = {"sources": sources}
     _set_cached(key, payload)
     return payload
@@ -206,7 +248,7 @@ async def _published_plans(
     bindings = (await list_bindings(organization_id, workspace_id)).get("bindings") or []
     published: list[tuple[dict[str, Any], Any]] = []
     for binding in bindings:
-        if str(binding.get("provider_kind") or "") != "managed_db":
+        if str(binding.get("provider_kind") or "") not in ("managed_db", "connected_db"):
             continue
         try:
             plan = parse_data_query_plan(binding.get("config") or {})
@@ -251,10 +293,13 @@ async def list_published_resources(
     limit: int = 50,
     permissions: frozenset[str] | set[str] | None = None,
 ) -> dict[str, Any]:
-    source_id = _parse_source_ref(source_ref) if source_ref else None
-    if source_id is not None:
-        row = await _managed_source(organization_id, workspace_id, source_id)
-        if row is None:
+    source_kind: str | None = None
+    source_id: UUID | None = None
+    if source_ref:
+        source_kind, source_id = _parse_source_ref(source_ref)
+        if not await _source_exists(
+            organization_id, workspace_id, source_kind, source_id
+        ):
             raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "fuente no expuesta")
 
     safe_limit = max(1, min(int(limit or 50), _MAX_LIMIT))
@@ -263,6 +308,9 @@ async def list_published_resources(
     seen: set[str] = set()
     for binding, plan in await _published_plans(organization_id, workspace_id, permissions):
         if source_id is not None and plan.connection_ref is not None:
+            if plan.connection_ref != source_id:
+                continue
+        if source_id is not None and source_kind == "connector":
             if plan.connection_ref != source_id:
                 continue
         resource_ref = _plan_resource_ref(plan)
@@ -316,12 +364,36 @@ async def get_resource_schema(
 ) -> dict[str, Any]:
     binding, plan = await _resource_plan(organization_id, workspace_id, resource_ref, permissions)
     if source_ref:
-        source_id = _parse_source_ref(source_ref)
-        row = await _managed_source(organization_id, workspace_id, source_id)
-        if row is None:
+        source_kind, source_id = _parse_source_ref(source_ref)
+        if not await _source_exists(
+            organization_id, workspace_id, source_kind, source_id
+        ):
             raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "fuente no expuesta")
         if plan.connection_ref is not None and plan.connection_ref != source_id:
             raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "recurso no expuesto")
+        if source_kind == "connector":
+            allowed = _plan_columns(plan)
+            return {
+                "resource_ref": resource_ref,
+                "binding_ref": str(binding.get("id") or ""),
+                "kind": plan.resource.kind,
+                "introspected": False,
+                "columns": [
+                    {
+                        "name": column,
+                        "label": column,
+                        "data_type": plan.column_types.get(column, "unknown"),
+                        "nullable": True,
+                        "primary_key": False,
+                        "foreign_key": False,
+                        "foreign_table": None,
+                        "foreign_column": None,
+                        "sensitive": is_sensitive_column(column),
+                        "pii_flags": pii_flags_for_column(column),
+                    }
+                    for column in sorted(allowed)
+                ],
+            }
     from src.connectors.sql.schema_discovery import discover_columns
     from src.platform.managed_db.service import open_managed_query_session
 

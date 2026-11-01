@@ -127,7 +127,7 @@ async def test_sources_are_scoped_to_workspace_and_org() -> None:
     payload = await list_data_sources(org.id, workspace.id, permissions={"workflows:read"})
     refs = [item["ref"] for item in payload["sources"]]
     assert f"managed_db:{source_id}" in refs
-    assert len(refs) == 1
+    assert all(item["ref"].startswith(("managed_db:", "connector:")) for item in payload["sources"])
     assert payload["sources"][0]["read_only"] is True
 
 

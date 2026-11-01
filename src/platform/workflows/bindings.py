@@ -23,6 +23,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
@@ -657,9 +658,8 @@ async def _dispatch_binding(
     elif kind == "managed_db":
         out = await _execute_managed_select(organization_id, binding, payload, workspace_id=workspace_id)
     elif kind == "connected_db":
-        raise BindingError(
-            "PROVIDER_NOT_SUPPORTED",
-            "connected_db requiere un ReadOnlyQueryAdapter certificado; P19-06 pendiente",
+        out = await _execute_connected_select(
+            organization_id, binding, payload, workspace_id=workspace_id
         )
     elif kind == "rest_api":
         out = await _execute_rest(organization_id, binding, payload)
@@ -995,6 +995,8 @@ def _query_failure(exc: Exception) -> BindingError:
         return BindingError("RESOURCE_NOT_EXPOSED", "el recurso no está expuesto para esta consulta")
     if "connect" in message or "connection" in message or "server closed" in message:
         return BindingError("CONNECTION_FAILED", "no se pudo conectar a la fuente")
+    if "getaddrinfo" in message or "name or service" in message:
+        return BindingError("CONNECTION_FAILED", "no se pudo resolver el host de la fuente")
     return BindingError("PROVIDER_ERROR", f"la consulta falló ({type(exc).__name__})")
 
 
@@ -1021,6 +1023,7 @@ async def _execute_data_query_plan(
     *,
     workspace_id: UUID | None,
     principal: dict[str, Any] | None = None,
+    session_factory: Any | None = None,
 ) -> dict[str, Any]:
     from src.platform.managed_db.service import open_managed_query_session
 
@@ -1115,7 +1118,12 @@ async def _execute_data_query_plan(
         sql = f"SELECT {cols_sql} FROM {table}{where_sql}{order_sql} LIMIT {row_limit}"
 
     started = datetime.now(timezone.utc)
-    session = await open_managed_query_session(organization_id, workspace_id, database_id=plan.connection_ref)
+    if session_factory is not None:
+        session = session_factory()
+    else:
+        session = await open_managed_query_session(
+            organization_id, workspace_id, database_id=plan.connection_ref
+        )
     if session is None:
         raise BindingError("NEEDS_CONFIGURATION", "no hay managed database para el tenant")
     try:
@@ -1282,6 +1290,84 @@ async def _execute_legacy_select(
         await session.close()
     data = [dict(row._mapping) for row in rows]
     return {"rows": data, "row_count": len(data), "table": table}
+
+
+async def _execute_connected_select(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+) -> dict[str, Any]:
+    """Ejecutor connected_db (PostgreSQL externo read-only) de P19-06."""
+    from urllib.parse import quote_plus
+
+    from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
+    from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+
+    plan = parse_data_query_plan(binding.get("config") or {})
+    if plan is None:
+        raise BindingError(
+            "NEEDS_CONFIGURATION",
+            "connected_db requiere un plan zent.data.query.binding/v1; legacy no soportado",
+        )
+    if plan.connection_ref is None:
+        raise BindingError("NEEDS_CONFIGURATION", "connected_db requiere connection_ref")
+    connector = await PostgresConnectorRepository().get_connector(
+        organization_id, plan.connection_ref
+    )
+    if connector is None or str(connector.status or "").lower() != "active":
+        raise BindingError("RESOURCE_NOT_EXPOSED", "conector no expuesto o inactivo")
+    if connector.workspace_id and workspace_id and str(connector.workspace_id) != str(workspace_id):
+        raise BindingError("PERMISSION_DENIED", "el conector pertenece a otro workspace")
+    if str(connector.type or "").lower() not in ("postgres", "postgresql"):
+        raise BindingError("PROVIDER_NOT_SUPPORTED", "solo PostgreSQL externo está certificado")
+    config = connector.config_json if isinstance(connector.config_json, dict) else {}
+    host = str(config.get("host") or "").strip()
+    database = str(config.get("database") or "").strip()
+    user = str(config.get("user") or "").strip()
+    if not host or not database or not user:
+        raise BindingError("NEEDS_CONFIGURATION", "conector PostgreSQL incompleto")
+    try:
+        port = int(config.get("port") or 5432)
+    except (TypeError, ValueError) as exc:
+        raise BindingError("NEEDS_CONFIGURATION", "puerto del conector inválido") from exc
+    secret = await get_secret_store().get(organization_id, plan.connection_ref)
+    password = secret.get("password") if isinstance(secret, dict) else None
+    if not password:
+        raise BindingError("NEEDS_CREDENTIALS", "el conector no tiene credencial de lectura")
+    dsn = (
+        f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(str(password))}"
+        f"@{host}:{port}/{quote_plus(database)}"
+    )
+    connect_args: dict[str, Any] = {
+        "server_settings": {"default_transaction_read_only": "on"}
+    }
+    if config.get("ssl"):
+        connect_args["ssl"] = "require"
+    engine = create_async_engine(
+        dsn,
+        pool_size=1,
+        max_overflow=0,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        return await _execute_data_query_plan(
+            organization_id,
+            binding,
+            plan,
+            payload,
+            workspace_id=workspace_id,
+            session_factory=factory,
+        )
+    except BindingError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _query_failure(exc) from exc
+    finally:
+        await engine.dispose()
 
 
 async def _execute_managed_select(

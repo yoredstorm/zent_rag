@@ -300,7 +300,7 @@ async def test_p19_06_connected_db_is_not_routed_to_managed_session(
             instance_id=None,
             node_id=None,
         )
-    assert exc.value.code == "PROVIDER_NOT_SUPPORTED"
+    assert exc.value.code == "NEEDS_CONFIGURATION"
     assert calls == []
 
 
