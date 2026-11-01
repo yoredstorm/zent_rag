@@ -241,6 +241,10 @@ jobs:
               --durations-path .test_durations \
               --exclude-file /tmp/invariant-files.txt \
               --exclude-dir tests/certification/workflows)
+          if [ "${#TEST_FILES[@]}" -eq 0 ]; then
+            echo "::error::el plan de shard quedo vacio; se aborta para no correr la suite completa"
+            exit 1
+          fi
           echo "shard ${{ matrix.shard }}/6 files=${#TEST_FILES[@]}"
           uv run --frozen --no-sync pytest "${TEST_FILES[@]}" \
             -q --tb=short --timeout=300 \

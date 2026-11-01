@@ -431,6 +431,12 @@ async def test_capability_digest_includes_contracts_and_kb_names(
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_capability_api_search_inspect_and_metrics(async_client: AsyncClient) -> None:
+    # El catalogo demo es parte del contrato de "catalogo grande" y hace
+    # determinista el conteo: sin el seed, el total depende de que otro test
+    # haya instalado integraciones demo antes (orden de shards).
+    from src.platform.marketplace.demo_integrations import ensure_demo_integrations
+
+    await ensure_demo_integrations()
     org = await _create_org(async_client, "Cap API")
     org["session"] = await _owner_session(async_client, org["organization_id"])
     await _install(org, "demo-echo")
