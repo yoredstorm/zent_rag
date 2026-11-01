@@ -67,7 +67,16 @@ Observaciones de revisión:
 - Navegación completa por teclado con lector de pantalla: `NOT_RUN`; solo se validó axe y semántica de tabs/radios.
 - Cinco participantes no técnicos: `NOT_RUN`.
 - Proveedor real: no disponible; el reporte real devolvió `effective_level=simulation`, `provider_verified=false`, `UNVERIFIED`, `capped_reason=provider_adapter_unavailable`.
-- CI remoto: `NOT_VERIFIED`; no hay `gh` en el entorno.
+
+## 4.1 CI remoto
+
+PR `#14`: `https://github.com/yoredstorm/zent_rag/pull/14`
+
+Run `41258029098`: 16/16 checks PASS.
+
+Incluye `certification`, `kustomize`, `lint`, `pip-audit`, `portal`, `portal-e2e`, `sdk-node`, `sdk-python`, `secrets-scan`, `test`, `test (1/4)` a `test (4/4)`, `test-evidence` y `build`.
+
+`gh` quedó autenticado como `yoredstorm`.
 
 ## 5. Evidencia de endpoints
 

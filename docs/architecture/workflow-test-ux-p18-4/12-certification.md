@@ -36,7 +36,7 @@ No se autootorga PASS de proveedor, accesibilidad total, estudio humano ni produ
 | Accesibilidad axe del panel | PASS acotado | 1440 setup/result y 390 setup sin serious/critical |
 | Teclado y lector de pantalla | `NOT_RUN` | Sin ejecución completa |
 | Cinco usuarios | `NOT_RUN` | Sin participantes |
-| CI remoto | `NOT_VERIFIED` | Sin `gh` |
+| CI remoto | PASS | PR #14, run 41258029098, 16/16 checks |
 
 ## 3. Evidencia ejecutada
 
@@ -53,6 +53,7 @@ No se autootorga PASS de proveedor, accesibilidad total, estudio humano ni produ
 - Efecto real `notify` in-app: 1/1.
 - Build final: PASS.
 - Axe del panel: PASS acotado.
+- CI remoto: PR #14, run 41258029098, 16/16 checks PASS.
 
 ## 4. Bloqueos
 

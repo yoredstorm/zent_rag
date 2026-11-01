@@ -6,8 +6,11 @@
   "branch_at_audit": "master",
   "working_tree_clean": true,
   "ci": {
-    "status": "NOT_VERIFIED",
-    "reason": "GitHub CLI no disponible; no se consultó el run remoto"
+    "status": "PASS",
+    "pull_request": "https://github.com/yoredstorm/zent_rag/pull/14",
+    "run_id": 41258029098,
+    "checks_passed": 16,
+    "checks_failed": 0
   },
   "tests_at_audit": {
     "portal_typecheck": { "status": "PASS", "errors": 0 },
@@ -36,7 +39,7 @@
     "portal_full_suite": { "status": "NOT_CLEAN", "passed": 619, "worker_shutdown_errors": 22 },
     "screen_reader": { "status": "NOT_RUN" },
     "human_study": { "status": "NOT_RUN" },
-    "remote_ci": { "status": "NOT_VERIFIED" }
+    "remote_ci": { "status": "PASS", "run_id": 41258029098, "checks_passed": 16, "checks_failed": 0 }
   },
   "surface": {
     "panel_file": "portal/src/components/workflowStudio/WorkflowTestPanel.tsx",
