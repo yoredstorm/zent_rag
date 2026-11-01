@@ -269,6 +269,37 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         optional_dependencies=("knowledge_bases",),
         supports_knowledge=True,
     ),
+    "data_query": _meta(
+        "Consultar registros",
+        "Consulta una tabla o vista autorizada con filtros y columnas aprobadas.",
+        long_description=(
+            "El plan vive en el servidor: conexión, tabla, columnas, filtros obligatorios, "
+            "orden y límite. El nodo solo envía parámetros declarados y recibe un contrato "
+            "tipado (encontrado, no encontrado, varias coincidencias, error). No escribe SQL."
+        ),
+        when_to_use=(
+            "necesitas un dato exacto o una lista de una fuente autorizada",
+            "quieres rutas explícitas para encontrado, no encontrado y error",
+        ),
+        when_not_to_use=(
+            "necesitas una pregunta abierta o análisis semántico; usa Consultar datos de negocio",
+            "necesitas escribir o modificar datos; usa una acción de negocio aprobada",
+        ),
+        examples=(
+            {
+                "title": "Precio por SKU",
+                "config": {
+                    "capability": "p19.price.lookup",
+                    "binding_ref": "uuid",
+                    "params": {"sku": "{{nodes.intent.output.entities.sku}}"},
+                },
+            },
+        ),
+        context_reads=("trigger", "variables", "data"),
+        context_writes=("data",),
+        requires=("managed_db",),
+        supports_simulation=True,
+    ),
     "marketplace_action": _meta(
         "Acción de integración",
         "Ejecuta una capacidad instalada (formulario según su schema).",

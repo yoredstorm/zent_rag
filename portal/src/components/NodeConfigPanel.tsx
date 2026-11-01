@@ -20,6 +20,7 @@ import {
 import type { ConditionGroupNode } from "../lib/conditionTree";
 import { BusinessParameterForm } from "./workflowStudio/BusinessParameterForm";
 import { ConditionBuilder } from "./workflowStudio/ConditionBuilder";
+import { DataQueryForm } from "./workflowStudio/DataQueryForm";
 import { AiDecisionForm } from "./workflowStudio/AiDecisionForm";
 import { DataView } from "./workflowStudio/DataView";
 import { NodeHelpCard } from "./workflowStudio/NodeHelpCard";
@@ -407,6 +408,8 @@ export function NodeConfigPanel({
                 />
               ) : current.type === "ai_decision" ? (
                 <AiDecisionForm config={current.config} onChange={patchConfig} />
+              ) : current.type === "data_query" ? (
+                <DataQueryForm config={current.config} onChange={patchConfig} level={level} />
               ) : current.type === "notify" ? (
                 <>
                   <NotificationBuilder

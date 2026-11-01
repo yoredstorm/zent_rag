@@ -79,6 +79,44 @@ def _parse_source_ref(source_ref: str) -> UUID:
         raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "fuente no expuesta") from exc
 
 
+async def list_data_query_plans(
+    organization_id: UUID,
+    workspace_id: UUID,
+    *,
+    permissions: frozenset[str] | set[str] | None = None,
+) -> dict[str, Any]:
+    """Planes publicados que el editor puede seleccionar (sin SQL)."""
+    plans = []
+    for binding, plan in await _published_plans(
+        organization_id, workspace_id, permissions
+    ):
+        plans.append(
+            {
+                "binding_ref": str(binding.get("id") or ""),
+                "capability_ref": str(binding.get("capability_ref") or ""),
+                "resource_ref": _plan_resource_ref(plan),
+                "resource_kind": plan.resource.kind,
+                "operation": plan.operation,
+                "projection": list(plan.projection),
+                "max_rows": plan.policy.max_rows,
+                "parameters": [
+                    {
+                        "name": item.name,
+                        "field": item.field,
+                        "operator": item.operator,
+                        "type": item.type,
+                        "required": item.required,
+                        "label": item.field.replace("_", " "),
+                    }
+                    for item in plan.parameters
+                ],
+                "ownership_required": bool(plan.ownership and plan.ownership.required),
+                "pii_class": plan.policy.pii_class,
+            }
+        )
+    return {"plans": plans}
+
+
 async def _managed_source(organization_id: UUID, workspace_id: UUID, source_id: UUID) -> Any:
     session = await get_async_session()
     try:

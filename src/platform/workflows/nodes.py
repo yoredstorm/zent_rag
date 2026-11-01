@@ -3747,6 +3747,70 @@ async def _exec_capability_call(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output=output)
 
 
+async def _exec_data_query(rctx: NodeContext) -> NodeOutcome:
+    """Consulta declarativa autorizada; el nodo no elige tabla ni escribe SQL."""
+    cfg = rctx.node.config
+    capability_ref = str(cfg.get("capability") or cfg.get("capability_ref") or "").strip()
+    if not capability_ref:
+        return NodeOutcome(error="data_query requiere capability")
+    params = _resolve_ref(cfg.get("params") or {}, rctx)
+    if not isinstance(params, dict):
+        return NodeOutcome(error="data_query requiere params como objeto")
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={
+                "kind": "data_query",
+                "capability": capability_ref,
+                "params": params,
+            },
+            output={"status": "SIMULATED", "capability": capability_ref, "simulated": True},
+        )
+    from src.platform.workflows.bindings import BindingError, execute_binding
+
+    try:
+        result = await execute_binding(
+            rctx.organization_id,
+            capability_ref,
+            {"params": params},
+            workspace_id=rctx.workspace_id,
+            source="workflow",
+            actor_id=rctx.execution.actor_id,
+            workflow_id=rctx.execution.workflow_id,
+            run_id=rctx.execution.run_id,
+            instance_id=rctx.execution.instance_id,
+            node_id=rctx.node_id,
+        )
+    except BindingError as exc:
+        return NodeOutcome(
+            output={
+                "status": "ERROR",
+                "found": False,
+                "record": None,
+                "rows": [],
+                "reason_code": exc.code,
+                "message": exc.message[:300],
+                "capability": capability_ref,
+            }
+        )
+    output = dict(result.get("output") or {})
+    expected_binding = str(cfg.get("binding_ref") or "").strip()
+    actual_binding = str(output.get("binding_ref") or "").strip()
+    if expected_binding and actual_binding and expected_binding != actual_binding:
+        return NodeOutcome(
+            output={
+                **output,
+                "status": "ERROR",
+                "reason_code": "BINDING_CHANGED",
+                "message": "el binding cambió desde la configuración del nodo",
+            }
+        )
+    output["capability"] = capability_ref
+    output["provider_kind"] = result.get("provider_kind")
+    output.setdefault("status", "FOUND" if output.get("found") else "NOT_FOUND")
+    return NodeOutcome(output=output)
+
+
 async def _exec_stop(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
     status = str(cfg.get("status") or "success")
@@ -4623,6 +4687,18 @@ def _register_defaults() -> None:
         outputs={"out": {"type": "record_list"}},
         execute=_exec_query_business_data,
         **semantic_metadata("query_business_data"),
+    )
+    registry.register(
+        "data_query",
+        version=1,
+        label="Consultar registros",
+        category="data",
+        risk_level="normal",
+        capabilities=frozenset({READ_DB}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_data_query,
+        **semantic_metadata("data_query"),
     )
 
     # AI

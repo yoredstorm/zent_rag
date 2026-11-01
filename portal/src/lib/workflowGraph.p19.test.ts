@@ -1,26 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { NODE_LIBRARY } from "./workflowGraph";
 
-// P19-00: fotografía del lienzo actual. No es una prueba de aceptación:
-// demuestra que hoy no existe un nodo visual «Consultar registros» ni
-// selectores de conexión, recurso, columnas o preview. P19-03 debe cambiar
-// estas expectativas (el test se actualizará con el nodo nuevo).
-describe("P19-00 AS-IS — configuración de consultas en el canvas", () => {
-  it("no existe un nodo visual de consulta por registros", () => {
-    expect(NODE_LIBRARY.data_query).toBeUndefined();
-    expect(NODE_LIBRARY.consultar_registros).toBeUndefined();
+// P19-03: el canvas ya expone «Consultar registros». El editor real vive en
+// NodeConfigPanel/DataQueryForm; aquí se protege la entrada de paleta y que el
+// nodo no transporte SQL, tabla ni conexión.
+describe("P19-03 — nodo visual Consultar registros", () => {
+  it("existe data_query con etiqueta de negocio", () => {
+    const node = NODE_LIBRARY.data_query;
+    expect(node).toBeDefined();
+    expect(node.label).toBe("Consultar registros");
+    expect(node.category).toBe("data");
   });
 
-  it("la única consulta de datos es una pregunta en texto libre", () => {
-    const node = NODE_LIBRARY.query_business_data;
-    expect(node.fields.map((field) => field.key)).toEqual(["ask"]);
-    expect(node.fields[0].type).toBe("textarea");
+  it("solo configura capability, binding y params", () => {
+    const keys = NODE_LIBRARY.data_query.fields.map((field) => field.key);
+    expect(keys).toEqual(["capability", "binding_ref", "params"]);
+    expect(JSON.stringify(NODE_LIBRARY.data_query)).not.toMatch(/sql|connection_ref|columns/);
   });
 
-  it("el canvas no ofrece catálogo de conexiones ni recursos", () => {
-    const serialized = JSON.stringify(NODE_LIBRARY.query_business_data);
-    for (const missingSelector of ["connection_ref", "resource", "columns", "preview"]) {
-      expect(serialized.includes(missingSelector)).toBe(false);
-    }
+  it("sigue existiendo la pregunta semántica separada", () => {
+    expect(NODE_LIBRARY.query_business_data.fields.map((field) => field.key)).toEqual(["ask"]);
   });
 });

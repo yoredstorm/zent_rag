@@ -99,6 +99,7 @@ def test_simulation_supported_flags() -> None:
         "adaptive_route",
         "capability_call",
         "conversation_guard",
+        "data_query",
         "human_approval",
         "loop",
         "marketplace_action",

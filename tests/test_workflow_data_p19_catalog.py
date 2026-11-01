@@ -21,6 +21,7 @@ from src.platform.workflows.data_sources import (
     DataSourceError,
     get_resource_schema,
     invalidate_data_catalog,
+    list_data_query_plans,
     list_data_sources,
     list_published_resources,
     preview_data_query,
@@ -82,6 +83,37 @@ async def _managed_row(org_id, workspace_id, *, connector_id=None) -> str:
     finally:
         await session.close()
     return str(db_id)
+
+
+@pytest.mark.asyncio
+async def test_query_plans_expose_parameters_without_sql() -> None:
+    org, workspace = await _org_workspace("P19 Plans")
+    config = _plan(resource="plans_table")
+    config["parameters"] = [
+        {
+            "name": "sku",
+            "field": "sku",
+            "operator": "eq",
+            "type": "string",
+            "required": True,
+        }
+    ]
+    await upsert_binding(
+        org.id,
+        f"p19.plans.{uuid4().hex[:8]}",
+        "managed_db",
+        config=config,
+        workspace_id=workspace.id,
+    )
+    invalidate_data_catalog(org.id, workspace.id)
+    payload = await list_data_query_plans(
+        org.id, workspace.id, permissions={"workflows:read"}
+    )
+    assert len(payload["plans"]) == 1
+    plan = payload["plans"][0]
+    assert plan["resource_ref"] == "public.plans_table"
+    assert plan["parameters"][0]["name"] == "sku"
+    assert "sql" not in plan
 
 
 @pytest.mark.asyncio

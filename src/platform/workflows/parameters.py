@@ -296,6 +296,56 @@ def _llm_schema() -> NodeBusinessSchema:
     )
 
 
+def _data_query_schema() -> NodeBusinessSchema:
+    return NodeBusinessSchema(
+        node_type="data_query",
+        label="Consultar registros",
+        category="data",
+        description="Consulta una tabla o vista autorizada sin escribir SQL.",
+        parameters=[
+            _p(
+                "capability",
+                "¿Qué consulta usar?",
+                "enum",
+                required=True,
+                dynamic_options="data_query_plans",
+                validation={"allow_custom": False},
+            ),
+            _p(
+                "params",
+                "¿Qué datos necesitas para buscar?",
+                "json",
+                required=False,
+                min_level="advanced",
+                help="Solo parámetros declarados en el plan autorizado.",
+            ),
+            _p(
+                "binding_ref",
+                "Versión del plan",
+                "text",
+                required=False,
+                min_level="advanced",
+                help="Se valida en ejecución para detectar cambios de binding.",
+            ),
+        ],
+        outputs=[
+            _out("status", "Estado", "text"),
+            _out("found", "Encontrado", "boolean"),
+            _out("record", "Registro", "record"),
+            _out("rows", "Filas", "record_list"),
+            _out("columns", "Columnas", "json"),
+            _out("row_count", "Cantidad", "number"),
+            _out("truncated", "Truncado", "boolean"),
+            _out("data_as_of", "Vigencia del dato", "text"),
+            _out("source_ref", "Fuente", "text"),
+            _out("binding_ref", "Binding", "text"),
+            _out("binding_hash", "Hash del binding", "text"),
+            _out("reason_code", "Motivo", "text"),
+            _out("provenance", "Procedencia", "json"),
+        ],
+    )
+
+
 def _query_business_data_schema() -> NodeBusinessSchema:
     return NodeBusinessSchema(
         node_type="query_business_data",
@@ -675,6 +725,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
             ],
         ),
         _query_business_data_schema(),
+        _data_query_schema(),
         _kb_query_schema(),
         _api_call_schema(),
         _marketplace_action_schema(),

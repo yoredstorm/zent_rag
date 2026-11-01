@@ -1987,6 +1987,26 @@ async def tenant_data_source_resource_schema(
         raise _data_source_http_error(exc) from exc
 
 
+@router.get(
+    "/data-query/plans",
+    summary="Planes de consulta publicados para el editor",
+)
+async def tenant_data_query_plans(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_sources import list_data_query_plans
+
+    ctx = require_permission(request, "workflows:read")
+    workspace_id = await _workspace_id(request)
+    if workspace_id is None:
+        raise HTTPException(
+            400,
+            detail={"error_code": "WORKSPACE_REQUIRED", "message": "X-Workspace-Id requerido"},
+        )
+    return await list_data_query_plans(
+        ctx.organization_id, workspace_id, permissions=ctx.permissions
+    )
+
+
 @router.post(
     "/data-query/preview",
     summary="Preview de un plan autorizado (sin SQL libre)",
