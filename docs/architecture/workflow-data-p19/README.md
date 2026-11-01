@@ -18,6 +18,7 @@ conversacionales sobre datos reales.
 | P19-08 Puntos con identidad | PENDIENTE | — |
 | P19-09 Pedido, aprobación y stock | PARCIAL (flujo principal PASS local) | [08-bodega-approval-stock.md](./08-bodega-approval-stock.md) |
 | P19-10 Acceso agente↔datos | DISEÑO | [09-agent-data-access.md](./09-agent-data-access.md) |
+| P19-03b Autoservicio conexión/publicación | COMPLETADO (local) | [10-self-service-data.md](./10-self-service-data.md) |
 | P19-11 a P19-14 | No iniciadas | — |
 
 ## Despliegue
