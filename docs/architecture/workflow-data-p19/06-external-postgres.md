@@ -90,6 +90,29 @@ Resultado: **2 passed**.
 - Conector inexistente devuelve `RESOURCE_NOT_EXPOSED`.
 - Host y API container conectan por IP/puerto; `p19_reader` solo lee.
 
+Evidencia desde `rag-api` (contenedor distinto al compose externo):
+
+```json
+{
+  "status": "FOUND",
+  "record": {
+    "sku": "ARR-001",
+    "product_name": "Arroz premium 1 kg",
+    "price": 5.0,
+    "currency": "PEN",
+    "valid_from": "2026-01-01",
+    "valid_to": "2026-12-31"
+  },
+  "source_ref": "catálogo/product_prices",
+  "binding_hash": "af518cb0...",
+  "provenance": {"provider_kind": "connected_db"},
+  "duration_ms": 376
+}
+```
+
+El preview real se ejecutó con `POST /api/v1/workflows/data-query/preview` contra
+el binding `p19.external.price` del tenant demo. No es un mock.
+
 Matriz:
 
 | Tecnología | Estado |
