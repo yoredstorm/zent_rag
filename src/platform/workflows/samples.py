@@ -17,11 +17,19 @@ async def latest_node_outputs(
     workflow_id: UUID,
     *,
     run_id: UUID | None = None,
+    workspace_id: UUID | None = None,
 ) -> dict | None:
     """Devuelve {run_id, status, nodes: {node_id: {status, output}}} del run más
     reciente (o del run indicado). None si el workflow no existe en la org."""
     session = await get_async_session()
     try:
+        scope = ""
+        params: dict = {"wid": workflow_id, "oid": organization_id}
+        if workspace_id is not None:
+            scope = (
+                " AND (workspace_id IS NULL OR workspace_id = CAST(:ws AS uuid))"
+            )
+            params["ws"] = str(workspace_id)
         workflow = (
             await session.execute(
                 text(
@@ -41,8 +49,9 @@ async def latest_node_outputs(
                         "SELECT id, status, started_at, completed_at, trigger_payload "
                         "FROM workflow_runs "
                         "WHERE id = :rid AND workflow_id = :wid AND organization_id = :oid"
+                        + scope
                     ),
-                    {"rid": run_id, "wid": workflow_id, "oid": organization_id},
+                    {**params, "rid": run_id},
                 )
             ).fetchone()
         else:
@@ -51,10 +60,11 @@ async def latest_node_outputs(
                     text(
                         "SELECT id, status, started_at, completed_at, trigger_payload "
                         "FROM workflow_runs "
-                        "WHERE workflow_id = :wid AND organization_id = :oid "
-                        "ORDER BY started_at DESC LIMIT 1"
+                        "WHERE workflow_id = :wid AND organization_id = :oid"
+                        + scope
+                        + " ORDER BY started_at DESC LIMIT 1"
                     ),
-                    {"wid": workflow_id, "oid": organization_id},
+                    params,
                 )
             ).fetchone()
 

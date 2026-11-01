@@ -48,6 +48,9 @@ export function WorkflowTestResult({
   historyOpen,
   activeRunId,
   elapsedMs,
+  durableStatus,
+  durableNotice,
+  currentGraphHash,
   onSelectPane,
   onSelectNode,
   onModify,
@@ -70,6 +73,9 @@ export function WorkflowTestResult({
   historyOpen: boolean;
   activeRunId?: string;
   elapsedMs?: number;
+  durableStatus?: string;
+  durableNotice?: string;
+  currentGraphHash?: string | null;
   onSelectPane: (pane: ResultPane) => void;
   onSelectNode: (id: string) => void;
   onModify: () => void;
@@ -120,6 +126,27 @@ export function WorkflowTestResult({
             testId="wf-historical-result"
             text="Resultado histórico. No es el estado actual del grafo; el lienzo muestra la corrida abierta."
           />
+        </div>
+      )}
+
+      {durableStatus && runKind === "execution_run" && (
+        <div
+          className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-[11.5px] text-muted"
+          data-testid="wf-durable-status"
+          role="status"
+          aria-live="polite"
+        >
+          <Badge tone={durableStatus === "WAITING" ? "warn" : durableStatus === "FAILED" ? "danger" : "info"}>
+            {durableStatus === "WAITING" ? "En espera" : durableStatus}
+          </Badge>
+          <span className="min-w-0 flex-1">
+            {durableNotice ||
+              (durableStatus === "COMPLETED"
+                ? "La instancia terminó. Este es el último segmento observado."
+                : durableStatus === "CONNECTION_LOST"
+                  ? "Conexión perdida; la instancia no se re-ejecutó."
+                  : "Estado durable de la instancia, separado del estado del run.")}
+          </span>
         </div>
       )}
 
@@ -227,8 +254,12 @@ export function WorkflowTestResult({
               )}
 
               <div className="rounded-md border border-border bg-raised/40 px-3 py-2.5">
-                <p className="text-[12px] font-medium text-text">Qué hará esta prueba</p>
+                <p className="text-[12px] font-medium text-text">Componentes del flujo (estructura)</p>
                 <p className="mt-1 text-[11.5px] leading-relaxed text-muted">{flowPreview(graph)}</p>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-faint">
+                  Esto es estructura almacenada, no el camino ejecutado. El recorrido real está en
+                  Recorrido.
+                </p>
                 <p className="mt-1 text-[11.5px] leading-relaxed text-faint">
                   {effectBoundary(normalizeLevel(report?.effective_level ?? "simulation"))}
                 </p>
@@ -238,6 +269,7 @@ export function WorkflowTestResult({
                 runs={history}
                 open={historyOpen}
                 activeRunId={activeRunId}
+                currentGraphHash={currentGraphHash}
                 onToggle={onToggleHistory}
                 onOpen={onOpenHistoricalRun}
               />

@@ -191,9 +191,24 @@ async def authorize_node(
             code = "policy.workspace_mismatch"
 
         revoked = set(getattr(policy, "revoked_capabilities", frozenset()) or ())
-        if "*" in revoked or capability_ref in revoked:
+        if capability_ref in revoked or ("*" in revoked and not read_only):
             reasons.append(f"capacidad revocada: {capability_ref}")
             code = "policy.revoked"
+        if bool(getattr(policy, "policy_store_error", False)) and not read_only:
+            reasons.append(
+                "no se pudo verificar el estado vigente de revocaciones; "
+                "escritura bloqueada"
+            )
+            code = "policy.revocation_unavailable"
+
+        if (
+            bool(getattr(rctx.execution, "agent_snapshot_legacy", False))
+            and _is_irreversible(node, capability_ref)
+        ):
+            reasons.append(
+                "snapshot de agente no certificado: acción irreversible bloqueada"
+            )
+            code = "policy.agent_snapshot_unverified"
 
         scope = set(getattr(policy, "capability_scope", frozenset()) or ())
         is_internal = _is_internal_effect(node, capability_ref)
@@ -246,14 +261,42 @@ async def authorize_node(
             )
             code = "policy.denied"
 
-        if (
+        node_cfg = getattr(node, "config", None) or {}
+        needs_approval = (
             bool(getattr(policy, "approval_required", False))
-            and _is_irreversible(node, capability_ref)
-            and not (getattr(node, "config", None) or {}).get("approval_ref")
-        ):
-            reasons.append("acción irreversible sin aprobación válida")
-            code = "policy.approval_required"
+            or bool(node_cfg.get("approval_ref"))
+            or bool(node_cfg.get("requires_approval"))
+        )
+        if needs_approval and _is_irreversible(node, capability_ref):
             approval_required = True
+
+            # La aprobación se resuelve en servidor; el string del nodo es solo
+            # una referencia. En simulación no se consume ni se exige para no
+            # bloquear la vista previa, pero se marca que el run real la exige.
+            if getattr(rctx, "simulate", False):
+                pass
+            else:
+                from src.platform.workflows.approvals import (
+                    ApprovalInvalid,
+                    resolve_verified_approval,
+                )
+
+                try:
+                    await resolve_verified_approval(
+                        rctx, node, capability_ref=capability_ref, consume=True
+                    )
+                    code = "policy.allow"
+                except ApprovalInvalid as exc:
+                    reasons.append(f"aprobación no verificable: {exc}")
+                    code = f"policy.{exc.code}"
+                except Exception as exc:  # noqa: BLE001 — fail closed
+                    logger.warning(
+                        "approval verification unavailable",
+                        error=str(exc)[:200],
+                        node_id=str(getattr(node, "id", "")),
+                    )
+                    reasons.append("no se pudo verificar la aprobación")
+                    code = "policy.approval_store_unavailable"
 
     allowed = not reasons
     verdict = PolicyVerdict(

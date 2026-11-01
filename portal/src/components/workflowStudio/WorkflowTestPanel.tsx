@@ -32,6 +32,8 @@ type Props = {
   graph?: WorkflowGraph | null;
   /** El estudio lo monta dentro del Drawer inferior: oculta el encabezado propio. */
   embedded?: boolean;
+  /** Huella del grafo actual para comparar el historial. */
+  graphHash?: string | null;
 };
 
 export function WorkflowTestPanel({
@@ -46,6 +48,7 @@ export function WorkflowTestPanel({
   onSaveBeforeRun,
   graph,
   embedded = false,
+  graphHash,
 }: Props) {
   const [raw, setRaw] = useState("");
   const [realLane, setRealLane] = useState<RealLane | null>(null);
@@ -255,6 +258,9 @@ export function WorkflowTestPanel({
             historyOpen={state.historyOpen}
             activeRunId={state.activeRunId}
             elapsedMs={elapsedMs}
+            durableStatus={state.durableStatus}
+            durableNotice={state.durableNotice}
+            currentGraphHash={graphHash}
             onSelectPane={(pane) => dispatch({ type: "show-result", pane })}
             onSelectNode={onSelectNode}
             onModify={() => dispatch({ type: "show-setup" })}

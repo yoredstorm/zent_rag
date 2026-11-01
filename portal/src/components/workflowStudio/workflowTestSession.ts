@@ -67,6 +67,9 @@ export function workflowTestSessionReducer(
         view: "setup",
         historicalRun: false,
         historicalHash: undefined,
+        instanceId: undefined,
+        durableStatus: undefined,
+        durableNotice: undefined,
       };
 
     case "start-run":
@@ -87,6 +90,9 @@ export function workflowTestSessionReducer(
         view: "setup",
         historicalRun: false,
         historicalHash: undefined,
+        instanceId: undefined,
+        durableStatus: undefined,
+        durableNotice: undefined,
       };
 
     case "loading-result":
@@ -132,6 +138,29 @@ export function workflowTestSessionReducer(
         historicalRun: false,
         historicalHash: undefined,
         operationId: action.operationId,
+        instanceId: action.instanceId,
+        durableStatus: action.durableStatus,
+        durableNotice: "",
+      };
+
+    case "run-refreshed":
+      return {
+        ...state,
+        view: "result",
+        runKind: "execution_run",
+        run: action.run,
+        activeRunId: action.run.id,
+        resultCode: action.run.status,
+        durableStatus: action.durableStatus ?? state.durableStatus,
+        durableNotice: action.notice ?? "",
+        error: "",
+      };
+
+    case "durable-status":
+      return {
+        ...state,
+        durableStatus: action.status,
+        durableNotice: action.notice ?? state.durableNotice,
       };
 
     case "failed": {

@@ -66,6 +66,17 @@ export type RunDetail = {
   /** Segmento de una WorkflowInstance durable (workflows de negocio). */
   instance_id?: string | null;
   instance_seq?: number | null;
+  graph_hash?: string | null;
+  policy_hash?: string | null;
+  published_version_id?: string | null;
+  workflow_version?: number | null;
+  definition_source?: string | null;
+  simulated?: boolean;
+  effective_level?: string | null;
+  provider_verified?: boolean;
+  agent_snapshot_hash?: string | null;
+  agent_snapshot_status?: string | null;
+  has_provenance?: boolean;
   steps?: RunStep[];
   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
   effect_verification?: EffectVerification;
@@ -328,6 +339,13 @@ export function WorkflowRunInspector({
       {run.correlation_id && (
         <p className="truncate font-mono text-[10px] text-ghost" title={run.correlation_id}>
           corr {run.correlation_id}
+        </p>
+      )}
+      {(run.graph_hash || run.workflow_version || run.definition_source) && (
+        <p className="truncate font-mono text-[10px] text-ghost" data-testid="wf-run-provenance">
+          {run.definition_source || "run"} · v{run.workflow_version ?? "?"} ·{" "}
+          {run.graph_hash ? `grafo ${String(run.graph_hash).slice(0, 12)}` : "sin huella"}
+          {run.agent_snapshot_status ? ` · agente ${run.agent_snapshot_status}` : ""}
         </p>
       )}
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildTestRun,
   cappedReasonLabel,
+  compareRunGraph,
   effectBoundary,
   generateSampleForGraph,
   isJsonObject,
@@ -19,6 +20,13 @@ const base: TestReportOut = {
 };
 
 describe("workflowTestPresentation", () => {
+  it("compara huellas sin inventar coincidencia", () => {
+    expect(compareRunGraph("abc", "abc")).toBe("SAME");
+    expect(compareRunGraph("abc", "def")).toBe("DIFFERENT");
+    expect(compareRunGraph(null, "def")).toBe("UNKNOWN");
+    expect(compareRunGraph("abc", null)).toBe("UNKNOWN");
+  });
+
   it("no confunde un PASSED de simulación con proveedor", () => {
     const headline = resultHeadline(base, null, "test_report");
     expect(headline.label).toBe("Simulación completada");

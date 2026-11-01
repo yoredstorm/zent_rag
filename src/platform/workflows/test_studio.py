@@ -101,6 +101,32 @@ def report_hashes(workflow: dict[str, Any], graph: dict[str, Any]) -> dict[str, 
     }
 
 
+def input_snapshot(scenario_draft: dict[str, Any]) -> dict[str, Any]:
+    """Input exacto que consumió el test, independiente del composer actual.
+
+    El Test Studio evalúa ``scenario.messages`` (texto), mientras que /run
+    ejecuta ``payload`` estructurado. El snapshot lo hace explícito y
+    redaccionado; nunca pretende certificar el payload real.
+    """
+    messages = scenario_draft.get("messages")
+    text_messages = (
+        [str(item)[:2000] for item in messages[:20]]
+        if isinstance(messages, list)
+        else []
+    )
+    return {
+        "kind": "scenario.messages",
+        "contract": "test_text_vs_run_payload",
+        "scenario": mask_value(scenario_draft),
+        "messages_preview": text_messages,
+        "message_count": len(text_messages),
+        "note": (
+            "El test recibió texto de escenario; la ejecución real usa el "
+            "payload estructurado confirmado en /run."
+        ),
+    }
+
+
 async def save_test_report(
     *,
     organization_id: UUID,
@@ -217,6 +243,15 @@ async def execute_workflow_test(
 ) -> dict[str, Any]:
     graph = workflow.get("graph") if isinstance(workflow.get("graph"), dict) else {}
     graph = dict(graph or {})
+    messages = scenario_draft.get("messages")
+    if messages is not None:
+        if not isinstance(messages, list) or not all(
+            isinstance(item, str) for item in messages
+        ):
+            raise ValueError("scenario.messages debe ser una lista de textos")
+        if len(messages) > 50:
+            raise ValueError("scenario.messages supera el máximo de 50 mensajes")
+    snapshot_input = input_snapshot(scenario_draft)
     try:
         validate_graph(WorkflowGraph.from_dict(graph))
     except Exception as exc:  # noqa: BLE001 — un grafo inválido es reporte BLOCKED
@@ -233,6 +268,7 @@ async def execute_workflow_test(
             "state": "BLOCKED",
             "hashes": report_hashes(workflow, graph),
             "scenario": mask_value(scenario_draft),
+            "input_snapshot": snapshot_input,
             "timeline": [],
             "executed_nodes": [],
             "why": f"Grafo inválido: {str(exc)[:240]}",
@@ -275,6 +311,7 @@ async def execute_workflow_test(
             "state": "PREVIEW_ONLY",
             "hashes": hashes,
             "scenario": mask_value(scenario_draft),
+            "input_snapshot": snapshot_input,
             "timeline": [],
             "executed_nodes": [],
             "why": "Preview teórico: no ejecuta nodos ni efectos.",
@@ -336,6 +373,7 @@ async def execute_workflow_test(
             "state": state,
             "hashes": hashes,
             "scenario": mask_value(scenario_draft),
+            "input_snapshot": snapshot_input,
             "verification": verification,
             "readiness": {
                 "sandbox_ready": readiness.sandbox_ready,

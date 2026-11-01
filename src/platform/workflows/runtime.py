@@ -51,6 +51,16 @@ class ExecutionContext:
     simulation_loops: dict[str, int] | None = None
     #: EffectiveExecutionPolicy resuelta en servidor para esta ejecución.
     effective_policy: Any = None
+    #: Snapshots de agente verificados contra el certificado/instancia. El
+    #: runtime ejecuta desde aquí; nunca completa desde la fila viva.
+    agent_snapshots: dict[str, dict] | None = None
+    #: Hash del grafo y versión ejecutada (procedencia del run).
+    graph_hash: str | None = None
+    workflow_version: int | None = None
+    definition_source: str | None = None
+    #: true si el grafo tiene nodos de agente pero la definición no trae un
+    #: snapshot certificado. El PEP bloquea acciones irreversibles.
+    agent_snapshot_legacy: bool = False
 
 
 @dataclass

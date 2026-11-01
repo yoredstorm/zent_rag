@@ -64,6 +64,20 @@ export function WorkflowTestTechnical({
                 </p>
               </div>
             )}
+            {report.input_snapshot && (
+              <div className="space-y-0.5" data-testid="wf-test-input-snapshot">
+                <p className="font-medium text-text">Input usado por esta prueba</p>
+                <p className="text-faint">
+                  {String(
+                    (report.input_snapshot.note as string) ||
+                      "El test recibió texto de escenario; la ejecución real usa el payload estructurado.",
+                  )}
+                </p>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm border border-border bg-surface px-2 py-1 font-mono text-[10.5px] text-muted">
+                  {JSON.stringify(report.input_snapshot.scenario ?? {}, null, 2)}
+                </pre>
+              </div>
+            )}
             {report.readiness?.reasons && report.readiness.reasons.length > 0 && (
               <div>
                 <p className="font-medium text-text">Readiness del reporte</p>

@@ -16,6 +16,16 @@ export function WorkflowTestHeader({
 }) {
   const saveLabel = saving ? "Guardando…" : saveError ? "No se pudo guardar" : dirty ? "Se guardará antes de probar" : "";
   const saveTone = saveError ? "danger" : saving ? "info" : "warn";
+  const statusLabel =
+    status === "active"
+      ? "Publicado y activo"
+      : status === "paused"
+        ? "Publicado · pausado"
+        : status === "archived"
+          ? "Archivado"
+          : status === "draft"
+            ? "Borrador sin publicar"
+            : `Estado: ${status || "desconocido"}`;
 
   const info = (
     <div className="space-y-2 text-[12.5px] leading-relaxed text-muted">
@@ -45,7 +55,7 @@ export function WorkflowTestHeader({
     return (
       <div className="flex flex-wrap items-center gap-2 px-3 pt-3" data-testid="wf-test-header">
         <StatusBadge status={status} />
-        <span className="text-[12px] text-muted">Sin publicar</span>
+        <span className="text-[12px] text-muted">{statusLabel}</span>
         {saveLabel && <Badge tone={saveTone}>{saveLabel}</Badge>}
         <span className="ml-auto">{infoButton}</span>
       </div>
@@ -58,7 +68,7 @@ export function WorkflowTestHeader({
         <h2 className="text-h3">Probar automatización</h2>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
           <StatusBadge status={status} />
-          <span className="text-[12px] text-muted">Sin publicar</span>
+          <span className="text-[12px] text-muted">{statusLabel}</span>
           {saveLabel && <Badge tone={saveTone}>{saveLabel}</Badge>}
         </div>
       </div>

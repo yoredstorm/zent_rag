@@ -500,8 +500,87 @@ describe("WorkflowTestPanel (dock de prueba)", () => {
     expect(calls.some((call) => String(call[0]).includes("/workflows/runs/r1"))).toBe(true);
   });
 
-  it("caracteriza JSON: conserva el objeto completo y no lo envuelve", async () => {
-    stubApi([]);
+  it("sigue WAIT y actualiza el nuevo segmento sin reenviar /run", async () => {
+    let instanceReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/runs") && (init?.method ?? "GET") === "GET") {
+          return Promise.resolve(json({ runs: [] }));
+        }
+        if (url.endsWith("/run")) {
+          return Promise.resolve(
+            json({
+              instance_id: "inst-1",
+              status: "waiting",
+              run: { run_id: "r1", status: "waiting" },
+              planned_effects: [],
+            }),
+          );
+        }
+        if (url.includes("/workflows/instances/inst-1")) {
+          instanceReads += 1;
+          return Promise.resolve(
+            json(
+              instanceReads === 1
+                ? {
+                    id: "inst-1",
+                    status: "WAITING",
+                    last_run_id: "r1",
+                    waiting_event_type: "pago.recibido",
+                  }
+                : {
+                    id: "inst-1",
+                    status: "COMPLETED",
+                    last_run_id: "r2",
+                  },
+            ),
+          );
+        }
+        if (url.includes("/workflows/runs/r2")) {
+          return Promise.resolve(
+            json({
+              id: "r2",
+              status: "succeeded",
+              steps: [
+                {
+                  step_index: 0,
+                  step_type: "llm",
+                  node_id: "ask",
+                  node_type: "llm",
+                  status: "succeeded",
+                  output: { text: "pago recibido" },
+                },
+              ],
+            }),
+          );
+        }
+        if (url.includes("/workflows/runs/r1")) {
+          return Promise.resolve(json({ id: "r1", status: "waiting", steps: [] }));
+        }
+        return Promise.resolve(json({}));
+      }),
+    );
+    const onRun = vi.fn();
+    const user = userEvent.setup();
+    renderDock({ onRun });
+
+    await user.type(screen.getByTestId("wf-test-payload"), "hola");
+    await user.click(screen.getByTestId("wf-run"));
+    await confirmReal(user);
+
+    await waitFor(
+      () => expect(screen.getByTestId("wf-durable-status")).toHaveTextContent("COMPLETED"),
+      { timeout: 8000 },
+    );
+    await waitFor(() => expect(onRun).toHaveBeenLastCalledWith(expect.objectContaining({ id: "r2" })));
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.filter((call) => String(call[0]).endsWith("/run")).length).toBe(1);
+    expect(screen.getByTestId("wf-chat-answer")).toHaveTextContent("pago recibido");
+  });
+
+  it("caracteriza JSON: conserva el objeto completo y no lo envuelve", async () => {    stubApi([]);
     const user = userEvent.setup();
     renderDock();
 

@@ -1504,10 +1504,22 @@ async def tenant_workflow_event_trigger_delete(trigger_id: str, request: Request
 @router.get("/runs/{run_id}", summary="Detalle del run con pasos")
 async def tenant_workflow_run_detail(run_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.access import (
+        WorkflowAccessDenied,
+        assert_run_access,
+    )
     from src.platform.workflows.engine import run_detail
 
     ctx = require_permission(request, "workflow_runs:read")
-    result = await run_detail(ctx.organization_id, UUID(run_id))
+    workspace_id = await _workspace_id(request)
+    try:
+        await assert_run_access(ctx.organization_id, UUID(run_id), workspace_id)
+    except WorkflowAccessDenied as exc:
+        raise HTTPException(
+            exc.status_code,
+            detail={"error_code": exc.code, "message": str(exc)},
+        ) from exc
+    result = await run_detail(ctx.organization_id, UUID(run_id), workspace_id=workspace_id)
     if result is None:
         raise HTTPException(404, "Run not found")
     return result
@@ -1516,13 +1528,25 @@ async def tenant_workflow_run_detail(run_id: str, request: Request):
 @router.get("/runs/{run_id}/approvals", summary="Aprobaciones del run")
 async def tenant_workflow_run_approvals(run_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.access import (
+        WorkflowAccessDenied,
+        assert_run_access,
+    )
     from src.platform.workflows.engine import list_approvals
 
     ctx = require_permission(request, "workflow_runs:read")
+    workspace_id = await _workspace_id(request)
+    try:
+        await assert_run_access(ctx.organization_id, UUID(run_id), workspace_id)
+    except WorkflowAccessDenied as exc:
+        raise HTTPException(
+            exc.status_code,
+            detail={"error_code": exc.code, "message": str(exc)},
+        ) from exc
     return await list_approvals(
         ctx.organization_id,
         UUID(run_id),
-        workspace_id=await _workspace_id(request),
+        workspace_id=workspace_id,
     )
 
 
@@ -1533,9 +1557,27 @@ async def tenant_workflow_approval_decide(
     run_id: str, approval_id: str, body: ApprovalIn, request: Request
 ):
     from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.access import (
+        WorkflowAccessDenied,
+        assert_approval_access,
+        assert_run_access,
+    )
     from src.platform.workflows.engine import decide_approval
 
     ctx = require_permission(request, "workflow_approvals:approve")
+    workspace_id = await _workspace_id(request)
+    try:
+        await assert_run_access(ctx.organization_id, UUID(run_id), workspace_id)
+        scope = await assert_approval_access(
+            ctx.organization_id, UUID(approval_id), workspace_id
+        )
+        if scope.parent_id and str(scope.parent_id) != str(run_id):
+            raise WorkflowAccessDenied("not_found", "Aprobación no encontrada.")
+    except WorkflowAccessDenied as exc:
+        raise HTTPException(
+            exc.status_code,
+            detail={"error_code": exc.code, "message": str(exc)},
+        ) from exc
     try:
         result = await decide_approval(
             ctx.organization_id,
@@ -1543,7 +1585,7 @@ async def tenant_workflow_approval_decide(
             body.decision,
             ctx.user_id,
             body.comment,
-            workspace_id=await _workspace_id(request),
+            workspace_id=workspace_id,
             allow_owner_self_approval=ctx.is_organization_admin(),
         )
     except ValueError as exc:
@@ -1605,6 +1647,7 @@ async def tenant_workflow_instances_list(
         workspace_id=await _workspace_id(request),
         limit=limit,
         offset=offset,
+        require_workspace_scope=True,
     )
     for item in result.get("instances") or []:
         item["view_status"] = operational_status(item)
@@ -1621,6 +1664,7 @@ async def tenant_workflow_instance_detail(instance_id: str, request: Request):
         ctx.organization_id,
         UUID(instance_id),
         workspace_id=await _workspace_id(request),
+        require_workspace_scope=True,
     )
     if result is None:
         raise HTTPException(404, "Instance not found")
@@ -1629,7 +1673,12 @@ async def tenant_workflow_instance_detail(instance_id: str, request: Request):
 
 
 @router.get("/instances/{instance_id}/timeline", summary="Timeline: runs, señales y eventos")
-async def tenant_workflow_instance_timeline(instance_id: str, request: Request):
+async def tenant_workflow_instance_timeline(
+    instance_id: str,
+    request: Request,
+    cursor: str | None = None,
+    limit: int = 200,
+):
     from src.platform.rbac.policy import require_permission
     from src.platform.workflows.instances import get_instance, instance_timeline
 
@@ -1638,10 +1687,19 @@ async def tenant_workflow_instance_timeline(instance_id: str, request: Request):
         ctx.organization_id,
         UUID(instance_id),
         workspace_id=await _workspace_id(request),
+        require_workspace_scope=True,
     )
     if instance is None:
         raise HTTPException(404, "Instance not found")
-    timeline = await instance_timeline(ctx.organization_id, UUID(instance_id))
+    try:
+        timeline = await instance_timeline(
+            ctx.organization_id, UUID(instance_id), cursor=cursor, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            400,
+            detail={"error_code": "timeline_cursor_invalid", "message": str(exc)},
+        ) from exc
     from src.platform.workflows.operations import operational_status, project_business_timeline
 
     instance["view_status"] = operational_status(instance)
@@ -1665,7 +1723,10 @@ async def tenant_workflow_instance_signal(
     workspace_id = await _workspace_id(request)
     if (
         await get_instance(
-            ctx.organization_id, UUID(instance_id), workspace_id=workspace_id
+            ctx.organization_id,
+            UUID(instance_id),
+            workspace_id=workspace_id,
+            require_workspace_scope=True,
         )
         is None
     ):
@@ -1701,6 +1762,7 @@ async def tenant_workflow_instance_cancel(instance_id: str, request: Request):
             ctx.organization_id,
             UUID(instance_id),
             workspace_id=await _workspace_id(request),
+            require_workspace_scope=True,
         )
         is None
     ):
@@ -1721,6 +1783,7 @@ async def tenant_workflow_instance_suspend(instance_id: str, request: Request):
             ctx.organization_id,
             UUID(instance_id),
             workspace_id=await _workspace_id(request),
+            require_workspace_scope=True,
         )
         is None
     ):
@@ -1741,6 +1804,7 @@ async def tenant_workflow_instance_resume(instance_id: str, request: Request):
             ctx.organization_id,
             UUID(instance_id),
             workspace_id=await _workspace_id(request),
+            require_workspace_scope=True,
         )
         is None
     ):
@@ -2133,9 +2197,22 @@ async def tenant_workflow_run(workflow_id: str, body: RunIn, request: Request):
             actor_id=ctx.user_id,
             permissions=ctx.permissions,
             require_active=False,
+            idempotency_key=(
+                request.headers.get("idempotency-key") or ""
+            ).strip()
+            or None,
         )
         if result.get("error") == "not_found":
             raise HTTPException(404, "Workflow not found")
+        if result.get("status_code") == 409:
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": result.get("error") or "idempotency_conflict",
+                    "message": result.get("message")
+                    or "La llave de idempotencia ya se usó con otro payload.",
+                },
+            )
         if result.get("status_code") == 403:
             raise HTTPException(403, result.get("error") or "forbidden")
     if result is None:
@@ -2191,7 +2268,12 @@ async def tenant_workflow_runs(workflow_id: str, request: Request, limit: int = 
     from src.platform.workflows.engine import list_runs
 
     ctx = require_permission(request, "workflow_runs:read")
-    return await list_runs(ctx.organization_id, UUID(workflow_id), limit)
+    return await list_runs(
+        ctx.organization_id,
+        UUID(workflow_id),
+        limit,
+        workspace_id=await _workspace_id(request),
+    )
 
 
 @router.get("/{workflow_id}/export", summary="Exportar workflow (zent.workflow.package/v1)")
@@ -2215,10 +2297,26 @@ async def tenant_workflow_sample_outputs(workflow_id: str, request: Request, run
     from src.platform.workflows.samples import latest_node_outputs
 
     ctx = require_permission(request, "workflow_runs:read")
+    workspace_id = await _workspace_id(request)
+    from src.platform.workflows.access import (
+        WorkflowAccessDenied,
+        assert_workflow_access,
+    )
+
+    try:
+        await assert_workflow_access(
+            ctx.organization_id, UUID(workflow_id), workspace_id
+        )
+    except WorkflowAccessDenied as exc:
+        raise HTTPException(
+            exc.status_code,
+            detail={"error_code": exc.code, "message": str(exc)},
+        ) from exc
     result = await latest_node_outputs(
         ctx.organization_id,
         UUID(workflow_id),
         run_id=UUID(run_id) if run_id else None,
+        workspace_id=workspace_id,
     )
     if result is None:
         raise HTTPException(404, "Workflow not found")

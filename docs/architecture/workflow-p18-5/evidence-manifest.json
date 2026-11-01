@@ -1,0 +1,139 @@
+{
+  "schema": "zent.p18_5.evidence/v1",
+  "generated_at": "2026-10-31T00:00:00Z",
+  "baseline_sha": "e6c42c2579df0e997ef2a0a0d0916f05dc735bef",
+  "branch": "fix/p18-5-security-execution-live-studio",
+  "commits": {
+    "baseline_docs": "3b859f9",
+    "agent_snapshot_and_workspace": "e23b2ed",
+    "verified_approval_and_revocation": "732e25e",
+    "provenance_timeline_live_ui": "7730264"
+  },
+  "environment": {
+    "os": "Windows",
+    "python": "3.11.16",
+    "postgres": "docker local",
+    "redis": "docker local",
+    "qdrant": "docker local",
+    "api": "uvicorn 127.0.0.1:8001 (source)",
+    "browser": "Playwright Chromium",
+    "production_data": false
+  },
+  "tests": [
+    {
+      "command": "uv run pytest tests/test_p18_5_agent_snapshot_security.py -q",
+      "result": "PASS",
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "command": "uv run pytest tests/test_p18_5_workspace_authorization.py -q",
+      "result": "PASS",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 1
+    },
+    {
+      "command": "uv run pytest tests/test_p18_5_verified_approval.py -q",
+      "result": "PASS",
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "command": "uv run pytest tests/test_p18_5_revocation_resume.py -q",
+      "result": "PASS",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "command": "uv run pytest tests/test_p18_5_effect_idempotency.py -q",
+      "result": "PASS",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "uv run pytest tests/test_p18_5_execution_timeline.py -q",
+      "result": "PASS",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "uv run pytest tests/test_p18_5_payload_contract.py -q",
+      "result": "PASS",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "uv run pytest <21 workflow regression files> -q",
+      "result": "PASS",
+      "passed": 150,
+      "failed": 0,
+      "skipped": 1
+    },
+    {
+      "command": "npm run test (portal completo)",
+      "result": "PASS",
+      "passed": 859,
+      "failed": 0
+    },
+    {
+      "command": "npx playwright test e2e/p18-5-live-resume.spec.ts",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "PASS"
+    },
+    {
+      "command": "npm run lint",
+      "result": "PASS",
+      "errors": 0,
+      "warnings": 26
+    },
+    {
+      "command": "npx playwright test e2e/p18-4-wait.spec.ts (E2E_WAIT=1)",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "npx playwright test e2e/p18-4-approval.spec.ts (E2E_APPROVAL=1)",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "npx playwright test e2e/p18-4-effects.spec.ts (E2E_EFFECTS=1)",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "not_run": [
+    "Suite completa de 6057 tests backend (se ejecutaron 150 tests de workflow + suites P18.5; la suite total excede la ventana de esta sesión)",
+    "E2E adversarial de aprobación, replay, workspace, historial y accesibilidad",
+    "Axe / lector de pantalla real",
+    "Chaos Redis/Postgres/worker/provider",
+    "Carga 100+ pasos y P95/P99",
+    "Prueba con 5 usuarios no técnicos",
+    "Rollback con tráfico real",
+    "Certificación de proveedor externo / sandbox autorizado"
+  ],
+  "p0_status": {
+    "snapshot_tools_prompt": "CLOSED",
+    "workspace_run_read": "CLOSED",
+    "fake_approval_ref": "CLOSED",
+    "revocation_on_resume": "CLOSED",
+    "duplicate_real_run_local": "CLOSED"
+  },
+  "decision": "GO_LOCAL_DEV",
+  "not_authorized": [
+    "GO_STAGING con datos de clientes",
+    "GO_INTERNAL_PILOT",
+    "GO_CUSTOMER_PILOT",
+    "GO_GENERAL_AVAILABILITY",
+    "Operaciones irreversibles reales"
+  ]
+}

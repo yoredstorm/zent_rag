@@ -42,6 +42,7 @@ export type TestReportOut = {
   explain?: Record<string, unknown>;
   simulation?: Record<string, unknown> | null;
   verification?: Record<string, unknown> | null;
+  input_snapshot?: Record<string, unknown> | null;
   created_at?: string;
 };
 
@@ -51,6 +52,8 @@ export type RunOut = {
   /** Run durable: el backend envuelve el run (y puede quedar esperando). */
   run?: { run_id: string; status?: string };
   status?: string;
+  instance_id?: string | null;
+  durable?: boolean;
   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
   effect_verification?: EffectVerification;
   result?: unknown;
@@ -77,6 +80,9 @@ export type TestSessionState = {
   historicalRun: boolean;
   historicalHash?: string;
   operationId: number;
+  instanceId?: string;
+  durableStatus?: string;
+  durableNotice?: string;
 };
 
 export type TestSessionAction =
@@ -97,7 +103,20 @@ export type TestSessionAction =
       type: "run-completed";
       run: RunDetail;
       plannedEffects?: RunOut["planned_effects"];
+      instanceId?: string;
+      durableStatus?: string;
       operationId: number;
+    }
+  | {
+      type: "run-refreshed";
+      run: RunDetail;
+      durableStatus?: string;
+      notice?: string;
+    }
+  | {
+      type: "durable-status";
+      status: string;
+      notice?: string;
     }
   | { type: "failed"; error: string; operationId: number }
   | {

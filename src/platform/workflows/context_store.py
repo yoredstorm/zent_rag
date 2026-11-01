@@ -85,6 +85,30 @@ _APPROVAL_CONTEXT_DDL = (
     "ADD COLUMN IF NOT EXISTS context JSONB NOT NULL DEFAULT '{}'"
 )
 
+_APPROVAL_BINDING_DDL = (
+    "ALTER TABLE workflow_approvals ADD COLUMN IF NOT EXISTS instance_id UUID",
+    "ALTER TABLE workflow_approvals ADD COLUMN IF NOT EXISTS workflow_version INTEGER",
+    "ALTER TABLE workflow_approvals ADD COLUMN IF NOT EXISTS graph_hash VARCHAR(64)",
+    "ALTER TABLE workflow_approvals ADD COLUMN IF NOT EXISTS capability_ref VARCHAR(160)",
+    "ALTER TABLE workflow_approvals ADD COLUMN IF NOT EXISTS target_node_id VARCHAR(120)",
+    (
+        "ALTER TABLE workflow_approvals ADD COLUMN IF NOT EXISTS approval_scope "
+        "JSONB NOT NULL DEFAULT '{}'::jsonb"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS workflow_approval_consumptions ("
+        " id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
+        " approval_id UUID NOT NULL,"
+        " organization_id UUID NOT NULL,"
+        " run_id UUID NOT NULL,"
+        " node_id VARCHAR(120) NOT NULL,"
+        " operation_id VARCHAR(200),"
+        " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+        " UNIQUE (approval_id, run_id, node_id)"
+        ")"
+    ),
+)
+
 _ENSURED = False
 
 
@@ -99,6 +123,8 @@ async def ensure_context_tables() -> None:
         await session.execute(text(_CONTEXTS_DDL))
         await session.execute(text(_RUN_EVENTS_DDL))
         await session.execute(text(_APPROVAL_CONTEXT_DDL))
+        for statement in _APPROVAL_BINDING_DDL:
+            await session.execute(text(statement))
         for statement in (*_CONTRIBUTIONS_INDEXES, _CONTEXTS_INDEX, *_RUN_EVENTS_INDEXES):
             await session.execute(text(statement))
         await session.commit()
