@@ -16,6 +16,10 @@ conversacionales sobre datos reales.
 | P19-06 Conectores externos | PENDIENTE | — |
 | P19-07 a P19-14 | No iniciadas | — |
 
+## Despliegue
+
+- Merge a master y actualización Docker: [merge-and-docker-2026-11-01.md](./merge-and-docker-2026-11-01.md)
+
 ## Artefactos P19-00
 
 - [00-audit-baseline.md](./00-audit-baseline.md): identidad del baseline,
