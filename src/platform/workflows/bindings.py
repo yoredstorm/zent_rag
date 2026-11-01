@@ -1423,7 +1423,9 @@ async def _execute_inventory_action(
         raise BindingError("NEEDS_CONFIGURATION", "inventory requiere connector_id") from exc
     order_number = str(payload.get("order_number") or "").strip()
     sku = str(payload.get("sku") or "").strip()
-    if not _valid_simple_ident(sku) or not re.match(r"^[A-Za-z0-9_-]{3,40}$", order_number):
+    if not re.match(r"^[A-Za-z0-9_-]{3,40}$", sku) or not re.match(
+        r"^[A-Za-z0-9_-]{3,40}$", order_number
+    ):
         raise BindingError("INVALID_PARAMS", "order_number o sku inválido")
     try:
         quantity = int(payload.get("quantity") or 0)

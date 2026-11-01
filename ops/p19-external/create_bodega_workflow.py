@@ -1,4 +1,5 @@
 """Crea y ejecuta el flujo bodega: pedido → aprobación → commit de stock."""
+
 from __future__ import annotations
 
 import json
@@ -10,9 +11,7 @@ import httpx
 BASE = os.environ.get("P19_PORTAL_API", "http://127.0.0.1:8000")
 EMAIL = os.environ.get("P19_DEMO_EMAIL", "p19.demo@example.com")
 PASSWORD = os.environ.get("P19_DEMO_PASSWORD", "P19Demo!2026")
-WORKSPACE = os.environ.get(
-    "P19_DEMO_WORKSPACE", "d28ec9d6-020f-4537-a715-dc4ff34e888d"
-)
+WORKSPACE = os.environ.get("P19_DEMO_WORKSPACE", "d28ec9d6-020f-4537-a715-dc4ff34e888d")
 ORDER = os.environ.get("P19_ORDER", "BOD-1001")
 SKU = os.environ.get("P19_SKU", "BD-ARROZ-01")
 QUANTITY = int(os.environ.get("P19_QUANTITY", "2"))
@@ -20,9 +19,7 @@ QUANTITY = int(os.environ.get("P19_QUANTITY", "2"))
 
 def main() -> None:
     with httpx.Client(base_url=BASE, timeout=60) as client:
-        login = client.post(
-            "/api/v1/auth/login", json={"email": EMAIL, "password": PASSWORD}
-        )
+        login = client.post("/api/v1/auth/login", json={"email": EMAIL, "password": PASSWORD})
         login.raise_for_status()
         session = login.json()
         headers = {
@@ -61,8 +58,7 @@ def main() -> None:
                     "config": {
                         "action": f"Aprobar pedido {ORDER}",
                         "summary": (
-                            "Pedido {{trigger.order_number}} · "
-                            "SKU {{trigger.sku}} · cantidad {{trigger.quantity}}"
+                            "Pedido {{trigger.order_number}} · SKU {{trigger.sku}} · cantidad {{trigger.quantity}}"
                         ),
                         "data": {
                             "order_number": "{{trigger.order_number}}",
@@ -82,7 +78,7 @@ def main() -> None:
                             "order_number": "{{nodes.approval.output.data.order_number}}",
                             "sku": "{{nodes.approval.output.data.sku}}",
                             "quantity": "{{nodes.approval.output.data.quantity}}",
-                            "idempotency_key": "{{nodes.approval.output.data.order_number}}-{{nodes.approval.output.data.sku}}",
+                            "idempotency_key": "{{nodes.approval.output.data.order_number}}-{{nodes.approval.output.data.sku}}",  # noqa: E501
                         },
                     },
                 },
