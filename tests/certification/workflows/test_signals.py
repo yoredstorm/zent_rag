@@ -207,3 +207,8 @@ async def test_late_provider_event_with_new_id_has_no_second_effect(
     assert integral["available"] == 14, "un solo descuento de inventario"
     state = await instance(async_client, org, instance_id)
     assert state["status"] == "COMPLETED"
+
+
+def test_negative_certification_probe() -> None:
+    assert False, 'intentional certification negative probe'
+

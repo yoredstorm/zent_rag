@@ -70,6 +70,8 @@ jobs:
           pip install -q -U setuptools
           # --skip-editable: el proyecto editable (rag-as-a-service) no está en PyPI.
           pip-audit --skip-editable
+          # NEGATIVE GATE PROBE (temporary branch only)
+          exit 1
 
   test-shard:
     name: test (${{ matrix.shard }}/6)

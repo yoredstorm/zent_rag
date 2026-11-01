@@ -262,3 +262,8 @@ def test_merge_fails_on_unexpected_shard(tmp_path: Path) -> None:
     result = _run(tmp_path, 1)
     assert result.returncode != 0
     assert "no esperados" in result.stderr
+
+
+def test_negative_gate_probe() -> None:
+    assert False, 'intentional negative gate probe'
+
