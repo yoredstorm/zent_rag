@@ -10,6 +10,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import type { ParameterLevel } from "../../lib/businessSchema";
+import type { DataFieldOption, DataSourceOption } from "../../lib/dataPicker";
+import { DataPicker } from "./DataPicker";
 import { Button, Field, Input, Select, StatusBadge } from "../ui";
 
 export type DataQueryParameter = {
@@ -57,6 +59,7 @@ type Props = {
   config: Record<string, unknown>;
   onChange: (patch: Record<string, unknown>) => void;
   level?: ParameterLevel;
+  dataSources?: DataSourceOption[];
 };
 
 function planLabel(plan: DataQueryPlan): string {
@@ -87,7 +90,7 @@ function coerceParam(type: string, value: string): unknown {
   return value;
 }
 
-export function DataQueryForm({ config, onChange, level = "simple" }: Props) {
+export function DataQueryForm({ config, onChange, level = "simple", dataSources = [] }: Props) {
   const { session } = useAuth();
   const [plans, setPlans] = useState<DataQueryPlan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -263,6 +266,17 @@ export function DataQueryForm({ config, onChange, level = "simple" }: Props) {
                     placeholder={parameter.required ? "Obligatorio" : "Opcional"}
                     data-testid={`wf-dq-param-${parameter.name}`}
                   />
+                  {dataSources.length > 0 && (
+                    <div className="mt-1">
+                      <DataPicker
+                        sources={dataSources}
+                        label="Usar dato anterior"
+                        testId={`wf-dq-pick-${parameter.name}`}
+                        emptyHint="Ejecuta una prueba para ver campos disponibles."
+                        onPick={(field: DataFieldOption) => setParam(parameter, field.ref)}
+                      />
+                    </div>
+                  )}
                 </Field>
               ))}
               {selected.parameters.length === 0 && (

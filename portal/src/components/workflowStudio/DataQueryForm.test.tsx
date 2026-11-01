@@ -37,12 +37,13 @@ const plan = {
   pii_class: "internal",
 };
 
-function Harness() {
+function Harness({ dataSources }: { dataSources?: Parameters<typeof DataQueryForm>[0]["dataSources"] }) {
   const [config, setConfig] = useState<Record<string, unknown>>({ params: {} });
   return (
     <DataQueryForm
       config={config}
       onChange={(patch) => setConfig((current) => ({ ...current, ...patch }))}
+      dataSources={dataSources}
     />
   );
 }
@@ -91,5 +92,36 @@ describe("DataQueryForm", () => {
     });
     expect(screen.getByText(/FOUND/)).toBeInTheDocument();
     expect(screen.getAllByText(/public.p19_prices/).length).toBeGreaterThan(0);
+  });
+
+  it("inserta una referencia de otro nodo con un clic", async () => {
+    mockedApi.mockResolvedValue({ plans: [plan] });
+    const user = userEvent.setup();
+    render(
+      <Harness
+        dataSources={[
+          {
+            id: "intent",
+            label: "Identificar solicitud",
+            kind: "node",
+            fields: [
+              {
+                key: "sku",
+                label: "SKU",
+                ref: "{{nodes.intent.output.entities.sku}}",
+                type: "text",
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+    const select = await screen.findByTestId("wf-dq-plan");
+    await user.selectOptions(select, "binding-1");
+    await user.click(await screen.findByTestId("wf-dq-pick-sku"));
+    await user.click(await screen.findByTestId("wf-dq-pick-sku-field-intent-sku"));
+    expect(screen.getByTestId("wf-dq-param-sku")).toHaveValue(
+      "{{nodes.intent.output.entities.sku}}",
+    );
   });
 });

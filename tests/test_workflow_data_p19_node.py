@@ -97,6 +97,32 @@ async def test_data_query_uses_binding_output(monkeypatch: pytest.MonkeyPatch) -
     assert calls[0]["workspace_id"] is not None
 
 
+async def test_data_query_resolves_previous_intent_entity(monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.platform.workflows.bindings as bindings
+
+    captured: list[dict] = []
+
+    async def _execute(*args, **kwargs):
+        captured.append({"args": args, "kwargs": kwargs})
+        return {
+            "provider_kind": "managed_db",
+            "output": {"status": "FOUND", "found": True, "binding_ref": "b-1", "record": {}},
+        }
+
+    monkeypatch.setattr(bindings, "execute_binding", _execute)
+    rctx = _ctx(
+        {
+            "capability": "p19.price.lookup",
+            "binding_ref": "b-1",
+            "params": {"sku": "{{nodes.intent.output.entities.sku}}"},
+        }
+    )
+    rctx.node_outputs = {"intent": {"output": {"entities": {"sku": "ARR-001"}}}}
+    outcome = await _exec_data_query(rctx)
+    assert outcome.output["status"] == "FOUND"
+    assert captured[0]["args"][2] == {"params": {"sku": "ARR-001"}}
+
+
 async def test_data_query_detects_binding_change(monkeypatch: pytest.MonkeyPatch) -> None:
     import src.platform.workflows.bindings as bindings
 

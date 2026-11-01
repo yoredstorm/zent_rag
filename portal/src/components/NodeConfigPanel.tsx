@@ -410,7 +410,12 @@ export function NodeConfigPanel({
               ) : current.type === "ai_decision" ? (
                 <AiDecisionForm config={current.config} onChange={patchConfig} />
               ) : current.type === "data_query" ? (
-                <DataQueryForm config={current.config} onChange={patchConfig} level={level} />
+                <DataQueryForm
+                  config={current.config}
+                  onChange={patchConfig}
+                  level={level}
+                  dataSources={dataSources}
+                />
               ) : current.type === "intent_route" ? (
                 <IntentRouteForm config={current.config} onChange={patchConfig} level={level} />
               ) : current.type === "notify" ? (

@@ -12,8 +12,9 @@ conversacionales sobre datos reales.
 | P19-02 Catálogo de recursos | COMPLETADO (backend) | [02-data-catalog.md](./02-data-catalog.md) |
 | P19-03 Nodo visual | COMPLETADO (backend + editor Simple) | [03-visual-data-query-node.md](./03-visual-data-query-node.md) |
 | P19-04 Intención de negocio | COMPLETADO (reglas) | [04-intent-routing.md](./04-intent-routing.md) |
-| P19-05 Data Picker tipado | PENDIENTE | — |
-| P19-06 a P19-14 | No iniciadas | — |
+| P19-05 Data Picker tipado | COMPLETADO (un clic) | [05-typed-data-picker.md](./05-typed-data-picker.md) |
+| P19-06 Conectores externos | PENDIENTE | — |
+| P19-07 a P19-14 | No iniciadas | — |
 
 ## Artefactos P19-00
 
