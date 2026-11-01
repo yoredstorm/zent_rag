@@ -13,11 +13,15 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import re
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Literal
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import text
 
 from src.infrastructure.observability.logging_config import get_logger
@@ -42,7 +46,207 @@ PROVIDER_KINDS: tuple[str, ...] = (
 )
 
 _IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$")
+_SIMPLE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _MAX_ROWS = 500
+_DATA_QUERY_SCHEMA = "zent.data.query.binding/v1"
+_QUERY_OPERATORS = ("eq", "ne", "gt", "gte", "lt", "lte", "like", "ilike", "in", "is_null", "is_not_null")
+_SQL_OPERATORS = {
+    "eq": "=",
+    "ne": "<>",
+    "gt": ">",
+    "gte": ">=",
+    "lt": "<",
+    "lte": "<=",
+    "like": "LIKE",
+    "ilike": "ILIKE",
+    "in": "IN",
+}
+_AUTHORITY_KEYS = frozenset(
+    {
+        "table",
+        "schema",
+        "columns",
+        "projection",
+        "filters",
+        "where",
+        "order_by",
+        "limit",
+        "offset",
+        "sql",
+        "query_sql",
+        "connection_ref",
+        "workspace_id",
+        "organization_id",
+        "operation",
+        "resource",
+        "policy",
+        "required_predicates",
+        "parameters",
+        "joins",
+    }
+)
+
+
+def _valid_simple_ident(name: str) -> bool:
+    return bool(_SIMPLE_IDENT_RE.match(name or ""))
+
+
+def _plan_hash(config: dict[str, Any]) -> str:
+    blob = json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _binding_hash(binding: dict[str, Any], plan_hash: str) -> str:
+    blob = json.dumps(
+        {
+            "binding_id": str(binding.get("id") or ""),
+            "capability_ref": str(binding.get("capability_ref") or ""),
+            "provider_kind": str(binding.get("provider_kind") or ""),
+            "plan_hash": plan_hash,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+class _PlanBase(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class QueryResource(_PlanBase):
+    schema_name: str | None = Field(default=None, alias="schema")
+    name: str
+    kind: Literal["table", "view"] = "view"
+
+    @field_validator("schema_name", "name")
+    @classmethod
+    def _ident(cls, value: str | None) -> str | None:
+        if value is not None and not _valid_simple_ident(value):
+            raise ValueError(f"identificador inválido: {value!r}")
+        return value
+
+
+class QueryPredicate(_PlanBase):
+    field: str
+    operator: Literal["eq", "ne", "gt", "gte", "lt", "lte", "like", "ilike", "in", "is_null", "is_not_null"] = Field(
+        default="eq", alias="op"
+    )
+    source: Literal["binding"] = "binding"
+    value: Any = None
+
+    @field_validator("field")
+    @classmethod
+    def _field(cls, value: str) -> str:
+        if not _valid_simple_ident(value):
+            raise ValueError(f"columna inválida: {value!r}")
+        return value
+
+
+class QueryParameter(_PlanBase):
+    name: str
+    field: str
+    operator: Literal["eq", "ne", "gt", "gte", "lt", "lte", "like", "ilike", "in"] = "eq"
+    type: Literal["string", "integer", "number", "boolean", "date", "datetime"] = "string"
+    required: bool = True
+
+    @field_validator("name", "field")
+    @classmethod
+    def _ident(cls, value: str) -> str:
+        if not _valid_simple_ident(value):
+            raise ValueError(f"identificador inválido: {value!r}")
+        return value
+
+
+class QuerySort(_PlanBase):
+    field: str
+    direction: Literal["asc", "desc"] = "asc"
+
+    @field_validator("field")
+    @classmethod
+    def _field(cls, value: str) -> str:
+        if not _valid_simple_ident(value):
+            raise ValueError(f"columna inválida: {value!r}")
+        return value
+
+
+class QueryPolicy(_PlanBase):
+    max_rows: int = Field(default=50, ge=1, le=_MAX_ROWS)
+    timeout_ms: int = Field(default=3000, ge=100, le=30_000)
+    read_only: Literal[True] = True
+    pii_class: Literal["public", "internal", "personal", "sensitive"] = "internal"
+    max_bytes: int = Field(default=262_144, ge=1024, le=5_242_880)
+
+
+class QueryOwnership(_PlanBase):
+    field: str
+    principal_claim: str
+    required: bool = True
+
+    @field_validator("field", "principal_claim")
+    @classmethod
+    def _ident(cls, value: str) -> str:
+        if not _valid_simple_ident(value):
+            raise ValueError(f"identificador inválido: {value!r}")
+        return value
+
+
+class DataQueryPlan(_PlanBase):
+    plan_schema: Literal["zent.data.query.binding/v1"] = Field(alias="schema")
+    scope: Literal["workspace", "organization"] = "workspace"
+    allowed_workspace_ids: list[UUID] = Field(default_factory=list)
+    connection_ref: UUID | None = None
+    resource: QueryResource
+    operation: Literal["get_one", "list", "count"] = "list"
+    projection: list[str] = Field(min_length=1)
+    allowed_columns: list[str] = Field(default_factory=list)
+    required_predicates: list[QueryPredicate] = Field(default_factory=list)
+    parameters: list[QueryParameter] = Field(default_factory=list)
+    order_by: list[QuerySort] = Field(default_factory=list)
+    policy: QueryPolicy = Field(default_factory=QueryPolicy)
+    ownership: QueryOwnership | None = None
+    resource_ref: str | None = None
+    column_types: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("projection", "allowed_columns")
+    @classmethod
+    def _columns(cls, value: list[str]) -> list[str]:
+        if "*" in value:
+            raise ValueError("SELECT * no está permitido")
+        for column in value:
+            if not _valid_simple_ident(column):
+                raise ValueError(f"columna inválida: {column!r}")
+        return value
+
+    @field_validator("parameters")
+    @classmethod
+    def _unique_parameters(cls, value: list[QueryParameter]) -> list[QueryParameter]:
+        names = [item.name for item in value]
+        if len(names) != len(set(names)):
+            raise ValueError("parámetros duplicados")
+        return value
+
+    @field_validator("column_types")
+    @classmethod
+    def _column_types(cls, value: dict[str, str]) -> dict[str, str]:
+        for column in value:
+            if not _valid_simple_ident(column):
+                raise ValueError(f"columna inválida: {column!r}")
+        return value
+
+
+def parse_data_query_plan(config: dict[str, Any] | None) -> DataQueryPlan | None:
+    """Devuelve el plan canónico o None para bindings legacy."""
+    if not isinstance(config, dict) or config.get("schema") != _DATA_QUERY_SCHEMA:
+        return None
+    try:
+        return DataQueryPlan.model_validate(config)
+    except ValidationError as exc:
+        details = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}" for item in exc.errors()[:5]
+        )
+        raise BindingError("NEEDS_CONFIGURATION", f"plan inválido: {details}") from exc
+
 
 _BINDING_DDL = """
 CREATE TABLE IF NOT EXISTS workflow_capability_bindings (
@@ -400,24 +604,47 @@ async def _dispatch_binding(
 ) -> dict[str, Any]:
     if kind == "marketplace_action":
         out = await _execute_marketplace_action(
-            organization_id, binding, payload, workspace_id=workspace_id, source=source,
-            actor_id=actor_id, workflow_id=workflow_id, run_id=run_id,
+            organization_id,
+            binding,
+            payload,
+            workspace_id=workspace_id,
+            source=source,
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
         )
     elif kind == "semantic_query":
         out = await _execute_semantic_query(organization_id, binding, payload, workspace_id=workspace_id)
-    elif kind in ("managed_db", "connected_db"):
+    elif kind == "managed_db":
         out = await _execute_managed_select(organization_id, binding, payload, workspace_id=workspace_id)
+    elif kind == "connected_db":
+        raise BindingError(
+            "PROVIDER_NOT_SUPPORTED",
+            "connected_db requiere un ReadOnlyQueryAdapter certificado; P19-06 pendiente",
+        )
     elif kind == "rest_api":
         out = await _execute_rest(organization_id, binding, payload)
     elif kind == "commerce":
         out = await _execute_commerce(
-            organization_id, binding, payload, workspace_id=workspace_id, instance_id=instance_id,
-            node_id=node_id, workflow_id=workflow_id, run_id=run_id,
+            organization_id,
+            binding,
+            payload,
+            workspace_id=workspace_id,
+            instance_id=instance_id,
+            node_id=node_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
         )
     elif kind == "payment_provider":
         out = await _execute_payment(
-            organization_id, binding, payload, workspace_id=workspace_id, instance_id=instance_id,
-            node_id=node_id, workflow_id=workflow_id, run_id=run_id,
+            organization_id,
+            binding,
+            payload,
+            workspace_id=workspace_id,
+            instance_id=instance_id,
+            node_id=node_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
         )
     elif kind == "conversation":
         from src.platform.workflows.conversation_capability import (
@@ -426,8 +653,14 @@ async def _dispatch_binding(
 
         try:
             out = await execute_conversation_capability(
-                organization_id, binding["capability_ref"], payload, workspace_id=workspace_id,
-                instance_id=instance_id, node_id=node_id, workflow_id=workflow_id, run_id=run_id,
+                organization_id,
+                binding["capability_ref"],
+                payload,
+                workspace_id=workspace_id,
+                instance_id=instance_id,
+                node_id=node_id,
+                workflow_id=workflow_id,
+                run_id=run_id,
                 binding=binding,
             )
         except BindingError:
@@ -616,11 +849,7 @@ async def _execute_semantic_query(
         raise BindingError("PROVIDER_ERROR", f"semantic query falló: {str(exc)[:200]}") from exc
     structured = getattr(result, "structured_output", None) or {}
     return {
-        "answer": (
-            result.llm_response.content
-            if getattr(result, "llm_response", None) is not None
-            else None
-        ),
+        "answer": (result.llm_response.content if getattr(result, "llm_response", None) is not None else None),
         "rows": list(structured.get("rows") or []),
         "columns": list(structured.get("columns") or []),
         "row_count": int(structured.get("row_count") or 0),
@@ -635,40 +864,348 @@ def _q(ident: str) -> str:
     return ident
 
 
-async def _execute_managed_select(
+def _param_type_ok(value: Any, want: str) -> bool:
+    if want == "string":
+        return isinstance(value, str) and len(value) <= 500
+    if want == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if want == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if want == "boolean":
+        return isinstance(value, bool)
+    if want in ("date", "datetime"):
+        return isinstance(value, str) and 4 <= len(value) <= 64
+    return False
+
+
+def _like_pattern_ok(value: str) -> bool:
+    if len(value) > 64:
+        return False
+    if value.startswith("%"):
+        return False
+    return value.count("%") <= 2 and value.count("_") <= 4
+
+
+def _build_where(
+    predicates: list[tuple[str, str, Any]],
+) -> tuple[list[str], dict[str, Any]]:
+    parts: list[str] = []
+    params: dict[str, Any] = {}
+    counter = 0
+    for field, operator, value in predicates:
+        if not _valid_simple_ident(field):
+            raise BindingError("INVALID_PARAMS", f"columna inválida: {field}")
+        if operator not in _QUERY_OPERATORS:
+            raise BindingError("INVALID_PARAMS", f"operador no permitido: {operator}")
+        col = _q(field)
+        if operator == "is_null":
+            parts.append(f"{col} IS NULL")
+            continue
+        if operator == "is_not_null":
+            parts.append(f"{col} IS NOT NULL")
+            continue
+        if operator == "in":
+            if not isinstance(value, (list, tuple)) or not value or len(value) > 50:
+                raise BindingError("INVALID_PARAMS", f"{field}: lista inválida")
+            names = []
+            for item in value:
+                if isinstance(item, (dict, list, tuple)):
+                    raise BindingError("INVALID_PARAMS", f"{field}: valor de lista inválido")
+                name = f"p{counter}"
+                counter += 1
+                names.append(f":{name}")
+                params[name] = item
+            parts.append(f"{col} IN ({', '.join(names)})")
+            continue
+        if value is None:
+            raise BindingError("INVALID_PARAMS", f"{field}: valor requerido")
+        if operator in ("like", "ilike"):
+            if not isinstance(value, str) or not _like_pattern_ok(value):
+                raise BindingError("INVALID_PARAMS", f"{field}: patrón no permitido")
+        name = f"p{counter}"
+        counter += 1
+        parts.append(f"{col} {_SQL_OPERATORS[operator]} :{name}")
+        params[name] = value
+    return parts, params
+
+
+async def _execute_sql(
+    session: Any,
+    sql: str,
+    params: dict[str, Any],
+    *,
+    timeout_ms: int,
+):
+    try:
+        await session.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+        return await asyncio.wait_for(
+            session.execute(text(sql), params),
+            timeout=(timeout_ms / 1000.0) + 0.5,
+        )
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        raise BindingError("TIMEOUT", "la consulta excedió el tiempo autorizado") from exc
+
+
+def _query_failure(exc: Exception) -> BindingError:
+    message = str(exc).lower()
+    if "statement timeout" in message or "canceling statement" in message:
+        return BindingError("TIMEOUT", "la consulta excedió el tiempo autorizado")
+    if "permission denied" in message or "insufficient privilege" in message:
+        return BindingError("PERMISSION_DENIED", "la fuente denegó el acceso de lectura")
+    if "does not exist" in message or "undefinedtable" in message or "undefined column" in message:
+        return BindingError("RESOURCE_NOT_EXPOSED", "el recurso no está expuesto para esta consulta")
+    if "connect" in message or "connection" in message or "server closed" in message:
+        return BindingError("CONNECTION_FAILED", "no se pudo conectar a la fuente")
+    return BindingError("PROVIDER_ERROR", f"la consulta falló ({type(exc).__name__})")
+
+
+def _output_columns(plan: DataQueryPlan) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": column,
+            "type": plan.column_types.get(column, "unknown"),
+            "label": column.replace("_", " "),
+        }
+        for column in plan.projection
+    ]
+
+
+def _record_size(data: Any) -> int:
+    return len(json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+async def _execute_data_query_plan(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    plan: DataQueryPlan,
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from src.platform.managed_db.service import open_managed_query_session
+
+    if set(payload or {}) - {"params"}:
+        raise BindingError(
+            "UNEXPECTED_PARAMETER",
+            "el payload solo puede enviar params; los recursos se resuelven en el servidor",
+        )
+    raw_params = (payload or {}).get("params")
+    params_input = raw_params if isinstance(raw_params, dict) else {}
+    if raw_params is not None and not isinstance(raw_params, dict):
+        raise BindingError("INVALID_PARAMS", "params debe ser un objeto")
+
+    if plan.scope == "organization":
+        if workspace_id is None:
+            raise BindingError("NEEDS_CONFIGURATION", "la consulta org-level requiere workspace")
+        if workspace_id not in plan.allowed_workspace_ids:
+            raise BindingError("PERMISSION_DENIED", "el workspace no tiene el binding autorizado")
+    else:
+        if not binding.get("workspace_id"):
+            raise BindingError(
+                "NEEDS_CONFIGURATION",
+                "el plan workspace debe estar guardado en un binding de workspace",
+            )
+        if str(binding["workspace_id"]) != str(workspace_id):
+            raise BindingError("PERMISSION_DENIED", "el binding pertenece a otro workspace")
+
+    allowed_fields = set(plan.projection) | set(plan.allowed_columns)
+    allowed_fields |= {item.field for item in plan.required_predicates}
+    allowed_fields |= {item.field for item in plan.parameters}
+    allowed_fields |= {item.field for item in plan.order_by}
+    if plan.ownership is not None:
+        allowed_fields.add(plan.ownership.field)
+    if plan.allowed_columns:
+        declared_fields = set(allowed_fields)
+        if not declared_fields.issubset(set(plan.allowed_columns)):
+            raise BindingError(
+                "NEEDS_CONFIGURATION",
+                "el plan usa columnas fuera de allowed_columns",
+            )
+    for field in allowed_fields:
+        if not _valid_simple_ident(field):
+            raise BindingError("NEEDS_CONFIGURATION", f"columna inválida en el plan: {field}")
+
+    declared = {item.name for item in plan.parameters}
+    unknown = set(params_input) - declared
+    if unknown:
+        raise BindingError(
+            "UNEXPECTED_PARAMETER",
+            f"parámetros no declarados: {', '.join(sorted(unknown)[:5])}",
+        )
+
+    predicates: list[tuple[str, str, Any]] = []
+    for item in plan.required_predicates:
+        if item.operator not in ("is_null", "is_not_null") and item.value is None:
+            raise BindingError("NEEDS_CONFIGURATION", f"predicado sin valor: {item.field}")
+        predicates.append((item.field, item.operator, item.value))
+
+    for item in plan.parameters:
+        if item.name not in params_input:
+            if item.required:
+                raise BindingError("INVALID_PARAMS", f"falta el parámetro {item.name}")
+            continue
+        value = params_input[item.name]
+        if not _param_type_ok(value, item.type):
+            raise BindingError("INVALID_PARAMS", f"tipo inválido en {item.name}: esperado {item.type}")
+        predicates.append((item.field, item.operator, value))
+
+    if plan.ownership is not None and plan.ownership.required:
+        resolved_principal = principal if isinstance(principal, dict) else {}
+        owner_value = resolved_principal.get(plan.ownership.principal_claim)
+        if owner_value is None or str(owner_value).strip() == "":
+            raise BindingError("PERMISSION_DENIED", "identidad del titular no verificada")
+        predicates.append((plan.ownership.field, "eq", owner_value))
+
+    where_parts, params = _build_where(predicates)
+    table = _q(plan.resource.name)
+    if plan.resource.schema_name:
+        table = f"{_q(plan.resource.schema_name)}.{table}"
+    cols_sql = ", ".join(_q(column) for column in plan.projection)
+    where_sql = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    order_sql = ""
+    if plan.order_by and plan.operation != "count":
+        order_sql = " ORDER BY " + ", ".join(f"{_q(item.field)} {item.direction.upper()}" for item in plan.order_by)
+
+    if plan.operation == "count":
+        sql = f"SELECT COUNT(*) AS row_count FROM {table}{where_sql}"
+    else:
+        row_limit = plan.policy.max_rows + (1 if plan.operation == "list" else 1)
+        if plan.operation == "get_one":
+            row_limit = 2
+        sql = f"SELECT {cols_sql} FROM {table}{where_sql}{order_sql} LIMIT {row_limit}"
+
+    started = datetime.now(timezone.utc)
+    session = await open_managed_query_session(organization_id, workspace_id, database_id=plan.connection_ref)
+    if session is None:
+        raise BindingError("NEEDS_CONFIGURATION", "no hay managed database para el tenant")
+    try:
+        try:
+            result = await _execute_sql(session, sql, params, timeout_ms=plan.policy.timeout_ms)
+            rows = result.fetchall()
+        except BindingError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise _query_failure(exc) from exc
+    finally:
+        await session.close()
+
+    duration_ms = max(0, int((datetime.now(timezone.utc) - started).total_seconds() * 1000))
+    plan_hash = _plan_hash(binding.get("config") or {})
+    binding_hash = _binding_hash(binding, plan_hash)
+    source_ref = plan.resource_ref or f"{plan.resource.kind}:{table}"
+    columns = _output_columns(plan)
+    base: dict[str, Any] = {
+        "status": "FOUND",
+        "found": False,
+        "record": None,
+        "rows": [],
+        "columns": columns,
+        "row_count": 0,
+        "truncated": False,
+        "data_as_of": None,
+        "source_ref": source_ref,
+        "binding_ref": str(binding.get("id") or ""),
+        "binding_hash": binding_hash,
+        "duration_ms": duration_ms,
+        "reason_code": None,
+        "provenance": {
+            "provider_kind": str(binding.get("provider_kind") or "managed_db"),
+            "queried_at": started.isoformat(),
+            "resource_kind": plan.resource.kind,
+        },
+    }
+
+    if plan.operation == "count":
+        count = int(rows[0]._mapping["row_count"]) if rows else 0
+        return {**base, "status": "FOUND", "found": True, "row_count": count, "rows": []}
+
+    if plan.operation == "get_one":
+        if not rows:
+            return {
+                **base,
+                "status": "NOT_FOUND",
+                "reason_code": "NOT_FOUND",
+            }
+        if len(rows) > 1:
+            return {
+                **base,
+                "status": "MULTIPLE_MATCHES",
+                "row_count": len(rows),
+                "reason_code": "MULTIPLE_MATCHES",
+            }
+        record = dict(rows[0]._mapping)
+        if _record_size(record) > plan.policy.max_bytes:
+            raise BindingError("INVALID_PARAMS", "el registro excede el tamaño autorizado")
+        return {
+            **base,
+            "status": "FOUND",
+            "found": True,
+            "record": record,
+            "row_count": 1,
+        }
+
+    data = [dict(row._mapping) for row in rows]
+    truncated = len(data) > plan.policy.max_rows
+    data = data[: plan.policy.max_rows]
+    while data and _record_size(data) > plan.policy.max_bytes:
+        data.pop()
+        truncated = True
+    return {
+        **base,
+        "status": "FOUND",
+        "found": bool(data),
+        "rows": data,
+        "row_count": len(data),
+        "truncated": truncated,
+    }
+
+
+async def _execute_legacy_select(
     organization_id: UUID,
     binding: dict[str, Any],
     payload: dict[str, Any],
     *,
     workspace_id: UUID | None,
 ) -> dict[str, Any]:
-    """SELECT declarativo validado (sin SQL arbitrario en plantillas)."""
+    """Camino legacy seguro: la configuración manda, el payload no la sustituye."""
     from src.platform.managed_db.service import open_managed_query_session
 
-    config = {**(binding.get("config") or {}), **payload}
+    unexpected = set(payload or {}) & _AUTHORITY_KEYS
+    if unexpected:
+        raise BindingError(
+            "UNEXPECTED_PARAMETER",
+            f"parámetros de autoridad no permitidos: {', '.join(sorted(unexpected)[:5])}",
+        )
+    config = binding.get("config") or {}
     table = _q(str(config.get("table") or ""))
     if not table:
         raise BindingError("NEEDS_CONFIGURATION", "managed_db requiere config.table")
-    columns = config.get("columns") or ["*"]
-    if not isinstance(columns, list):
-        columns = [columns]
-    cols_sql = ", ".join("*" if c == "*" else _q(str(c)) for c in columns)
+    columns = config.get("columns")
+    if not isinstance(columns, list) or not columns:
+        raise BindingError(
+            "NEEDS_CONFIGURATION",
+            "managed_db legacy requiere config.columns explícito; SELECT * no está permitido",
+        )
+    if "*" in columns:
+        raise BindingError("NEEDS_CONFIGURATION", "SELECT * no está permitido")
+    cols_sql = ", ".join(_q(str(column)) for column in columns)
     filters = config.get("filters") or {}
     if not isinstance(filters, dict):
         filters = {}
-    where_parts: list[str] = []
-    params: dict[str, Any] = {}
-    for idx, (column, value) in enumerate(list(filters.items())[:20]):
-        col = _q(str(column))
-        op = "="
+    predicates: list[tuple[str, str, Any]] = []
+    for column, value in list(filters.items())[:20]:
         if isinstance(value, dict):
-            op = {"eq": "=", "ne": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<=", "like": "ILIKE"}.get(
-                str(value.get("op") or "eq"), "="
-            )
-            value = value.get("value")
-        pname = f"f{idx}"
-        where_parts.append(f"{col} {op} :{pname}")
-        params[pname] = value
+            predicates.append((str(column), str(value.get("op") or "eq"), value.get("value")))
+        else:
+            predicates.append((str(column), "eq", value))
+    # Compatibilidad: inputs planos que coinciden con una columna proyectada o
+    # filtrada se aceptan como parámetros eq. Nunca table/columns/limit/order_by.
+    accepted = {str(column) for column in columns} | {item[0] for item in predicates}
+    for key, value in list((payload or {}).items())[:20]:
+        if key in accepted and not any(item[0] == key for item in predicates):
+            predicates.append((str(key), "eq", value))
+    where_parts, params = _build_where(predicates)
     order_by = config.get("order_by")
     order_sql = ""
     if order_by:
@@ -686,25 +1223,51 @@ async def _execute_managed_select(
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
     sql += order_sql + f" LIMIT {limit}"
-    session = await open_managed_query_session(organization_id, workspace_id)
+    database_id = config.get("database_id")
+    try:
+        database_uuid = UUID(str(database_id)) if database_id else None
+    except (TypeError, ValueError) as exc:
+        raise BindingError("NEEDS_CONFIGURATION", "config.database_id inválido") from exc
+    session = await open_managed_query_session(organization_id, workspace_id, database_id=database_uuid)
     if session is None:
         raise BindingError("NEEDS_CONFIGURATION", "no hay managed database para el tenant")
     try:
-        rows = (await session.execute(text(sql), params)).fetchall()
-        keys = list(rows[0]._mapping.keys()) if rows else []
-    except BindingError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise BindingError("PROVIDER_ERROR", f"consulta falló: {str(exc)[:200]}") from exc
+        try:
+            result = await _execute_sql(session, sql, params, timeout_ms=3000)
+            rows = result.fetchall()
+        except BindingError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise _query_failure(exc) from exc
     finally:
         await session.close()
-    data = [dict(zip(keys, row)) for row in rows] if keys else [dict(row._mapping) for row in rows]
+    data = [dict(row._mapping) for row in rows]
     return {"rows": data, "row_count": len(data), "table": table}
 
 
-async def _execute_rest(
-    organization_id: UUID, binding: dict[str, Any], payload: dict[str, Any]
+async def _execute_managed_select(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+    principal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Ejecuta un plan canónico o el camino legacy seguro."""
+    plan = parse_data_query_plan(binding.get("config") or {})
+    if plan is not None:
+        return await _execute_data_query_plan(
+            organization_id,
+            binding,
+            plan,
+            payload,
+            workspace_id=workspace_id,
+            principal=principal,
+        )
+    return await _execute_legacy_select(organization_id, binding, payload, workspace_id=workspace_id)
+
+
+async def _execute_rest(organization_id: UUID, binding: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     import httpx
 
     from src.infrastructure.secrets.secret_store_resolver import get_secret_store
@@ -727,9 +1290,7 @@ async def _execute_rest(
             from uuid import UUID as _UUID
 
             store = get_secret_store()
-            secret = (
-                await store.get(organization_id, _UUID(str(credential_ref))) if store else None
-            )
+            secret = await store.get(organization_id, _UUID(str(credential_ref))) if store else None
             if isinstance(secret, dict):
                 headers.update({str(k): str(v) for k, v in secret.get("headers", {}).items()})
                 if secret.get("api_key"):

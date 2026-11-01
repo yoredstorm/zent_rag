@@ -24,8 +24,6 @@ from src.platform.workflows.bindings import (
     upsert_binding,
 )
 
-P19_01_PENDING = "P19-01 pendiente: el plan canónico del servidor aún no existe"
-
 
 class _RecordedResult:
     def __init__(self, rows: list[Any] | None = None) -> None:
@@ -96,71 +94,67 @@ async def _run_select(
 # ---------------------------------------------------------------------------
 # 1. Sustitución del recurso autorizado desde el payload
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=P19_01_PENDING)
-async def test_p19_00_red_payload_cannot_override_binding_resource(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session = await _run_select(
-        monkeypatch,
-        {"table": "product_prices", "columns": ["sku", "price"]},
-        {"table": "loyalty_balances", "columns": ["customer_id", "balance"]},
-    )
-    sql = session.statements[0]
-    assert "FROM product_prices" in sql, f"el payload desvió el recurso: {sql}"
-    assert "loyalty_balances" not in sql
-
-
-# ---------------------------------------------------------------------------
-# 2. SELECT * y proyección no autorizada desde el payload
-# ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=P19_01_PENDING)
-async def test_p19_00_red_payload_cannot_request_star_columns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session = await _run_select(
-        monkeypatch,
-        {"table": "product_prices", "columns": ["sku", "price"]},
-        {"columns": ["*"]},
-    )
-    sql = session.statements[0]
-    assert "*" not in sql, f"el payload abrió SELECT *: {sql}"
-    assert "sku" in sql and "price" in sql
-
-
-# ---------------------------------------------------------------------------
-# 3. Filtros obligatorios: reemplazo y operadores no permitidos
-# ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=P19_01_PENDING)
-async def test_p19_00_red_payload_cannot_replace_required_predicates(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session = await _run_select(
-        monkeypatch,
-        {
-            "table": "product_prices",
-            "columns": ["sku", "price"],
-            "filters": {
-                "channel": {"op": "eq", "value": "retail"},
-                "sku": {"op": "eq", "value": "ARR-001"},
-            },
-        },
-        {"filters": {"sku": {"op": "eq", "value": "ATACANTE"}}},
-    )
-    sql = session.statements[0]
-    assert "channel" in sql, f"el payload eliminó un predicado obligatorio: {sql}"
-    assert session.params[0].get("f0") == "retail", session.params[0]
-    assert "ATACANTE" not in sql
-
-
-@pytest.mark.xfail(strict=True, reason=P19_01_PENDING)
-async def test_p19_00_red_unknown_operator_is_rejected(
+async def test_p19_01_payload_cannot_override_binding_resource(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with pytest.raises(BindingError) as exc:
         await _run_select(
             monkeypatch,
-            {"table": "orders", "columns": ["id", "status"]},
-            {"filters": {"id": {"op": "union_select", "value": "x"}}},
+            {"table": "product_prices", "columns": ["sku", "price"]},
+            {"table": "loyalty_balances", "columns": ["customer_id", "balance"]},
+        )
+    assert exc.value.code == "UNEXPECTED_PARAMETER"
+
+
+# ---------------------------------------------------------------------------
+# 2. SELECT * y proyección no autorizada desde el payload
+# ---------------------------------------------------------------------------
+async def test_p19_01_payload_cannot_request_star_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(BindingError) as exc:
+        await _run_select(
+            monkeypatch,
+            {"table": "product_prices", "columns": ["sku", "price"]},
+            {"columns": ["*"]},
+        )
+    assert exc.value.code == "UNEXPECTED_PARAMETER"
+
+
+# ---------------------------------------------------------------------------
+# 3. Filtros obligatorios: reemplazo y operadores no permitidos
+# ---------------------------------------------------------------------------
+async def test_p19_01_payload_cannot_replace_required_predicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(BindingError) as exc:
+        await _run_select(
+            monkeypatch,
+            {
+                "table": "product_prices",
+                "columns": ["sku", "price"],
+                "filters": {
+                    "channel": {"op": "eq", "value": "retail"},
+                    "sku": {"op": "eq", "value": "ARR-001"},
+                },
+            },
+            {"filters": {"sku": {"op": "eq", "value": "ATACANTE"}}},
+        )
+    assert exc.value.code == "UNEXPECTED_PARAMETER"
+
+
+async def test_p19_01_unknown_operator_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(BindingError) as exc:
+        await _run_select(
+            monkeypatch,
+            {
+                "table": "orders",
+                "columns": ["id", "status"],
+                "filters": {"id": {"op": "union_select", "value": "x"}},
+            },
+            {},
         )
     assert exc.value.code == "INVALID_PARAMS"
 
@@ -168,50 +162,65 @@ async def test_p19_00_red_unknown_operator_is_rejected(
 # ---------------------------------------------------------------------------
 # 4. Límites, orden y presupuesto por binding
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=P19_01_PENDING)
-async def test_p19_00_red_payload_cannot_raise_binding_row_limit(
+async def test_p19_01_payload_cannot_raise_binding_row_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = await _run_select(
-        monkeypatch,
-        {"table": "product_prices", "columns": ["sku"], "limit": 1},
-        {"limit": 500},
-    )
-    assert "LIMIT 1" in session.statements[0], session.statements[0]
+    with pytest.raises(BindingError) as exc:
+        await _run_select(
+            monkeypatch,
+            {"table": "product_prices", "columns": ["sku"], "limit": 1},
+            {"limit": 500},
+        )
+    assert exc.value.code == "UNEXPECTED_PARAMETER"
 
 
-@pytest.mark.xfail(strict=True, reason=P19_01_PENDING)
-async def test_p19_00_red_payload_cannot_choose_order_by(
+async def test_p19_01_payload_cannot_choose_order_by(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(BindingError):
+    with pytest.raises(BindingError) as exc:
         await _run_select(
             monkeypatch,
             {"table": "orders", "columns": ["id", "status"]},
             {"order_by": {"column": "customer_id", "dir": "desc"}},
         )
+    assert exc.value.code == "UNEXPECTED_PARAMETER"
 
 
 # ---------------------------------------------------------------------------
 # 5. Herencia de binding y separación entre autorización e inexistencia
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=P19_01_PENDING)
-async def test_p19_00_red_org_binding_is_not_inherited_without_explicit_grant() -> None:
+async def test_p19_01_org_plan_is_denied_without_workspace_grant() -> None:
     from src.infrastructure.postgres.session import get_async_session
 
     organization_id = uuid4()
     workspace_id = uuid4()
     capability_ref = f"p19.audit.{uuid4().hex[:10]}"
+    plan = {
+        "schema": "zent.data.query.binding/v1",
+        "scope": "organization",
+        "allowed_workspace_ids": [],
+        "resource": {"schema": "public", "name": "product_prices", "kind": "view"},
+        "operation": "list",
+        "projection": ["sku", "price"],
+        "allowed_columns": ["sku", "price"],
+        "policy": {"max_rows": 1},
+    }
     binding = await upsert_binding(
         organization_id,
         capability_ref,
         "managed_db",
-        config={"table": "product_prices"},
+        config=plan,
         workspace_id=None,
     )
     try:
-        resolved = await resolve_binding(organization_id, capability_ref, workspace_id=workspace_id)
-        assert resolved is None, "un workspace sin concesión heredó el binding org-level"
+        with pytest.raises(BindingError) as exc:
+            await _execute_managed_select(
+                organization_id,
+                binding,
+                {},
+                workspace_id=workspace_id,
+            )
+        assert exc.value.code == "PERMISSION_DENIED"
     finally:
         session = await get_async_session()
         try:
@@ -258,10 +267,9 @@ async def test_p19_00_asis_cross_org_binding_is_not_visible() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. connected_db se ejecuta contra la sesión de Managed DB
+# 6. connected_db no se ejecuta contra la sesión de Managed DB
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason="P19-06 pendiente: no existe adaptador externo")
-async def test_p19_00_red_connected_db_is_not_routed_to_managed_session(
+async def test_p19_06_connected_db_is_not_routed_to_managed_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []

@@ -1850,6 +1850,9 @@ async def tenant_capability_binding_upsert(
 
     ctx = require_permission(request, "workflows:update")
     try:
+        from src.platform.workflows.bindings import BindingError, parse_data_query_plan
+
+        parse_data_query_plan(body.config)
         result = await upsert_binding(
             ctx.organization_id,
             capability_ref,
@@ -1861,7 +1864,7 @@ async def tenant_capability_binding_upsert(
             contract_output_schema=body.contract_output_schema,
             created_by=ctx.user_id,
         )
-    except ValueError as exc:
+    except (ValueError, BindingError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return result
 
