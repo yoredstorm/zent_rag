@@ -2033,7 +2033,20 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         agent_role = None
         pinned = getattr(rctx.instance, "policy_snapshot", None) if rctx.instance else None
         entry = None
-        if isinstance(pinned, dict):
+        snapshot_status = "LIVE_DRAFT"
+        snapshot_source = "live"
+        pinned_snapshot: dict[str, Any] | None = None
+        if rctx.instance is not None:
+            # Una instancia durable NUNCA completa su configuración desde el
+            # agente vivo. Sin snapshot verificable, la ejecución se bloquea.
+            if not isinstance(pinned, dict) or not pinned.get("agents"):
+                return NodeOutcome(
+                    error=(
+                        "agent_snapshot_missing: la instancia no tiene snapshot de "
+                        "agente certificado. Ejecución bloqueada (UNCERTIFIED_LEGACY)."
+                    ),
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                )
             entry = next(
                 (
                     item
@@ -2042,39 +2055,122 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
                 ),
                 None,
             )
-        if entry is not None:
-            pinned_snapshot = entry.get("config_snapshot")
-            if isinstance(pinned_snapshot, dict) and pinned_snapshot:
-                from src.platform.deployments.versions import (
-                    execution_fingerprints,
-                    resolve_agent,
-                    snapshot_agent,
+            if entry is None:
+                return NodeOutcome(
+                    error=(
+                        f"agent_snapshot_missing: el agente {agent_id} no está en el "
+                        "snapshot de la instancia."
+                    ),
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
                 )
+            if entry.get("is_active") is False:
+                return NodeOutcome(
+                    error=(
+                        f"agent_inactive: el agente {agent_id} fue desactivado; "
+                        "la instancia no puede ejecutarlo."
+                    ),
+                    output={"agent_snapshot_status": "BLOCKED_INACTIVE"},
+                )
+            candidate = entry.get("config_snapshot")
+            if not isinstance(candidate, dict) or not candidate:
+                return NodeOutcome(
+                    error=(
+                        "agent_snapshot_invalid: snapshot de agente incompleto; "
+                        "se requiere re-certificación."
+                    ),
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                )
+            from src.platform.deployments.versions import (
+                AgentSnapshotError,
+                execution_fingerprints,
+                validate_agent_snapshot,
+            )
 
-                live_fingerprint = execution_fingerprints(
-                    snapshot_agent(agent)
-                ).get("config_fingerprint")
-                pinned_fingerprint = entry.get("config_fingerprint")
-                if pinned_fingerprint and live_fingerprint != pinned_fingerprint:
-                    logger.warning(
-                        "workflow agent config changed after instance start; "
-                        "using pinned revision",
-                        agent_id=str(agent_id),
-                        workflow_run_id=str(rctx.execution.run_id),
-                    )
-                agent = resolve_agent(agent, pinned_snapshot)
-            else:
-                logger.warning(
-                    "workflow instance has no pinned agent snapshot (legacy); "
-                    "live agent config used, do not certify this instance",
+            try:
+                validate_agent_snapshot(candidate)
+            except AgentSnapshotError as exc:
+                return NodeOutcome(
+                    error=f"agent_snapshot_invalid: {exc.issue}",
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                )
+            pinned_fingerprint = str(entry.get("config_fingerprint") or "")
+            computed = execution_fingerprints(candidate).get("config_fingerprint")
+            if pinned_fingerprint and computed and pinned_fingerprint != computed:
+                logger.error(
+                    "workflow agent snapshot hash mismatch",
                     agent_id=str(agent_id),
                     workflow_run_id=str(rctx.execution.run_id),
                 )
+                return NodeOutcome(
+                    error=(
+                        "agent_snapshot_hash_mismatch: el snapshot pinneado no "
+                        "coincide con su huella; ejecución bloqueada."
+                    ),
+                    output={"agent_snapshot_status": "HASH_MISMATCH"},
+                )
+            pinned_snapshot = candidate
+            snapshot_status = "PINNED_INSTANCE"
+            snapshot_source = "instance"
             agent_role = entry.get("role")
+        else:
+            certified = (getattr(rctx.execution, "agent_snapshots", None) or {}).get(
+                str(agent_id)
+            )
+            if isinstance(certified, dict) and certified:
+                from src.platform.deployments.versions import (
+                    AgentSnapshotError,
+                    validate_agent_snapshot,
+                )
+
+                try:
+                    validate_agent_snapshot(certified)
+                except AgentSnapshotError as exc:
+                    return NodeOutcome(
+                        error=f"agent_snapshot_invalid: {exc.issue}",
+                        output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                    )
+                pinned_snapshot = certified
+                snapshot_status = "VERIFIED_PUBLISHED"
+                snapshot_source = "published"
+            elif str(getattr(rctx.execution, "definition_source", "")) == "published":
+                # Certificado antiguo sin snapshot: se mantiene el run, pero la
+                # UI y la auditoría deben verlo como no certificado.
+                snapshot_status = "UNCERTIFIED_LEGACY"
+                snapshot_source = "live_legacy"
+                logger.warning(
+                    "published workflow has no pinned agent snapshot (legacy); "
+                    "live agent config used, do not certify this run",
+                    agent_id=str(agent_id),
+                    workflow_run_id=str(rctx.execution.run_id),
+                )
+        if pinned_snapshot is not None:
+            from src.platform.deployments.versions import resolve_agent
+
+            agent = resolve_agent(agent, pinned_snapshot, strict=True)
         if agent_role is None:
             agent_role = await get_agent_role(rctx.organization_id, agent_id)
         if agent_role is not None:
             agent = apply_role_to_agent(agent, agent_role)
+        try:
+            logger.info(
+                "workflow.agent_snapshot",
+                organization_id=str(rctx.organization_id),
+                workspace_id=str(rctx.workspace_id or ""),
+                workflow_run_id=str(rctx.execution.run_id),
+                instance_id=str(rctx.execution.instance_id or ""),
+                agent_id=str(agent_id),
+                agent_version_id=(
+                    entry.get("agent_version_id") if isinstance(entry, dict) else None
+                ),
+                snapshot_status=snapshot_status,
+                snapshot_source=snapshot_source,
+                config_fingerprint=(
+                    entry.get("config_fingerprint") if isinstance(entry, dict) else None
+                ),
+                tools_count=len(agent.tools or []),
+            )
+        except Exception:  # noqa: BLE001 — auditoría no tumba el nodo
+            pass
         org_config = await _org_config_json(rctx.organization_id)
         context_payload, context_truncated, context_summary, requested_reads = (
             await _agent_context_payload(rctx)
@@ -2118,6 +2214,14 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
             "agent_id": str(agent_id),
             "model": result.model,
             "cost": result.cost,
+            "agent_snapshot_status": snapshot_status,
+            "agent_snapshot_source": snapshot_source,
+            "agent_config_fingerprint": (
+                entry.get("config_fingerprint") if isinstance(entry, dict) else None
+            ),
+            "agent_version_id": (
+                entry.get("agent_version_id") if isinstance(entry, dict) else None
+            ),
         }
         raw_status = str(getattr(result, "status", "") or "")
         if raw_status == "limit_reached":
@@ -3680,6 +3784,13 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
         requested_by,
         expires_minutes,
         context=snapshot,
+        capability_ref=str(cfg.get("capability_ref") or cfg.get("capability") or "") or None,
+        target_node_id=str(cfg.get("target_node_id") or "") or None,
+        approval_scope=(
+            cfg.get("approval_scope")
+            if isinstance(cfg.get("approval_scope"), dict)
+            else None
+        ),
     )
     return NodeOutcome(
         output={
@@ -3778,6 +3889,9 @@ async def _create_approval(
     expires_minutes: int,
     *,
     context: dict[str, Any] | None = None,
+    capability_ref: str | None = None,
+    target_node_id: str | None = None,
+    approval_scope: dict[str, Any] | None = None,
 ) -> UUID:
     from datetime import datetime, timedelta, timezone
     from uuid import uuid4
@@ -3788,15 +3902,24 @@ async def _create_approval(
 
     approval_id = uuid4()
     expires = datetime.now(timezone.utc) + timedelta(minutes=max(expires_minutes, 1))
+    scope = dict(approval_scope or {})
+    if not scope.get("scope_type"):
+        scope["scope_type"] = (
+            "node" if target_node_id else "capability" if capability_ref else "run"
+        )
+    instance_id = getattr(execution, "instance_id", None)
     session = await get_async_session()
     try:
         await session.execute(
             text(
                 "INSERT INTO workflow_approvals "
                 "(id, run_id, workflow_id, organization_id, workspace_id, node_id, "
-                "action, summary, requested_by, expires_at, context) "
+                "action, summary, requested_by, expires_at, context, instance_id, "
+                "workflow_version, graph_hash, capability_ref, target_node_id, "
+                "approval_scope) "
                 "VALUES (:id, :rid, :wid, :oid, :ws, :nid, :action, :summary, :by, :exp, "
-                "CAST(:context AS jsonb))"
+                "CAST(:context AS jsonb), :iid, :wver, :ghash, :cap, :target, "
+                "CAST(:scope AS jsonb))"
             ),
             {
                 "id": approval_id,
@@ -3810,6 +3933,12 @@ async def _create_approval(
                 "by": requested_by,
                 "exp": expires,
                 "context": json.dumps(context or {}, ensure_ascii=False, default=str),
+                "iid": str(instance_id) if instance_id else None,
+                "wver": getattr(execution, "workflow_version", None),
+                "ghash": getattr(execution, "graph_hash", None),
+                "cap": (capability_ref or "")[:160] or None,
+                "target": (target_node_id or "")[:120] or None,
+                "scope": json.dumps(scope, ensure_ascii=False, default=str),
             },
         )
         await session.commit()
