@@ -14,7 +14,10 @@ conversacionales sobre datos reales.
 | P19-04 Intención de negocio | COMPLETADO (reglas) | [04-intent-routing.md](./04-intent-routing.md) |
 | P19-05 Data Picker tipado | COMPLETADO (un clic) | [05-typed-data-picker.md](./05-typed-data-picker.md) |
 | P19-06 Conectores externos | COMPLETADO (PostgreSQL local) | [06-external-postgres.md](./06-external-postgres.md) |
-| P19-07 a P19-14 | No iniciadas | — |
+| P19-07 Precio y disponibilidad | PARCIAL (recorrido principal PASS local) | [07-price-lookup.md](./07-price-lookup.md) |
+| P19-08 Puntos con identidad | PENDIENTE | — |
+| P19-09 Pedido y WAIT | PENDIENTE | — |
+| P19-10 a P19-14 | No iniciadas | — |
 
 ## Despliegue
 
