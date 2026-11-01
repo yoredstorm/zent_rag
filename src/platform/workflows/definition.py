@@ -234,6 +234,7 @@ async def load_published_definition(
 
     certificate_id = row.version_certificate_id or row.published_certificate_id
     legacy_baseline = bool(row.legacy_baseline)
+    agent_snapshots: dict[str, dict] = {}
     trigger_type = str(snapshot.get("trigger_type") or row.live_trigger_type or "webhook")
     trigger_config = dict(snapshot.get("trigger_config") or {})
     trigger_hash = trigger_fingerprint(trigger_type, trigger_config)
@@ -259,7 +260,7 @@ async def load_published_definition(
             )
 
             current_agents, _roles, missing_agents = await _agent_fingerprint(
-                organization_id, graph
+                organization_id, graph, include_snapshots=True
             )
             if missing_agents or agent_versions_stale(
                 cert.get("agent_versions"), current_agents
@@ -269,6 +270,16 @@ async def load_published_definition(
                     "Un agente vinculado cambió desde la certificación; "
                     "la versión publicada no puede ejecutarse con otra configuración.",
                 )
+            # El snapshot se capturó en la misma lectura con la que se verificó
+            # el fingerprint: el runtime ejecuta exactamente lo certificado y no
+            # vuelve a leer la fila mutable del agente.
+            agent_snapshots = {
+                str(item.get("agent_id")): dict(item.get("config_snapshot") or {})
+                for item in current_agents.get("agents") or []
+                if isinstance(item, dict)
+                and item.get("agent_id")
+                and isinstance(item.get("config_snapshot"), dict)
+            }
     return {
         "workflow_id": str(row.id),
         "organization_id": str(row.organization_id),
@@ -291,6 +302,7 @@ async def load_published_definition(
         "trigger_hash": trigger_hash,
         "legacy_baseline": legacy_baseline,
         "draft_revision": int(row.draft_revision or 0),
+        "agent_snapshots": agent_snapshots,
     }
 
 

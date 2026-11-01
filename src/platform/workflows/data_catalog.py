@@ -38,6 +38,12 @@ async def workflow_data_catalog(
     workflow = await get_workflow(organization_id, workflow_id)
     if workflow is None:
         return None
+    if (
+        workspace_id is not None
+        and workflow.get("workspace_id")
+        and str(workflow.get("workspace_id")) != str(workspace_id)
+    ):
+        return None
     graph = workflow.get("graph")
     if not graph:
         graph = LegacyWorkflowAdapter.steps_to_graph(
@@ -46,7 +52,9 @@ async def workflow_data_catalog(
             workflow.get("trigger_config") or {},
         ).to_dict()
 
-    samples = await latest_node_outputs(organization_id, workflow_id, run_id=run_id)
+    samples = await latest_node_outputs(
+        organization_id, workflow_id, run_id=run_id, workspace_id=workspace_id
+    )
     contracts = output_contracts()
 
     sources: list[dict[str, Any]] = []

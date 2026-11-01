@@ -305,6 +305,7 @@ async def get_instance(
     instance_id: UUID,
     *,
     workspace_id: UUID | None = None,
+    require_workspace_scope: bool = False,
 ) -> dict | None:
     session = await get_async_session()
     try:
@@ -316,7 +317,14 @@ async def get_instance(
             "iid": str(instance_id),
             "oid": str(organization_id),
         }
-        if workspace_id is not None:
+        if require_workspace_scope:
+            if workspace_id is None:
+                # Solo recursos globales de la organización.
+                sql += " AND workspace_id IS NULL"
+            else:
+                sql += " AND (workspace_id IS NULL OR workspace_id = :ws)"
+                params["ws"] = str(workspace_id)
+        elif workspace_id is not None:
             sql += " AND workspace_id = :ws"
             params["ws"] = str(workspace_id)
         row = (await session.execute(text(sql), params)).fetchone()
@@ -335,6 +343,7 @@ async def list_instances(
     workspace_id: UUID | None = None,
     limit: int = 50,
     offset: int = 0,
+    require_workspace_scope: bool = False,
 ) -> dict:
     filters = ["organization_id = :oid"]
     params: dict[str, Any] = {"oid": str(organization_id), "lim": min(int(limit), 200), "off": max(int(offset), 0)}
@@ -350,7 +359,13 @@ async def list_instances(
     if status:
         filters.append("status = :st")
         params["st"] = status
-    if workspace_id is not None:
+    if require_workspace_scope:
+        if workspace_id is None:
+            filters.append("workspace_id IS NULL")
+        else:
+            filters.append("(workspace_id IS NULL OR workspace_id = :ws)")
+            params["ws"] = str(workspace_id)
+    elif workspace_id is not None:
         filters.append("workspace_id = :ws")
         params["ws"] = str(workspace_id)
     where = " AND ".join(filters)
@@ -430,8 +445,21 @@ async def load_instance_preload(
     }
 
 
-async def instance_timeline(organization_id: UUID, instance_id: UUID) -> dict:
-    """Timeline de la instancia: runs (segmentos), signals y eventos."""
+async def instance_timeline(
+    organization_id: UUID,
+    instance_id: UUID,
+    *,
+    cursor: str | None = None,
+    limit: int = 200,
+) -> dict:
+    """Timeline de la instancia: runs (segmentos), signals y eventos.
+
+    P18.5: proyección ``execution_timeline/v1`` paginada por cursor de
+    ``workflow_run_events.seq``. Nunca trunca silenciosamente: si hay más
+    eventos, devuelve ``has_more`` y ``next_cursor``.
+    """
+    page_size = max(1, min(int(limit), 500))
+    after_seq = _decode_timeline_cursor(cursor)
     session = await get_async_session()
     try:
         runs = (
@@ -454,59 +482,235 @@ async def instance_timeline(organization_id: UUID, instance_id: UUID) -> dict:
                 {"iid": str(instance_id), "oid": str(organization_id)},
             )
         ).fetchall()
+        event_sql = (
+            "SELECT e.id, e.run_id, e.kind, e.node_id, e.payload, e.created_at, e.seq "
+            "FROM workflow_run_events e "
+            "WHERE e.instance_id = :iid AND e.organization_id = :oid"
+        )
+        event_params: dict = {
+            "iid": str(instance_id),
+            "oid": str(organization_id),
+            "lim": page_size + 1,
+        }
+        if after_seq is not None:
+            event_sql += " AND e.seq > :after_seq"
+            event_params["after_seq"] = after_seq
+        event_sql += " ORDER BY e.seq LIMIT :lim"
         events = (
-            await session.execute(
-                text(
-                    "SELECT e.id, e.run_id, e.kind, e.node_id, e.payload, e.created_at "
-                    "FROM workflow_run_events e "
-                    "WHERE e.instance_id = :iid AND e.organization_id = :oid "
-                    "ORDER BY e.seq LIMIT 1000"
-                ),
-                {"iid": str(instance_id), "oid": str(organization_id)},
-            )
+            await session.execute(text(event_sql), event_params)
         ).fetchall()
     finally:
         await session.close()
-    return {
-        "runs": [
-            {
-                "run_id": str(r.id),
-                "status": r.status,
-                "trigger": r.trigger,
-                "instance_seq": r.instance_seq,
-                "started_at": r.started_at.isoformat() if r.started_at else None,
-                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-                "duration_ms": r.duration_ms,
-                "error": r.error,
-            }
-            for r in runs
-        ],
-        "signals": [
-            {
-                "signal_id": str(s.id),
-                "event_type": s.event_type,
-                "external_event_id": s.external_event_id,
-                "correlation_key": s.correlation_key,
-                "payload": dict(s.payload or {}),
-                "status": s.status,
-                "source": s.source,
-                "received_at": s.received_at.isoformat() if s.received_at else None,
-                "consumed_at": s.consumed_at.isoformat() if s.consumed_at else None,
-            }
-            for s in signals
-        ],
-        "events": [
-            {
-                "id": str(e.id),
-                "run_id": str(e.run_id),
-                "kind": e.kind,
-                "node_id": e.node_id,
-                "payload": dict(e.payload or {}),
-                "created_at": e.created_at.isoformat() if e.created_at else None,
-            }
-            for e in events
-        ],
+
+    has_more = len(events) > page_size
+    page_events = events[:page_size]
+    runs_payload = [
+        {
+            "run_id": str(r.id),
+            "status": r.status,
+            "trigger": r.trigger,
+            "instance_seq": r.instance_seq,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "duration_ms": r.duration_ms,
+            "error": _redact_value(r.error),
+        }
+        for r in runs
+    ]
+    signals_payload = [
+        {
+            "signal_id": str(s.id),
+            "event_type": s.event_type,
+            "external_event_id": s.external_event_id,
+            "correlation_key": s.correlation_key,
+            "payload": _redact_value(dict(s.payload or {})),
+            "status": s.status,
+            "source": s.source,
+            "received_at": s.received_at.isoformat() if s.received_at else None,
+            "consumed_at": s.consumed_at.isoformat() if s.consumed_at else None,
+        }
+        for s in signals
+    ]
+    events_payload = [
+        {
+            "id": str(e.id),
+            "run_id": str(e.run_id),
+            "kind": e.kind,
+            "node_id": e.node_id,
+            "payload": _redact_value(dict(e.payload or {})),
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+            "seq": int(e.seq),
+        }
+        for e in page_events
+    ]
+
+    seq_by_run = {
+        str(r.id): int(r.instance_seq) if r.instance_seq is not None else None for r in runs
     }
+    items: list[dict] = []
+    for run in runs_payload:
+        items.append(
+            {
+                "event_id": f"run:{run['run_id']}",
+                "cursor": None,
+                "kind": "run",
+                "status": run["status"],
+                "instance_id": str(instance_id),
+                "run_id": run["run_id"],
+                "node_id": None,
+                "instance_seq": run["instance_seq"],
+                "occurred_at": run["started_at"],
+                "observed_at": run["completed_at"] or run["started_at"],
+                "duration_ms": run["duration_ms"],
+                "summary": "segmento iniciado",
+                "audit_refs": {"trigger": run["trigger"]},
+            }
+        )
+    for signal in signals_payload:
+        items.append(
+            {
+                "event_id": f"signal:{signal['signal_id']}",
+                "cursor": None,
+                "kind": "signal",
+                "status": signal["status"],
+                "instance_id": str(instance_id),
+                "run_id": None,
+                "node_id": None,
+                "instance_seq": None,
+                "occurred_at": signal["received_at"],
+                "observed_at": signal["consumed_at"] or signal["received_at"],
+                "duration_ms": None,
+                "summary": f"señal {signal['event_type']}",
+                "audit_refs": {"source": signal["source"]},
+            }
+        )
+    for event in events_payload:
+        payload = event["payload"]
+        items.append(
+            {
+                "event_id": str(event["id"]),
+                "cursor": _encode_timeline_cursor(event["seq"]),
+                "kind": event["kind"],
+                "status": str(payload.get("status") or payload.get("result") or ""),
+                "instance_id": str(instance_id),
+                "run_id": event["run_id"],
+                "node_id": event["node_id"],
+                "instance_seq": seq_by_run.get(event["run_id"]),
+                "occurred_at": event["created_at"],
+                "observed_at": event["created_at"],
+                "duration_ms": payload.get("duration_ms"),
+                "summary": _redact_value(
+                    payload.get("summary")
+                    or payload.get("message")
+                    or payload.get("text")
+                    or event["kind"]
+                ),
+                "audit_refs": {
+                    key: payload.get(key)
+                    for key in ("policy_code", "approval_id", "signal_id", "error_code")
+                    if payload.get(key)
+                },
+            }
+        )
+    items.sort(
+        key=lambda item: (
+            str(item.get("occurred_at") or ""),
+            0 if item["kind"] in ("run", "signal") else 1,
+            str(item.get("event_id") or ""),
+        )
+    )
+    next_cursor = (
+        _encode_timeline_cursor(events_payload[-1]["seq"])
+        if has_more and events_payload
+        else None
+    )
+    return {
+        "runs": runs_payload,
+        "signals": signals_payload,
+        "events": events_payload,
+        "execution_timeline": {
+            "schema": "execution_timeline/v1",
+            "items": items,
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+            "limit": page_size,
+            "cursor_invalid": False,
+        },
+    }
+
+
+def _encode_timeline_cursor(seq: int) -> str:
+    import base64
+    import json
+
+    raw = json.dumps({"v": 1, "seq": int(seq)}, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_timeline_cursor(cursor: str | None) -> int | None:
+    if not cursor:
+        return None
+    import base64
+    import json
+
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        if int(data.get("v")) != 1:
+            raise ValueError
+        seq = int(data.get("seq"))
+        if seq < 0:
+            raise ValueError
+        return seq
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("timeline_cursor_invalid") from exc
+
+
+_SENSITIVE_KEYS = frozenset(
+    {
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "private_key",
+        "credential",
+        "credentials",
+        "card_number",
+        "cvv",
+        "ssn",
+        "rut",
+    }
+)
+
+
+def _redact_value(value: Any, *, depth: int = 0) -> Any:
+    """Redacción acotada de PII/secretos para timeline y errores."""
+    if depth > 6:
+        return "[truncated]"
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 50:
+                result["_truncated"] = True
+                break
+            text_key = str(key)
+            if text_key.lower() in _SENSITIVE_KEYS:
+                result[text_key] = "[redacted]"
+            else:
+                result[text_key] = _redact_value(item, depth=depth + 1)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(item, depth=depth + 1) for item in list(value)[:50]]
+    if isinstance(value, str):
+        return value[:2000] + ("…" if len(value) > 2000 else "")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -800,9 +1004,23 @@ async def _build_policy_snapshot(
                 if row.role_profile_id
                 else None
             )
+            version = (
+                await session.execute(
+                    text(
+                        "SELECT id, version_number, status FROM agent_versions "
+                        "WHERE agent_id = :aid ORDER BY version_number DESC LIMIT 1"
+                    ),
+                    {"aid": str(row.id)},
+                )
+            ).fetchone()
             agents.append(
                 {
                     "agent_id": str(row.id),
+                    "agent_version_id": str(version.id) if version else None,
+                    "agent_version_number": (
+                        int(version.version_number) if version else None
+                    ),
+                    "agent_version_status": str(version.status) if version else None,
                     "is_active": bool(row.is_active),
                     "status": str(row.status),
                     "role_profile_id": (
@@ -810,6 +1028,9 @@ async def _build_policy_snapshot(
                     ),
                     "role": role,
                     "config_snapshot": snapshot,
+                    "snapshot_schema_version": int(
+                        snapshot.get("schema_version") or 0
+                    ),
                     **execution_fingerprints(snapshot),
                 }
             )

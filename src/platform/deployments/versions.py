@@ -30,6 +30,51 @@ _SNAPSHOT_CONFIG_KEYS = (
     "provider",
 )
 
+#: Claves que un snapshot ejecutable debe declarar explícitamente. Un snapshot
+#: certificado incompleto no puede completarse desde el agente vivo: fail closed.
+_AGENT_SNAPSHOT_REQUIRED_KEYS = ("system_prompt", "model", "tools")
+_AGENT_SNAPSHOT_SCHEMA_VERSION = 2
+
+
+class AgentSnapshotError(ValueError):
+    """Snapshot ausente, incompleto o de un schema no soportado."""
+
+    def __init__(self, issue: str):
+        self.issue = issue
+        self.code = "agent_snapshot_invalid"
+        super().__init__(f"agent snapshot inválido: {issue}")
+
+
+def snapshot_issues(snapshot: dict | None) -> list[str]:
+    """Problemas de completitud/schema sin consultar el agente vivo."""
+    if not isinstance(snapshot, dict) or not snapshot:
+        return ["empty"]
+    issues: list[str] = []
+    schema = snapshot.get("schema_version")
+    if schema is None:
+        issues.append("missing:schema_version")
+    elif not isinstance(schema, int) or schema > _AGENT_SNAPSHOT_SCHEMA_VERSION:
+        issues.append(f"unsupported:schema_version:{schema}")
+    for key in _AGENT_SNAPSHOT_REQUIRED_KEYS:
+        if key not in snapshot:
+            issues.append(f"missing:{key}")
+    if "tools" in snapshot and not isinstance(snapshot.get("tools"), (list, tuple)):
+        issues.append("invalid:tools")
+    if "system_prompt" in snapshot and snapshot.get("system_prompt") is not None:
+        if not isinstance(snapshot.get("system_prompt"), str):
+            issues.append("invalid:system_prompt")
+    if "model" in snapshot and snapshot.get("model") is not None:
+        if not isinstance(snapshot.get("model"), str):
+            issues.append("invalid:model")
+    return issues
+
+
+def validate_agent_snapshot(snapshot: dict | None) -> None:
+    """Valida un snapshot certificado. Falla cerrado ante duda."""
+    issues = snapshot_issues(snapshot)
+    if issues:
+        raise AgentSnapshotError(",".join(issues))
+
 
 def snapshot_from_fields(
     *,
@@ -113,24 +158,59 @@ def snapshot_agent(agent: Agent) -> dict:
     )
 
 
-def resolve_agent(agent: Agent, snapshot: dict) -> Agent:
+def resolve_agent(agent: Agent, snapshot: dict, *, strict: bool = False) -> Agent:
     """Materializa un Agent con los valores del snapshot (compat runtime).
 
-    El runtime recibe un dataclass Agent como siempre: no conoce versiones.
+    Semántica de presencia, no de verdad booleana:
+
+    * clave presente con ``[]``/``""``/``None`` → ese es el valor ejecutable;
+    * clave ausente → en modo ``strict`` falla cerrado; en modo legacy se
+      conserva el valor vivo (compatibilidad con snapshots parciales antiguos).
+
+    Los snapshots de instancias y de versiones publicadas deben resolverse con
+    ``strict=True``. El modo legacy existe solo para llamadores históricos y no
+    puede usarse para autorizar acciones irreversibles.
     """
+    import copy
+
     if not snapshot:
         return agent
-    config = dict(snapshot.get("config") or {})
-    config.update(snapshot.get("config_extra") or {})
+    if strict:
+        validate_agent_snapshot(snapshot)
+
+    config = copy.deepcopy(dict(snapshot.get("config") or {}))
+    config.update(copy.deepcopy(dict(snapshot.get("config_extra") or {})))
+
+    def _present(key: str, live: object) -> object:
+        if key in snapshot:
+            return copy.deepcopy(snapshot.get(key))
+        if strict:
+            raise AgentSnapshotError(f"missing:{key}")
+        return live
+
+    system_prompt = _present("system_prompt", agent.system_prompt)
+    model = _present("model", agent.model)
+    tools_raw = _present("tools", agent.tools)
+    if tools_raw is None:
+        # schema 2 escribe list(); un null explícito significa "sin tools",
+        # nunca "hereda las tools vivas".
+        tools = []
+    elif isinstance(tools_raw, (list, tuple)):
+        tools = [str(item) for item in copy.deepcopy(list(tools_raw))]
+    else:
+        if strict:
+            raise AgentSnapshotError("invalid:tools")
+        tools = list(agent.tools or [])
+
     return Agent(
         id=agent.id,
         organization_id=agent.organization_id,
         name=agent.name,
         project_id=agent.project_id,
         description=agent.description,
-        system_prompt=snapshot.get("system_prompt") or agent.system_prompt,
-        tools=list(snapshot.get("tools") or agent.tools or []),
-        model=snapshot.get("model") or agent.model,
+        system_prompt=system_prompt if isinstance(system_prompt, str) else None,
+        tools=tools,
+        model=model if isinstance(model, str) else None,
         config_json=config,
         is_active=agent.is_active,
         created_at=agent.created_at,
