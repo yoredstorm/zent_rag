@@ -58,6 +58,9 @@ class ExecutionContext:
     graph_hash: str | None = None
     workflow_version: int | None = None
     definition_source: str | None = None
+    #: true si el grafo tiene nodos de agente pero la definición no trae un
+    #: snapshot certificado. El PEP bloquea acciones irreversibles.
+    agent_snapshot_legacy: bool = False
 
 
 @dataclass

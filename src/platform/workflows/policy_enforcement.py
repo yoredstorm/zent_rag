@@ -201,6 +201,15 @@ async def authorize_node(
             )
             code = "policy.revocation_unavailable"
 
+        if (
+            bool(getattr(rctx.execution, "agent_snapshot_legacy", False))
+            and _is_irreversible(node, capability_ref)
+        ):
+            reasons.append(
+                "snapshot de agente no certificado: acción irreversible bloqueada"
+            )
+            code = "policy.agent_snapshot_unverified"
+
         scope = set(getattr(policy, "capability_scope", frozenset()) or ())
         is_internal = _is_internal_effect(node, capability_ref)
         if (

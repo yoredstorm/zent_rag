@@ -669,6 +669,21 @@ async def run_workflow(
     # set queda VACÍO (fail-closed): un caller nuevo que olvide permisos no
     # hereda `external_actions:execute` por accidente.
     perms = resolve_workflow_permissions(permissions, system_context=system_context)
+    graph_nodes = (definition.get("graph") or {}).get("nodes") or []
+    has_agent_nodes = any(
+        isinstance(node, dict)
+        and node.get("type") == "llm"
+        and (node.get("config") or {}).get("agent_id")
+        for node in graph_nodes
+    )
+    agent_snapshots = dict(definition.get("agent_snapshots") or {})
+    if source == "instance":
+        pinned_agents = (definition.get("policy_snapshot") or {}).get("agents") or []
+        agent_snapshot_legacy = bool(has_agent_nodes and not pinned_agents)
+    elif source == "published":
+        agent_snapshot_legacy = bool(has_agent_nodes and not agent_snapshots)
+    else:
+        agent_snapshot_legacy = False
     exec_ctx = ExecutionContext(
         organization_id=eff_org,
         workspace_id=eff_ws,
@@ -682,10 +697,11 @@ async def run_workflow(
         simulate=bool(simulate),
         instance_id=UUID(str(instance_id)) if instance_id else None,
         effective_policy=effective_policy,
-        agent_snapshots=dict(definition.get("agent_snapshots") or {}),
+        agent_snapshots=agent_snapshots,
         graph_hash=definition.get("graph_hash"),
         workflow_version=workflow_version,
         definition_source=definition.get("definition_source"),
+        agent_snapshot_legacy=agent_snapshot_legacy,
     )
 
     started = datetime.now(timezone.utc)
