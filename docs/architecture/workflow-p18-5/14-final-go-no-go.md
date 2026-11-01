@@ -79,7 +79,10 @@ un LLM. Por tanto no se declara usabilidad certificada.
 - `evidence-manifest.json`
 - `gates.json`
 - Suites y comandos en `12-certification.md`
-- E2E: `portal/e2e/p18-5-live-resume.spec.ts` (1 passed local)
+- E2E: `portal/e2e/p18-5-live-resume.spec.ts` (1 passed local y 1 passed
+  contra Docker `:8080` con migración 177 aplicada).
+- Docker local actualizado: API `rag-api` healthy, portal `rag-portal` healthy,
+  worker arriba; `alembic current` = `177 (head)`.
 
 ## STOP de expansión
 

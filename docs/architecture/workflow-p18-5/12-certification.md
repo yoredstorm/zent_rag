@@ -42,6 +42,9 @@ npx playwright test e2e/p18-4-effects.spec.ts   # 1 passed
 La prueba de effects usó un efecto interno de notificación, no un proveedor
 externo productivo.
 
+El mismo E2E se ejecutó contra el stack Docker actualizado (`:8080` / `:8000`,
+migración 177): 1 passed en 22.1 s.
+
 ## E2E adversariales NO ejecutados
 
 | Spec requerido | Estado | Motivo |

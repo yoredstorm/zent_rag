@@ -109,6 +109,12 @@
       "result": "PASS",
       "passed": 1,
       "failed": 0
+    },
+    {
+      "command": "npx playwright test e2e/p18-5-live-resume.spec.ts (docker 8080)",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
     }
   ],
   "not_run": [
@@ -137,5 +143,16 @@
     "Operaciones irreversibles reales"
   ],
   "merge_sha": "8893fac",
-  "merged_to": "master"
+  "merged_to": "master",
+  "docker": {
+    "compose_build": "api, ingestion-worker, portal rebuilt",
+    "alembic_head": "177",
+    "api_health": "200",
+    "portal_health": "200",
+    "e2e_docker": {
+      "command": "E2E_EXTERNAL=1 E2E_BASE_URL=http://127.0.0.1:8080 npx playwright test e2e/p18-5-live-resume.spec.ts",
+      "result": "PASS",
+      "passed": 1
+    }
+  }
 }

@@ -56,6 +56,17 @@ npx playwright test e2e/p18-5-live-resume.spec.ts
 API desde fuente, Postgres/Redis locales, Chromium, sin refrescar la página:
 WAIT visible → señal por API → estado COMPLETED en el dock → un solo POST /run.
 
+También se ejecutó contra el stack Docker local actualizado (portal `:8080`,
+API `:8000`, migración 177):
+
+```text
+$env:E2E_WAIT=1; $env:E2E_EXTERNAL=1; $env:E2E_BASE_URL=http://127.0.0.1:8080
+npx playwright test e2e/p18-5-live-resume.spec.ts
+1 passed (22.1s)
+```
+
+
+
 ## Límites
 
 - No se probó SSE porque esta ruta no tiene un stream con replay/cursor; se usó
