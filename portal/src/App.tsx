@@ -391,7 +391,13 @@ function ProtectedLayout() {
               />
             </aside>
 
-            <div className="app-main flex min-h-[100dvh] min-w-0 flex-col">
+            <div
+              className={
+                fullBleed
+                  ? "app-main flex h-[100dvh] min-w-0 flex-col overflow-hidden"
+                  : "app-main flex min-h-[100dvh] min-w-0 flex-col"
+              }
+            >
               <Topbar
                 sidebarCollapsed={collapsed}
                 onExpandSidebar={() => setCollapsed(false)}
@@ -431,7 +437,7 @@ function ProtectedLayout() {
                 id="contenido"
                 className={
                   fullBleed
-                    ? "flex w-full min-w-0 flex-1 flex-col px-3 py-3 sm:px-4"
+                    ? "flex min-h-0 w-full min-w-0 flex-1 flex-col px-3 py-3 sm:px-4"
                     : "mx-auto w-full max-w-[1360px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
                 }
               >
