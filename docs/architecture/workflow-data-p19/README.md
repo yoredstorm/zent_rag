@@ -10,8 +10,9 @@ conversacionales sobre datos reales.
 | P19-00 Auditoría y baseline | COMPLETADO | [00-audit-baseline.md](./00-audit-baseline.md) |
 | P19-01 Motor declarativo seguro | COMPLETADO (backend) | [01-declarative-query-engine.md](./01-declarative-query-engine.md) |
 | P19-02 Catálogo de recursos | COMPLETADO (backend) | [02-data-catalog.md](./02-data-catalog.md) |
-| P19-03 Nodo visual | PENDIENTE | — |
-| P19-04 a P19-14 | No iniciadas | — |
+| P19-03 Nodo visual | COMPLETADO (backend + editor Simple) | [03-visual-data-query-node.md](./03-visual-data-query-node.md) |
+| P19-04 Intención de negocio | PENDIENTE | — |
+| P19-05 a P19-14 | No iniciadas | — |
 
 ## Artefactos P19-00
 
@@ -34,7 +35,9 @@ conversacionales sobre datos reales.
 .\.venv\Scripts\python.exe -m pytest tests/test_workflow_data_p19_query.py -q
 .\.venv\Scripts\python.exe -m pytest tests/test_workflow_data_p19_query_integration.py -q
 .\.venv\Scripts\python.exe -m pytest tests/test_workflow_data_p19_catalog.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_workflow_data_p19_node.py -q
 pnpm --dir portal exec vitest run src/lib/workflowGraph.p19.test.ts
+pnpm --dir portal exec vitest run src/components/workflowStudio/DataQueryForm.test.tsx
 ```
 
 P19-01 convirtió los 8 `xfail` de P19-00 en PASS con rechazo explícito
