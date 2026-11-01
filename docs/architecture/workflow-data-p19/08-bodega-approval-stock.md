@@ -34,12 +34,17 @@ Roles:
 ```
 trigger_webhook (pedido)
   → state_set (order)
+  → capability_call bodega.stock.reserve (TTL 900 s)
   → human_approval (dueño)
-  → capability_call bodega.stock.commit
+  → condition approved?
+      → commit_stock
+      → release_stock si rechaza
   → notify
   → end
 ```
 
+La reserva se crea antes de la aprobación y descuenta `available`, no `on_hand`.
+Si el dueño no aprueba dentro del TTL, la reserva expira y el stock se libera.
 La aprobación muestra:
 
 ```
@@ -81,6 +86,46 @@ Resultado:
 
 El descuento ocurrió **después** de la aprobación. No al crear el pedido. No hay
 descuento automático por pago.
+
+### Reserva tipo cine — BOD-1002
+
+Antes de la aprobación:
+
+| Dato | Valor |
+|---|---|
+| SKU | `BD-POLLO-01` |
+| `on_hand` | 55 |
+| `reserved` | 1 |
+| Reserva | `active` |
+| Expira | 15 minutos |
+
+Después de aprobar:
+
+| Dato | Valor |
+|---|---|
+| `on_hand` | 54 |
+| `reserved` | 0 |
+| Reserva | `committed` |
+| Pedido | `confirmed` |
+
+### Expiración — BOD-1003
+
+Se reservó 1 unidad de `BD-QUINUA-01` con TTL 30 s. Tras 35 s:
+
+```json
+{"status": "RESERVATION_EXPIRED", "order_number": "BOD-1003", "sku": "BD-QUINUA-01"}
+```
+
+Resultado:
+
+- `reserved` volvió a 0.
+- `on_hand` no cambió.
+- la reserva quedó `expired`.
+- no se creó movimiento de commit.
+
+La reserva vencida se barre de forma perezosa al iniciar reserve/commit. Para
+producción hace falta un job periódico que libere reservas sin esperar una
+llamada.
 
 ## 4. Idempotencia
 
