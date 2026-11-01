@@ -64,6 +64,11 @@ def main() -> None:
                             "Pedido {{trigger.order_number}} · "
                             "SKU {{trigger.sku}} · cantidad {{trigger.quantity}}"
                         ),
+                        "data": {
+                            "order_number": "{{trigger.order_number}}",
+                            "sku": "{{trigger.sku}}",
+                            "quantity": "{{trigger.quantity}}",
+                        },
                         "expires_minutes": 60,
                     },
                 },
@@ -74,10 +79,10 @@ def main() -> None:
                     "config": {
                         "capability": "bodega.stock.commit",
                         "inputs": {
-                            "order_number": "{{instance.state.order.order_number}}",
-                            "sku": "{{instance.state.order.sku}}",
-                            "quantity": "{{instance.state.order.quantity}}",
-                            "idempotency_key": "{{instance.state.order.order_number}}-{{instance.state.order.sku}}",
+                            "order_number": "{{nodes.approval.output.data.order_number}}",
+                            "sku": "{{nodes.approval.output.data.sku}}",
+                            "quantity": "{{nodes.approval.output.data.quantity}}",
+                            "idempotency_key": "{{nodes.approval.output.data.order_number}}-{{nodes.approval.output.data.sku}}",
                         },
                     },
                 },

@@ -3863,6 +3863,9 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
     summary = str(
         _resolve_ref(cfg.get("summary") or cfg.get("message") or "", rctx) or ""
     )
+    data = _resolve_ref(cfg.get("data") or {}, rctx)
+    if not isinstance(data, dict):
+        data = {}
     expires_minutes = int(cfg.get("expires_minutes", 1440) or 1440)
     requested_by = rctx.execution.actor_id
     snapshot = _approval_context_snapshot(rctx)
@@ -3876,6 +3879,7 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
                 "status": "pending",
                 "action": action,
                 "summary": summary,
+                "data": data,
                 "context": snapshot,
             },
             control="wait_approval",
@@ -3902,6 +3906,7 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
             "status": "pending",
             "action": action,
             "summary": summary,
+            "data": data,
             "context": snapshot,
         },
         control="wait_approval",
