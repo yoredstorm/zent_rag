@@ -230,18 +230,20 @@ jobs:
             XFLAG=""
           fi
           # Los tests de invariantes ya corrieron arriba (junit-invariants.xml).
-          # Se excluyen por archivo para que cada test pertenezca a un solo
-          # shard y se ejecute exactamente una vez. La lista se deriva del
-          # propio paso de invariantes para que no pueda divergir.
-          INVARIANT_IGNORES=$(uv run --frozen --no-sync \
-            python scripts/cert/run_invariants.py --list-ignores)
-          # shellcheck disable=SC2086
-          uv run --frozen --no-sync pytest tests/ -q --tb=short --timeout=300 \
-            --ignore=tests/certification/workflows \
-            $INVARIANT_IGNORES \
-            --splits 6 --group ${{ matrix.shard }} \
-            --splitting-algorithm least_duration \
-            --durations-path .test_durations \
+          # El planner asigna archivos completos: preserva fixtures de modulo y
+          # dependencias internas del archivo, y evita que un test se ejecute
+          # dos veces. La lista de invariantes se deriva del propio paso.
+          uv run --frozen --no-sync python scripts/cert/run_invariants.py --list-ignores \
+            | sed 's/^--ignore=//' > /tmp/invariant-files.txt
+          mapfile -t TEST_FILES < <(uv run --frozen --no-sync \
+            python scripts/ci/shard_plan.py \
+              --splits 6 --group ${{ matrix.shard }} \
+              --durations-path .test_durations \
+              --exclude-file /tmp/invariant-files.txt \
+              --exclude-dir tests/certification/workflows)
+          echo "shard ${{ matrix.shard }}/6 files=${#TEST_FILES[@]}"
+          uv run --frozen --no-sync pytest "${TEST_FILES[@]}" \
+            -q --tb=short --timeout=300 \
             $XFLAG --junitxml=artifacts/junit-tests-shard-${{ matrix.shard }}.xml \
             2>&1 | tee /tmp/pytest-shard-${{ matrix.shard }}.log
 

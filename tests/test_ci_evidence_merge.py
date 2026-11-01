@@ -140,6 +140,69 @@ def test_verify_coverage_fails_when_test_missing(tmp_path: Path) -> None:
     assert "faltan en JUnit=1" in result.stderr
 
 
+def _planner_files(group: int, splits: int, exclude_file: Path) -> list[str]:
+    result = subprocess.run(  # noqa: S603 - script propio, argumentos fijos del test
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "ci" / "shard_plan.py"),
+            "--splits",
+            str(splits),
+            "--group",
+            str(group),
+            "--durations-path",
+            str(ROOT / ".test_durations"),
+            "--exclude-file",
+            str(exclude_file),
+            "--exclude-dir",
+            "tests/certification/workflows",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def test_shard_plan_partitions_every_test_file_exactly_once(tmp_path: Path) -> None:
+    excludes = subprocess.run(  # noqa: S603 - script propio, argumentos fijos del test
+        [sys.executable, str(ROOT / "scripts" / "cert" / "run_invariants.py"), "--list-ignores"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+    excluded = {line.removeprefix("--ignore=") for line in excludes.splitlines() if line}
+    exclude_file = tmp_path / "invariants.txt"
+    exclude_file.write_text("\n".join(sorted(excluded)), encoding="utf-8")
+
+    expected = {
+        line
+        for line in subprocess.run(
+            ["git", "ls-files", "tests"],  # noqa: S603,S607 - git del repo, sin shell
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout.splitlines()
+        if line.endswith(".py")
+        and (Path(line).name.startswith("test_") or Path(line).name.endswith("_test.py"))
+        and line not in excluded
+        and not line.startswith("tests/certification/workflows/")
+    }
+
+    assigned: list[str] = []
+    for group in range(1, 7):
+        assigned.extend(_planner_files(group, 6, exclude_file))
+
+    assert len(assigned) == len(set(assigned)), "un archivo quedo en mas de un shard"
+    assert set(assigned) == expected, "el plan de shards no cubre todos los archivos"
+
+
 def test_merge_includes_shards_and_invariants_once(tmp_path: Path) -> None:
     inv = tmp_path / "junit-invariants.xml"
     _write_shard(inv, [("tests.test_architecture", "test_core", 0.5)])
