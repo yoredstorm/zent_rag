@@ -13,8 +13,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
-from src.infrastructure.postgres.session import get_async_session
 from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.postgres.session import get_async_session
 
 logger = get_logger(__name__)
 

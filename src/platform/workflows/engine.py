@@ -2135,6 +2135,15 @@ async def decide_approval(
                     expires = expires.replace(tzinfo=timezone.utc)
                 if expires <= datetime.now(timezone.utc):
                     status = "expired"
+                    await session.execute(
+                        text(
+                            "UPDATE workflow_approvals SET status = 'expired' "
+                            "WHERE id = :aid AND organization_id = :oid "
+                            "AND status = 'pending'"
+                        ),
+                        {"aid": approval_id, "oid": organization_id},
+                    )
+                    await session.commit()
             return {
                 "approval_id": str(approval_id),
                 "status": status or "conflict",

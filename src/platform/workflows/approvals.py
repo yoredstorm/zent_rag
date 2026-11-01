@@ -275,7 +275,7 @@ async def resolve_verified_approval(
     execution = rctx.execution
     node_id = str(getattr(node, "id", "") or "")
     ref = _approval_ref_value(rctx, node)
-    row: dict[str, Any] | None = None
+    approval: VerifiedApproval | None = None
     if ref:
         approval_id = _as_uuid(ref)
         if approval_id is None:
@@ -285,27 +285,32 @@ async def resolve_verified_approval(
         row = await _load_row(execution.organization_id, approval_id=approval_id)
         if row is None:
             raise ApprovalInvalid("approval_invalid", "la aprobación no existe")
+        approval = _validate_row(
+            row, execution=execution, node_id=node_id, capability_ref=capability_ref
+        )
     else:
-        if getattr(execution, "instance_id", None) is not None:
-            row = await _load_row(
-                execution.organization_id, instance_id=execution.instance_id
-            )
-        else:
-            row = await _load_row(execution.organization_id, run_id=execution.run_id)
-        if row is None or str(row.get("status")) != STATUS_APPROVED:
-            # Buscar la última aprobada, no una pendiente rechazada.
-            row = await _load_row_approved(
-                execution.organization_id,
-                instance_id=getattr(execution, "instance_id", None),
-                run_id=getattr(execution, "run_id", None),
-            )
-        if row is None:
-            raise ApprovalInvalid(
+        rows = await _load_approved_rows(
+            execution.organization_id,
+            instance_id=getattr(execution, "instance_id", None),
+            run_id=getattr(execution, "run_id", None),
+        )
+        last_error: ApprovalInvalid | None = None
+        for row in rows:
+            try:
+                approval = _validate_row(
+                    row,
+                    execution=execution,
+                    node_id=node_id,
+                    capability_ref=capability_ref,
+                )
+                break
+            except ApprovalInvalid as exc:
+                last_error = exc
+                continue
+        if approval is None:
+            raise last_error or ApprovalInvalid(
                 "approval_required", "no hay aprobación verificada para esta acción"
             )
-    approval = _validate_row(
-        row, execution=execution, node_id=node_id, capability_ref=capability_ref
-    )
     if consume:
         await _consume(
             execution.organization_id,
@@ -331,12 +336,12 @@ async def resolve_verified_approval(
     return approval
 
 
-async def _load_row_approved(
+async def _load_approved_rows(
     organization_id: UUID,
     *,
     instance_id: UUID | None,
     run_id: UUID | None,
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
     session = await get_async_session()
     try:
         sql = (
@@ -358,12 +363,12 @@ async def _load_row_approved(
             sql += "AND a.run_id = :rid "
             params["rid"] = str(run_id)
         else:
-            return None
-        sql += "ORDER BY a.decided_at DESC NULLS LAST LIMIT 1"
-        row = (await session.execute(text(sql), params)).fetchone()
+            return []
+        sql += "ORDER BY a.decided_at DESC NULLS LAST LIMIT 20"
+        rows = (await session.execute(text(sql), params)).fetchall()
     finally:
         await session.close()
-    return dict(row._mapping) if row is not None else None
+    return [dict(row._mapping) for row in rows]
 
 
 __all__ = [
