@@ -3,14 +3,15 @@
 Fecha: 2026-11-01.
 Rama: `perf/ci-optimization` (PR #15, draft).
 Baseline: `docs/ci-performance-baseline.md`.
-Última ejecución verde del pipeline: **#506** (SHA `00f4f73`).
+Última ejecución verde del pipeline: **#507** (SHA `78064b2`).
 Este documento no autoriza merge ni despliegue.
 
 ## 1. Resumen ejecutivo
 
 La optimización reduce el wall-clock del workflow de **15,10 min a 8,73–9,18 min**
-en cuatro ejecuciones verdes comparables (**−41,2 % en promedio**; mejor run
-#506: **−42,2 %**), sin perder cobertura ni controles de seguridad. El consumo
+en cuatro ejecuciones comparables (#501, #502, #503, #506) más la validación
+final #507 (**−41,2 % en promedio**; mejor run #506: **−42,2 %**), sin perder
+cobertura ni controles de seguridad. El consumo
 de runner-minutes queda en **76–85** (baseline 83; promedio 81,5, **−1,8 %**),
 por lo que la mejora de latencia no se paga con más cómputo.
 
@@ -32,7 +33,8 @@ correctitud, cobertura ni release gate.
 | #502 | `4d8afa5` | 8,86 min | success | Refresh de duraciones |
 | #503 | `c2a8244` | 8,77 min | success | Segundo refresh |
 | #505 | `3efc5ea` | — | failure | Flake preexistente: `window is not defined` en `AgentBuilder.test.tsx` (promesa de catálogo resolviendo tras unmount) |
-| **#506** | **`00f4f73`** | **8,73 min** | **success** | Fix de cleanup + validación final |
+| **#506** | **`00f4f73`** | **8,73 min** | **success** | Fix de cleanup + mejor run |
+| #507 | `78064b2` | 8,75 min | success | Validación del commit de documentación |
 
 #505 no fue una regresión del sharding: el test pasaba, pero Vitest marcaba
 exit 1 por un `unhandled rejection` de React tras el desmontaje. Se corrigió
@@ -237,7 +239,7 @@ individualmente como required.
 - Aceptar que el balance de shards queda como deuda de seguimiento; el objetivo
   de latencia y costo sí se cumple.
 - Validar el commit final de documentación con una ejecución verde adicional
-  antes de mergear (el pipeline probado es #506, SHA `00f4f73`).
+  antes de mergear (el pipeline probado es #507, SHA `78064b2`).
 
 No se declara GO para 8 shards ni para `workers: 2` en Playwright: no fueron
 medidos en producción y no son necesarios para el objetivo actual.
