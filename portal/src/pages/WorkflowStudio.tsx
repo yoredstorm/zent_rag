@@ -933,6 +933,7 @@ export default function WorkflowStudioPage() {
               onRan={() => void load(true)}
               onSaveBeforeRun={save}
               graph={graph}
+              graphHash={detail?.graph_hash}
             />
           </aside>
         )}
@@ -960,6 +961,7 @@ export default function WorkflowStudioPage() {
               onRan={() => void load(true)}
               onSaveBeforeRun={save}
               graph={graph}
+              graphHash={detail?.graph_hash}
               embedded
             />
           </div>

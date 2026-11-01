@@ -108,7 +108,7 @@ describe("workflowTestSessionReducer", () => {
     expect(state.error).toBe("No pude guardar");
   });
 
-  it("un histórico se marca como histórico", () => {
+  it("un hist�rico se marca como hist�rico", () => {
     let state = createInitialTestSessionState();
     state = workflowTestSessionReducer(state, {
       type: "historical-run",
@@ -138,5 +138,52 @@ describe("workflowTestSessionReducer", () => {
     expect(isTestBusy(running.operation)).toBe(true);
     const next = workflowTestSessionReducer(running, { type: "select-level", level: "provider" });
     expect(next.requestedLevel).toBe("simulation");
+  });
+
+  it("WAIT no se muestra como completado y el resume actualiza el segmento", () => {
+    let state = createInitialTestSessionState();
+    state = workflowTestSessionReducer(state, { type: "start-run", operationId: 7 });
+    state = workflowTestSessionReducer(state, {
+      type: "run-completed",
+      run: { ...run, status: "waiting" },
+      instanceId: "inst-1",
+      durableStatus: "WAITING",
+      operationId: 7,
+    });
+    expect(state.durableStatus).toBe("WAITING");
+    expect(state.resultCode).toBe("waiting");
+    expect(state.instanceId).toBe("inst-1");
+    expect(state.operation).toBe("completed");
+
+    state = workflowTestSessionReducer(state, {
+      type: "durable-status",
+      status: "WAITING",
+      notice: 'Esperando "pago.recibido".',
+    });
+    expect(state.durableNotice).toContain("pago.recibido");
+
+    state = workflowTestSessionReducer(state, {
+      type: "run-refreshed",
+      run: { ...run, id: "run-2", status: "succeeded" },
+      durableStatus: "COMPLETED",
+      notice: "",
+    });
+    expect(state.activeRunId).toBe("run-2");
+    expect(state.durableStatus).toBe("COMPLETED");
+    expect(state.run?.id).toBe("run-2");
+  });
+
+  it("un nuevo run limpia el estado durable anterior", () => {
+    let state = createInitialTestSessionState();
+    state = workflowTestSessionReducer(state, {
+      type: "run-completed",
+      run,
+      instanceId: "inst-1",
+      durableStatus: "WAITING",
+      operationId: 2,
+    });
+    state = workflowTestSessionReducer(state, { type: "start-run", operationId: 3 });
+    expect(state.instanceId).toBeUndefined();
+    expect(state.durableStatus).toBeUndefined();
   });
 });

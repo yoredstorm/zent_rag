@@ -57,8 +57,23 @@ export function useWorkflowTestRunner({
   const operationRef = useRef(0);
   const identityRef = useRef(`${session?.organizationId ?? ""}:${workflowId}`);
   const mountedRef = useRef(true);
+  const followRef = useRef<{
+    token: number;
+    timer: number | null;
+    abort: AbortController | null;
+  }>({ token: 0, timer: null, abort: null });
 
   const busy = isTestBusy(state.operation);
+
+  const stopFollow = useCallback(() => {
+    followRef.current.token += 1;
+    if (followRef.current.timer !== null) {
+      window.clearTimeout(followRef.current.timer);
+      followRef.current.timer = null;
+    }
+    followRef.current.abort?.abort();
+    followRef.current.abort = null;
+  }, []);
 
   const loadRuns = useCallback(async () => {
     if (!session) return;
@@ -79,15 +94,17 @@ export function useWorkflowTestRunner({
     return () => {
       mountedRef.current = false;
       busyRef.current = false;
+      stopFollow();
     };
-  }, []);
+  }, [stopFollow]);
 
   useEffect(() => {
     identityRef.current = `${session?.organizationId ?? ""}:${workflowId}`;
     operationRef.current += 1;
     busyRef.current = false;
+    stopFollow();
     dispatch({ type: "reset", level: "simulation" });
-  }, [workflowId, session?.organizationId]);
+  }, [workflowId, session?.organizationId, stopFollow]);
 
   useEffect(() => {
     void loadRuns();
@@ -179,7 +196,10 @@ export function useWorkflowTestRunner({
     }
   }
 
-  async function confirmRealRun(payload: Record<string, unknown>) {
+  async function confirmRealRun(
+    payload: Record<string, unknown>,
+    options?: { idempotencyKey?: string },
+  ) {
     const operationId = beginOperation();
     if (operationId === null) return;
 
@@ -187,10 +207,14 @@ export function useWorkflowTestRunner({
     onRun(null);
     try {
       if (!(await saveIfNeeded(operationId))) return;
+      // Una intención real = una llave. Reintentos del mismo payload reutilizan
+      // la llave; un payload nuevo debe generar otra intención en la UI.
+      const idempotencyKey = options?.idempotencyKey || `wf-run-${crypto.randomUUID()}`;
       const out = await api<RunOut>(`/api/v1/workflows/${workflowId}/run`, {
         method: "POST",
         token: session?.token,
         organizationId: session?.organizationId,
+        headers: { "Idempotency-Key": idempotencyKey },
         body: JSON.stringify({ payload, simulate: false }),
       });
       if (!isCurrent(operationId)) return;
@@ -208,15 +232,115 @@ export function useWorkflowTestRunner({
         type: "run-completed",
         run: detail,
         plannedEffects: out.planned_effects,
+        instanceId: out.instance_id ?? detail.instance_id ?? undefined,
+        durableStatus: out.status,
         operationId,
       });
       onRun(detail);
       onRan?.();
       void loadRuns();
+      if (out.instance_id) {
+        void followInstance(
+          out.instance_id,
+          operationId,
+          runId,
+        );
+      }
     } catch (error) {
       fail(operationId, errorText(error));
     } finally {
       if (operationRef.current === operationId) busyRef.current = false;
+    }
+  }
+
+  async function followInstance(
+    instanceId: string,
+    operationId: number,
+    initialRunId: string,
+  ) {
+    stopFollow();
+    const token = followRef.current.token;
+    const terminal = new Set(["COMPLETED", "FAILED", "CANCELLED", "EXPIRED", "SUSPENDED"]);
+    let delay = 1500;
+    let lastRunId = initialRunId;
+    dispatch({ type: "durable-status", status: "RUNNING" });
+    while (
+      mountedRef.current &&
+      isCurrent(operationId) &&
+      followRef.current.token === token
+    ) {
+      await new Promise<void>((resolve) => {
+        followRef.current.timer = window.setTimeout(resolve, delay);
+      }).catch(() => undefined);
+      if (!mountedRef.current || !isCurrent(operationId)) return;
+      if (followRef.current.token !== token) return;
+      const controller = new AbortController();
+      followRef.current.abort = controller;
+      try {
+        const instance = await api<{
+          id: string;
+          status: string;
+          last_run_id?: string | null;
+          waiting_event_type?: string | null;
+        }>(`/api/v1/workflows/instances/${instanceId}`, {
+          token: session?.token,
+          organizationId: session?.organizationId,
+          signal: controller.signal,
+        });
+        if (!mountedRef.current || !isCurrent(operationId)) return;
+        const status = String(instance.status || "").toUpperCase();
+        const notice =
+          status === "WAITING"
+            ? instance.waiting_event_type
+              ? `Esperando "${instance.waiting_event_type}". La instancia sigue viva.`
+              : "Esperando señal. La instancia sigue viva."
+            : status === "SUSPENDED"
+              ? "Instancia suspendida. Reanúdala para continuar; no se envió nada."
+              : "";
+        dispatch({ type: "durable-status", status, notice });
+        if (instance.last_run_id && instance.last_run_id !== lastRunId) {
+          try {
+            const detail = await api<RunDetail>(
+              `/api/v1/workflows/runs/${instance.last_run_id}`,
+              {
+                token: session?.token,
+                organizationId: session?.organizationId,
+                signal: controller.signal,
+              },
+            );
+            if (!mountedRef.current || !isCurrent(operationId)) return;
+            lastRunId = instance.last_run_id;
+            dispatch({
+              type: "run-refreshed",
+              run: detail,
+              durableStatus: status,
+              notice,
+            });
+            onRun(detail);
+            void loadRuns();
+          } catch {
+            if (!mountedRef.current || !isCurrent(operationId)) return;
+            dispatch({
+              type: "durable-status",
+              status,
+              notice: `${notice} No pude cargar el nuevo segmento.`.trim(),
+            });
+          }
+        }
+        if (terminal.has(status)) return;
+        delay = Math.min(Math.round(delay * 1.6), 10000);
+      } catch {
+        if (controller.signal.aborted) return;
+        if (!mountedRef.current || !isCurrent(operationId)) return;
+        dispatch({
+          type: "durable-status",
+          status: "CONNECTION_LOST",
+          notice: "Conexión perdida con la instancia. Reintentando; no se ejecutó otro run.",
+        });
+        delay = Math.min(Math.round(delay * 2), 15000);
+      } finally {
+        if (followRef.current.abort === controller) followRef.current.abort = null;
+      }
     }
   }
 

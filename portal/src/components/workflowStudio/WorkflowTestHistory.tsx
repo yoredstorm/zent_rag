@@ -1,19 +1,31 @@
 import { StatusBadge } from "../ui";
 import type { WorkflowRun } from "./types";
+import { compareRunGraph } from "./workflowTestPresentation";
 
 export function WorkflowTestHistory({
   runs,
   open,
   activeRunId,
+  currentGraphHash,
   onToggle,
   onOpen,
 }: {
   runs: WorkflowRun[];
   open: boolean;
   activeRunId?: string;
+  currentGraphHash?: string | null;
   onToggle: (open: boolean) => void;
   onOpen: (runId: string) => void;
 }) {
+  function provenance(run: WorkflowRun): { label: string; tone: "ok" | "warn" | "muted" } {
+    const comparison = compareRunGraph(run.graph_hash, currentGraphHash);
+    if (comparison === "UNKNOWN") {
+      return { label: run.graph_hash ? "Huella sin comparar" : "Sin huella", tone: "muted" };
+    }
+    return comparison === "SAME"
+      ? { label: "Grafo actual", tone: "ok" }
+      : { label: "Grafo distinto", tone: "warn" };
+  }
   return (
     <details
       className="rounded-md border border-border bg-raised/40 px-3 py-2"
@@ -39,6 +51,23 @@ export function WorkflowTestHistory({
                 data-testid="wf-history-run"
               >
                 <StatusBadge status={run.status} hideIcon className="shrink-0" />
+                {(() => {
+                  const mark = provenance(run);
+                  return (
+                    <span
+                      className={`shrink-0 text-[10px] ${
+                        mark.tone === "ok"
+                          ? "text-ok"
+                          : mark.tone === "warn"
+                            ? "text-warn"
+                            : "text-faint"
+                      }`}
+                      title={run.graph_hash || undefined}
+                    >
+                      {mark.label}
+                    </span>
+                  );
+                })()}
                 <span className="min-w-0 flex-1 truncate text-text">
                   {run.simulate === false ? "Ejecución real" : run.simulate === true ? "Simulación" : "Run"}
                   {" · "}

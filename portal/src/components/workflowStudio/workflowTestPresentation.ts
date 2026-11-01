@@ -314,8 +314,19 @@ export function generateSampleForGraph(graph: WorkflowGraph | null | undefined):
   return "ejemplo";
 }
 
-export function shortHash(value: string | null | undefined): string {
-  const text = String(value ?? "");
+export type GraphComparison = "SAME" | "DIFFERENT" | "UNKNOWN";
+
+/** Compara la huella del run con el grafo actual; nunca infiere coincidencia. */
+export function compareRunGraph(
+  runHash: string | null | undefined,
+  currentHash: string | null | undefined,
+): GraphComparison {
+  if (!runHash) return "UNKNOWN";
+  if (!currentHash) return "UNKNOWN";
+  return runHash === currentHash ? "SAME" : "DIFFERENT";
+}
+
+export function shortHash(value: string | null | undefined): string {  const text = String(value ?? "");
   return text.length > 12 ? `${text.slice(0, 12)}…` : text;
 }
 
