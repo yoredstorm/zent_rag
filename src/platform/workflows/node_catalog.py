@@ -835,16 +835,10 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         ),
         examples=(
             {
-                "title": "Precio, puntos o pedido",
+                "title": "Identificar la intención del mensaje",
                 "config": {
                     "confidence_min": 0.75,
                     "ambiguity_policy": "ask_clarification",
-                    "routes": [
-                        {"id": "price_lookup", "description": "Precio de un producto"},
-                        {"id": "loyalty_balance", "description": "Saldo de puntos"},
-                        {"id": "order_status", "description": "Estado de un pedido"},
-                        {"id": "other", "description": "No identificada"},
-                    ],
                 },
             },
         ),
