@@ -1880,6 +1880,146 @@ async def tenant_capability_binding_delete(binding_id: str, request: Request):
     return {"deleted": True}
 
 
+# ---------------------------------------------------------------------------
+# P19-02 — catálogo de conexiones y recursos autorizados
+# ---------------------------------------------------------------------------
+class DataQueryPreviewIn(BaseModel):
+    binding_id: str = Field(..., max_length=80)
+    params: dict = Field(default_factory=dict)
+
+
+def _data_source_http_error(exc: Any) -> HTTPException:
+    return HTTPException(
+        exc.status_code,
+        detail={"error_code": exc.code, "message": exc.message},
+    )
+
+
+@router.get(
+    "/data-sources",
+    summary="Conexiones de datos autorizadas del workspace",
+)
+async def tenant_data_sources(request: Request, kind: str | None = None):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_sources import DataSourceError, list_data_sources
+
+    ctx = require_permission(request, "workflows:read")
+    workspace_id = await _workspace_id(request)
+    if workspace_id is None:
+        raise HTTPException(
+            400,
+            detail={"error_code": "WORKSPACE_REQUIRED", "message": "X-Workspace-Id requerido"},
+        )
+    if kind and kind not in ("sql", "managed_db"):
+        return {"sources": []}
+    try:
+        return await list_data_sources(
+            ctx.organization_id, workspace_id, permissions=ctx.permissions
+        )
+    except DataSourceError as exc:
+        raise _data_source_http_error(exc) from exc
+
+
+@router.get(
+    "/data-sources/{source_ref}/resources",
+    summary="Recursos publicados de una conexión autorizada",
+)
+async def tenant_data_source_resources(
+    source_ref: str,
+    request: Request,
+    cursor: int = 0,
+    limit: int = 50,
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_sources import (
+        DataSourceError,
+        list_published_resources,
+    )
+
+    ctx = require_permission(request, "workflows:read")
+    workspace_id = await _workspace_id(request)
+    if workspace_id is None:
+        raise HTTPException(
+            400,
+            detail={"error_code": "WORKSPACE_REQUIRED", "message": "X-Workspace-Id requerido"},
+        )
+    try:
+        return await list_published_resources(
+            ctx.organization_id,
+            workspace_id,
+            source_ref=source_ref,
+            cursor=cursor,
+            limit=limit,
+            permissions=ctx.permissions,
+        )
+    except DataSourceError as exc:
+        raise _data_source_http_error(exc) from exc
+
+
+@router.get(
+    "/data-sources/{source_ref}/resources/{resource_ref}/schema",
+    summary="Esquema permitido de un recurso publicado",
+)
+async def tenant_data_source_resource_schema(
+    source_ref: str,
+    resource_ref: str,
+    request: Request,
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_sources import DataSourceError, get_resource_schema
+
+    ctx = require_permission(request, "workflows:read")
+    workspace_id = await _workspace_id(request)
+    if workspace_id is None:
+        raise HTTPException(
+            400,
+            detail={"error_code": "WORKSPACE_REQUIRED", "message": "X-Workspace-Id requerido"},
+        )
+    try:
+        return await get_resource_schema(
+            ctx.organization_id,
+            workspace_id,
+            resource_ref,
+            source_ref=source_ref,
+            permissions=ctx.permissions,
+        )
+    except DataSourceError as exc:
+        raise _data_source_http_error(exc) from exc
+
+
+@router.post(
+    "/data-query/preview",
+    summary="Preview de un plan autorizado (sin SQL libre)",
+)
+async def tenant_data_query_preview(body: DataQueryPreviewIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_sources import DataSourceError, preview_data_query
+
+    ctx = require_permission(request, "workflows:read")
+    workspace_id = await _workspace_id(request)
+    if workspace_id is None:
+        raise HTTPException(
+            400,
+            detail={"error_code": "WORKSPACE_REQUIRED", "message": "X-Workspace-Id requerido"},
+        )
+    try:
+        binding_id = UUID(body.binding_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "binding_id inválido") from exc
+    if len(body.params) > 20:
+        raise HTTPException(400, "demasiados parámetros")
+    try:
+        return await preview_data_query(
+            ctx.organization_id,
+            workspace_id,
+            binding_id,
+            body.params,
+            permissions=ctx.permissions,
+        )
+    except DataSourceError as exc:
+        raise _data_source_http_error(exc) from exc
+
+
 @router.post("/import/inspect", summary="Inspeccionar paquete (sin persistir)")
 async def tenant_workflow_import_inspect(body: PackageIn, request: Request):
     from src.platform.rbac.policy import require_permission

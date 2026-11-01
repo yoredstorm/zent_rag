@@ -127,6 +127,18 @@ async def test_p19_01_real_managed_query_is_parameterized_and_read_only(
         assert result["binding_hash"]
         assert "sql" not in result
 
+        from src.platform.workflows.data_sources import get_resource_schema
+
+        schema = await get_resource_schema(
+            organization.id,
+            workspace.id,
+            "public.p19_prices",
+            permissions={"workflows:read"},
+        )
+        names = [column["name"] for column in schema["columns"]]
+        assert names == ["sku", "channel", "price", "currency"]
+        assert all(column["sensitive"] is False for column in schema["columns"])
+
         injected = await _execute_managed_select(
             organization.id,
             binding,

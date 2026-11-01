@@ -357,6 +357,12 @@ async def upsert_binding(
         await session.commit()
     finally:
         await session.close()
+    try:
+        from src.platform.workflows.data_sources import invalidate_data_catalog
+
+        invalidate_data_catalog(organization_id, workspace_id)
+    except Exception:  # noqa: BLE001 — la cache no rompe el guardado
+        pass
     return _row(row)
 
 
@@ -390,9 +396,17 @@ async def delete_binding(organization_id: UUID, binding_id: UUID) -> bool:
             {"bid": str(binding_id), "oid": str(organization_id)},
         )
         await session.commit()
-        return result.rowcount > 0
+        changed = result.rowcount > 0
     finally:
         await session.close()
+    if changed:
+        try:
+            from src.platform.workflows.data_sources import invalidate_data_catalog
+
+            invalidate_data_catalog(organization_id)
+        except Exception:  # noqa: BLE001 — la cache no rompe el borrado
+            pass
+    return changed
 
 
 async def resolve_binding(
@@ -425,6 +439,31 @@ async def resolve_binding(
                     {"oid": str(organization_id), "ref": capability_ref},
                 )
             ).fetchone()
+    finally:
+        await session.close()
+    return _row(row) if row else None
+
+
+async def get_binding(
+    organization_id: UUID,
+    binding_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
+) -> dict[str, Any] | None:
+    """Binding exacto por id, acotado a organización y workspace."""
+    await ensure_binding_tables()
+    session = await get_async_session()
+    try:
+        sql = (
+            f"SELECT {_BINDING_COLS} FROM workflow_capability_bindings "
+            "WHERE id = :bid AND organization_id = :oid AND status = 'active'"
+        )
+        params: dict[str, Any] = {"bid": str(binding_id), "oid": str(organization_id)}
+        if workspace_id is not None:
+            sql += " AND (workspace_id IS NULL OR workspace_id = :ws)"
+            params["ws"] = str(workspace_id)
+        sql += " LIMIT 1"
+        row = (await session.execute(text(sql), params)).fetchone()
     finally:
         await session.close()
     return _row(row) if row else None
