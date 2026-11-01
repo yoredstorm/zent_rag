@@ -3811,6 +3811,42 @@ async def _exec_data_query(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output=output)
 
 
+async def _exec_intent_route(rctx: NodeContext) -> NodeOutcome:
+    """Identifica una solicitud contra rutas cerradas; no ejecuta la ruta."""
+    from src.platform.workflows.intent_route import IntentConfigError, classify_intent
+
+    cfg = rctx.node.config
+    raw_text = cfg.get("text") or cfg.get("message") or "{{trigger.message}}"
+    text = _resolve_ref(raw_text, rctx)
+    if not isinstance(text, str):
+        text = str(text or "")
+    intent_config = {
+        key: value
+        for key, value in cfg.items()
+        if key
+        in {
+            "schema",
+            "intent_schema",
+            "routes",
+            "confidence_min",
+            "ambiguity_policy",
+            "decision_source",
+        }
+    }
+    try:
+        result = classify_intent(intent_config, text)
+    except IntentConfigError as exc:
+        return NodeOutcome(error=exc.message[:300])
+    output = result.model_dump(mode="json")
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "intent_route", "text": text[:200]},
+            output={**output, "simulated": True},
+        )
+    return NodeOutcome(output=output)
+
+
 async def _exec_stop(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
     status = str(cfg.get("status") or "success")
@@ -4699,6 +4735,18 @@ def _register_defaults() -> None:
         outputs={"out": {"type": "json"}},
         execute=_exec_data_query,
         **semantic_metadata("data_query"),
+    )
+    registry.register(
+        "intent_route",
+        version=1,
+        label="Identificar solicitud",
+        category="logic",
+        risk_level="normal",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_intent_route,
+        **semantic_metadata("intent_route"),
     )
 
     # AI

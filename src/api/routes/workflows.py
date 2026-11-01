@@ -1888,11 +1888,32 @@ class DataQueryPreviewIn(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class IntentRouteTestIn(BaseModel):
+    text: str = Field(..., max_length=4000)
+    config: dict = Field(default_factory=dict)
+
+
 def _data_source_http_error(exc: Any) -> HTTPException:
     return HTTPException(
         exc.status_code,
         detail={"error_code": exc.code, "message": exc.message},
     )
+
+
+@router.post(
+    "/intent-route/test",
+    summary="Probar la identificación de solicitud (sin ejecutar rutas)",
+)
+async def tenant_intent_route_test(body: IntentRouteTestIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.intent_route import IntentConfigError, classify_intent
+
+    require_permission(request, "workflows:read")
+    try:
+        result = classify_intent(body.config, body.text)
+    except IntentConfigError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return result.model_dump(mode="json")
 
 
 @router.get(

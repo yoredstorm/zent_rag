@@ -296,6 +296,55 @@ def _llm_schema() -> NodeBusinessSchema:
     )
 
 
+def _intent_route_schema() -> NodeBusinessSchema:
+    return NodeBusinessSchema(
+        node_type="intent_route",
+        label="Identificar solicitud",
+        category="logic",
+        description="Reconoce precio, puntos, pedido u otra solicitud.",
+        parameters=[
+            _p(
+                "text",
+                "Mensaje a analizar",
+                "text",
+                default="{{trigger.message}}",
+                data_source="any",
+            ),
+            _p("confidence_min", "Confianza mínima", "number", min_level="guided", default=0.75),
+            _p(
+                "ambiguity_policy",
+                "Si hay duda",
+                "enum",
+                min_level="guided",
+                default="ask_clarification",
+                validation={
+                    "options": [
+                        {"value": "ask_clarification", "label": "Pedir aclaración"},
+                        {"value": "other", "label": "Ruta No entendí"},
+                    ]
+                },
+            ),
+            _p(
+                "routes",
+                "Rutas y ejemplos (JSON)",
+                "json",
+                min_level="advanced",
+                help="Solo rutas permitidas: price_lookup, loyalty_balance, order_status, other.",
+            ),
+        ],
+        outputs=[
+            _out("intent", "Intención", "text"),
+            _out("confidence", "Confianza", "number"),
+            _out("entities", "Entidades", "json"),
+            _out("missing_slots", "Datos faltantes", "json"),
+            _out("route", "Ruta", "text"),
+            _out("decision_source", "Origen de decisión", "text"),
+            _out("reason_codes", "Motivos", "json"),
+            _out("requires_identity_verification", "Requiere identidad", "boolean"),
+        ],
+    )
+
+
 def _data_query_schema() -> NodeBusinessSchema:
     return NodeBusinessSchema(
         node_type="data_query",
@@ -726,6 +775,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         ),
         _query_business_data_schema(),
         _data_query_schema(),
+        _intent_route_schema(),
         _kb_query_schema(),
         _api_call_schema(),
         _marketplace_action_schema(),

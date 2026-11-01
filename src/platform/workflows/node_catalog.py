@@ -818,6 +818,41 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         context_writes=("decisions",),
         supports_simulation=True,
     ),
+    "intent_route": _meta(
+        "Identificar solicitud",
+        "Reconoce precio, puntos, pedido u otra solicitud y extrae entidades.",
+        long_description=(
+            "Contrato zent.workflow.intent.route/v1. Rutas cerradas, entidades "
+            "sanitizadas, confianza y slots faltantes. No ejecuta la ruta ni "
+            "concede acceso: la identidad y los permisos se validan después."
+        ),
+        when_to_use=(
+            "el siguiente paso depende de la intención del mensaje",
+            "necesitas precio, puntos o estado de pedido como rutas explícitas",
+        ),
+        when_not_to_use=(
+            "la acción ya está decidida y no depende del mensaje",
+            "necesitas una decisión binaria simple; usa una condición",
+        ),
+        examples=(
+            {
+                "title": "Precio, puntos o pedido",
+                "config": {
+                    "confidence_min": 0.75,
+                    "ambiguity_policy": "ask_clarification",
+                    "routes": [
+                        {"id": "price_lookup", "description": "Precio de un producto"},
+                        {"id": "loyalty_balance", "description": "Saldo de puntos"},
+                        {"id": "order_status", "description": "Estado de un pedido"},
+                        {"id": "other", "description": "No identificada"},
+                    ],
+                },
+            },
+        ),
+        context_reads=("trigger", "variables", "data"),
+        context_writes=("decisions", "entities"),
+        supports_simulation=True,
+    ),
     "subworkflow_call": _meta(
         "Subflujo congelado",
         "Ejecuta un subflujo con la versión y el snapshot ya congelados.",

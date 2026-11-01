@@ -110,7 +110,7 @@ export type PurposeGroup = { id: string; label: string; types: string[] };
 
 export const PURPOSE_GROUPS: PurposeGroup[] = [
   { id: "start", label: "Iniciar", types: ["trigger_webhook", "trigger_schedule", "trigger_event"] },
-  { id: "understand", label: "Entender", types: ["llm", "adaptive_route"] },
+  { id: "understand", label: "Entender", types: ["llm", "adaptive_route", "intent_route"] },
   {
     id: "consult",
     label: "Consultar",
@@ -306,6 +306,32 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
     defaults: { params: {} },
     summary: (c) =>
       String(c.capability ? `Consulta ${String(c.capability).slice(0, 34)}` : "Falta elegir consulta"),
+  },
+  intent_route: {
+    type: "intent_route",
+    category: "logic",
+    label: "Identificar solicitud",
+    icon: "🧭",
+    color: "bg-info",
+    fields: [
+      { key: "text", label: "Mensaje", type: "text", placeholder: "{{trigger.message}}", refs: true },
+      { key: "confidence_min", label: "Confianza mínima", type: "number", default: 0.75, adv: true },
+      {
+        key: "ambiguity_policy",
+        label: "Si hay duda",
+        type: "select",
+        options: [
+          { value: "ask_clarification", label: "Pedir aclaración" },
+          { value: "other", label: "Ruta No entendí" },
+        ],
+        default: "ask_clarification",
+        adv: true,
+      },
+      { key: "routes", label: "Rutas (JSON)", type: "json", adv: true },
+    ],
+    defaults: { text: "{{trigger.message}}", confidence_min: 0.75, ambiguity_policy: "ask_clarification" },
+    summary: (c) =>
+      String(c.text ? `Clasificar: ${String(c.text).slice(0, 34)}` : "Identificar solicitud"),
   },
   llm: {
     type: "llm",
@@ -732,6 +758,16 @@ const OUTPUT_FIELDS: Record<string, string[]> = {
     "binding_hash",
     "reason_code",
     "provenance",
+  ],
+  intent_route: [
+    "intent",
+    "confidence",
+    "entities",
+    "missing_slots",
+    "route",
+    "decision_source",
+    "reason_codes",
+    "requires_identity_verification",
   ],
   llm: ["text", "agent_id", "model", "cost", "structured", "echo", "status", "decision", "confidence", "context_summary", "reason_codes"],
   notify: ["sent", "channel", "recipients", "delivered", "deliveries", "count", "result"],

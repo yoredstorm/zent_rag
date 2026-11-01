@@ -101,6 +101,7 @@ def test_simulation_supported_flags() -> None:
         "conversation_guard",
         "data_query",
         "human_approval",
+        "intent_route",
         "loop",
         "marketplace_action",
         "notify",
