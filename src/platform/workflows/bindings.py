@@ -1487,6 +1487,8 @@ async def _execute_inventory_action(
             ).fetchone()
             if order is None:
                 raise BindingError("NOT_FOUND", "pedido no encontrado")
+            if action == "reserve_stock" and str(order.status) in ("confirmed", "cancelled"):
+                raise BindingError("CONFLICT", "el pedido ya está cerrado")
             stock = (
                 await conn.execute(
                     text(
