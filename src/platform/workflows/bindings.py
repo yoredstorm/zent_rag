@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
+from src.platform.workflows.values import jsonable
 
 logger = get_logger(__name__)
 
@@ -1181,7 +1182,7 @@ async def _execute_data_query_plan(
                 "row_count": len(rows),
                 "reason_code": "MULTIPLE_MATCHES",
             }
-        record = dict(rows[0]._mapping)
+        record = jsonable(dict(rows[0]._mapping))
         if _record_size(record) > plan.policy.max_bytes:
             raise BindingError("INVALID_PARAMS", "el registro excede el tamaño autorizado")
         return {
@@ -1192,7 +1193,7 @@ async def _execute_data_query_plan(
             "row_count": 1,
         }
 
-    data = [dict(row._mapping) for row in rows]
+    data = [jsonable(dict(row._mapping)) for row in rows]
     truncated = len(data) > plan.policy.max_rows
     data = data[: plan.policy.max_rows]
     while data and _record_size(data) > plan.policy.max_bytes:
