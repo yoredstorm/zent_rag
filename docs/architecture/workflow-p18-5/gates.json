@@ -1,0 +1,104 @@
+{
+  "schema": "zent.p18_5.gates/v1",
+  "baseline_sha": "e6c42c2579df0e997ef2a0a0d0916f05dc735bef",
+  "branch": "fix/p18-5-security-execution-live-studio",
+  "updated_at": "2026-10-31T00:00:00Z",
+  "gates": [
+    {
+      "id": "P18.5-00",
+      "name": "Baseline forense, threat model y matriz de gates",
+      "status": "PASS",
+      "p0_open": 0,
+      "evidence": "docs/architecture/workflow-p18-5/00-baseline-threat-model.md",
+      "tests": "tests/test_workflow_test_studio.py tests/test_workflow_test_report.py tests/test_workflow_workspace_isolation.py tests/test_workflow_effective_policy.py (20 passed)"
+    },
+    {
+      "id": "P18.5-01",
+      "name": "Snapshots inmutables y pinning ejecutable de agentes",
+      "status": "NOT_RUN",
+      "p0_open": 1,
+      "evidence": "docs/architecture/workflow-p18-5/01-agent-snapshot.md"
+    },
+    {
+      "id": "P18.5-02",
+      "name": "Aislamiento real de workspaces",
+      "status": "NOT_RUN",
+      "p0_open": 1,
+      "evidence": "docs/architecture/workflow-p18-5/02-workspace-authorization.md"
+    },
+    {
+      "id": "P18.5-03",
+      "name": "Aprobaciones verificables",
+      "status": "NOT_RUN",
+      "p0_open": 1,
+      "evidence": "docs/architecture/workflow-p18-5/03-verified-approval.md"
+    },
+    {
+      "id": "P18.5-04",
+      "name": "Revocaciones y RBAC en WAIT/RESUME",
+      "status": "NOT_RUN",
+      "p0_open": 1,
+      "evidence": "docs/architecture/workflow-p18-5/04-revocation-resume.md"
+    },
+    {
+      "id": "P18.5-05",
+      "name": "Idempotencia de efectos y replay intencional",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/05-effect-idempotency.md"
+    },
+    {
+      "id": "P18.5-06",
+      "name": "Contratos de payload /test y /run",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/06-payload-contract.md"
+    },
+    {
+      "id": "P18.5-07",
+      "name": "Historial con hashes y procedencia",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/07-history-provenance.md"
+    },
+    {
+      "id": "P18.5-08",
+      "name": "Timeline durable con cursor y permisos",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/08-execution-timeline.md"
+    },
+    {
+      "id": "P18.5-09",
+      "name": "Test Studio en vivo RUNNING/WAIT/RESUME/COMPLETED",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/09-live-test-studio.md"
+    },
+    {
+      "id": "P18.5-10",
+      "name": "Recorrido de canvas basado en traza real",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/10-canvas-trace.md"
+    },
+    {
+      "id": "P18.5-11",
+      "name": "Robustez React, accesibilidad y semántica",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/11-ui-robustness.md"
+    },
+    {
+      "id": "P18.5-12",
+      "name": "E2E adversariales de seguridad y efectividad",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/12-certification.md"
+    },
+    {
+      "id": "P18.5-13",
+      "name": "Chaos, rendimiento y observabilidad operacional",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/13-resilience-performance.md"
+    },
+    {
+      "id": "P18.5-14",
+      "name": "Usabilidad, auditoría final y GO/NO-GO",
+      "status": "NOT_RUN",
+      "evidence": "docs/architecture/workflow-p18-5/14-final-go-no-go.md"
+    }
+  ]
+}
