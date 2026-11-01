@@ -1819,7 +1819,7 @@ class BindingIn(BaseModel):
     #: Provider kinds del binder (fuente única: `bindings.PROVIDER_KINDS`).
     provider_kind: str = Field(
         ...,
-        pattern="^(managed_db|connected_db|marketplace_action|semantic_query|rest_api|erp|custom|commerce|payment_provider|conversation)$",
+        pattern="^(managed_db|connected_db|marketplace_action|semantic_query|rest_api|erp|custom|commerce|payment_provider|conversation|inventory)$",
     )
     config: dict = Field(default_factory=dict)
     contract_input_schema: dict = Field(default_factory=dict)

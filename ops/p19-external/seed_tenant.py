@@ -120,6 +120,51 @@ def _order_plan(connector_id: UUID) -> dict:
     }
 
 
+def _bodega_plan(connector_id: UUID) -> dict:
+    return {
+        "schema": "zent.data.query.binding/v1",
+        "scope": "workspace",
+        "connection_ref": str(connector_id),
+        "resource": {"schema": "bodega", "name": "product_catalog_v", "kind": "view"},
+        "operation": "get_one",
+        "projection": ["sku", "name", "category", "unit", "price", "currency", "available"],
+        "allowed_columns": [
+            "sku",
+            "name",
+            "category",
+            "unit",
+            "price",
+            "currency",
+            "available",
+            "on_hand",
+            "reserved",
+        ],
+        "parameters": [
+            {"name": "sku", "field": "sku", "operator": "eq", "type": "string", "required": True}
+        ],
+        "policy": {"max_rows": 1, "timeout_ms": 3000, "read_only": True},
+        "resource_ref": "bodega/product_catalog",
+        "column_types": {
+            "sku": "string",
+            "name": "string",
+            "category": "string",
+            "unit": "string",
+            "price": "number",
+            "currency": "string",
+            "available": "integer",
+        },
+    }
+
+
+def _inventory_binding(connector_id: UUID) -> dict:
+    return {
+        "connector_id": str(connector_id),
+        "action": "commit_stock",
+        "write": True,
+        "max_quantity": 100,
+    }
+
+
 async def main() -> None:
     org_id = UUID(os.environ["ORG_ID"])
     workspace_id = UUID(os.environ["WORKSPACE_ID"])
@@ -142,10 +187,31 @@ async def main() -> None:
         connector.id,
         {"password": os.environ.get("P19_EXTERNAL_PASSWORD", "p19_reader_dev_2026")},
     )
+    writer = await PostgresConnectorRepository().create_connector(
+        org_id,
+        f"ERP externo P19 escritura {uuid4().hex[:6]}",
+        "postgres",
+        workspace_id=workspace_id,
+        config_json={
+            "host": os.environ.get("P19_EXTERNAL_HOST", "host.docker.internal"),
+            "port": int(os.environ.get("P19_EXTERNAL_PORT", "55432")),
+            "database": os.environ.get("P19_EXTERNAL_DB", "zent_external_mvp"),
+            "user": os.environ.get("P19_WRITER_USER", "p19_writer"),
+            "ssl": False,
+            "managed": False,
+            "write": True,
+        },
+    )
+    await get_secret_store().put(
+        org_id,
+        writer.id,
+        {"password": os.environ.get("P19_WRITER_PASSWORD", "p19_writer_dev_2026")},
+    )
     plans = {
         "p19.external.price": _price_plan(connector.id),
         "p19.external.loyalty": _loyalty_plan(connector.id),
         "p19.external.order": _order_plan(connector.id),
+        "bodega.product.get": _bodega_plan(connector.id),
     }
     for capability_ref, config in plans.items():
         await upsert_binding(
@@ -155,8 +221,16 @@ async def main() -> None:
             config=config,
             workspace_id=workspace_id,
         )
+    await upsert_binding(
+        org_id,
+        "bodega.stock.commit",
+        "inventory",
+        config=_inventory_binding(writer.id),
+        workspace_id=workspace_id,
+    )
     print(f"connector_id={connector.id}")  # noqa: T201
-    print("bindings=" + ",".join(plans))  # noqa: T201
+    print(f"writer_connector_id={writer.id}")  # noqa: T201
+    print("bindings=" + ",".join([*plans, "bodega.stock.commit"]))  # noqa: T201
 
 
 if __name__ == "__main__":

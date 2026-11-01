@@ -45,6 +45,8 @@ PROVIDER_KINDS: tuple[str, ...] = (
     "payment_provider",
     # Mensajería al cliente resuelta por binding (in_app/email/webhook).
     "conversation",
+    # P19: acción de inventario gobernada (no SQL libre).
+    "inventory",
 )
 
 _IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$")
@@ -568,7 +570,7 @@ async def execute_binding(
 
     kind = binding["provider_kind"]
     ledger_eid: str | None = None
-    if kind in ("rest_api", "marketplace_action") and workflow_id and node_id:
+    if kind in ("rest_api", "marketplace_action", "inventory") and workflow_id and node_id:
         from src.platform.workflows.effect_ledger import begin_effect
 
         ledger_eid, confirmed = await begin_effect(
@@ -707,6 +709,10 @@ async def _dispatch_binding(
             raise
         except Exception as exc:  # noqa: BLE001
             raise BindingError("PROVIDER_ERROR", f"mensajería falló: {str(exc)[:200]}") from exc
+    elif kind == "inventory":
+        out = await _execute_inventory_action(
+            organization_id, binding, payload, workspace_id=workspace_id
+        )
     else:
         raise BindingError(
             "PROVIDER_NOT_IMPLEMENTED",
@@ -1391,6 +1397,164 @@ async def _execute_managed_select(
             principal=principal,
         )
     return await _execute_legacy_select(organization_id, binding, payload, workspace_id=workspace_id)
+
+
+async def _execute_inventory_action(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+) -> dict[str, Any]:
+    """Acción de inventario gobernada: commit de stock con idempotencia."""
+    from urllib.parse import quote_plus
+
+    from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
+    from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+
+    config = binding.get("config") or {}
+    if str(config.get("action") or "") != "commit_stock":
+        raise BindingError("PROVIDER_NOT_SUPPORTED", "acción de inventario no soportada")
+    if config.get("write") is not True:
+        raise BindingError("PERMISSION_DENIED", "el conector no está habilitado para escritura")
+    try:
+        connector_id = UUID(str(config.get("connector_id") or ""))
+    except (TypeError, ValueError) as exc:
+        raise BindingError("NEEDS_CONFIGURATION", "inventory requiere connector_id") from exc
+    order_number = str(payload.get("order_number") or "").strip()
+    sku = str(payload.get("sku") or "").strip()
+    if not _valid_simple_ident(sku) or not re.match(r"^[A-Za-z0-9_-]{3,40}$", order_number):
+        raise BindingError("INVALID_PARAMS", "order_number o sku inválido")
+    try:
+        quantity = int(payload.get("quantity") or 0)
+    except (TypeError, ValueError) as exc:
+        raise BindingError("INVALID_PARAMS", "quantity inválida") from exc
+    if quantity < 1 or quantity > int(config.get("max_quantity") or 100):
+        raise BindingError("INVALID_PARAMS", "quantity fuera de rango")
+    idempotency_key = str(
+        payload.get("idempotency_key") or f"commit:{order_number}:{sku}"
+    )[:160]
+
+    connector = await PostgresConnectorRepository().get_connector(
+        organization_id, connector_id
+    )
+    if connector is None or str(connector.status or "").lower() != "active":
+        raise BindingError("RESOURCE_NOT_EXPOSED", "conector de escritura no disponible")
+    if connector.workspace_id and workspace_id and str(connector.workspace_id) != str(workspace_id):
+        raise BindingError("PERMISSION_DENIED", "el conector pertenece a otro workspace")
+    cfg = connector.config_json if isinstance(connector.config_json, dict) else {}
+    if str(connector.type or "").lower() not in ("postgres", "postgresql"):
+        raise BindingError("PROVIDER_NOT_SUPPORTED", "solo PostgreSQL")
+    host = str(cfg.get("host") or "").strip()
+    database = str(cfg.get("database") or "").strip()
+    user = str(cfg.get("user") or "").strip()
+    if not host or not database or not user:
+        raise BindingError("NEEDS_CONFIGURATION", "conector de escritura incompleto")
+    secret = await get_secret_store().get(organization_id, connector_id)
+    password = secret.get("password") if isinstance(secret, dict) else None
+    if not password:
+        raise BindingError("NEEDS_CREDENTIALS", "sin credencial de escritura")
+    dsn = (
+        f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(str(password))}"
+        f"@{host}:{int(cfg.get('port') or 5432)}/{quote_plus(database)}"
+    )
+    engine = create_async_engine(dsn, pool_size=1, max_overflow=0, pool_pre_ping=True)
+    try:
+        async with engine.begin() as conn:
+            order = (
+                await conn.execute(
+                    text(
+                        "SELECT status, payment_status FROM bodega.orders "
+                        "WHERE order_number = :on FOR UPDATE"
+                    ),
+                    {"on": order_number},
+                )
+            ).fetchone()
+            if order is None:
+                raise BindingError("NOT_FOUND", "pedido no encontrado")
+            stock = (
+                await conn.execute(
+                    text(
+                        "SELECT on_hand, reserved FROM bodega.stock "
+                        "WHERE sku = :sku FOR UPDATE"
+                    ),
+                    {"sku": sku},
+                )
+            ).fetchone()
+            if stock is None:
+                raise BindingError("RESOURCE_NOT_EXPOSED", "SKU no expuesto")
+            existing = (
+                await conn.execute(
+                    text(
+                        "SELECT id, after_on_hand FROM bodega.stock_movements "
+                        "WHERE idempotency_key = :key"
+                    ),
+                    {"key": idempotency_key},
+                )
+            ).fetchone()
+            if existing is not None:
+                return {
+                    "status": "ALREADY_APPLIED",
+                    "order_number": order_number,
+                    "sku": sku,
+                    "quantity": quantity,
+                    "on_hand": int(existing.after_on_hand),
+                    "movement_id": str(existing.id),
+                }
+            before = int(stock.on_hand)
+            if before < quantity:
+                raise BindingError("CONFLICT", "stock insuficiente")
+            after = before - quantity
+            movement = (
+                await conn.execute(
+                    text(
+                        "INSERT INTO bodega.stock_movements "
+                        "(order_number, sku, quantity, movement_type, idempotency_key, "
+                        "before_on_hand, after_on_hand) "
+                        "VALUES (:on, :sku, :qty, 'commit', :key, :before, :after) "
+                        "RETURNING id"
+                    ),
+                    {
+                        "on": order_number,
+                        "sku": sku,
+                        "qty": quantity,
+                        "key": idempotency_key,
+                        "before": before,
+                        "after": after,
+                    },
+                )
+            ).fetchone()
+            await conn.execute(
+                text(
+                    "UPDATE bodega.stock SET on_hand = :after, "
+                    "reserved = GREATEST(reserved - :qty, 0), version = version + 1 "
+                    "WHERE sku = :sku"
+                ),
+                {"after": after, "qty": quantity, "sku": sku},
+            )
+            await conn.execute(
+                text(
+                    "UPDATE bodega.orders SET status = 'confirmed', "
+                    "payment_status = 'approved_manual', updated_at = NOW() "
+                    "WHERE order_number = :on"
+                ),
+                {"on": order_number},
+            )
+        return {
+            "status": "COMMITTED",
+            "order_number": order_number,
+            "sku": sku,
+            "quantity": quantity,
+            "on_hand_before": before,
+            "on_hand": after,
+            "movement_id": str(movement.id) if movement else None,
+        }
+    except BindingError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _query_failure(exc) from exc
+    finally:
+        await engine.dispose()
 
 
 async def _execute_rest(organization_id: UUID, binding: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
