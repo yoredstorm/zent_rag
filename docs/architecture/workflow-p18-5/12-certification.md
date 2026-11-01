@@ -31,6 +31,17 @@ npx playwright test e2e/p18-5-live-resume.spec.ts
 
 Valida WAIT → señal → resume → COMPLETED sin refrescar, con un único POST /run.
 
+Regresión P18.4 ejecutada contra la misma API fuente:
+
+```text
+npx playwright test e2e/p18-4-wait.spec.ts      # 1 passed
+npx playwright test e2e/p18-4-approval.spec.ts  # 1 passed
+npx playwright test e2e/p18-4-effects.spec.ts   # 1 passed
+```
+
+La prueba de effects usó un efecto interno de notificación, no un proveedor
+externo productivo.
+
 ## E2E adversariales NO ejecutados
 
 | Spec requerido | Estado | Motivo |

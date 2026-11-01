@@ -27,7 +27,7 @@
 ```text
 npm run typecheck   # OK
 npm run lint        # 0 errors, warnings preexistentes
-npm run test -- --run src/components/workflowStudio  # 112 passed
+npm run test  # 136 files, 859 passed
 npx vitest run ...WorkflowTestPanel.test.tsx  # 28 passed
 ```
 

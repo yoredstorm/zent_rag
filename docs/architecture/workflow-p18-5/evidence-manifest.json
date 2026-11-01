@@ -71,9 +71,9 @@
       "skipped": 1
     },
     {
-      "command": "npx vitest run src/components/workflowStudio",
+      "command": "npm run test (portal completo)",
       "result": "PASS",
-      "passed": 112,
+      "passed": 859,
       "failed": 0
     },
     {
@@ -91,6 +91,24 @@
       "result": "PASS",
       "errors": 0,
       "warnings": 26
+    },
+    {
+      "command": "npx playwright test e2e/p18-4-wait.spec.ts (E2E_WAIT=1)",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "npx playwright test e2e/p18-4-approval.spec.ts (E2E_APPROVAL=1)",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "npx playwright test e2e/p18-4-effects.spec.ts (E2E_EFFECTS=1)",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0
     }
   ],
   "not_run": [

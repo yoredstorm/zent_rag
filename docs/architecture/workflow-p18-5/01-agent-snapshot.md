@@ -15,6 +15,7 @@
 | Snapshot incompleto | Completa desde agente vivo | `strict=True` falla con `AgentSnapshotError` |
 | Hash del snapshot de instancia | Solo warning | Comparación obligatoria; mismatch bloquea el nodo |
 | Instancia sin `config_snapshot` | Usa agente vivo | Bloquea con `agent_snapshot_missing` (`UNCERTIFIED_LEGACY`) |
+| Acción irreversible en definición publicada/instancia sin snapshot | Podía ejecutarse | Bloqueada por `policy.agent_snapshot_unverified` |
 | Ejecución publicada | Lee agente vivo en runtime | Snapshot capturado en la misma lectura que verifica el certificado |
 | Auditoría | Sin huella por nodo | `agent_snapshot_status`, `agent_config_fingerprint`, `agent_version_id` en la salida del nodo |
 
