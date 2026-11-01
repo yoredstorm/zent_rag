@@ -1511,13 +1511,53 @@ async def _execute_inventory_action(
                     )
                 ).fetchone()
                 if existing is not None:
+                    if existing.status == "committed":
+                        return {
+                            "status": "COMMITTED",
+                            "order_number": order_number,
+                            "sku": sku,
+                            "quantity": quantity,
+                            "expires_at": existing.expires_at.isoformat() if existing.expires_at else None,
+                            "reservation_id": str(existing.id),
+                        }
+                    if existing.status == "active":
+                        return {
+                            "status": "ALREADY_RESERVED",
+                            "order_number": order_number,
+                            "sku": sku,
+                            "quantity": quantity,
+                            "expires_at": existing.expires_at.isoformat() if existing.expires_at else None,
+                            "reservation_id": str(existing.id),
+                        }
+                    available = int(stock.on_hand) - int(stock.reserved)
+                    if available < quantity:
+                        raise BindingError("CONFLICT", "stock insuficiente para reservar")
+                    renewed = (
+                        await conn.execute(
+                            text(
+                                "UPDATE bodega.stock_reservations SET status = 'active', "
+                                "quantity = :qty, expires_at = NOW() + (:ttl || ' seconds')::interval, "
+                                "committed_at = NULL, released_at = NULL, created_at = NOW() "
+                                "WHERE id = :rid RETURNING expires_at"
+                            ),
+                            {"qty": quantity, "ttl": str(ttl_seconds), "rid": existing.id},
+                        )
+                    ).fetchone()
+                    await conn.execute(
+                        text(
+                            "UPDATE bodega.stock SET reserved = reserved + :qty, "
+                            "version = version + 1 WHERE sku = :sku"
+                        ),
+                        {"qty": quantity, "sku": sku},
+                    )
                     return {
-                        "status": "ALREADY_RESERVED" if existing.status == "active" else existing.status.upper(),
+                        "status": "RESERVED",
                         "order_number": order_number,
                         "sku": sku,
                         "quantity": quantity,
-                        "expires_at": existing.expires_at.isoformat() if existing.expires_at else None,
+                        "expires_at": renewed.expires_at.isoformat(),
                         "reservation_id": str(existing.id),
+                        "available": available,
                     }
                 available = int(stock.on_hand) - int(stock.reserved)
                 if available < quantity:
@@ -1619,6 +1659,23 @@ async def _execute_inventory_action(
                 )
             ).fetchone()
             if reservation is None:
+                previous = (
+                    await conn.execute(
+                        text(
+                            "SELECT status FROM bodega.stock_reservations "
+                            "WHERE order_number = :on AND sku = :sku "
+                            "ORDER BY created_at DESC LIMIT 1"
+                        ),
+                        {"on": order_number, "sku": sku},
+                    )
+                ).fetchone()
+                if previous is not None and previous.status in ("expired", "released"):
+                    return {
+                        "status": "RESERVATION_EXPIRED",
+                        "order_number": order_number,
+                        "sku": sku,
+                        "quantity": quantity,
+                    }
                 raise BindingError("CONFLICT", "no hay reserva activa para el pedido")
             if reservation.expires_at <= datetime.now(timezone.utc):
                 await conn.execute(
@@ -1635,7 +1692,12 @@ async def _execute_inventory_action(
                     ),
                     {"qty": int(reservation.quantity), "sku": sku},
                 )
-                raise BindingError("RESERVATION_EXPIRED", "la reserva expiró")
+                return {
+                    "status": "RESERVATION_EXPIRED",
+                    "order_number": order_number,
+                    "sku": sku,
+                    "quantity": quantity,
+                }
             before = int(stock.on_hand)
             if before < quantity:
                 raise BindingError("CONFLICT", "stock insuficiente")
