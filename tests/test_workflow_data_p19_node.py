@@ -59,6 +59,16 @@ def test_data_query_is_registered_and_has_business_schema() -> None:
     assert any(parameter.key == "capability" for parameter in schema.parameters)
 
 
+def test_data_query_is_available_with_connected_db_without_managed_db() -> None:
+    from src.platform.workflows.node_catalog import catalog_availability
+
+    available, reason = catalog_availability(
+        registry.require("data_query"), {"managed_db": False}
+    )
+    assert available is True
+    assert reason is None
+
+
 async def test_data_query_uses_binding_output(monkeypatch: pytest.MonkeyPatch) -> None:
     import src.platform.workflows.bindings as bindings
 

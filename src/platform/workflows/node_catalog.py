@@ -297,7 +297,6 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         ),
         context_reads=("trigger", "variables", "data"),
         context_writes=("data",),
-        requires=("managed_db",),
         supports_simulation=True,
     ),
     "marketplace_action": _meta(
