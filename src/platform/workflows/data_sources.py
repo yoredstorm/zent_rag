@@ -481,12 +481,22 @@ async def preview_data_query(
     preview_plan = plan.model_copy(update={"policy": preview_policy})
     preview_binding = {**binding, "config": preview_plan.model_dump(by_alias=True)}
     try:
-        result = await _execute_managed_select(
-            organization_id,
-            preview_binding,
-            {"params": dict(params or {})},
-            workspace_id=workspace_id,
-        )
+        if str(binding.get("provider_kind") or "") == "connected_db":
+            from src.platform.workflows.bindings import _execute_connected_select
+
+            result = await _execute_connected_select(
+                organization_id,
+                preview_binding,
+                {"params": dict(params or {})},
+                workspace_id=workspace_id,
+            )
+        else:
+            result = await _execute_managed_select(
+                organization_id,
+                preview_binding,
+                {"params": dict(params or {})},
+                workspace_id=workspace_id,
+            )
     except BindingError as exc:
         raise DataSourceError(400, exc.code, exc.message) from exc
 
