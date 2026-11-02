@@ -35,6 +35,23 @@
 | Dos DB con mismas tablas | NOT_RUN | pendiente P20-16 |
 | Refresh concurrente | NOT_RUN | pendiente P20-16 |
 
+## P20-02 — Agente conversacional sobre BD externa
+
+| Caso | Resultado | Evidencia |
+|---|---|---|
+| `_run_query` usa sesión externa | PASS | `tests/test_p20_external_sql_query.py` |
+| `_run_query` sin BD autorizada no usa BD interna | PASS | idem |
+| Fuente se resuelve por `connector_id` | PASS | idem |
+| Dos conectores distintos fallan cerrado | PASS | idem |
+| `query_database` enruta a `execute_external` | PASS | idem |
+| Agente DB-only no recibe `search_knowledge` | PASS | idem |
+| Precio real `4.80 / 22.50 PEN` | PASS (local, runtime real) | `02-external-sql-agent.md` |
+| `¿Qué tablas tienes?` con discovery real | PASS (local, runtime real) | idem |
+| Grants por agente/capability | NOT_RUN | P20-04 |
+| Carrito/quote/checkout | NOT_RUN | P20-10/11 |
+| Postventa con identidad | NOT_RUN | P20-12 |
+
+
 ## Comandos
 
 ```powershell

@@ -921,10 +921,10 @@ class QueryDatabaseTool(Tool):
 
     name: ClassVar[str] = "query_database"
     description: ClassVar[str] = (
-        "Haz preguntas analíticas sobre los datos de negocio del tenant "
-        "(ventas, clientes, stock, etc) y sobre los Excel/CSV ingestados: "
-        "las tablas materializadas viven con prefijo `zent_` "
-        "(p. ej. zent_atpco_attributes). Devuelve filas de la BD. "
+        "Consulta datos de negocio reales en la fuente del agente: catálogo, "
+        "productos, precios, stock, pedidos, ventas o tablas materializadas "
+        "`zent_*`. Usa esta herramienta para preguntas de datos; "
+        "search_knowledge es solo para documentos. "
         "Input: question (pregunta en lenguaje natural)."
     )
     input_schema: ClassVar[dict] = {
@@ -935,10 +935,122 @@ class QueryDatabaseTool(Tool):
         },
     }
     permission: ClassVar[str] = "tool:query_database"
-    timeout_seconds: ClassVar[float] = 30.0
+    timeout_seconds: ClassVar[float] = 60.0
+
+    #: Tipos de `kb_sources` que representan una base de datos conectada.
+    _DB_SOURCE_TYPES: ClassVar[tuple[str, ...]] = (
+        "sql",
+        "postgres",
+        "postgresql",
+        "mysql",
+        "mssql",
+        "oracle",
+        "snowflake",
+    )
+    #: Preguntas de estructura que se responden con metadata real.
+    _SCHEMA_INTENT: ClassVar[re.Pattern[str]] = re.compile(
+        r"\b(tablas?|columnas?|esquemas?|estructura|campos?)\b"
+        r"|\bqu[eé]\s+datos\s+(tienes|hay)\b"
+        r"|\bqu[eé]\s+puedo\s+consultar\b"
+        r"|\bschema\b",
+        re.IGNORECASE,
+    )
 
     def __init__(self, sql_expert: SqlExpert) -> None:
         self._sql_expert = sql_expert
+
+    async def _external_database_source(
+        self, ctx: ToolContext
+    ) -> tuple[dict | None, str | None]:
+        """Resuelve la fuente DB externa declarada por el agente.
+
+        Solo usa `source_ids` efectivos (scope del agente ∩ scope del caller).
+        Si hay más de un conector distinto, falla cerrado: el agente debe
+        declarar una única fuente de datos para responder.
+        """
+        source_ids = [
+            str(item).strip()
+            for item in ((ctx.org_config or {}).get("source_ids") or [])
+            if str(item).strip()
+        ]
+        if not source_ids:
+            return None, None
+
+        from sqlalchemy import bindparam
+        from sqlalchemy import text as sql_text
+
+        from src.infrastructure.postgres.session import get_async_session
+
+        stmt = sql_text(
+            "SELECT id::text AS id, name, workspace_id::text AS workspace_id, "
+            "config_json, status FROM kb_sources "
+            "WHERE organization_id = :oid AND id::text IN :ids "
+            "AND type IN :types "
+            "AND COALESCE(config_json->>'connector_id', '') <> '' "
+            "AND status NOT IN ('disabled', 'suspended', 'deleted', 'error', 'failed')"
+        ).bindparams(
+            bindparam("ids", expanding=True),
+            bindparam("types", expanding=True),
+        )
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    stmt,
+                    {
+                        "oid": str(ctx.tenant_id),
+                        "ids": source_ids,
+                        "types": list(self._DB_SOURCE_TYPES),
+                    },
+                )
+            ).fetchall()
+        finally:
+            await session.close()
+        if not rows:
+            return None, None
+
+        connector_ids = {
+            str((row.config_json or {}).get("connector_id") or "") for row in rows
+        }
+        connector_ids.discard("")
+        if not connector_ids:
+            return None, None
+        if len(connector_ids) > 1:
+            return None, (
+                "MULTIPLE_DATABASE_SOURCES: el agente tiene más de una base "
+                "de datos vinculada; selecciona una sola para consultar"
+            )
+
+        row = rows[0]
+        workspace_id = row.workspace_id
+        if ctx.user_id is not None:
+            try:
+                from src.platform.workspaces.context import get_active_workspace_id
+
+                active = await get_active_workspace_id(ctx.tenant_id, ctx.user_id)
+                if active is not None:
+                    if workspace_id and str(active) != str(workspace_id):
+                        return None, (
+                            "PERMISSION_DENIED: la fuente pertenece a otro "
+                            "workspace"
+                        )
+                    workspace_id = str(active)
+            except Exception as exc:  # noqa: BLE001 - fail closed
+                logger.warning(
+                    "External DB workspace check failed", error=str(exc)[:150]
+                )
+                return None, (
+                    "PERMISSION_DENIED: no se pudo verificar el workspace "
+                    "de la fuente"
+                )
+        config = dict(row.config_json or {})
+        return {
+            "source_id": str(row.id),
+            "name": str(row.name or ""),
+            "connector_id": next(iter(connector_ids)),
+            "workspace_id": workspace_id,
+            "source_mode": str(config.get("source_mode") or ""),
+        }, None
 
     async def _materialized_schema_hint(self, ctx: ToolContext) -> str:
         """Esquema compacto de las tablas materializadas (`zent_*`) de la org.
@@ -978,34 +1090,118 @@ class QueryDatabaseTool(Tool):
         except Exception:  # noqa: BLE001 - el hint nunca rompe la tool
             return ""
 
+    async def _execute_external(
+        self,
+        ctx: ToolContext,
+        source: dict,
+        question: str,
+        *,
+        start: float,
+    ) -> ToolResult:
+        """Ejecuta la pregunta contra la BD externa ya resuelta y validada."""
+        executor = getattr(self._sql_expert, "execute_external", None)
+        if executor is None:
+            return ToolResult(
+                error="EXTERNAL_SQL_UNSUPPORTED: el motor SQL no soporta "
+                "consultas externas",
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+        connector_id = str(source.get("connector_id") or "")
+        try:
+            result = await executor(
+                organization_id=ctx.tenant_id,
+                connector_id=UUID(connector_id),
+                workspace_id=UUID(str(source["workspace_id"]))
+                if source.get("workspace_id")
+                else None,
+                question=question,
+                role=ctx.role,
+                permissions=(ctx.org_config or {}).get("sql"),
+                user_id=ctx.user_id,
+            )
+        except ValueError:
+            return ToolResult(
+                error="SOURCE_UNAVAILABLE: identificador de conector inválido",
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                error=str(exc), latency_ms=(time.perf_counter() - start) * 1000
+            )
+
+        meta = {
+            "source_id": source.get("source_id"),
+            "connector_id": connector_id,
+            "source_mode": source.get("source_mode"),
+        }
+        if result.error:
+            return ToolResult(
+                error=result.error,
+                latency_ms=(time.perf_counter() - start) * 1000,
+                meta=meta,
+            )
+        if result.row_count == 0:
+            return ToolResult(
+                output="(no rows)",
+                latency_ms=(time.perf_counter() - start) * 1000,
+                meta=meta,
+            )
+        header = " | ".join(result.columns)
+        rows = "\n".join(" | ".join(row) for row in result.rows[:25])
+        output = (
+            f"Columns: {header}\n"
+            f"Rows ({result.row_count} total"
+            f"{'+, truncated' if result.truncated else ''}):\n{rows}"
+        )
+        return ToolResult(
+            output=output[:6000],
+            truncated=len(output) > 6000,
+            latency_ms=(time.perf_counter() - start) * 1000,
+            meta=meta,
+        )
+
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
         start = time.perf_counter()
         question = str(arguments.get("question") or "")
 
+        external, source_error = await self._external_database_source(ctx)
+        if source_error:
+            return ToolResult(
+                error=source_error,
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+
         # Rechazo rápido (sin LLM): si la pregunta es de definición/identidad
         # ("quién es X") y no tiene ninguna señal analítica, el SQL Expert
         # solo puede fallar caro. Se guía al LLM a la vía documental.
-        from src.agents.tools.sql_router import SqlIntentRouter
+        # Las preguntas de estructura de una BD externa sí aplican.
+        if external is None or not self._SCHEMA_INTENT.search(question):
+            from src.agents.tools.sql_router import SqlIntentRouter
 
-        profile = SqlIntentRouter.signal_profile(question)
-        analytical = (
-            profile["aggregation"]
-            + profile["ranking"]
-            + profile["date"]
-            + profile["catalog"]
-        )
-        if analytical == 0 and (
-            profile["entity"] == 0
-            or profile["definitional"] > 0
-            or profile["rag"] > 0
-        ):
-            return ToolResult(
-                error=(
-                    "Esta pregunta no parece ser sobre datos/tablas (SQL no "
-                    "aplica). Usa search_knowledge para documentos o formula "
-                    "una pregunta de datos con tablas, columnas o métricas."
-                ),
-                latency_ms=(time.perf_counter() - start) * 1000,
+            profile = SqlIntentRouter.signal_profile(question)
+            analytical = (
+                profile["aggregation"]
+                + profile["ranking"]
+                + profile["date"]
+                + profile["catalog"]
+            )
+            if analytical == 0 and (
+                profile["entity"] == 0
+                or profile["definitional"] > 0
+                or profile["rag"] > 0
+            ):
+                return ToolResult(
+                    error=(
+                        "Esta pregunta no parece ser sobre datos/tablas (SQL no "
+                        "aplica). Usa search_knowledge para documentos o formula "
+                        "una pregunta de datos con tablas, columnas o métricas."
+                    ),
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
+
+        if external is not None:
+            return await self._execute_external(
+                ctx, external, question, start=start
             )
 
         try:

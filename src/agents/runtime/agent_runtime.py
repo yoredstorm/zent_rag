@@ -800,16 +800,22 @@ def _filter_tools_by_sources(
     - ``query_database``: solo con fuentes SQL.
     - ``query_tabular_data``: solo con CSV/Excel o fuentes SQL.
     - ``call_api``: solo con allowlist de APIs del tenant.
+    - ``search_knowledge``: solo si hay fuentes documentales; un agente
+      conectado únicamente a una BD no debe buscar en documentos.
 
     Devuelve ``(tools_filtradas, omitidas)``; ``omitidas`` es la lista de
     ``{"tool": ..., "reason": ...}`` que se expone en "Ver flujo".
     """
     has_db = bool(source_types & _DB_SOURCE_TYPES)
     has_tabular = bool(source_types & _TABULAR_SOURCE_TYPES)
+    has_knowledge = bool(source_types - _DB_SOURCE_TYPES) or not source_types
     allowlist = [str(a).strip() for a in (api_allowlist or []) if str(a).strip()]
     omitted: list[dict] = []
     filtered: list[str] = []
     for name in tools:
+        if name == "search_knowledge" and not has_knowledge:
+            omitted.append({"tool": name, "reason": "no_knowledge_sources"})
+            continue
         if name == "query_database" and not has_db:
             omitted.append({"tool": name, "reason": "no_data_sources"})
             continue

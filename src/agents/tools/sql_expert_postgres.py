@@ -54,6 +54,50 @@ _FORBIDDEN_KEYWORDS = re.compile(
 
 _READ_ONLY_STATEMENTS = {"select", "describe"}
 
+# Preguntas de estructura: se responden con el discovery real, sin LLM.
+_SCHEMA_QUESTION_PATTERNS = re.compile(
+    r"\b(tablas?|columnas?|esquemas?|estructura|campos?)\b"
+    r"|\bqu[eé]\s+datos\s+(tienes|hay)\b"
+    r"|\bqu[eé]\s+puedo\s+consultar\b"
+    r"|\bschema\b",
+    re.IGNORECASE,
+)
+
+#: Vista comercial preferida para preguntas de catálogo/precio/stock.
+_PREFERRED_CATALOG_VIEW = "product_catalog_v"
+_CATALOG_VIEW_HINT = """## CATALOG VIEW NOTES
+- Use ONLY the view shown above.
+- `name` includes the presentation (e.g. "Arroz extra 1 kg"); `unit` is the base unit (kg, saco).
+- To filter a presentation use `name ILIKE '%1 kg%'`; do NOT filter `unit` by '1 kg' or '1 kilo'.
+- `available` is the live sellable stock (on_hand - reserved). Use `available` for stock questions.
+- Always select `sku`, `name`, `unit`, `price`, `currency`, `available` for product, price or stock answers.
+- `price` is the current unit price in `currency` (PEN in this store)."""
+_NON_CATALOG_INTENT = re.compile(
+    r"\b(pedidos?|[óo]rdenes?|ordenes?|orders?|puntos?|fidelidad|loyalty"
+    r"|ventas?|ingresos?|facturas?|pagos?|clientes?|env[ií]os?"
+    r"|delivery|entrega)\b",
+    re.IGNORECASE,
+)
+
+
+def _preferred_catalog_source(
+    question: str, sources: list[DataSource]
+) -> list[DataSource] | None:
+    """Prioriza la vista de catálogo real para preguntas de producto.
+
+    Evita que el LLM elija una tabla de precios histórica/paralela cuando la
+    fuente conectada ya expone una vista comercial con precio y stock vivos.
+    """
+    if _NON_CATALOG_INTENT.search(question or ""):
+        return None
+    for source in sources:
+        if source.table_name.lower() != _PREFERRED_CATALOG_VIEW:
+            continue
+        names = {column.name.lower() for column in source.columns}
+        if {"price", "available"} & names or {"price", "stock"} & names:
+            return [source]
+    return None
+
 
 def assert_reader_runtime_secrets(secrets: dict | None) -> dict:
     """Refuse schema_admin credentials in the Text-to-SQL runtime."""
@@ -716,6 +760,221 @@ class PostgresSqlExpert(SqlExpert):
 
         return result
 
+    async def execute_external(
+        self,
+        organization_id: UUID,
+        connector_id: UUID,
+        workspace_id: UUID | None,
+        question: str,
+        role: str,
+        permissions: dict | None = None,
+        user_id: UUID | None = None,
+    ) -> SqlQueryResult:
+        """Wrapper aislado: el experto es singleton y no comparte estado.
+
+        Cada consulta externa corre en una instancia nueva para que la sesión
+        validada, permisos y allowlist no se mezclen entre requests
+        concurrentes de organizaciones distintas.
+        """
+        worker = type(self)(
+            llm_provider=self._llm,
+            cache=None,
+            semantic_linking=self._semantic_linking,
+            verified_query_service=self._verified_queries,
+        )
+        return await worker._execute_external_isolated(
+            organization_id=organization_id,
+            connector_id=connector_id,
+            workspace_id=workspace_id,
+            question=question,
+            role=role,
+            permissions=permissions,
+            user_id=user_id,
+        )
+
+    async def _execute_external_isolated(
+        self,
+        organization_id: UUID,
+        connector_id: UUID,
+        workspace_id: UUID | None,
+        question: str,
+        role: str,
+        permissions: dict | None = None,
+        user_id: UUID | None = None,
+    ) -> SqlQueryResult:
+        """Consulta NL→SELECT validada contra un conector PostgreSQL externo.
+
+        No usa la Managed DB ni el esquema interno de ZENT. La sesión es
+        read-only y la validación reutiliza el mismo SQL Expert existente.
+        """
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from src.connectors.plugin import get_plugin
+        from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
+        from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+        from src.platform.workflows.connector_security import (
+            get_connector_engine,
+            prepare_connector_target,
+        )
+
+        connector = await PostgresConnectorRepository().get_connector(
+            organization_id, connector_id
+        )
+        if connector is None or str(connector.status or "").lower() != "active":
+            return SqlQueryResult(sql="", error="SOURCE_UNAVAILABLE")
+        if str(connector.type or "").lower() not in ("postgres", "postgresql"):
+            return SqlQueryResult(sql="", error="PROVIDER_NOT_SUPPORTED")
+        if (
+            workspace_id is not None
+            and connector.workspace_id
+            and str(connector.workspace_id) != str(workspace_id)
+        ):
+            return SqlQueryResult(sql="", error="PERMISSION_DENIED")
+        config = dict(connector.config_json or {})
+        secret = await get_secret_store().get(organization_id, connector_id)
+        password = secret.get("password") if isinstance(secret, dict) else None
+        if not password:
+            return SqlQueryResult(sql="", error="NEEDS_CREDENTIALS")
+        try:
+            from urllib.parse import quote_plus
+
+            target = await prepare_connector_target(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                connector_id=connector_id,
+                config=config,
+                password=str(password),
+            )
+            dsn = (
+                f"postgresql+asyncpg://{quote_plus(target.user)}:"
+                f"{quote_plus(target.password)}@{target.host}:{target.port}/"
+                f"{quote_plus(target.database)}"
+            )
+            engine = get_connector_engine(dsn, target)
+        except Exception as exc:  # noqa: BLE001
+            return SqlQueryResult(sql="", error=str(exc)[:300])
+
+        plugin = get_plugin("postgres", config, secret or {})
+        try:
+            deep = await plugin.deep_discover(max_samples=0)
+        except Exception as exc:  # noqa: BLE001
+            await plugin.close()
+            return SqlQueryResult(
+                sql="", error=f"SOURCE_DISCOVERY_FAILED: {str(exc)[:200]}"
+            )
+        finally:
+            try:
+                await plugin.close()
+            except Exception:
+                pass
+
+        sources = [
+            DataSource(
+                schema_name=table.schema or "public",
+                table_name=table.table_name,
+                columns=[
+                    ColumnMeta(
+                        name=column.name,
+                        data_type=column.data_type,
+                        is_nullable=bool(column.nullable),
+                        is_primary_key=bool(column.is_primary_key),
+                    )
+                    for column in table.columns
+                ],
+                row_count=max(int(table.row_count_approx or 0), 0),
+                is_view=bool(table.is_view),
+            )
+            for table in deep.tables
+        ]
+        if not sources:
+            return SqlQueryResult(sql="", error="SOURCE_EMPTY")
+
+        # Preguntas de estructura: respuesta determinista desde el discovery,
+        # sin LLM y sin inventar tablas.
+        schema_question = _SCHEMA_QUESTION_PATTERNS.search(question or "")
+        if schema_question:
+            ordered = sorted(sources, key=lambda s: (s.schema_name, s.table_name))
+            return SqlQueryResult(
+                sql="",
+                columns=["schema", "tabla", "tipo", "filas_aprox"],
+                rows=[
+                    [
+                        source.schema_name,
+                        source.table_name,
+                        "vista" if source.is_view else "tabla",
+                        "-"
+                        if source.is_view or source.row_count <= 0
+                        else str(source.row_count),
+                    ]
+                    for source in ordered
+                ],
+                row_count=len(ordered),
+                metadata={"answerability": "schema_overview"},
+            )
+
+        self._permissions = permissions
+        self._query_organization_id = organization_id
+        self._query_workspace_id = workspace_id
+        self._query_workspace_kind = None
+        self._column_allowlist = None
+        self._enum_hints = []
+        self._extra_tables = set()
+        self._query_session_override = None
+        settings = get_settings()
+        relevant = build_relevant_schema(
+            question,
+            sources,
+            max_tables=settings.RAG_SQL_MAX_TABLES,
+        )
+        preferred = _preferred_catalog_source(question, sources)
+        if preferred is not None:
+            relevant = preferred
+        if not relevant:
+            return SqlQueryResult(sql="", error="Cannot generate query for this question")
+        schema_ctx = self._build_schema_context(relevant, role)
+        prompt = _SQL_GENERATION_PROMPT.format(
+            schema=schema_ctx["schema"],
+            fk_chains=schema_ctx["fk_chains"],
+            question=question,
+        )
+        if preferred is not None:
+            prompt = prompt.replace(
+                "## QUESTION", f"{_CATALOG_VIEW_HINT}\n\n## QUESTION", 1
+            )
+        try:
+            llm_response = await self._llm.generate(
+                prompt=prompt,
+                max_tokens=512,
+                temperature=0.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return SqlQueryResult(sql="", error=f"LLM error: {exc}")
+        sql = self._clean_sql(llm_response.content.strip())
+        if not sql or sql.upper().startswith("NO_QUERY"):
+            return SqlQueryResult(sql="", error="Cannot generate query for this question")
+        session = async_sessionmaker(engine, expire_on_commit=False)()
+        self._query_session_override = session
+        try:
+            try:
+                safe_sql = await self.validate_sql(
+                    sql, relevant, role, organization_id
+                )
+            except SqlValidationError as exc:
+                return SqlQueryResult(sql=sql, error=exc.message)
+            return await self._run_with_execution_repair(
+                safe_sql,
+                schema=schema_ctx["schema"],
+                fk_chains=schema_ctx["fk_chains"],
+                question=question,
+                sources=relevant,
+                role=role,
+                organization_id=organization_id,
+                max_repair_attempts=settings.RAG_SQL_MAX_REPAIR_ATTEMPTS,
+            )
+        finally:
+            self._query_session_override = None
+            await session.close()
+
     async def _execute_inner(
         self,
         organization_id: UUID,
@@ -729,6 +988,7 @@ class PostgresSqlExpert(SqlExpert):
         self._query_organization_id = organization_id
         self._query_workspace_id = None
         self._query_workspace_kind = None
+        self._query_session_override = None
         # Tablas extra (materializadas `zent_*`) permitidas en la validación.
         self._extra_tables: set[str] = set()
         if extra_schema:
@@ -1627,24 +1887,34 @@ class PostgresSqlExpert(SqlExpert):
         settings = get_settings()
         timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
         max_cost = settings.RAG_SQL_MAX_COST
-        from src.infrastructure.postgres.readonly_session import get_readonly_session
 
-        session = None
-        org_id = getattr(self, "_query_organization_id", None)
-        # Tablas materializadas (`zent_*`) viven en la Managed DB: el EXPLAIN
-        # debe correr en la misma BD que la ejecución.
-        if org_id is not None and getattr(self, "_extra_tables", None):
-            try:
-                from src.platform.managed_db.service import open_managed_query_session
+        override = getattr(self, "_query_session_override", None)
+        owns_session = override is None
+        if override is not None:
+            session = override
+        else:
+            from src.platform.managed_db.service import open_managed_query_session
 
-                session = await open_managed_query_session(
-                    org_id, getattr(self, "_query_workspace_id", None)
+            session = None
+            org_id = getattr(self, "_query_organization_id", None)
+            # Tablas materializadas (`zent_*`) viven en la Managed DB: el EXPLAIN
+            # debe correr en la misma BD que la ejecución.
+            if org_id is not None:
+                try:
+                    session = await open_managed_query_session(
+                        org_id, getattr(self, "_query_workspace_id", None)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Managed EXPLAIN session skipped", error=str(exc)[:180]
+                    )
+                    session = None
+            if session is None:
+                raise SqlValidationError(
+                    "DATABASE_NOT_CONFIGURED: no hay una base de datos "
+                    "autorizada para este workspace",
+                    sql,
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Managed EXPLAIN session skipped", error=str(exc)[:180])
-                session = None
-        if session is None:
-            session = await get_readonly_session()
         try:
             from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
 
@@ -1673,8 +1943,7 @@ class PostgresSqlExpert(SqlExpert):
             if any(hint in str(exc).lower() for hint in _CONNECTION_ERROR_HINTS):
                 logger.error(
                     "SQL Expert: read-only database connection failed. "
-                    "Verify POSTGRES_READONLY_USER / POSTGRES_READONLY_PASSWORD "
-                    "and run db_init/09-readonly-role.sh on existing volumes.",
+                    "Verify connector credentials and network policy.",
                     error=str(exc),
                     sql=sql[:300],
                 )
@@ -1682,7 +1951,8 @@ class PostgresSqlExpert(SqlExpert):
                 logger.warning("SQL Expert: EXPLAIN validation failed", error=str(exc))
             raise SqlValidationError(f"Invalid SQL: {exc}", sql) from exc
         finally:
-            await session.close()
+            if owns_session:
+                await session.close()
 
     @staticmethod
     def _extract_total_cost(plan_json) -> float | None:
@@ -1709,21 +1979,36 @@ class PostgresSqlExpert(SqlExpert):
         timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
         max_rows = settings.RAG_SQL_MAX_ROWS
         cost = getattr(self, "_last_cost", None)
-        from src.infrastructure.postgres.readonly_session import get_readonly_session
-        from src.platform.managed_db.service import open_managed_query_session
 
-        session = None
-        org_id = getattr(self, "_query_organization_id", None)
-        if org_id is not None:
-            try:
-                session = await open_managed_query_session(
-                    org_id, getattr(self, "_query_workspace_id", None)
+        # P20: una consulta externa usa SIEMPRE la sesión del conector
+        # validado. Nunca cae a la Managed DB ni a la BD interna de ZENT.
+        override = getattr(self, "_query_session_override", None)
+        owns_session = override is None
+        if override is not None:
+            session = override
+        else:
+            from src.platform.managed_db.service import open_managed_query_session
+
+            session = None
+            org_id = getattr(self, "_query_organization_id", None)
+            if org_id is not None:
+                try:
+                    session = await open_managed_query_session(
+                        org_id, getattr(self, "_query_workspace_id", None)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Managed query session skipped", error=str(exc)[:180]
+                    )
+            if session is None:
+                return SqlQueryResult(
+                    sql=sql,
+                    error=(
+                        "DATABASE_NOT_CONFIGURED: no hay una base de datos "
+                        "autorizada para este workspace"
+                    ),
+                    cost=cost,
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Managed query session skipped", error=str(exc)[:180])
-                session = None
-        if session is None:
-            session = await get_readonly_session()
         try:
             from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
 
@@ -1748,4 +2033,5 @@ class PostgresSqlExpert(SqlExpert):
         except Exception as exc:
             return SqlQueryResult(sql=sql, error=str(exc), cost=cost)
         finally:
-            await session.close()
+            if owns_session:
+                await session.close()
