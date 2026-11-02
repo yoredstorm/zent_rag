@@ -764,7 +764,14 @@ def _classify_tool_failure(error: str) -> str:
 
 #: Tools que consultan las fuentes del agente. Si una falla y no quedó ninguna
 #: evidencia, la abstención es OPERATIVA: la búsqueda no llegó a ejecutarse.
-_CONSULT_TOOLS = ("search_knowledge", "query_tabular_data", "query_database")
+_CONSULT_TOOLS = (
+    "search_knowledge",
+    "query_tabular_data",
+    "query_database",
+    "find_products",
+    "get_product",
+    "get_price_and_stock",
+)
 
 
 def _retrieval_unavailable(
@@ -812,11 +819,17 @@ def _filter_tools_by_sources(
     allowlist = [str(a).strip() for a in (api_allowlist or []) if str(a).strip()]
     omitted: list[dict] = []
     filtered: list[str] = []
+    db_tools = {
+        "query_database",
+        "find_products",
+        "get_product",
+        "get_price_and_stock",
+    }
     for name in tools:
         if name == "search_knowledge" and not has_knowledge:
             omitted.append({"tool": name, "reason": "no_knowledge_sources"})
             continue
-        if name == "query_database" and not has_db:
+        if name in db_tools and not has_db:
             omitted.append({"tool": name, "reason": "no_data_sources"})
             continue
         if name == "query_tabular_data" and not (has_tabular or has_db):

@@ -937,16 +937,6 @@ class QueryDatabaseTool(Tool):
     permission: ClassVar[str] = "tool:query_database"
     timeout_seconds: ClassVar[float] = 60.0
 
-    #: Tipos de `kb_sources` que representan una base de datos conectada.
-    _DB_SOURCE_TYPES: ClassVar[tuple[str, ...]] = (
-        "sql",
-        "postgres",
-        "postgresql",
-        "mysql",
-        "mssql",
-        "oracle",
-        "snowflake",
-    )
     #: Preguntas de estructura que se responden con metadata real.
     _SCHEMA_INTENT: ClassVar[re.Pattern[str]] = re.compile(
         r"\b(tablas?|columnas?|esquemas?|estructura|campos?)\b"
@@ -976,77 +966,25 @@ class QueryDatabaseTool(Tool):
         if not source_ids:
             return None, None
 
-        from sqlalchemy import bindparam
-        from sqlalchemy import text as sql_text
-
-        from src.infrastructure.postgres.session import get_async_session
-
-        stmt = sql_text(
-            "SELECT id::text AS id, name, workspace_id::text AS workspace_id, "
-            "config_json, status FROM kb_sources "
-            "WHERE organization_id = :oid AND id::text IN :ids "
-            "AND type IN :types "
-            "AND COALESCE(config_json->>'connector_id', '') <> '' "
-            "AND status NOT IN ('disabled', 'suspended', 'deleted', 'error', 'failed')"
-        ).bindparams(
-            bindparam("ids", expanding=True),
-            bindparam("types", expanding=True),
+        from src.platform.agents.database_access import (
+            resolve_agent_database_source,
         )
-        session = await get_async_session()
-        try:
-            rows = (
-                await session.execute(
-                    stmt,
-                    {
-                        "oid": str(ctx.tenant_id),
-                        "ids": source_ids,
-                        "types": list(self._DB_SOURCE_TYPES),
-                    },
-                )
-            ).fetchall()
-        finally:
-            await session.close()
-        if not rows:
+
+        source, source_error = await resolve_agent_database_source(
+            organization_id=ctx.tenant_id,
+            user_id=ctx.user_id,
+            source_ids=source_ids,
+        )
+        if source_error:
+            return None, source_error
+        if source is None:
             return None, None
 
-        connector_ids = {
-            str((row.config_json or {}).get("connector_id") or "") for row in rows
-        }
-        connector_ids.discard("")
-        if not connector_ids:
-            return None, None
-        if len(connector_ids) > 1:
-            return None, (
-                "MULTIPLE_DATABASE_SOURCES: el agente tiene más de una base "
-                "de datos vinculada; selecciona una sola para consultar"
-            )
-
-        row = rows[0]
-        workspace_id = row.workspace_id
-        if ctx.user_id is not None:
-            try:
-                from src.platform.workspaces.context import get_active_workspace_id
-
-                active = await get_active_workspace_id(ctx.tenant_id, ctx.user_id)
-                if active is not None:
-                    if workspace_id and str(active) != str(workspace_id):
-                        return None, (
-                            "PERMISSION_DENIED: la fuente pertenece a otro "
-                            "workspace"
-                        )
-                    workspace_id = str(active)
-            except Exception as exc:  # noqa: BLE001 - fail closed
-                logger.warning(
-                    "External DB workspace check failed", error=str(exc)[:150]
-                )
-                return None, (
-                    "PERMISSION_DENIED: no se pudo verificar el workspace "
-                    "de la fuente"
-                )
-        config = dict(row.config_json or {})
         from src.platform.agents.data_grants import allowed_query_resources
 
-        source_workspace = UUID(str(workspace_id)) if workspace_id else None
+        source_workspace = (
+            UUID(source.workspace_id) if source.workspace_id else None
+        )
         allowed_resources, grant_error = await allowed_query_resources(
             ctx.tenant_id,
             ctx.agent_id,
@@ -1055,11 +993,11 @@ class QueryDatabaseTool(Tool):
         if grant_error:
             return None, grant_error
         return {
-            "source_id": str(row.id),
-            "name": str(row.name or ""),
-            "connector_id": next(iter(connector_ids)),
-            "workspace_id": workspace_id,
-            "source_mode": str(config.get("source_mode") or ""),
+            "source_id": source.source_id,
+            "name": source.name,
+            "connector_id": source.connector_id,
+            "workspace_id": source.workspace_id,
+            "source_mode": source.source_mode,
             "allowed_resources": sorted(allowed_resources),
         }, None
 
@@ -1381,6 +1319,15 @@ def register_builtin_tools(
     register_tool(SearchKnowledgeTool(retriever, embedder=embedder, tabular_query=tabular_query))
     register_tool(QueryDatabaseTool(sql_expert))
     register_tool(CallApiTool())
+    from src.agents.tools.catalog_tools import (
+        FindProductsTool,
+        GetPriceAndStockTool,
+        GetProductTool,
+    )
+
+    register_tool(FindProductsTool())
+    register_tool(GetProductTool())
+    register_tool(GetPriceAndStockTool())
     if tabular_query is not None:
         register_tool(QueryTabularDataTool(tabular_query))
     try:
@@ -1390,4 +1337,4 @@ def register_builtin_tools(
         logger.info("Marketplace agent tool registered", count=4)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Marketplace tool registration failed", error=str(exc)[:150])
-    logger.info("Builtin agent tools registered", count=4)
+    logger.info("Builtin agent tools registered", count=7)

@@ -117,13 +117,37 @@ async def allowed_query_resources(
     grants = await get_agent_data_grants(
         organization_id, agent_id, workspace_id=workspace_id
     )
+    return _resources_for_capabilities(
+        grants, {DATA_QUERY_CAPABILITY, "store.catalog.read"}
+    )
+
+
+async def allowed_capability_resources(
+    organization_id: UUID,
+    agent_id: UUID | None,
+    capability_ref: str,
+    *,
+    workspace_id: UUID | None = None,
+) -> tuple[set[str], str | None]:
+    """Recursos autorizados para una capability comercial específica."""
+    if agent_id is None:
+        return set(), "PERMISSION_DENIED: la tool requiere un agente identificado"
+    grants = await get_agent_data_grants(
+        organization_id, agent_id, workspace_id=workspace_id
+    )
+    return _resources_for_capabilities(grants, {capability_ref})
+
+
+def _resources_for_capabilities(
+    grants: list[dict], capabilities: set[str]
+) -> tuple[set[str], str | None]:
     if not grants:
         return set(), "PERMISSION_DENIED: el agente no tiene grants de datos"
 
     allowed: set[str] = set()
     row_scoped = 0
     for grant in grants:
-        if grant["capability_ref"] not in (DATA_QUERY_CAPABILITY, "store.catalog.read"):
+        if grant["capability_ref"] not in capabilities:
             continue
         scopes = {str(scope) for scope in grant["scopes"]}
         if not scopes & _READ_SCOPES:

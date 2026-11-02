@@ -43,6 +43,7 @@ IDs estables y scope:
 | full_refresh | borraba vectores de toda la org | prohibido; scoped-only | IMPLEMENTED P20-01 (fail closed) |
 | Fuente en Agent picker | se mostraba como documento pendiente | “Base de datos conectada”, sin indexar | IMPLEMENTED |
 | Query viva del agente | `query_database` usa SQL Expert/Managed DB | `execute_external` por conector externo; fallback interno bloqueado | IMPLEMENTED P20-02 (read-only) |
+| Tools comerciales | solo `query_database` NL→SQL | `find_products`, `get_product`, `get_price_and_stock` con precio/stock backend | PARTIAL P20-05 |
 | Catálogo semántico | discovery + sugerencias, sin modelo comercial aprobado | modelo/manifest revisable | MISSING P20-03 |
 | Grants por agente | P19.1 documenta, no implementa grants específicos | `agent_data_grants` + allowlist de recursos en `query_database` | PARTIAL P20-04 (backend; UI y tools tipadas pendientes) |
 | Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 |

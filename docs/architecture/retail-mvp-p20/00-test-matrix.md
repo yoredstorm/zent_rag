@@ -53,6 +53,10 @@
 | Sin grant, `PERMISSION_DENIED` | PASS (local, runtime real) | idem |
 | `row_scope` falla cerrado | PASS | `tests/test_p20_external_sql_query.py` |
 | UI de grants | NOT_RUN | P20-04 pendiente |
+| `find_products` precio/stock backend | PASS | `tests/test_p20_catalog_tools.py` |
+| `get_price_and_stock` total decimal | PASS | idem |
+| `NOT_FOUND` sin 500 | PASS | idem |
+| Presentación «arroz de 1 kg» | PASS (local, runtime real) | `05-catalog-tools.md` |
 | Carrito/quote/checkout | NOT_RUN | P20-10/11 |
 | Postventa con identidad | NOT_RUN | P20-12 |
 
