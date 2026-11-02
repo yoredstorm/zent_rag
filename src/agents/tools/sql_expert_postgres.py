@@ -769,6 +769,7 @@ class PostgresSqlExpert(SqlExpert):
         role: str,
         permissions: dict | None = None,
         user_id: UUID | None = None,
+        allowed_resources: set[str] | None = None,
     ) -> SqlQueryResult:
         """Wrapper aislado: el experto es singleton y no comparte estado.
 
@@ -790,6 +791,7 @@ class PostgresSqlExpert(SqlExpert):
             role=role,
             permissions=permissions,
             user_id=user_id,
+            allowed_resources=allowed_resources,
         )
 
     async def _execute_external_isolated(
@@ -801,6 +803,7 @@ class PostgresSqlExpert(SqlExpert):
         role: str,
         permissions: dict | None = None,
         user_id: UUID | None = None,
+        allowed_resources: set[str] | None = None,
     ) -> SqlQueryResult:
         """Consulta NL→SELECT validada contra un conector PostgreSQL externo.
 
@@ -856,6 +859,22 @@ class PostgresSqlExpert(SqlExpert):
         ]
         if not sources:
             return SqlQueryResult(sql="", error="SOURCE_EMPTY")
+
+        if allowed_resources is not None:
+            allowed = {str(item).strip().lower() for item in allowed_resources}
+            sources = [
+                source
+                for source in sources
+                if f"{source.schema_name}.{source.table_name}".lower() in allowed
+            ]
+            if not sources:
+                return SqlQueryResult(
+                    sql="",
+                    error=(
+                        "PERMISSION_DENIED: el agente no tiene grants sobre "
+                        "los recursos consultados"
+                    ),
+                )
 
         # Preguntas de estructura: respuesta determinista desde el discovery,
         # sin LLM y sin inventar tablas.

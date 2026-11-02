@@ -44,7 +44,7 @@ IDs estables y scope:
 | Fuente en Agent picker | se mostraba como documento pendiente | “Base de datos conectada”, sin indexar | IMPLEMENTED |
 | Query viva del agente | `query_database` usa SQL Expert/Managed DB | `execute_external` por conector externo; fallback interno bloqueado | IMPLEMENTED P20-02 (read-only) |
 | Catálogo semántico | discovery + sugerencias, sin modelo comercial aprobado | modelo/manifest revisable | MISSING P20-03 |
-| Grants por agente | P19.1 documenta, no implementa grants específicos | grant backend por agente/capability | MISSING P20-04 |
+| Grants por agente | P19.1 documenta, no implementa grants específicos | `agent_data_grants` + allowlist de recursos en `query_database` | PARTIAL P20-04 (backend; UI y tools tipadas pendientes) |
 | Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 |
 | Sales funnel | 40 nodos existentes, demo interno | adaptar a capacidades externas | PARTIAL P20-09 |
 | Checkout | proveedor abstracto, sin sandbox dedicado | checkout simulado verificable | MISSING P20-11 |

@@ -21,6 +21,7 @@ ORG = UUID("00000000-0000-0000-0000-000000000001")
 WS = UUID("00000000-0000-0000-0000-000000000002")
 CONNECTOR = UUID("00000000-0000-0000-0000-000000000003")
 SOURCE = "00000000-0000-0000-0000-000000000004"
+AGENT = UUID("00000000-0000-0000-0000-000000000005")
 
 
 class _FakeLLM:
@@ -32,6 +33,7 @@ def _context(source_ids: list[str] | None = None) -> ToolContext:
     return ToolContext(
         tenant_id=ORG,
         user_id=None,
+        agent_id=AGENT,
         role="admin",
         permissions=frozenset({"*"}),
         org_config={"source_ids": source_ids or [SOURCE]},
@@ -123,6 +125,12 @@ async def test_external_source_is_resolved_by_connector_id(monkeypatch) -> None:
     monkeypatch.setattr(
         "src.infrastructure.postgres.session.get_async_session", _session
     )
+    async def _allowed(*_args, **_kwargs):
+        return {"bodega.product_catalog_v"}, None
+
+    monkeypatch.setattr(
+        "src.platform.agents.data_grants.allowed_query_resources", _allowed
+    )
     tool = QueryDatabaseTool(PostgresSqlExpert(llm_provider=_FakeLLM()))
 
     source, error = await tool._external_database_source(_context())
@@ -131,6 +139,7 @@ async def test_external_source_is_resolved_by_connector_id(monkeypatch) -> None:
     assert source is not None
     assert source["connector_id"] == str(CONNECTOR)
     assert source["source_mode"] == "schema_only"
+    assert source["allowed_resources"] == ["bodega.product_catalog_v"]
 
 
 @pytest.mark.asyncio
@@ -245,3 +254,48 @@ def test_db_only_agent_hides_document_search() -> None:
     assert omitted == [
         {"tool": "search_knowledge", "reason": "no_knowledge_sources"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_query_grant_returns_only_authorized_resources(monkeypatch) -> None:
+    from src.platform.agents import data_grants
+
+    async def _grants(*_args, **_kwargs):
+        return [
+            {
+                "capability_ref": data_grants.DATA_QUERY_CAPABILITY,
+                "resource_ref": "bodega.product_catalog_v",
+                "scopes": ["read"],
+                "row_scope": {},
+                "expires_at": None,
+            }
+        ]
+
+    monkeypatch.setattr(data_grants, "get_agent_data_grants", _grants)
+    allowed, error = await data_grants.allowed_query_resources(ORG, AGENT)
+
+    assert error is None
+    assert allowed == {"bodega.product_catalog_v"}
+
+
+@pytest.mark.asyncio
+async def test_query_grant_with_row_scope_fails_closed(monkeypatch) -> None:
+    from src.platform.agents import data_grants
+
+    async def _grants(*_args, **_kwargs):
+        return [
+            {
+                "capability_ref": data_grants.DATA_QUERY_CAPABILITY,
+                "resource_ref": "bodega.orders",
+                "scopes": ["read"],
+                "row_scope": {"subject_id": "principal"},
+                "expires_at": None,
+            }
+        ]
+
+    monkeypatch.setattr(data_grants, "get_agent_data_grants", _grants)
+    allowed, error = await data_grants.allowed_query_resources(ORG, AGENT)
+
+    assert allowed == set()
+    assert error is not None
+    assert error.startswith("PERMISSION_DENIED")

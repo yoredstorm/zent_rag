@@ -49,6 +49,10 @@
 | `¿Qué tablas tienes?` con discovery real | PASS (local, runtime real) | idem |
 | Contexto multi-turno «¿Y el de 5 kg?» | PASS (local, runtime real) | idem |
 | Grants por agente/capability | NOT_RUN | P20-04 |
+| Grant activo limita recursos | PASS (local, runtime real) | `04-data-grants.md` |
+| Sin grant, `PERMISSION_DENIED` | PASS (local, runtime real) | idem |
+| `row_scope` falla cerrado | PASS | `tests/test_p20_external_sql_query.py` |
+| UI de grants | NOT_RUN | P20-04 pendiente |
 | Carrito/quote/checkout | NOT_RUN | P20-10/11 |
 | Postventa con identidad | NOT_RUN | P20-12 |
 

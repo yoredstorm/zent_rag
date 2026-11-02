@@ -1044,12 +1044,23 @@ class QueryDatabaseTool(Tool):
                     "de la fuente"
                 )
         config = dict(row.config_json or {})
+        from src.platform.agents.data_grants import allowed_query_resources
+
+        source_workspace = UUID(str(workspace_id)) if workspace_id else None
+        allowed_resources, grant_error = await allowed_query_resources(
+            ctx.tenant_id,
+            ctx.agent_id,
+            workspace_id=source_workspace,
+        )
+        if grant_error:
+            return None, grant_error
         return {
             "source_id": str(row.id),
             "name": str(row.name or ""),
             "connector_id": next(iter(connector_ids)),
             "workspace_id": workspace_id,
             "source_mode": str(config.get("source_mode") or ""),
+            "allowed_resources": sorted(allowed_resources),
         }, None
 
     async def _materialized_schema_hint(self, ctx: ToolContext) -> str:
@@ -1118,6 +1129,7 @@ class QueryDatabaseTool(Tool):
                 role=ctx.role,
                 permissions=(ctx.org_config or {}).get("sql"),
                 user_id=ctx.user_id,
+                allowed_resources=set(source.get("allowed_resources") or []),
             )
         except ValueError:
             return ToolResult(

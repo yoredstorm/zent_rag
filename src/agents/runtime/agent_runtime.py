@@ -2076,6 +2076,7 @@ class AgentRuntime:
         ctx = ToolContext(
             tenant_id=agent.organization_id,
             user_id=request.user_id,
+            agent_id=agent.id,
             role=request.role,
             permissions=request.permissions,
             agent_permissions=agent_permissions,
