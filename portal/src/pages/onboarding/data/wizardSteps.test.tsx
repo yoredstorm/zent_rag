@@ -37,7 +37,7 @@ describe("wizard UI steps 3–6", () => {
     expect(onContinue).not.toHaveBeenCalled();
   });
 
-  it("Analizar muestra nube de glimpses sin porcentaje inventado", () => {
+  it("Analizar muestra el avance real y la nube de glimpses", () => {
     render(
       <AnalysisProgressStep
         headline="Zent está leyendo tu documento"
@@ -53,8 +53,9 @@ describe("wizard UI steps 3–6", () => {
         ]}
       />
     );
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42");
     expect(screen.getByTestId("analyze-ring")).toHaveTextContent("En proceso");
+    expect(screen.getByTestId("analyze-percent")).toHaveTextContent("42%");
     expect(screen.getByTestId("analyze-cloud")).toHaveTextContent("Ah, Empresa es AIR FRANCE");
     expect(screen.getByTestId("analyze-live")).toHaveTextContent("Vi un monto: 29733");
     expect(screen.getByTestId("analyze-continue")).toBeDisabled();
@@ -73,12 +74,31 @@ describe("wizard UI steps 3–6", () => {
         glimpses={[{ id: "g1", text: "Ah, Empresa es AIR FRANCE" }]}
       />
     );
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "90");
     expect(screen.getByTestId("analyze-ring")).toHaveTextContent("Listo para revisar");
     expect(screen.getByTestId("analyze-live")).toHaveTextContent(
       "Ya entendí lo suficiente. Revisa cuando quieras."
     );
     expect(screen.getByTestId("analyze-continue")).toBeEnabled();
+  });
+
+  it("Analizar muestra fallo real en vez de quedarse en proceso", () => {
+    render(
+      <AnalysisProgressStep
+        headline="Zent está leyendo tu fuente"
+        phases={[{ id: "structure", label: "Estructura descubierta", state: "active" }]}
+        technical={{ job_status: "failed", catalog_phase: "FAILED" }}
+        showTech={false}
+        onToggleTech={() => {}}
+        onContinue={() => {}}
+        ready={false}
+        percent={0}
+        status="FAILED"
+      />
+    );
+    expect(screen.getByTestId("analyze-ring")).toHaveTextContent("La ingesta no terminó");
+    expect(screen.getByRole("alert")).toHaveTextContent("El job falló");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
   it("Analizar reduced-motion no rompe la nube", () => {

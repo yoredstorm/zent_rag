@@ -19,8 +19,10 @@ export function AnalysisProgressStep({
   onToggleTech,
   onContinue,
   ready,
+  percent = 0,
   glimpses = [],
   files = [],
+  status = null,
   learningSessionId = null,
 }: {
   headline: string;
@@ -40,6 +42,15 @@ export function AnalysisProgressStep({
     typeof technical?.pages === "number" ? ` (${String(technical.pages)} páginas)` : "";
   const visibleGlimpses = glimpses.slice(0, 12);
   const [idleIdx, setIdleIdx] = useState(0);
+  const progress = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  const jobStatus = String(technical?.job_status ?? status ?? "").toLowerCase();
+  const failed =
+    jobStatus === "failed" ||
+    jobStatus === "dead" ||
+    String(technical?.catalog_phase ?? "").toUpperCase() === "FAILED" ||
+    String(status ?? "").toUpperCase() === "FAILED";
+  const catalogPhase = String(technical?.catalog_phase ?? "");
+  const processed = Number(technical?.records_processed ?? 0);
 
   useEffect(() => {
     if (ready || visibleGlimpses.length) return;
@@ -67,13 +78,45 @@ export function AnalysisProgressStep({
         data-testid="analyze-ring"
       >
         <p className="text-sm font-medium text-text">
-          {ready ? "Listo para revisar" : "En proceso"}
+          {failed ? "La ingesta no terminó" : ready ? "Listo para revisar" : "En proceso"}
         </p>
-        <p className="mt-1 text-xs leading-relaxed text-muted">
-          {ready
-            ? "El procesamiento terminó. Revisa lo encontrado antes de continuar."
-            : "No mostramos un porcentaje: el backend no expone avance por etapas. Las fases de abajo reflejan señales reales."}
-        </p>
+        {failed ? (
+          <p className="mt-1 text-xs leading-relaxed text-danger" role="alert">
+            El job falló. Abre los detalles técnicos y corrige la conexión o la fuente antes de
+            reintentar.
+          </p>
+        ) : (
+          <>
+            {percent > 0 && (
+              <div className="mt-2">
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span data-testid="analyze-percent">{progress}%</span>
+                  {catalogPhase && <span>{catalogPhase}</span>}
+                </div>
+                <div
+                  className="mt-1 h-1.5 overflow-hidden rounded-full bg-border"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progress}
+                  aria-label="Avance de la ingesta"
+                >
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width] duration-500"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <p className="mt-1 text-xs leading-relaxed text-muted">
+              {ready
+                ? "El procesamiento terminó. Revisa lo encontrado antes de continuar."
+                : percent > 0
+                  ? `Avance real del job${processed > 0 ? ` · ${processed} registros` : ""}.`
+                  : "Conectando y preparando la lectura. Las fases de abajo son señales reales."}
+            </p>
+          </>
+        )}
       </div>
       <p className="mt-3 text-sm text-text" aria-live="polite" data-testid="analyze-live">
         {live}
