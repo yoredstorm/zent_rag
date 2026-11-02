@@ -55,8 +55,7 @@ ROUTE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "producto",
         "productos",
         "product",
-        "disponible",
-        "disponibilidad",
+        "stock",
     ),
     "loyalty_balance": (
         "puntos",
@@ -75,7 +74,6 @@ ROUTE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "pedidos",
         "orden",
         "ordenes",
-        "estado",
         "seguimiento",
         "tracking",
         "order",
@@ -104,6 +102,9 @@ _PRODUCT_STOPWORDS = {
     "vale",
     "producto",
     "por",
+    "en",
+    "soles",
+    "pen",
 }
 
 
@@ -122,7 +123,8 @@ def _extract_product(raw: str, normalized: str) -> str | None:
     if sku:
         return None  # el SKU va en su propio campo
     match = re.search(
-        r"(?:precio|cuanto cuesta|cuánto cuesta|price of|precio de)\s+"
+        r"(?:precio|cuanto cuesta|cuánto cuesta|price of|precio de|"
+        r"costo de|cuanto vale|cuánto vale|vale)\s+"
         r"(?:un|una|el|la|los|las|kilo de|kg de)?\s*([a-z0-9 ]{2,60})",
         normalized,
     )
@@ -182,7 +184,7 @@ class DemoIntentRoutes:
                 entities=["order_number"],
                 required_entities=["order_number"],
                 requires_identity_verification=True,
-                examples=["en qué estado está mi pedido", "seguimiento de la orden"],
+                examples=["dónde está mi pedido", "seguimiento de la orden"],
             ),
             IntentRouteSpec(
                 id="other",

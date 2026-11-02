@@ -26,6 +26,11 @@ export type DataQueryParameter = {
 
 type DataQueryPlan = {
   binding_ref: string;
+  binding_hash?: string;
+  plan_version?: number;
+  policy_hash?: string | null;
+  sensitive_columns?: string[];
+  legacy_plan?: boolean;
   capability_ref: string;
   resource_ref: string;
   resource_kind: string;
@@ -179,6 +184,7 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
     onChange({
       capability: plan.capability_ref,
       binding_ref: plan.binding_ref,
+      binding_hash: plan.binding_hash,
       params: nextParams,
     });
   }
@@ -191,6 +197,12 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
     (parameter) => parameter.required && emptyParam(params[parameter.name]),
   );
   const canPreview = Boolean(selected) && missing.length === 0 && !busy;
+  const planStale = Boolean(
+    selected &&
+      config.binding_hash &&
+      selected.binding_hash &&
+      String(config.binding_hash) !== selected.binding_hash,
+  );
 
   async function runPreview() {
     if (!session || !selected) return;
@@ -223,6 +235,7 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
       onChange({
         capability: target.capability_ref,
         binding_ref: target.binding_ref,
+        binding_hash: target.binding_hash,
         params: {},
       });
       setPreview(null);
@@ -299,6 +312,21 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
             <p className="mt-1 text-[12px] text-muted">
               Devuelve: {selected.projection.join(", ")} · máximo {selected.max_rows} fila(s)
             </p>
+            {selected.legacy_plan && (
+              <p className="mt-1 rounded-sm border border-warning/30 bg-warning/5 p-1.5 text-[11px] text-muted">
+                Plan anterior sin política versionada. Revisar y republicar antes de usarlo en
+                producción.
+              </p>
+            )}
+            {planStale && (
+              <p
+                className="mt-1 rounded-sm border border-danger/30 bg-danger/5 p-1.5 text-[11px] text-danger"
+                role="alert"
+              >
+                Consulta cambiada: revisar y republicar. El nodo no ejecutará hasta actualizar la
+                referencia.
+              </p>
+            )}
           </div>
 
           {selected.ownership_required && (
@@ -444,6 +472,14 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
               <div className="flex justify-between gap-2">
                 <dt>binding_ref</dt>
                 <dd className="truncate">{selected.binding_ref}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>binding_hash</dt>
+                <dd className="truncate">{selected.binding_hash ?? "legacy sin hash"}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>plan_version</dt>
+                <dd>{selected.plan_version ?? "legacy"}</dd>
               </div>
               <div className="flex justify-between gap-2">
                 <dt>capability</dt>

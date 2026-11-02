@@ -86,6 +86,8 @@ async def list_data_query_plans(
     permissions: frozenset[str] | set[str] | None = None,
 ) -> dict[str, Any]:
     """Planes publicados que el editor puede seleccionar (sin SQL)."""
+    from src.platform.workflows.bindings import binding_plan_hash
+
     plans = []
     for binding, plan in await _published_plans(
         organization_id, workspace_id, permissions
@@ -94,6 +96,11 @@ async def list_data_query_plans(
             {
                 "binding_ref": str(binding.get("id") or ""),
                 "capability_ref": str(binding.get("capability_ref") or ""),
+                "binding_hash": binding_plan_hash(binding),
+                "plan_version": int(binding.get("plan_version") or 1),
+                "policy_hash": plan.policy_hash,
+                "sensitive_columns": list(plan.sensitive_columns),
+                "legacy_plan": not bool(plan.policy_hash),
                 "resource_ref": _plan_resource_ref(plan),
                 "resource_kind": plan.resource.kind,
                 "operation": plan.operation,

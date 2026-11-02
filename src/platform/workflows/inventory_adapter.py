@@ -32,6 +32,10 @@ async def execute_inventory_action(
 
     config = binding.get("config") or {}
     action = str(config.get("action") or "")
+    if action == "reserve_stock_batch":
+        return await reserve_stock_batch(
+            organization_id, binding, payload, workspace_id=workspace_id
+        )
     if action not in ("reserve_stock", "commit_stock", "release_stock"):
         raise BindingError("PROVIDER_NOT_SUPPORTED", "acción de inventario no soportada")
     if config.get("write") is not True:
@@ -450,6 +454,188 @@ async def expire_inventory_reservations(
                 )
             ).fetchall()
         return {"status": "OK", "expired_reservations": len(expired)}
+    except BindingError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _query_failure(exc) from exc
+    finally:
+        await engine.dispose()
+
+
+async def reserve_stock_batch(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+) -> dict[str, Any]:
+    """Reserva multi-item atomica: todo o nada, en una sola transaccion."""
+    from urllib.parse import quote_plus
+
+    from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
+    from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+
+    config = binding.get("config") or {}
+    if config.get("write") is not True:
+        raise BindingError("PERMISSION_DENIED", "el conector no esta habilitado para escritura")
+    try:
+        connector_id = UUID(str(config.get("connector_id") or ""))
+    except (TypeError, ValueError) as exc:
+        raise BindingError("NEEDS_CONFIGURATION", "inventory requiere connector_id") from exc
+    order_number = str(payload.get("order_number") or "").strip()
+    if not re.match(r"^[A-Za-z0-9_-]{3,40}$", order_number):
+        raise BindingError("INVALID_PARAMS", "order_number invalido")
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list) or not raw_items or len(raw_items) > 20:
+        raise BindingError("INVALID_PARAMS", "items requiere 1..20 lineas")
+    items: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    max_quantity = int(config.get("max_quantity") or 100)
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            raise BindingError("INVALID_PARAMS", "item invalido")
+        sku = str(raw.get("sku") or "").strip()
+        if not re.match(r"^[A-Za-z0-9_-]{3,40}$", sku):
+            raise BindingError("INVALID_PARAMS", "sku invalido")
+        if sku in seen:
+            raise BindingError("INVALID_PARAMS", "sku duplicado en items")
+        seen.add(sku)
+        try:
+            quantity = int(raw.get("quantity") or 0)
+        except (TypeError, ValueError) as exc:
+            raise BindingError("INVALID_PARAMS", "quantity invalida") from exc
+        if quantity < 1 or quantity > max_quantity:
+            raise BindingError("INVALID_PARAMS", "quantity fuera de rango")
+        items.append((sku, quantity))
+    try:
+        ttl_seconds = min(max(int(payload.get("ttl_seconds") or 900), 30), 3600)
+    except (TypeError, ValueError):
+        ttl_seconds = 900
+
+    connector = await PostgresConnectorRepository().get_connector(organization_id, connector_id)
+    if connector is None or str(connector.status or "").lower() != "active":
+        raise BindingError("RESOURCE_NOT_EXPOSED", "conector de escritura no disponible")
+    if connector.workspace_id and workspace_id and str(connector.workspace_id) != str(workspace_id):
+        raise BindingError("PERMISSION_DENIED", "el conector pertenece a otro workspace")
+    cfg = connector.config_json if isinstance(connector.config_json, dict) else {}
+    host = str(cfg.get("host") or "").strip()
+    database = str(cfg.get("database") or "").strip()
+    user = str(cfg.get("user") or "").strip()
+    if not host or not database or not user:
+        raise BindingError("NEEDS_CONFIGURATION", "conector de escritura incompleto")
+    secret = await get_secret_store().get(organization_id, connector_id)
+    password = secret.get("password") if isinstance(secret, dict) else None
+    if not password:
+        raise BindingError("NEEDS_CREDENTIALS", "sin credencial de escritura")
+    dsn = (
+        f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(str(password))}"
+        f"@{host}:{int(cfg.get('port') or 5432)}/{quote_plus(database)}"
+    )
+    engine = create_async_engine(dsn, pool_size=1, max_overflow=0, pool_pre_ping=True)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "WITH expired AS ("
+                    " UPDATE bodega.stock_reservations SET status = 'expired', released_at = NOW()"
+                    " WHERE status = 'active' AND expires_at <= NOW() RETURNING sku, quantity"
+                    "), agg AS (SELECT sku, SUM(quantity) AS qty FROM expired GROUP BY sku)"
+                    " UPDATE bodega.stock s SET reserved = GREATEST(s.reserved - agg.qty, 0)"
+                    " FROM agg WHERE s.sku = agg.sku"
+                )
+            )
+            order = (
+                await conn.execute(
+                    text("SELECT status FROM bodega.orders WHERE order_number = :on FOR UPDATE"),
+                    {"on": order_number},
+                )
+            ).fetchone()
+            if order is None:
+                raise BindingError("NOT_FOUND", "pedido no encontrado")
+            if str(order.status) in ("confirmed", "cancelled"):
+                raise BindingError("CONFLICT", "el pedido ya esta cerrado")
+
+            existing_rows = (
+                await conn.execute(
+                    text(
+                        "SELECT sku, id, status, quantity, expires_at"
+                        " FROM bodega.stock_reservations"
+                        " WHERE order_number = :on AND sku = ANY(:skus) AND status = 'active'"
+                        " FOR UPDATE"
+                    ),
+                    {"on": order_number, "skus": [sku for sku, _ in items]},
+                )
+            ).fetchall()
+            existing = {str(row.sku): row for row in existing_rows}
+            if existing:
+                return {
+                    "status": "ALREADY_RESERVED",
+                    "order_number": order_number,
+                    "items": [
+                        {
+                            "sku": sku,
+                            "quantity": int(existing[sku].quantity),
+                            "reservation_id": str(existing[sku].id),
+                        }
+                        for sku, _ in items
+                        if sku in existing
+                    ],
+                }
+
+            stocks = (
+                await conn.execute(
+                    text(
+                        "SELECT sku, on_hand, reserved FROM bodega.stock"
+                        " WHERE sku = ANY(:skus) ORDER BY sku FOR UPDATE"
+                    ),
+                    {"skus": [sku for sku, _ in items]},
+                )
+            ).fetchall()
+            by_sku = {str(row.sku): row for row in stocks}
+            for sku, quantity in items:
+                stock = by_sku.get(sku)
+                if stock is None:
+                    raise BindingError("RESOURCE_NOT_EXPOSED", f"SKU no expuesto: {sku}")
+                available = int(stock.on_hand) - int(stock.reserved)
+                if available < quantity:
+                    raise BindingError("CONFLICT", f"stock insuficiente para {sku}")
+
+            reservations = []
+            for sku, quantity in items:
+                row = (
+                    await conn.execute(
+                        text(
+                            "INSERT INTO bodega.stock_reservations"
+                            " (order_number, sku, quantity, status, idempotency_key, expires_at)"
+                            " VALUES (:on, :sku, :qty, 'active', :key,"
+                            " NOW() + (:ttl || ' seconds')::interval)"
+                            " RETURNING id, expires_at"
+                        ),
+                        {
+                            "on": order_number,
+                            "sku": sku,
+                            "qty": quantity,
+                            "key": f"reserve:{order_number}:{sku}",
+                            "ttl": str(ttl_seconds),
+                        },
+                    )
+                ).fetchone()
+                await conn.execute(
+                    text(
+                        "UPDATE bodega.stock SET reserved = reserved + :qty,"
+                        " version = version + 1 WHERE sku = :sku"
+                    ),
+                    {"qty": quantity, "sku": sku},
+                )
+                reservations.append(
+                    {
+                        "sku": sku,
+                        "quantity": quantity,
+                        "reservation_id": str(row.id),
+                        "expires_at": row.expires_at.isoformat(),
+                    }
+                )
+        return {"status": "RESERVED", "order_number": order_number, "items": reservations}
     except BindingError:
         raise
     except Exception as exc:  # noqa: BLE001
