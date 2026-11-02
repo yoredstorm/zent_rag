@@ -197,6 +197,26 @@ async def test_trust_dashboard(async_client: AsyncClient) -> None:
     plat = await _platform_admin(async_client, f"padmin-tsd-{uuid4().hex[:8]}@zent.example")
     oid = org["organization_id"]
 
+    # El dashboard cuenta usage_events; el trial no siempre deja uno y el
+    # test debe ser determinista sin depender del orden de la suite.
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    usage_session = await get_async_session()
+    try:
+        await usage_session.execute(
+            text(
+                "INSERT INTO usage_events "
+                "(request_id, organization_id, status) "
+                "VALUES (gen_random_uuid(), :oid, 'completed')"
+            ),
+            {"oid": oid},
+        )
+        await usage_session.commit()
+    finally:
+        await usage_session.close()
+
     from src.platform.trustsafety.trust_safety import moderate_text
 
     await moderate_text(UUID(oid), "keylogger ransomware exploit cmd.exe", "input")
