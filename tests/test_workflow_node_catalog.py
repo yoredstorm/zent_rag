@@ -104,6 +104,7 @@ def test_simulation_supported_flags() -> None:
         "intent_route",
         "loop",
         "marketplace_action",
+        "manual_payment_validation",
         "notify",
         "state_append",
         "state_get",

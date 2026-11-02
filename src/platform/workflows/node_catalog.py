@@ -700,7 +700,7 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
                 },
             },
         ),
-        context_reads=("trigger", "variables", "node_outputs"),
+        context_reads=("trigger", "variables"),
         supports_simulation=True,
     ),
     "human_approval": _meta(
