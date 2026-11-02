@@ -2,110 +2,50 @@
 # P19-04 — Contrato de intención de negocio y extracción de entidades.
 #
 # Decisión de alcance: no hay un clasificador global ni un orquestador nuevo.
-# Este módulo implementa reglas deterministas y un contrato tipado reutilizable
-# por el nodo intent_route. Un LLM futuro solo podrá proponer; la ruta y los
-# permisos se validan contra el grafo y el plan autorizado.
+# Este módulo implementa el motor genérico de reglas deterministas y el
+# contrato tipado reutilizable por el nodo intent_route. Las rutas concretas,
+# su vocabulario y sus extractores viven en un pack de vertical
+# (src/verticals/p19_demo/intent_routes.py); el motor no conoce negocios.
+# Un LLM futuro solo podrá proponer; la ruta y los permisos se validan contra
+# el grafo y el plan autorizado.
 # =============================================================================
 from __future__ import annotations
 
 import re
 import unicodedata
 from difflib import SequenceMatcher
-from typing import Any, Literal
+from functools import lru_cache
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 INTENT_SCHEMA = "zent.workflow.intent.route/v1"
-ALLOWED_ROUTES = ("price_lookup", "loyalty_balance", "order_status", "other")
 MAX_INPUT_CHARS = 2000
 MAX_ENTITY_CHARS = 80
-_INJECTION_PATTERNS = (
-    "ignora las reglas",
-    "ignore the rules",
-    "ignora las instrucciones",
-    "ignore previous",
-    "system prompt",
-    "consulta todos los pedidos",
-    "select *",
-    "drop table",
-    "union select",
-    "bypass",
-    "sql",
-)
-_OWNERSHIP_RISK = (
-    "pedido de otra persona",
-    "otra persona",
-    "de otro cliente",
-    "ajeno",
-    "someone else",
-)
-_ROUTE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "price_lookup": (
-        "precio",
-        "precios",
-        "cuesta",
-        "cuestan",
-        "costo",
-        "vale",
-        "valor",
-        "price",
-        "pricing",
-        "soles",
-        "pen",
-        "moneda",
-        "sku",
-        "producto",
-        "productos",
-        "product",
-        "disponible",
-        "disponibilidad",
-    ),
-    "loyalty_balance": (
-        "puntos",
-        "punto",
-        "saldo",
-        "fidelidad",
-        "loyalty",
-        "points",
-        "balance",
-        "rewards",
-        "canje",
-        "nivel",
-    ),
-    "order_status": (
-        "pedido",
-        "pedidos",
-        "orden",
-        "ordenes",
-        "estado",
-        "seguimiento",
-        "tracking",
-        "order",
-        "envio",
-        "entrega",
-        "cancelado",
-        "despacho",
-    ),
-}
-_PRODUCT_STOPWORDS = {
-    "un",
-    "una",
-    "el",
-    "la",
-    "los",
-    "las",
-    "de",
-    "del",
-    "kilo",
-    "kg",
-    "precio",
-    "cuesta",
-    "cuanto",
-    "cuánto",
-    "vale",
-    "producto",
-    "por",
-}
+
+
+class IntentRoutePack(Protocol):
+    """Política de rutas inyectada por un vertical; el motor solo la consume."""
+
+    route_ids: tuple[str, ...]
+    keywords: dict[str, tuple[str, ...]]
+    injection_patterns: tuple[str, ...]
+    ownership_risk_patterns: tuple[str, ...]
+    identity_routes: frozenset[str]
+
+    def default_routes(self) -> list[IntentRouteSpec]: ...
+
+    def extract_entities(self, route_id: str, raw: str, normalized: str) -> dict[str, str]: ...
+
+    def extra_missing_slots(self, route_id: str, entities: dict[str, str]) -> list[str]: ...
+
+
+@lru_cache(maxsize=1)
+def _default_pack() -> IntentRoutePack:
+    """Pack demo usado cuando el workflow no declara rutas (compatibilidad P19)."""
+    from src.verticals.p19_demo.intent_routes import build_pack
+
+    return build_pack()
 
 
 class IntentConfigError(ValueError):
@@ -117,7 +57,7 @@ class IntentConfigError(ValueError):
 class IntentRouteSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: Literal["price_lookup", "loyalty_balance", "order_status", "other"]
+    id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_]*$")
     description: str = Field(default="", max_length=300)
     entities: list[str] = Field(default_factory=list, max_length=10)
     examples: list[str] = Field(default_factory=list, max_length=20)
@@ -166,49 +106,30 @@ class IntentResult(BaseModel):
 
 
 def default_routes() -> list[IntentRouteSpec]:
-    return [
-        IntentRouteSpec(
-            id="price_lookup",
-            description="Precio o disponibilidad de un producto",
-            entities=["product_name", "sku"],
-            required_entities=[],
-            examples=["cuánto cuesta el arroz", "precio del SKU ARR-001"],
-        ),
-        IntentRouteSpec(
-            id="loyalty_balance",
-            description="Saldo o movimientos de puntos de fidelidad",
-            entities=["customer_verified_ref"],
-            requires_identity_verification=True,
-            examples=["cuántos puntos tengo", "mi saldo de fidelidad"],
-        ),
-        IntentRouteSpec(
-            id="order_status",
-            description="Estado o seguimiento de un pedido",
-            entities=["order_number"],
-            required_entities=["order_number"],
-            requires_identity_verification=True,
-            examples=["en qué estado está mi pedido", "seguimiento de la orden"],
-        ),
-        IntentRouteSpec(
-            id="other",
-            description="Solicitud distinta o no identificada",
-            entities=[],
-        ),
-    ]
+    """Rutas del pack por defecto; compatibilidad con workflows P19 sin config."""
+    return _default_pack().default_routes()
 
 
-def parse_intent_config(config: dict[str, Any] | None) -> IntentRouteConfig:
+def parse_intent_config(
+    config: dict[str, Any] | None,
+    pack: IntentRoutePack | None = None,
+) -> IntentRouteConfig:
+    active = pack or _default_pack()
     raw = dict(config or {})
     if not raw.get("routes"):
-        raw["routes"] = [item.model_dump(mode="json") for item in default_routes()]
+        raw["routes"] = [item.model_dump(mode="json") for item in active.default_routes()]
     raw.setdefault("schema", INTENT_SCHEMA)
     try:
-        return IntentRouteConfig.model_validate(raw)
+        parsed = IntentRouteConfig.model_validate(raw)
     except ValidationError as exc:
         details = "; ".join(
             f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}" for item in exc.errors()[:5]
         )
         raise IntentConfigError(f"configuración de intención inválida: {details}") from exc
+    unknown = sorted({route.id for route in parsed.routes} - set(active.route_ids))
+    if unknown:
+        raise IntentConfigError(f"ruta no permitida por el pack de intención: {', '.join(unknown)}")
+    return parsed
 
 
 def _normalize(text: str) -> str:
@@ -228,11 +149,11 @@ def _close(token: str, keyword: str) -> bool:
     return SequenceMatcher(None, token, keyword).ratio() >= 0.84
 
 
-def _score_route(route: IntentRouteSpec, normalized: str) -> int:
-    keywords = _ROUTE_KEYWORDS.get(route.id, ())
+def _score_route(route: IntentRouteSpec, normalized: str, keywords: dict[str, tuple[str, ...]]) -> int:
+    route_keywords = keywords.get(route.id, ())
     score = 0
     for token in _tokens(normalized):
-        if any(_close(token, keyword) for keyword in keywords):
+        if any(_close(token, keyword) for keyword in route_keywords):
             score += 1
     for example in route.examples:
         for token in _tokens(_normalize(example)):
@@ -242,57 +163,14 @@ def _score_route(route: IntentRouteSpec, normalized: str) -> int:
     return score
 
 
-def _sanitize_entity(value: str | None) -> str | None:
-    if not value:
-        return None
-    clean = re.sub(r"[\x00-\x1f<>{}]", " ", str(value))
-    clean = re.sub(r"\s+", " ", clean).strip(" .,;:!?")
-    if not clean:
-        return None
-    return clean[:MAX_ENTITY_CHARS]
-
-
-def _extract_product(raw: str, normalized: str) -> str | None:
-    sku = re.search(r"\b[A-Z]{2,6}-\d{2,6}\b", raw)
-    if sku:
-        return None  # el SKU va en su propio campo
-    match = re.search(
-        r"(?:precio|cuanto cuesta|cuánto cuesta|price of|precio de)\s+"
-        r"(?:un|una|el|la|los|las|kilo de|kg de)?\s*([a-z0-9 ]{2,60})",
-        normalized,
-    )
-    if not match:
-        match = re.search(r"^([a-z0-9 ]{2,40}?)\s+a\s+\d", normalized)
-    if not match:
-        return None
-    words = [word for word in match.group(1).split() if word not in _PRODUCT_STOPWORDS]
-    return _sanitize_entity(" ".join(words) or None)
-
-
-def _extract_order(raw: str) -> str | None:
-    match = re.search(
-        r"(?:pedido|orden|order)\s*(?:nro|numero|número|#|:)?\s*([A-Za-z0-9-]{4,24})",
-        raw,
-        re.IGNORECASE,
-    )
-    if match:
-        return _sanitize_entity(match.group(1).upper())
-    match = re.search(r"#([A-Za-z0-9-]{4,24})", raw)
-    if match:
-        return _sanitize_entity(match.group(1).upper())
-    if re.search(r"\b(pedido|orden|order)\b", _normalize(raw)):
-        numeric = re.search(r"\b\d{4,12}\b", raw)
-        if numeric:
-            return _sanitize_entity(numeric.group(0))
-    return None
-
-
 def classify_intent(
     config: dict[str, Any] | None,
     text: str,
+    pack: IntentRoutePack | None = None,
 ) -> IntentResult:
     """Clasificación determinista con rutas cerradas y entidades sanitizadas."""
-    parsed = parse_intent_config(config)
+    active = pack or _default_pack()
+    parsed = parse_intent_config(config, active)
     raw = str(text or "")
     if len(raw) > MAX_INPUT_CHARS:
         return IntentResult(
@@ -309,7 +187,7 @@ def classify_intent(
             route="other",
             reason_codes=["EMPTY_INPUT"],
         )
-    if any(pattern in normalized for pattern in _INJECTION_PATTERNS):
+    if any(pattern in normalized for pattern in active.injection_patterns):
         return IntentResult(
             intent="other",
             confidence=0.0,
@@ -317,7 +195,11 @@ def classify_intent(
             reason_codes=["PROMPT_INJECTION_REJECTED"],
         )
 
-    scores = {route.id: _score_route(route, normalized) for route in parsed.routes if route.id != "other"}
+    scores = {
+        route.id: _score_route(route, normalized, active.keywords)
+        for route in parsed.routes
+        if route.id != "other"
+    }
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     top_id, top_score = ranked[0] if ranked else ("other", 0)
     second_score = ranked[1][1] if len(ranked) > 1 else 0
@@ -353,52 +235,32 @@ def classify_intent(
             missing_slots=["clarification"],
         )
 
-    entities: dict[str, str] = {}
-    if top_id == "price_lookup":
-        sku = re.search(r"\b[A-Z]{2,6}-\d{2,6}\b", raw)
-        if sku:
-            entities["sku"] = sku.group(0)
-        product = _extract_product(raw, normalized)
-        if product:
-            entities["product_name"] = product
-        if not entities:
-            return IntentResult(
-                intent=top_id,
-                confidence=round(confidence, 2),
-                route=top_id,
-                entities={},
-                missing_slots=["product_name"],
-                reason_codes=["MISSING_SLOT"],
-                requires_identity_verification=route_spec.requires_identity_verification,
-            )
-    if top_id == "order_status":
-        order_number = _extract_order(raw)
-        if order_number:
-            entities["order_number"] = order_number
-        else:
-            return IntentResult(
-                intent=top_id,
-                confidence=round(confidence, 2),
-                route=top_id,
-                entities={},
-                missing_slots=["order_number"],
-                reason_codes=["MISSING_SLOT"],
-                requires_identity_verification=True,
-            )
+    entities = active.extract_entities(top_id, raw, normalized)
+    missing_slots = [entity for entity in route_spec.required_entities if entity not in entities]
+    for slot in active.extra_missing_slots(top_id, entities):
+        if slot not in missing_slots:
+            missing_slots.append(slot)
+    requires_identity = route_spec.requires_identity_verification or top_id in active.identity_routes
+    if missing_slots:
+        return IntentResult(
+            intent=top_id,
+            confidence=round(confidence, 2),
+            route=top_id,
+            entities=entities,
+            missing_slots=missing_slots,
+            reason_codes=["MISSING_SLOT"],
+            requires_identity_verification=requires_identity,
+        )
 
     reason_codes = ["RULES_MATCH"]
-    requires_identity = route_spec.requires_identity_verification or top_id in (
-        "loyalty_balance",
-        "order_status",
-    )
-    if any(pattern in normalized for pattern in _OWNERSHIP_RISK):
+    if any(pattern in normalized for pattern in active.ownership_risk_patterns):
         reason_codes.append("OWNERSHIP_NOT_VERIFIED")
         requires_identity = True
     return IntentResult(
         intent=top_id,
         confidence=round(confidence, 2),
         entities=entities,
-        missing_slots=[entity for entity in route_spec.required_entities if entity not in entities],
+        missing_slots=[],
         route=top_id,
         decision_source="rules",
         reason_codes=reason_codes,
@@ -407,11 +269,11 @@ def classify_intent(
 
 
 __all__ = [
-    "ALLOWED_ROUTES",
     "INTENT_SCHEMA",
     "IntentConfigError",
     "IntentResult",
     "IntentRouteConfig",
+    "IntentRoutePack",
     "IntentRouteSpec",
     "classify_intent",
     "default_routes",

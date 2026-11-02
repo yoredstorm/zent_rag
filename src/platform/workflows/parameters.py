@@ -329,7 +329,7 @@ def _intent_route_schema() -> NodeBusinessSchema:
                 "Rutas y ejemplos (JSON)",
                 "json",
                 min_level="advanced",
-                help="Solo rutas permitidas: price_lookup, loyalty_balance, order_status, other.",
+                help="Define rutas, ejemplos y slots. Si se omite, usa el pack de intención configurado.",
             ),
         ],
         outputs=[
