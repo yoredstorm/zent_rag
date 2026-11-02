@@ -70,5 +70,7 @@ soportado por el registry); el motor real está en `config.engine`.
   consultas en vivo son la ruta válida.
 - Falta prueba con dos conectores homónimos y dos workspaces reales; se declara
   NOT_RUN, no PASS.
-- La tool del agente para consultar el conector externo sigue pendiente P20-05.
+- La tool del agente para consultar el conector externo ya está implementada
+  en P20-02 (`execute_external`); quedan pendientes las tools comerciales
+  tipadas de P20-05.
 - La autoridad de orden (ZENT commerce vs Bodega) queda ADR, no implementada.

@@ -42,7 +42,7 @@ IDs estables y scope:
 | Indexado externo | `SQLSourceConnector` leía Managed DB interna | rechazo tipado; catálogo/live query | IMPLEMENTED P20-01 |
 | full_refresh | borraba vectores de toda la org | prohibido; scoped-only | IMPLEMENTED P20-01 (fail closed) |
 | Fuente en Agent picker | se mostraba como documento pendiente | “Base de datos conectada”, sin indexar | IMPLEMENTED |
-| Query viva del agente | `query_database` usa SQL Expert/Managed DB | tool externa vía binding P19 | MISSING P20-05 |
+| Query viva del agente | `query_database` usa SQL Expert/Managed DB | `execute_external` por conector externo; fallback interno bloqueado | IMPLEMENTED P20-02 (read-only) |
 | Catálogo semántico | discovery + sugerencias, sin modelo comercial aprobado | modelo/manifest revisable | MISSING P20-03 |
 | Grants por agente | P19.1 documenta, no implementa grants específicos | grant backend por agente/capability | MISSING P20-04 |
 | Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 |
@@ -70,9 +70,12 @@ con el mismo nombre podían colisionar. **Mitigación:** búsqueda solo por
 `config_json.connector_id`; nombre duplicado recibe sufijo, no se reutiliza.
 
 ### P1-01 — Agente genérico sin query externa
-`query_database` usa `PostgresSqlExpert` sobre Managed DB. El conector externo
-P19 no está cableado a una tool de agente. **Pendiente P20-05.**
-No se declara “agente vendedor” operativo.
+`query_database` usaba `PostgresSqlExpert` sobre Managed DB. El conector
+externo P19 ya está cableado a `QueryDatabaseTool` vía
+`execute_external()` (P20-02): fuente por `connector_id`, sesión externa
+read-only y fallback interno bloqueado. Siguen pendientes las tools
+comerciales tipadas y los grants por capability (P20-04/05). No se declara
+“agente vendedor” operativo.
 
 ### P1-02 — Órdenes y stock con doble autoridad potencial
 Bodega tiene `orders/order_items`; commerce ZENT tiene su store. **Decisión
@@ -96,7 +99,8 @@ idempotente a Bodega solo si se implementa adapter. No doble escritura en P20-00
 
 1. P20-01: congelar contrato de fuente y guardas (este corte).
 2. P20-02/03: ficha Knowledge y modelo comercial revisable.
-3. P20-04/05: grants por agente y tool externa `query_database`.
+3. P20-04/05: grants por agente y tools comerciales tipadas (la query
+   externa read-only ya está en P20-02).
 4. P20-06/07: wizard “Crear vendedor” y prompt/grounding.
 5. P20-08/09: intent v2 + sales funnel adaptado.
 6. P20-10/11: carrito/quote/checkout simulado.
