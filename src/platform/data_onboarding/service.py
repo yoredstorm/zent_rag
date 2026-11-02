@@ -392,13 +392,16 @@ class DataOnboardingService:
             "host": str((connector.config_json or {}).get("host") or ""),
             "database": str((connector.config_json or {}).get("database") or ""),
         }
+        # El registry de conocimiento indexa fuentes SQL como `sql`; el motor
+        # real queda en config.engine. `postgres` no es un tipo de kb_source.
+        source_type = "sql"
         sources = await repo.list_sources(organization_id, workspace_id=workspace_id)
         source = next(
             (
                 item
                 for item in sources
                 if str((item.config_json or {}).get("connector_id") or "") == str(connector.id)
-                or (item.type == config["engine"] and item.name == source_name)
+                or (item.type == source_type and item.name == source_name)
             ),
             None,
         )
@@ -407,7 +410,7 @@ class DataOnboardingService:
                 source = await repo.create_source(
                     organization_id,
                     source_name,
-                    config["engine"],
+                    source_type,
                     config_json=config,
                     workspace_id=workspace_id,
                 )
@@ -416,7 +419,7 @@ class DataOnboardingService:
                 source = await repo.create_source(
                     organization_id,
                     f"{source_name} ({str(connector.id)[:8]})",
-                    config["engine"],
+                    source_type,
                     config_json=config,
                     workspace_id=workspace_id,
                 )

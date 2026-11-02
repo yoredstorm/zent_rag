@@ -788,7 +788,7 @@ async def test_database_onboarding_creates_visible_kb_source(
     match = next(
         item for item in sources.json()["sources"] if item["id"] == body["kb_source_id"]
     )
-    assert match["type"] == "postgres"
+    assert match["type"] == "sql"
     assert match["status"] in ("created", "connected", "ready")
 
 
