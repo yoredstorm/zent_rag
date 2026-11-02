@@ -48,7 +48,7 @@ IDs estables y scope:
 | Grants por agente | P19.1 documenta, no implementa grants específicos | `agent_data_grants` + allowlist de recursos en `query_database` | PARTIAL P20-04 (backend; UI y tools tipadas pendientes) |
 | Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 |
 | Sales funnel | 40 nodos existentes, demo interno | adaptar a capacidades externas | PARTIAL P20-09 |
-| Checkout | proveedor abstracto, sin sandbox dedicado | checkout simulado verificable | MISSING P20-11 |
+| Checkout | proveedor abstracto, sin sandbox dedicado | nodo manual MVP temporal; Stripe/PSP real pendiente | PARTIAL P20-11 |
 | Postventa | órdenes externas disponibles por SQL | identidad + owner filter | BLOCKED P20-12 |
 | Observabilidad | métricas/timeline existentes | métricas de venta y grants | PARTIAL P20-15 |
 

@@ -5144,6 +5144,13 @@ def _register_defaults() -> None:
             **semantic_metadata(f"state_{_op}"),
         )
 
+    # MVP temporal: se elimina al integrar Stripe/PSP real.
+    from src.platform.workflows.manual_payment import (
+        register_manual_payment_node,
+    )
+
+    register_manual_payment_node(registry)
+
 
 _register_defaults()
 

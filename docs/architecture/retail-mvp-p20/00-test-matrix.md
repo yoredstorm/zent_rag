@@ -58,6 +58,11 @@
 | `NOT_FOUND` sin 500 | PASS | idem |
 | Presentación «arroz de 1 kg» | PASS (local, runtime real) | `05-catalog-tools.md` |
 | Carrito/quote/checkout | NOT_RUN | P20-10/11 |
+| Nodo pago manual MVP | PASS | `tests/test_p20_manual_payment.py` |
+| Pago manual sin aprobación | PASS (pending_approval) | idem |
+| Pago manual aprobado | PASS (`provider=manual_mvp`) | idem |
+| Pago manual en producción | PASS (bloqueado) | idem |
+| Stripe/PSP real | NOT_RUN | P20-11
 | Postventa con identidad | NOT_RUN | P20-12 |
 
 

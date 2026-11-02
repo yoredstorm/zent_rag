@@ -58,6 +58,7 @@ _ACTION_NODE_TYPES = frozenset(
         "business_node",
         "business_result",
         "human_approval",
+        "manual_payment_validation",
         "capability_call",
         "wait_event",
         "state_set",
