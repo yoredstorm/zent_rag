@@ -312,6 +312,28 @@ def _intent_route_schema() -> NodeBusinessSchema:
             ),
             _p("confidence_min", "Confianza mínima", "number", min_level="guided", default=0.75),
             _p(
+                "schema",
+                "Contrato de rutas",
+                "enum",
+                min_level="advanced",
+                default="zent.workflow.intent.route/v1",
+                validation={
+                    "options": [
+                        {"value": "zent.workflow.intent.route/v1", "label": "v1 (pack demo)"},
+                        {"value": "zent.workflow.intent.route/v2", "label": "v2 (rutas del workflow)"},
+                    ]
+                },
+                help="v2 permite ids/keywords propios del workflow; v1 conserva el pack demo.",
+            ),
+            _p(
+                "conversation_state",
+                "Recordar slots entre turnos",
+                "boolean",
+                min_level="guided",
+                default=True,
+                help="Persiste el estado en la instancia durable; no crea memoria paralela.",
+            ),
+            _p(
                 "ambiguity_policy",
                 "Si hay duda",
                 "enum",
@@ -341,6 +363,7 @@ def _intent_route_schema() -> NodeBusinessSchema:
             _out("decision_source", "Origen de decisión", "text"),
             _out("reason_codes", "Motivos", "json"),
             _out("requires_identity_verification", "Requiere identidad", "boolean"),
+            _out("conversation_state", "Estado de conversación", "json"),
         ],
     )
 
