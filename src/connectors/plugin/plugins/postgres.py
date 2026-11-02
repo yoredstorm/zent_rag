@@ -248,7 +248,7 @@ class PostgresPlugin(ConnectorPlugin):
                                 column_comment=stat.get("comment") if stat else None,
                                 null_ratio=stat.get("null_frac") if stat else None,
                                 cardinality=stat.get("n_distinct") if stat else None,
-                                distinct_values=stat.get("common_vals") or [],
+                                distinct_values=(stat.get("common_vals") if stat else []) or [],
                                 pii_flags=pii_flags_for_column(c.name),
                                 sensitive=is_sensitive_column(c.name),
                                 sample_disabled=is_sensitive_column(c.name),
