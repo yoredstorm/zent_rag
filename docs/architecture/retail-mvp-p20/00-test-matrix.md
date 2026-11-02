@@ -47,7 +47,8 @@
 | Agente DB-only no recibe `search_knowledge` | PASS | idem |
 | Precio real `4.80 / 22.50 PEN` | PASS (local, runtime real) | `02-external-sql-agent.md` |
 | `¿Qué tablas tienes?` con discovery real | PASS (local, runtime real) | idem |
-| Contexto multi-turno «¿Y el de 5 kg?» | NOT_RUN | Runtime no conserva historial; P20-08 |
+| Contexto multi-turno «¿Y el de 5 kg?» | PASS mínimo | Historial textual por `conversation_id`; slots/WAIT P20-08 |
+| Slots durables / WAIT-RESUME | NOT_RUN | P20-08 completo |
 | Grants por agente/capability | NOT_RUN | P20-04 |
 | Grant activo limita recursos | PASS (local, runtime real) | `04-data-grants.md` |
 | Sin grant, `PERMISSION_DENIED` | PASS (local, runtime real) | idem |

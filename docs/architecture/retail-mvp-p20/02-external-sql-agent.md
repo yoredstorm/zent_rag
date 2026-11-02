@@ -36,7 +36,7 @@
 | Precio real | `¿Cuánto cuesta el arroz?` | `BD-ARROZ-01 = 4.80 PEN`, `BD-ARROZ-05 = 22.50 PEN` desde `bodega.product_catalog_v` |
 | Estructura | `¿Qué tablas tienes?` | 10 objetos: `bodega`, `catalog`, `loyalty`, `sales`; incluye la vista `product_catalog_v` |
 | Stock | `¿Cuánto stock hay de arroz de 1 kg?` | `BD-ARROZ-01 available = 53` |
-| Contexto multi-turno | `¿Y el de 5 kg?` sin repetir producto | NOT_RUN: el runtime no conserva historial entre runs; requiere P20-08 |
+| Contexto multi-turno | `¿Cuánto cuesta el arroz?` → `¿Y el de 5 kg?` | PASS mínimo: historial textual por `conversation_id`; slots/WAIT/RESUME siguen P20-08 |
 | Ruta interna | agente DB sin Managed DB | `DATABASE_NOT_CONFIGURED`; no abre `rag_platform` |
 | Tool del agente | runtime HTTP/portal | `query_database` con observación real; sin timeout de 30 s |
 

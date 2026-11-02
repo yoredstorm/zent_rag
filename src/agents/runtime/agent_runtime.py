@@ -493,6 +493,7 @@ class AgentRunResult:
     answer: str
     message: str = ""
     user_id: UUID | None = None
+    conversation_id: UUID | None = None
     deployment_id: UUID | None = None
     version_id: UUID | None = None
     environment: str | None = None
@@ -2106,6 +2107,7 @@ class AgentRuntime:
             answer="",
             message=request.message,
             user_id=request.user_id,
+            conversation_id=request.conversation_id,
             role=request.role,
             deployment_id=request.deployment_id,
             version_id=request.version_id,
@@ -2789,7 +2791,38 @@ class AgentRuntime:
                 {"type": "context", "sections": sorted(str(key) for key in request.context)}
             )
 
-        history: list[str] = [f"USER QUESTION: {request.message}"]
+        history: list[str] = []
+        if request.conversation_id is not None:
+            try:
+                from src.agents.runtime.trace_store import load_conversation_turns
+
+                prior_turns = await load_conversation_turns(
+                    request.agent.organization_id,
+                    request.agent.id,
+                    request.conversation_id,
+                    user_id=request.user_id,
+                    limit=6,
+                )
+                for turn in prior_turns:
+                    history.append(f"USER: {turn['message']}")
+                    history.append(f"ASSISTANT: {turn['answer']}")
+                if prior_turns:
+                    history.append(
+                        "SYSTEM NOTE: prior turns are context only. Re-query "
+                        "price, stock, totals and order state before asserting "
+                        "them."
+                    )
+                    result.steps.append(
+                        {
+                            "type": "conversation_history",
+                            "turns": len(prior_turns),
+                        }
+                    )
+            except Exception as exc:  # noqa: BLE001 - contexto nunca rompe
+                logger.warning(
+                    "Conversation history load failed", error=str(exc)[:160]
+                )
+        history.append(f"USER QUESTION: {request.message}")
         # El cierre por presupuesto (timeout/error) necesita lo reunido hasta el
         # corte para no devolver una respuesta vacía.
         _runtime_scratch(result)["history"] = history

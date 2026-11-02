@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     status VARCHAR(30) NOT NULL,
     message TEXT NOT NULL,
     answer TEXT,
+    conversation_id UUID,
     steps JSONB NOT NULL DEFAULT '[]',
     total_latency_ms DOUBLE PRECISION DEFAULT 0,
     total_tokens INTEGER DEFAULT 0,
@@ -48,6 +49,9 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 # El flow canónico es aditivo: las instalaciones previas reciben la columna acá
 # (misma migración 131 para quien corre alembic).
 _AGENT_RUNS_FLOW_COLUMN = "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS flow JSONB"
+_AGENT_RUNS_CONVERSATION_COLUMN = (
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS conversation_id UUID"
+)
 
 _INDEX_ORG = (
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_org "
@@ -57,6 +61,10 @@ _INDEX_AGENT = (
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_agent "
     "ON agent_runs(agent_id, created_at DESC)"
 )
+_INDEX_CONVERSATION = (
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation "
+    "ON agent_runs(organization_id, agent_id, conversation_id, created_at DESC)"
+)
 
 
 async def ensure_agent_runs_table() -> None:
@@ -64,6 +72,7 @@ async def ensure_agent_runs_table() -> None:
     try:
         await session.execute(text(_AGENT_RUNS_TABLE))
         await session.execute(text(_AGENT_RUNS_FLOW_COLUMN))
+        await session.execute(text(_AGENT_RUNS_CONVERSATION_COLUMN))
         await session.commit()
     except Exception:
         await session.rollback()
@@ -75,6 +84,11 @@ async def ensure_agent_runs_table() -> None:
         await session.rollback()
     try:
         await session.execute(text(_INDEX_AGENT))
+        await session.commit()
+    except Exception:
+        await session.rollback()
+    try:
+        await session.execute(text(_INDEX_CONVERSATION))
         await session.commit()
     except Exception:
         await session.rollback()
@@ -91,13 +105,13 @@ async def save_run(result, flow: dict | None = None) -> None:
                 text(
                     "INSERT INTO agent_runs "
                     "(id, organization_id, agent_id, user_id, role, status, "
-                    "message, answer, steps, total_latency_ms, total_tokens, "
-                    "cost, injection_detected, trace_id, model, provider, "
-                    "deployment_id, version_id, environment, prompt_tokens, "
-                    "completion_tokens, flow) "
+                    "message, answer, conversation_id, steps, total_latency_ms, "
+                    "total_tokens, cost, injection_detected, trace_id, model, "
+                    "provider, deployment_id, version_id, environment, "
+                    "prompt_tokens, completion_tokens, flow) "
                     "VALUES (:id, :oid, :aid, :uid, :role, :status, :message, "
-                    ":answer, CAST(:steps AS jsonb), :latency, :tokens, "
-                    ":cost, :injection, :trace_id, :model, :provider, "
+                    ":answer, :conversation_id, CAST(:steps AS jsonb), :latency, "
+                    ":tokens, :cost, :injection, :trace_id, :model, :provider, "
                     ":deployment_id, :version_id, :environment, :prompt_tokens, "
                     ":completion_tokens, CAST(:flow AS jsonb))"
                 ),
@@ -110,6 +124,7 @@ async def save_run(result, flow: dict | None = None) -> None:
                     "status": result.status,
                     "message": (result.message or "")[:2000],
                     "answer": (result.answer or "")[:8000],
+                    "conversation_id": getattr(result, "conversation_id", None),
                     "steps": json.dumps(result.steps or []),
                     "latency": round(result.total_latency_ms, 2),
                     "tokens": result.total_tokens,
@@ -134,6 +149,55 @@ async def save_run(result, flow: dict | None = None) -> None:
             await session.close()
     except Exception:
         pass
+
+
+async def load_conversation_turns(
+    organization_id: UUID,
+    agent_id: UUID,
+    conversation_id: UUID,
+    *,
+    user_id: UUID | None = None,
+    limit: int = 6,
+) -> list[dict]:
+    """Turnos previos de una conversación, en orden cronológico.
+
+    Solo mensajes/respuestas; nunca tool outputs ni datos de otras
+    conversaciones. Es contexto, no autoridad: precios/stock se reconsultan.
+    """
+    session: AsyncSession = await get_async_session()
+    try:
+        sql = (
+            "SELECT message, answer, created_at FROM agent_runs "
+            "WHERE organization_id = :oid AND agent_id = :aid "
+            "AND conversation_id = :cid AND status = 'completed' "
+            "AND answer IS NOT NULL AND answer <> '' "
+        )
+        params: dict = {
+            "oid": str(organization_id),
+            "aid": str(agent_id),
+            "cid": str(conversation_id),
+            "limit": max(1, min(int(limit), 20)),
+        }
+        if user_id is not None:
+            sql += "AND user_id = :uid "
+            params["uid"] = str(user_id)
+        sql += "ORDER BY created_at DESC LIMIT :limit"
+        rows = (await session.execute(text(sql), params)).fetchall()
+    except Exception as exc:  # noqa: BLE001 - contexto nunca rompe el run
+        logger.warning("Conversation history read failed", error=str(exc)[:200])
+        return []
+    finally:
+        await session.close()
+    turns = [
+        {
+            "message": str(row.message or "")[:1000],
+            "answer": str(row.answer or "")[:1500],
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+    turns.reverse()
+    return turns
 
 
 async def get_flow(organization_id: UUID, run_id: UUID) -> dict | None:
