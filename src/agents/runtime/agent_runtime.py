@@ -835,6 +835,7 @@ async def _agent_source_types(agent: Agent) -> set[str] | None:
     ``None`` = no se pudo determinar (permisivo: no se filtran tools).
     """
     raw_ids = (agent.config_json or {}).get("source_ids") or []
+    kb_ids = (agent.config_json or {}).get("knowledge_base_ids") or []
     ids = [str(sid).strip() for sid in raw_ids if str(sid).strip()][:100]
     try:
         from sqlalchemy import bindparam
@@ -866,7 +867,12 @@ async def _agent_source_types(agent: Agent) -> set[str] | None:
                 ).fetchall()
         finally:
             await session.close()
-        return {str(row[0]) for row in rows if row[0]}
+        types = {str(row[0]) for row in rows if row[0]}
+        if kb_ids:
+            # Un KB documental mantiene habilitada la búsqueda aunque el
+            # agente solo declare una fuente SQL en `source_ids`.
+            types.add("knowledge_base")
+        return types
     except Exception as exc:  # noqa: BLE001 - nunca rompe el run
         logger.warning("source-aware tools skipped", error=str(exc)[:200])
         return None
