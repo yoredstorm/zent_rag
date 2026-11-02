@@ -9,18 +9,18 @@ SHA lo hace.
 
 | Prompt | Estado | Documento |
 |---|---|---|
-| P19.1-00 Baseline, CI rojo, threat model y regresión | DONE (CI run 41362601249 success) | [00-baseline-ci-threat-model.md](./00-baseline-ci-threat-model.md) |
+| P19.1-00 Baseline, CI rojo, threat model y regresión | DONE (CI 41364117697 success) | [00-baseline-ci-threat-model.md](./00-baseline-ci-threat-model.md) |
 | P19.1-00 Inventario AS-IS | DONE | [00-inventory-asis.md](./00-inventory-asis.md) |
 | P19.1-00 Mapa de regresión | DONE | [00-regression-map.md](./00-regression-map.md) |
-| P19.1-01 Gobierno de publicación | NOT_STARTED | — |
-| P19.1-02 Identidad y ownership | NOT_STARTED | — |
-| P19.1-03 Binding pinning/drift | NOT_STARTED | — |
-| P19.1-04 Contrato de resultados y errores | NOT_STARTED | — |
-| P19.1-05 UX de datos | NOT_STARTED | — |
-| P19.1-06 Intención multivuelta durable | NOT_STARTED | — |
-| P19.1-07 Inventario | NOT_STARTED | — |
-| P19.1-08 Conectores PostgreSQL productivos | NOT_STARTED | — |
-| P19.1-09 Certificación GO/NO-GO | NOT_STARTED | — |
+| P19.1-01 Gobierno de publicación | DONE local | [01-publication-governance.md](./01-publication-governance.md) |
+| P19.1-02 Identidad y ownership | PARTIAL (revocación WAIT/RLS pendientes) | [02-identity-ownership.md](./02-identity-ownership.md) |
+| P19.1-03 Binding pinning/drift | PARTIAL (snapshot release/métricas pendientes) | [03-binding-revisions.md](./03-binding-revisions.md) |
+| P19.1-04 Contrato de resultados y errores | DONE local | [04-result-contract.md](./04-result-contract.md) |
+| P19.1-05 UX de datos | PARTIAL (E2E/a11y/humano pendientes) | [05-data-ux.md](./05-data-ux.md) |
+| P19.1-06 Intención multivuelta durable | PARTIAL (gold set/desambiguación pendientes) | [06-intent-conversation.md](./06-intent-conversation.md) |
+| P19.1-07 Inventario | PARTIAL (multi-ítem/concurrencia pendientes) | [07-inventory-adapter.md](./07-inventory-adapter.md) |
+| P19.1-08 Conectores PostgreSQL productivos | PARTIAL (TLS real/carga pendientes) | [08-connector-security.md](./08-connector-security.md) |
+| P19.1-09 Certificación GO/NO-GO | NO-GO producción; GO staging técnico condicionado | [09-final-certification.md](./09-final-certification.md) |
 
 ## Regla de evidencia
 
