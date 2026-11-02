@@ -9,7 +9,7 @@ SHA lo hace.
 
 | Prompt | Estado | Documento |
 |---|---|---|
-| P19.1-00 Baseline, CI rojo, threat model y regresión | DONE (CI 41364117697 success) | [00-baseline-ci-threat-model.md](./00-baseline-ci-threat-model.md) |
+| P19.1-00 Baseline, CI rojo, threat model y regresión | DONE (CI 41364117697 success; P19.1 CI 41383152164 success) | [00-baseline-ci-threat-model.md](./00-baseline-ci-threat-model.md) |
 | P19.1-00 Inventario AS-IS | DONE | [00-inventory-asis.md](./00-inventory-asis.md) |
 | P19.1-00 Mapa de regresión | DONE | [00-regression-map.md](./00-regression-map.md) |
 | P19.1-01 Gobierno de publicación | DONE local | [01-publication-governance.md](./01-publication-governance.md) |

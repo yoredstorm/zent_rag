@@ -1,6 +1,6 @@
 # P19.1-09 — Certificación integral y decisión GO/NO-GO
 
-- **SHA de código evaluado:** `c5a8232fce3bf42481c8110ddfeb27bdd3243225`
+- **SHA de código evaluado:** `55143e07bfbdb7ab0dfa80f03fe4cfd23e958886`
 - **PR:** https://github.com/yoredstorm/zent_rag/pull/18
 - **Fecha:** 2026-11-01
 - **Regla:** PASS solo con comando ejecutado y evidencia. Los mocks no
@@ -27,7 +27,7 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 
 | Gate | Riesgo | Prueba ejecutada | Resultado | Evidencia | Bloquea piloto |
 |---|---|---|---|---|---|
-| G00 | CI/arquitectura | Invariantes + PR CI | PASS local; CI en curso | `scripts/cert/run_invariants.py`; run del PR | Sí |
+| G00 | CI/arquitectura | Invariantes + PR CI | PASS (run 41383152164) | `scripts/cert/run_invariants.py`; run del PR | Sí |
 | G01 | Publicación/PII | Permisos, allowlist, PII, auditoría, preview stale | PASS local | `test_workflow_data_p19_governance.py` (4) | Sí |
 | G02 | Identidad/ownership | Principal, scope, expiración, A/B, sin principal | PASS local; revocación WAIT NOT_RUN | `test_workflow_data_p19_principal.py`, integración PostgreSQL | Sí |
 | G03 | Binding drift | Mutar tabla con mismo ID, hash, revisiones | PASS local; snapshot release PARTIAL | `test_workflow_data_p19_binding_pin.py` | Sí |
@@ -52,6 +52,7 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 | `npm run typecheck` | PASS |
 | `ruff check src/ tests/ sdk/python` | PASS |
 | Migraciones 178/179 | aplicadas localmente |
+| CI PR 18 (`41383152164`, SHA `55143e0`) | `test`, 4 shards, portal, portal-e2e, certification, secrets-scan, lint, SDKs y build: success |
 
 ## Pruebas obligatorias NOT_RUN
 
