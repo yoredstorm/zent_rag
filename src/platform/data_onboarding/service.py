@@ -391,6 +391,12 @@ class DataOnboardingService:
             "engine": str(connector.type or "postgres"),
             "host": str((connector.config_json or {}).get("host") or ""),
             "database": str((connector.config_json or {}).get("database") or ""),
+            "source_mode": "schema_only",
+            "connection_status": "connected",
+            "catalog_status": "discovered",
+            "snapshot_status": "not_supported",
+            "allowed_resources": [],
+            "revision": 1,
         }
         # El registry de conocimiento indexa fuentes SQL como `sql`; el motor
         # real queda en config.engine. `postgres` no es un tipo de kb_source.
@@ -401,7 +407,6 @@ class DataOnboardingService:
                 item
                 for item in sources
                 if str((item.config_json or {}).get("connector_id") or "") == str(connector.id)
-                or (item.type == source_type and item.name == source_name)
             ),
             None,
         )

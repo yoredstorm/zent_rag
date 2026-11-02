@@ -29,6 +29,19 @@ class SQLSourceConnector(SourceConnector):
     source_type = "sql"
     self_contained = True
 
+    def _assert_not_external(self) -> None:
+        """Una fuente SQL externa no se indexa contra la Managed DB interna.
+
+        El catálogo y las consultas en vivo viven en bindings P19/P19.1. Si
+        esta fuente tiene connector_id, el snapshot/indexado se rechaza de
+        forma tipada antes de tocar la base interna de ZENT.
+        """
+        if self.config.get("connector_id"):
+            raise ConnectorError(
+                "SOURCE_MODE_UNSUPPORTED: la fuente apunta a un conector externo; "
+                "use consultas en vivo o catálogo, no indexado interno"
+            )
+
     def _tables(self) -> list[tuple[str, str]]:
         result: list[tuple[str, str]] = []
         for entry in self.config.get("tables") or []:
@@ -51,6 +64,7 @@ class SQLSourceConnector(SourceConnector):
         )
 
     async def validate(self) -> None:
+        self._assert_not_external()
         try:
             sources = await (await self._service()).discover_sources(
                 self.source.organization_id
@@ -65,6 +79,7 @@ class SQLSourceConnector(SourceConnector):
                 raise ConnectorError(f"Tables not found: {', '.join(missing)}")
 
     async def discover(self) -> list[DiscoveredItem]:
+        self._assert_not_external()
         service = await self._service()
         sources = await service.discover_sources(self.source.organization_id)
         return [
@@ -77,6 +92,7 @@ class SQLSourceConnector(SourceConnector):
         ]
 
     async def sync(self, cursor: dict | None) -> SyncOutcome:
+        self._assert_not_external()
         service = await self._service()
         organization_id = self.source.organization_id
         start = time.perf_counter()
