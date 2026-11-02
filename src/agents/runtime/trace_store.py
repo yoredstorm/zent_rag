@@ -66,14 +66,20 @@ _INDEX_CONVERSATION = (
     "ON agent_runs(organization_id, agent_id, conversation_id, created_at DESC)"
 )
 
+_AGENT_RUNS_ENSURED = False
+
 
 async def ensure_agent_runs_table() -> None:
+    global _AGENT_RUNS_ENSURED
+    if _AGENT_RUNS_ENSURED:
+        return
     session: AsyncSession = await get_async_session()
     try:
         await session.execute(text(_AGENT_RUNS_TABLE))
         await session.execute(text(_AGENT_RUNS_FLOW_COLUMN))
         await session.execute(text(_AGENT_RUNS_CONVERSATION_COLUMN))
         await session.commit()
+        _AGENT_RUNS_ENSURED = True
     except Exception:
         await session.rollback()
         logger.warning("Failed to ensure agent_runs table")
@@ -98,6 +104,7 @@ async def ensure_agent_runs_table() -> None:
 
 async def save_run(result, flow: dict | None = None) -> None:
     """Persiste un AgentRunResult (+ su flow canónico). Fail-silent."""
+    await ensure_agent_runs_table()
     try:
         session: AsyncSession = await get_async_session()
         try:
