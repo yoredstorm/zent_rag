@@ -36,6 +36,7 @@
 | Precio real | `¿Cuánto cuesta el arroz?` | `BD-ARROZ-01 = 4.80 PEN`, `BD-ARROZ-05 = 22.50 PEN` desde `bodega.product_catalog_v` |
 | Estructura | `¿Qué tablas tienes?` | 10 objetos: `bodega`, `catalog`, `loyalty`, `sales`; incluye la vista `product_catalog_v` |
 | Stock | `¿Cuánto stock hay de arroz de 1 kg?` | `BD-ARROZ-01 available = 53` |
+| Contexto multi-turno | `¿Cuánto cuesta el arroz?` → `¿Y el de 5 kg?` | resuelve `BD-ARROZ-05 = 22.50 PEN`, 62 disponibles, sin reiniciar la conversación |
 | Ruta interna | agente DB sin Managed DB | `DATABASE_NOT_CONFIGURED`; no abre `rag_platform` |
 | Tool del agente | runtime HTTP/portal | `query_database` con observación real; sin timeout de 30 s |
 
