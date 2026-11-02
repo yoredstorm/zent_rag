@@ -17,7 +17,8 @@ Motivos del NO-GO:
 
 - G02 no tiene prueba de revocación viva durante WAIT ni RLS de proveedor.
 - G05/G06 no tienen Playwright, axe, usuarios reales ni gold set de 80 casos.
-- G07 no tiene 100 reservas concurrentes, doble commit ni multi-ítem atómico.
+- G07 no tiene prueba de crash/reboot, reconciliación ledger ni expiración bajo
+  job real.
 - G08 no tiene CA inválida/hostname incorrecto, rotación ni carga concurrente.
 - G09 no tiene SLO medidos, DR ni soporte operativo certificado.
 
@@ -34,7 +35,7 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 | G04 | Estados/errores | NOT_FOUND, TIMEOUT, DENIED, run failed | PASS local | `test_workflow_data_p19_node.py` (10) | Sí |
 | G05 | UX | Cero columnas, sin reload, tipos, política, typecheck | PASS parcial; E2E/a11y/humano NOT_RUN | Vitest `DataQueryForm` + `PublishQueryModal` | Sí para self-service |
 | G06 | Conversación | v2, slots, gold set 80, turn limit | PASS unitario + gold set 100%; 4+ turnos E2E NOT_RUN | `test_workflow_data_p19_goldset.py` | Sí para piloto conversacional |
-| G07 | Inventario | Adaptador, expiración, batch, 100 ops | PASS local: 100 ops/20 concurrencia, stock 10, 0 negativo; doble commit NOT_RUN | `p19_inventory_concurrency.py` | Sí para escrituras |
+| G07 | Inventario | Adaptador, expiración, batch, 100 ops, doble commit | PASS local: 100 ops/20 concurrencia, stock 10, 0 negativo; 2 commits = 1 movement; crash NOT_RUN | `p19_inventory_concurrency.py`, `p19_inventory_double_commit.py` | Sí para escrituras |
 | G08 | Conexiones | Red, TLS handshake CA, allowlist, cache, external real | PASS unitario + external; carga 100 NOT_RUN | `test_workflow_data_p19_connector_security.py` (7) | Sí para DB externa |
 | G09 | Certificación | E2E, adversarial, humanas, SLO | FAIL / incompleto | este documento | Sí |
 
@@ -51,6 +52,7 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 | Vitest `PublishQueryModal` | `1 passed` |
 | Gold set intención 80 casos | `route_accuracy=1.0`, `slot_f1=1.0`, `false_authorizations=0` |
 | Chaos inventario | 100 operaciones, concurrencia 20, stock 10: 10 reserved, 90 conflicts, 0 negativo |
+| Doble commit | 2 commits simultáneos: 1 COMMITTED, 1 ALREADY_APPLIED, 1 movement, on_hand 4 |
 | TLS handshake CA propia | PASS; hostname incorrecto rechazado |
 | Cache de engines | PASS; límite 2 respetado |
 | `npm run typecheck` | PASS |

@@ -1,8 +1,8 @@
 # P19.1-07 — Inventario: adaptador, reservas y efectos
 
-- **Estado:** PARTIAL. SQL extraído del core, idempotencia corregida, barrido
-  periódico y batch atómico agregados; doble commit/chaos y E2E de crash
-  pendientes.
+- **Estado:** PARTIAL. SQL extraído del core, idempotencia, barrido periódico,
+  batch atómico, 100 operaciones concurrentes y doble commit probados; crash/
+  reboot y reconciliación ledger pendientes.
 
 ## Hallazgo AS-IS
 
@@ -35,7 +35,7 @@
 | Suite P19 existente (incluye bodega) | PASS | `test_workflow_data_p19_*` |
 | External PostgreSQL | PASS | `test_workflow_data_p19_external.py` |
 | 100 operaciones, concurrencia 20, stock 10 | PASS: 10 reserved, 90 CONFLICT, reserved=10, active=10, sin negativo | `scripts/cert/p19_inventory_concurrency.py` |
-| Doble commit simultáneo | NOT_RUN | falta test concurrente PostgreSQL |
+| Doble commit simultáneo | PASS: 1 COMMITTED + 1 ALREADY_APPLIED, 1 movement | `scripts/cert/p19_inventory_double_commit.py` |
 | Multi-ítem atómico | PASS unitario (validación); falta E2E | `reserve_stock_batch` |
 | Job de expiración | PARTIAL | función + script; cron no conectado |
 | Crash/reboot worker | NOT_RUN | pendiente |
