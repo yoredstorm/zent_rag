@@ -15,10 +15,20 @@ type Table = {
   columns: { name: string; data_type: string; is_primary_key: boolean }[];
 };
 
+type PublishedPlan = {
+  binding_ref: string;
+  capability_ref: string;
+  resource_ref: string;
+  operation: string;
+  projection: string[];
+  parameters: { name: string; field: string; operator: string; type: string; required: boolean }[];
+  max_rows: number;
+};
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onPublished: () => void;
+  onPublished: (plan: PublishedPlan) => void;
 };
 
 export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
@@ -77,11 +87,8 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
 
   function chooseTable(value: string) {
     setResource(value);
-    const table = tables.find((item) => `${item.schema}.${item.name}` === value);
-    if (!table) return;
-    setSelectedColumns(table.columns.map((column) => column.name));
-    const primary = table.columns.find((column) => column.is_primary_key);
-    setKeyColumn(primary?.name ?? table.columns[0]?.name ?? "");
+    setSelectedColumns([]);
+    setKeyColumn("");
   }
 
   async function publish() {
@@ -89,7 +96,7 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
     setLoading(true);
     setError("");
     try {
-      await api("/api/v1/workflows/data-query/plans", {
+      const published = await api<PublishedPlan>("/api/v1/workflows/data-query/plans", {
         method: "POST",
         token: session.token,
         organizationId: session.organizationId,
@@ -112,7 +119,7 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
           label: selectedTable ? `${selectedTable.name}` : resource,
         }),
       });
-      onPublished();
+      onPublished(published);
       onOpenChange(false);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "No pude publicar la consulta.");

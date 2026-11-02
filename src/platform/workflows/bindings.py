@@ -18,12 +18,13 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
@@ -114,6 +115,11 @@ def _binding_hash(binding: dict[str, Any], plan_hash: str) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def binding_plan_hash(binding: dict[str, Any]) -> str:
+    """Hash canonico del binding + plan; no incluye secretos ni filas."""
+    return _binding_hash(binding, _plan_hash(binding.get("config") or {}))
+
+
 class _PlanBase(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -151,7 +157,9 @@ class QueryParameter(_PlanBase):
     name: str
     field: str
     operator: Literal["eq", "ne", "gt", "gte", "lt", "lte", "like", "ilike", "in"] = "eq"
-    type: Literal["string", "integer", "number", "boolean", "date", "datetime"] = "string"
+    type: Literal[
+        "string", "integer", "number", "decimal", "boolean", "date", "datetime", "uuid", "enum"
+    ] = "string"
     required: bool = True
 
     @field_validator("name", "field")
@@ -211,6 +219,9 @@ class DataQueryPlan(_PlanBase):
     ownership: QueryOwnership | None = None
     resource_ref: str | None = None
     column_types: dict[str, str] = Field(default_factory=dict)
+    sensitive_columns: list[str] = Field(default_factory=list)
+    purpose: str | None = Field(default=None, max_length=300)
+    policy_hash: str | None = Field(default=None, max_length=64)
 
     @field_validator("projection", "allowed_columns")
     @classmethod
@@ -295,12 +306,16 @@ def _row(r: Any) -> dict[str, Any]:
         "contract_input_schema": dict(r.contract_input_schema or {}),
         "contract_output_schema": dict(r.contract_output_schema or {}),
         "status": str(r.status),
+        "plan_version": int(getattr(r, "plan_version", 1) or 1),
+        "canonical_plan_hash": getattr(r, "canonical_plan_hash", None),
+        "policy_version": str(getattr(r, "policy_version", "v1") or "v1"),
     }
 
 
 _BINDING_COLS = (
     "id, organization_id, workspace_id, capability_ref, provider_kind, config, "
-    "credential_ref, contract_input_schema, contract_output_schema, status"
+    "credential_ref, contract_input_schema, contract_output_schema, status, "
+    "plan_version, canonical_plan_hash, policy_version"
 )
 
 
@@ -323,25 +338,62 @@ async def upsert_binding(
     if not ref or len(ref) > 120:
         raise ValueError("capability_ref inválido")
     await ensure_binding_tables()
+    cfg = dict(config or {})
+    plan_digest = _plan_hash(cfg)
     session = await get_async_session()
     try:
         if workspace_id is not None:
             conflict = "(organization_id, workspace_id, capability_ref) WHERE workspace_id IS NOT NULL"
+            old_sql = (
+                "SELECT id, plan_version, canonical_plan_hash, config "
+                "FROM workflow_capability_bindings "
+                "WHERE organization_id = :oid AND workspace_id = :ws AND capability_ref = :ref"
+            )
+            old_params = {"oid": str(organization_id), "ws": str(workspace_id), "ref": ref}
         else:
             conflict = "(organization_id, capability_ref) WHERE workspace_id IS NULL"
+            old_sql = (
+                "SELECT id, plan_version, canonical_plan_hash, config "
+                "FROM workflow_capability_bindings "
+                "WHERE organization_id = :oid AND workspace_id IS NULL AND capability_ref = :ref"
+            )
+            old_params = {"oid": str(organization_id), "ref": ref}
+        old = (await session.execute(text(old_sql), old_params)).fetchone()
+        if old is not None:
+            await session.execute(
+                text(
+                    "INSERT INTO workflow_capability_binding_revisions "
+                    "(binding_id, organization_id, workspace_id, plan_version, "
+                    "canonical_plan_hash, config, status, created_by) "
+                    "VALUES (:bid, :oid, :ws, :version, :hash, CAST(:cfg AS jsonb), "
+                    "'superseded', :uid) ON CONFLICT (binding_id, plan_version) DO NOTHING"
+                ),
+                {
+                    "bid": str(old.id),
+                    "oid": str(organization_id),
+                    "ws": str(workspace_id) if workspace_id else None,
+                    "version": int(old.plan_version or 1),
+                    "hash": old.canonical_plan_hash,
+                    "cfg": json.dumps(dict(old.config or {}), ensure_ascii=False, default=str),
+                    "uid": str(created_by) if created_by else None,
+                },
+            )
         row = (
             await session.execute(
                 text(
                     "INSERT INTO workflow_capability_bindings "
                     "(organization_id, workspace_id, capability_ref, provider_kind, config, "
-                    "credential_ref, contract_input_schema, contract_output_schema, created_by) "
+                    "credential_ref, contract_input_schema, contract_output_schema, created_by, "
+                    "canonical_plan_hash) "
                     "VALUES (:oid, :ws, :ref, :kind, CAST(:cfg AS jsonb), :cred, "
-                    "CAST(:is AS jsonb), CAST(:os AS jsonb), :uid) "
+                    "CAST(:is AS jsonb), CAST(:os AS jsonb), :uid, :plan_hash) "
                     f"ON CONFLICT {conflict} DO UPDATE SET "
                     "provider_kind = EXCLUDED.provider_kind, config = EXCLUDED.config, "
                     "credential_ref = EXCLUDED.credential_ref, "
                     "contract_input_schema = EXCLUDED.contract_input_schema, "
                     "contract_output_schema = EXCLUDED.contract_output_schema, "
+                    "canonical_plan_hash = EXCLUDED.canonical_plan_hash, "
+                    "plan_version = workflow_capability_bindings.plan_version + 1, "
                     "status = 'active', updated_at = NOW() "
                     f"RETURNING {_BINDING_COLS}"
                 ),
@@ -350,14 +402,33 @@ async def upsert_binding(
                     "ws": str(workspace_id) if workspace_id else None,
                     "ref": ref,
                     "kind": provider_kind,
-                    "cfg": json.dumps(config or {}, ensure_ascii=False, default=str),
+                    "cfg": json.dumps(cfg, ensure_ascii=False, default=str),
                     "cred": credential_ref,
                     "is": json.dumps(contract_input_schema or {}, ensure_ascii=False),
                     "os": json.dumps(contract_output_schema or {}, ensure_ascii=False),
                     "uid": str(created_by) if created_by else None,
+                    "plan_hash": plan_digest,
                 },
             )
         ).fetchone()
+        await session.execute(
+            text(
+                "INSERT INTO workflow_capability_binding_revisions "
+                "(binding_id, organization_id, workspace_id, plan_version, "
+                "canonical_plan_hash, config, status, created_by) "
+                "VALUES (:bid, :oid, :ws, :version, :hash, CAST(:cfg AS jsonb), "
+                "'published', :uid) ON CONFLICT (binding_id, plan_version) DO NOTHING"
+            ),
+            {
+                "bid": str(row.id),
+                "oid": str(organization_id),
+                "ws": str(workspace_id) if workspace_id else None,
+                "version": int(row.plan_version or 1),
+                "hash": row.canonical_plan_hash,
+                "cfg": json.dumps(cfg, ensure_ascii=False, default=str),
+                "uid": str(created_by) if created_by else None,
+            },
+        )
         await session.commit()
     finally:
         await session.close()
@@ -548,6 +619,9 @@ async def execute_binding(
     run_id: UUID | None = None,
     instance_id: UUID | None = None,
     node_id: str | None = None,
+    principal: Any | None = None,
+    binding_ref: UUID | None = None,
+    expected_binding_hash: str | None = None,
 ) -> dict[str, Any]:
     """Ejecuta una capacidad resuelta por el binding del tenant.
 
@@ -557,11 +631,21 @@ async def execute_binding(
 
     Lanza BindingError(code) para estados accionables: NEEDS_CONFIGURATION,
     NEEDS_CREDENTIALS, DISABLED, PROVIDER_NOT_IMPLEMENTED, CONTRACT_INVALID."""
-    binding = await resolve_binding(organization_id, capability_ref, workspace_id)
+    binding = (
+        await get_binding(organization_id, binding_ref, workspace_id=workspace_id)
+        if binding_ref is not None
+        else await resolve_binding(organization_id, capability_ref, workspace_id)
+    )
     if binding is None:
+        code = "PLAN_STALE" if binding_ref is not None else "NEEDS_CONFIGURATION"
         raise BindingError(
-            "NEEDS_CONFIGURATION",
-            f"la capacidad {capability_ref} no tiene binding configurado",
+            code,
+            f"la capacidad {capability_ref} no tiene binding vigente",
+        )
+    if expected_binding_hash and binding_plan_hash(binding) != expected_binding_hash:
+        raise BindingError(
+            "PLAN_STALE",
+            "el binding cambio desde la publicacion; revisar y republicar",
         )
     payload = dict(inputs or {})
     errors = validate_contract(payload, binding.get("contract_input_schema"))
@@ -604,6 +688,7 @@ async def execute_binding(
             run_id=run_id,
             instance_id=instance_id,
             node_id=node_id,
+            principal=principal,
         )
         if ledger_eid is not None:
             from src.platform.workflows.effect_ledger import confirm_effect
@@ -644,6 +729,7 @@ async def _dispatch_binding(
     run_id: UUID | None,
     instance_id: UUID | None,
     node_id: str | None,
+    principal: Any | None = None,
 ) -> dict[str, Any]:
     if kind == "marketplace_action":
         out = await _execute_marketplace_action(
@@ -659,10 +745,12 @@ async def _dispatch_binding(
     elif kind == "semantic_query":
         out = await _execute_semantic_query(organization_id, binding, payload, workspace_id=workspace_id)
     elif kind == "managed_db":
-        out = await _execute_managed_select(organization_id, binding, payload, workspace_id=workspace_id)
+        out = await _execute_managed_select(
+            organization_id, binding, payload, workspace_id=workspace_id, principal=principal
+        )
     elif kind == "connected_db":
         out = await _execute_connected_select(
-            organization_id, binding, payload, workspace_id=workspace_id
+            organization_id, binding, payload, workspace_id=workspace_id, principal=principal
         )
     elif kind == "rest_api":
         out = await _execute_rest(organization_id, binding, payload)
@@ -917,10 +1005,21 @@ def _param_type_ok(value: Any, want: str) -> bool:
         return isinstance(value, int) and not isinstance(value, bool)
     if want == "number":
         return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if want == "decimal":
+        return isinstance(value, str) and bool(re.match(r"^-?\d{1,18}(\.\d{1,6})?$", value))
     if want == "boolean":
         return isinstance(value, bool)
     if want in ("date", "datetime"):
         return isinstance(value, str) and 4 <= len(value) <= 64
+    if want == "uuid":
+        return isinstance(value, str) and bool(
+            re.match(
+                r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                value,
+            )
+        )
+    if want == "enum":
+        return isinstance(value, str) and 0 < len(value) <= 80
     return False
 
 
@@ -1029,7 +1128,7 @@ async def _execute_data_query_plan(
     payload: dict[str, Any],
     *,
     workspace_id: UUID | None,
-    principal: dict[str, Any] | None = None,
+    principal: Any | None = None,
     session_factory: Any | None = None,
 ) -> dict[str, Any]:
     from src.platform.managed_db.service import open_managed_query_session
@@ -1097,10 +1196,22 @@ async def _execute_data_query_plan(
         value = params_input[item.name]
         if not _param_type_ok(value, item.type):
             raise BindingError("INVALID_PARAMS", f"tipo inválido en {item.name}: esperado {item.type}")
+        if item.type == "decimal":
+            value = Decimal(str(value))
         predicates.append((item.field, item.operator, value))
 
     if plan.ownership is not None and plan.ownership.required:
-        resolved_principal = principal if isinstance(principal, dict) else {}
+        from src.platform.workflows.principal import (
+            principal_claims,
+            validate_principal_scope,
+        )
+
+        if principal is not None:
+            try:
+                validate_principal_scope(principal, organization_id, workspace_id)
+            except ValueError as exc:
+                raise BindingError("IDENTITY_REQUIRED", str(exc)[:200]) from exc
+        resolved_principal = principal_claims(principal)
         owner_value = resolved_principal.get(plan.ownership.principal_claim)
         if owner_value is None or str(owner_value).strip() == "":
             raise BindingError("PERMISSION_DENIED", "identidad del titular no verificada")
@@ -1152,6 +1263,7 @@ async def _execute_data_query_plan(
     base: dict[str, Any] = {
         "status": "FOUND",
         "found": False,
+        "operation": plan.operation,
         "record": None,
         "rows": [],
         "columns": columns,
@@ -1305,12 +1417,17 @@ async def _execute_connected_select(
     payload: dict[str, Any],
     *,
     workspace_id: UUID | None,
+    principal: Any | None = None,
 ) -> dict[str, Any]:
     """Ejecutor connected_db (PostgreSQL externo read-only) de P19-06."""
     from urllib.parse import quote_plus
 
     from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
     from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+    from src.platform.workflows.connector_security import (
+        get_connector_engine,
+        prepare_connector_target,
+    )
 
     plan = parse_data_query_plan(binding.get("config") or {})
     if plan is None:
@@ -1330,35 +1447,23 @@ async def _execute_connected_select(
     if str(connector.type or "").lower() not in ("postgres", "postgresql"):
         raise BindingError("PROVIDER_NOT_SUPPORTED", "solo PostgreSQL externo está certificado")
     config = connector.config_json if isinstance(connector.config_json, dict) else {}
-    host = str(config.get("host") or "").strip()
-    database = str(config.get("database") or "").strip()
-    user = str(config.get("user") or "").strip()
-    if not host or not database or not user:
-        raise BindingError("NEEDS_CONFIGURATION", "conector PostgreSQL incompleto")
-    try:
-        port = int(config.get("port") or 5432)
-    except (TypeError, ValueError) as exc:
-        raise BindingError("NEEDS_CONFIGURATION", "puerto del conector inválido") from exc
     secret = await get_secret_store().get(organization_id, plan.connection_ref)
     password = secret.get("password") if isinstance(secret, dict) else None
     if not password:
         raise BindingError("NEEDS_CREDENTIALS", "el conector no tiene credencial de lectura")
+    target = await prepare_connector_target(
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        connector_id=plan.connection_ref,
+        config=config,
+        password=str(password),
+        policy_config=binding.get("network_policy") if isinstance(binding.get("network_policy"), dict) else None,
+    )
     dsn = (
-        f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(str(password))}"
-        f"@{host}:{port}/{quote_plus(database)}"
+        f"postgresql+asyncpg://{quote_plus(target.user)}:{quote_plus(target.password)}"
+        f"@{target.host}:{target.port}/{quote_plus(target.database)}"
     )
-    connect_args: dict[str, Any] = {
-        "server_settings": {"default_transaction_read_only": "on"}
-    }
-    if config.get("ssl"):
-        connect_args["ssl"] = "require"
-    engine = create_async_engine(
-        dsn,
-        pool_size=1,
-        max_overflow=0,
-        pool_pre_ping=True,
-        connect_args=connect_args,
-    )
+    engine = get_connector_engine(dsn, target)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         return await _execute_data_query_plan(
@@ -1367,14 +1472,13 @@ async def _execute_connected_select(
             plan,
             payload,
             workspace_id=workspace_id,
+            principal=principal,
             session_factory=factory,
         )
     except BindingError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise _query_failure(exc) from exc
-    finally:
-        await engine.dispose()
 
 
 async def _execute_managed_select(
@@ -1406,361 +1510,12 @@ async def _execute_inventory_action(
     *,
     workspace_id: UUID | None,
 ) -> dict[str, Any]:
-    """Inventario gobernado: reserva temporal, commit o release."""
-    from urllib.parse import quote_plus
+    """Delegacion al adaptador de inventario; sin SQL de inventario en el core."""
+    from src.platform.workflows.inventory_adapter import execute_inventory_action
 
-    from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
-    from src.infrastructure.secrets.secret_store_resolver import get_secret_store
-
-    config = binding.get("config") or {}
-    action = str(config.get("action") or "")
-    if action not in ("reserve_stock", "commit_stock", "release_stock"):
-        raise BindingError("PROVIDER_NOT_SUPPORTED", "acción de inventario no soportada")
-    if config.get("write") is not True:
-        raise BindingError("PERMISSION_DENIED", "el conector no está habilitado para escritura")
-    try:
-        connector_id = UUID(str(config.get("connector_id") or ""))
-    except (TypeError, ValueError) as exc:
-        raise BindingError("NEEDS_CONFIGURATION", "inventory requiere connector_id") from exc
-    order_number = str(payload.get("order_number") or "").strip()
-    sku = str(payload.get("sku") or "").strip()
-    if not re.match(r"^[A-Za-z0-9_-]{3,40}$", sku) or not re.match(
-        r"^[A-Za-z0-9_-]{3,40}$", order_number
-    ):
-        raise BindingError("INVALID_PARAMS", "order_number o sku inválido")
-    try:
-        quantity = int(payload.get("quantity") or 0)
-    except (TypeError, ValueError) as exc:
-        raise BindingError("INVALID_PARAMS", "quantity inválida") from exc
-    if quantity < 1 or quantity > int(config.get("max_quantity") or 100):
-        raise BindingError("INVALID_PARAMS", "quantity fuera de rango")
-    try:
-        ttl_seconds = min(max(int(payload.get("ttl_seconds") or 900), 30), 3600)
-    except (TypeError, ValueError):
-        ttl_seconds = 900
-
-    connector = await PostgresConnectorRepository().get_connector(
-        organization_id, connector_id
+    return await execute_inventory_action(
+        organization_id, binding, payload, workspace_id=workspace_id
     )
-    if connector is None or str(connector.status or "").lower() != "active":
-        raise BindingError("RESOURCE_NOT_EXPOSED", "conector de escritura no disponible")
-    if connector.workspace_id and workspace_id and str(connector.workspace_id) != str(workspace_id):
-        raise BindingError("PERMISSION_DENIED", "el conector pertenece a otro workspace")
-    cfg = connector.config_json if isinstance(connector.config_json, dict) else {}
-    if str(connector.type or "").lower() not in ("postgres", "postgresql"):
-        raise BindingError("PROVIDER_NOT_SUPPORTED", "solo PostgreSQL")
-    host = str(cfg.get("host") or "").strip()
-    database = str(cfg.get("database") or "").strip()
-    user = str(cfg.get("user") or "").strip()
-    if not host or not database or not user:
-        raise BindingError("NEEDS_CONFIGURATION", "conector de escritura incompleto")
-    secret = await get_secret_store().get(organization_id, connector_id)
-    password = secret.get("password") if isinstance(secret, dict) else None
-    if not password:
-        raise BindingError("NEEDS_CREDENTIALS", "sin credencial de escritura")
-    dsn = (
-        f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(str(password))}"
-        f"@{host}:{int(cfg.get('port') or 5432)}/{quote_plus(database)}"
-    )
-    engine = create_async_engine(dsn, pool_size=1, max_overflow=0, pool_pre_ping=True)
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "WITH expired AS ("
-                    " UPDATE bodega.stock_reservations SET status = 'expired', released_at = NOW() "
-                    " WHERE status = 'active' AND expires_at <= NOW() "
-                    " RETURNING sku, quantity"
-                    "), agg AS (SELECT sku, SUM(quantity) AS qty FROM expired GROUP BY sku) "
-                    "UPDATE bodega.stock s SET reserved = GREATEST(s.reserved - agg.qty, 0) "
-                    "FROM agg WHERE s.sku = agg.sku"
-                )
-            )
-            order = (
-                await conn.execute(
-                    text(
-                        "SELECT status FROM bodega.orders "
-                        "WHERE order_number = :on FOR UPDATE"
-                    ),
-                    {"on": order_number},
-                )
-            ).fetchone()
-            if order is None:
-                raise BindingError("NOT_FOUND", "pedido no encontrado")
-            if action == "reserve_stock" and str(order.status) in ("confirmed", "cancelled"):
-                raise BindingError("CONFLICT", "el pedido ya está cerrado")
-            stock = (
-                await conn.execute(
-                    text(
-                        "SELECT on_hand, reserved FROM bodega.stock "
-                        "WHERE sku = :sku FOR UPDATE"
-                    ),
-                    {"sku": sku},
-                )
-            ).fetchone()
-            if stock is None:
-                raise BindingError("RESOURCE_NOT_EXPOSED", "SKU no expuesto")
-            reservation_key = f"reserve:{order_number}:{sku}"
-
-            if action == "reserve_stock":
-                existing = (
-                    await conn.execute(
-                        text(
-                            "SELECT id, status, expires_at FROM bodega.stock_reservations "
-                            "WHERE idempotency_key = :key"
-                        ),
-                        {"key": reservation_key},
-                    )
-                ).fetchone()
-                if existing is not None:
-                    if existing.status == "committed":
-                        return {
-                            "status": "COMMITTED",
-                            "order_number": order_number,
-                            "sku": sku,
-                            "quantity": quantity,
-                            "expires_at": existing.expires_at.isoformat() if existing.expires_at else None,
-                            "reservation_id": str(existing.id),
-                        }
-                    if existing.status == "active":
-                        return {
-                            "status": "ALREADY_RESERVED",
-                            "order_number": order_number,
-                            "sku": sku,
-                            "quantity": quantity,
-                            "expires_at": existing.expires_at.isoformat() if existing.expires_at else None,
-                            "reservation_id": str(existing.id),
-                        }
-                    available = int(stock.on_hand) - int(stock.reserved)
-                    if available < quantity:
-                        raise BindingError("CONFLICT", "stock insuficiente para reservar")
-                    renewed = (
-                        await conn.execute(
-                            text(
-                                "UPDATE bodega.stock_reservations SET status = 'active', "
-                                "quantity = :qty, expires_at = NOW() + (:ttl || ' seconds')::interval, "
-                                "committed_at = NULL, released_at = NULL, created_at = NOW() "
-                                "WHERE id = :rid RETURNING expires_at"
-                            ),
-                            {"qty": quantity, "ttl": str(ttl_seconds), "rid": existing.id},
-                        )
-                    ).fetchone()
-                    await conn.execute(
-                        text(
-                            "UPDATE bodega.stock SET reserved = reserved + :qty, "
-                            "version = version + 1 WHERE sku = :sku"
-                        ),
-                        {"qty": quantity, "sku": sku},
-                    )
-                    return {
-                        "status": "RESERVED",
-                        "order_number": order_number,
-                        "sku": sku,
-                        "quantity": quantity,
-                        "expires_at": renewed.expires_at.isoformat(),
-                        "reservation_id": str(existing.id),
-                        "available": available,
-                    }
-                available = int(stock.on_hand) - int(stock.reserved)
-                if available < quantity:
-                    raise BindingError("CONFLICT", "stock insuficiente para reservar")
-                reservation = (
-                    await conn.execute(
-                        text(
-                            "INSERT INTO bodega.stock_reservations "
-                            "(order_number, sku, quantity, status, idempotency_key, expires_at) "
-                            "VALUES (:on, :sku, :qty, 'active', :key, NOW() + (:ttl || ' seconds')::interval) "
-                            "RETURNING id, expires_at"
-                        ),
-                        {
-                            "on": order_number,
-                            "sku": sku,
-                            "qty": quantity,
-                            "key": reservation_key,
-                            "ttl": str(ttl_seconds),
-                        },
-                    )
-                ).fetchone()
-                await conn.execute(
-                    text(
-                        "UPDATE bodega.stock SET reserved = reserved + :qty, "
-                        "version = version + 1 WHERE sku = :sku"
-                    ),
-                    {"qty": quantity, "sku": sku},
-                )
-                return {
-                    "status": "RESERVED",
-                    "order_number": order_number,
-                    "sku": sku,
-                    "quantity": quantity,
-                    "expires_at": reservation.expires_at.isoformat(),
-                    "reservation_id": str(reservation.id),
-                    "available": available,
-                }
-
-            if action == "release_stock":
-                reservation = (
-                    await conn.execute(
-                        text(
-                            "SELECT id, status, quantity FROM bodega.stock_reservations "
-                            "WHERE order_number = :on AND sku = :sku AND status = 'active' "
-                            "FOR UPDATE"
-                        ),
-                        {"on": order_number, "sku": sku},
-                    )
-                ).fetchone()
-                if reservation is None:
-                    return {"status": "NO_ACTIVE_RESERVATION", "order_number": order_number, "sku": sku}
-                await conn.execute(
-                    text(
-                        "UPDATE bodega.stock_reservations SET status = 'released', released_at = NOW() "
-                        "WHERE id = :rid"
-                    ),
-                    {"rid": reservation.id},
-                )
-                await conn.execute(
-                    text(
-                        "UPDATE bodega.stock SET reserved = GREATEST(reserved - :qty, 0), "
-                        "version = version + 1 WHERE sku = :sku"
-                    ),
-                    {"qty": int(reservation.quantity), "sku": sku},
-                )
-                return {
-                    "status": "RELEASED",
-                    "order_number": order_number,
-                    "sku": sku,
-                    "quantity": int(reservation.quantity),
-                }
-
-            existing = (
-                await conn.execute(
-                    text(
-                        "SELECT id, after_on_hand FROM bodega.stock_movements "
-                        "WHERE idempotency_key = :key"
-                    ),
-                    {"key": f"commit:{order_number}:{sku}"},
-                )
-            ).fetchone()
-            if existing is not None:
-                return {
-                    "status": "ALREADY_APPLIED",
-                    "order_number": order_number,
-                    "sku": sku,
-                    "quantity": quantity,
-                    "on_hand": int(existing.after_on_hand),
-                    "movement_id": str(existing.id),
-                }
-            reservation = (
-                await conn.execute(
-                    text(
-                        "SELECT id, status, quantity, expires_at FROM bodega.stock_reservations "
-                        "WHERE order_number = :on AND sku = :sku AND status = 'active' "
-                        "FOR UPDATE"
-                    ),
-                    {"on": order_number, "sku": sku},
-                )
-            ).fetchone()
-            if reservation is None:
-                previous = (
-                    await conn.execute(
-                        text(
-                            "SELECT status FROM bodega.stock_reservations "
-                            "WHERE order_number = :on AND sku = :sku "
-                            "ORDER BY created_at DESC LIMIT 1"
-                        ),
-                        {"on": order_number, "sku": sku},
-                    )
-                ).fetchone()
-                if previous is not None and previous.status in ("expired", "released"):
-                    return {
-                        "status": "RESERVATION_EXPIRED",
-                        "order_number": order_number,
-                        "sku": sku,
-                        "quantity": quantity,
-                    }
-                raise BindingError("CONFLICT", "no hay reserva activa para el pedido")
-            if reservation.expires_at <= datetime.now(timezone.utc):
-                await conn.execute(
-                    text(
-                        "UPDATE bodega.stock_reservations SET status = 'expired', released_at = NOW() "
-                        "WHERE id = :rid"
-                    ),
-                    {"rid": reservation.id},
-                )
-                await conn.execute(
-                    text(
-                        "UPDATE bodega.stock SET reserved = GREATEST(reserved - :qty, 0) "
-                        "WHERE sku = :sku"
-                    ),
-                    {"qty": int(reservation.quantity), "sku": sku},
-                )
-                return {
-                    "status": "RESERVATION_EXPIRED",
-                    "order_number": order_number,
-                    "sku": sku,
-                    "quantity": quantity,
-                }
-            before = int(stock.on_hand)
-            if before < quantity:
-                raise BindingError("CONFLICT", "stock insuficiente")
-            after = before - quantity
-            movement = (
-                await conn.execute(
-                    text(
-                        "INSERT INTO bodega.stock_movements "
-                        "(order_number, sku, quantity, movement_type, idempotency_key, "
-                        "before_on_hand, after_on_hand) "
-                        "VALUES (:on, :sku, :qty, 'commit', :key, :before, :after) "
-                        "RETURNING id"
-                    ),
-                    {
-                        "on": order_number,
-                        "sku": sku,
-                        "qty": quantity,
-                        "key": f"commit:{order_number}:{sku}",
-                        "before": before,
-                        "after": after,
-                    },
-                )
-            ).fetchone()
-            await conn.execute(
-                text(
-                    "UPDATE bodega.stock SET on_hand = :after, "
-                    "reserved = GREATEST(reserved - :qty, 0), version = version + 1 "
-                    "WHERE sku = :sku"
-                ),
-                {"after": after, "qty": quantity, "sku": sku},
-            )
-            await conn.execute(
-                text(
-                    "UPDATE bodega.stock_reservations SET status = 'committed', committed_at = NOW() "
-                    "WHERE id = :rid"
-                ),
-                {"rid": reservation.id},
-            )
-            await conn.execute(
-                text(
-                    "UPDATE bodega.orders SET status = 'confirmed', "
-                    "payment_status = 'approved_manual', updated_at = NOW() "
-                    "WHERE order_number = :on"
-                ),
-                {"on": order_number},
-            )
-        return {
-            "status": "COMMITTED",
-            "order_number": order_number,
-            "sku": sku,
-            "quantity": quantity,
-            "on_hand_before": before,
-            "on_hand": after,
-            "movement_id": str(movement.id) if movement else None,
-        }
-    except BindingError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise _query_failure(exc) from exc
-    finally:
-        await engine.dispose()
 
 
 async def _execute_rest(organization_id: UUID, binding: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:

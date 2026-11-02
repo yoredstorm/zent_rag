@@ -409,6 +409,7 @@ async def route_ingress(
     occurred_at: datetime | None = None,
     signature_verified: bool = False,
     dedupe_mode: str | None = None,
+    principal: Any | None = None,
 ) -> dict[str, Any]:
     """Entrada única. Efímero → run; durable → WorkflowInstance."""
     await ensure_ingress_tables()
@@ -530,6 +531,7 @@ async def route_ingress(
                 system_context=system_context,
                 correlation_id=correlation_id,
                 definition_source=definition["definition_source"],
+                principal=principal,
             )
             await _finish_event(
                 organization_id,
@@ -562,6 +564,7 @@ async def route_ingress(
             system_context=system_context,
             correlation_id=correlation_id,
             definition=definition,
+            principal=principal,
         )
         instance_id = result.get("instance_id")
         run_id = (result.get("run") or {}).get("run_id") if isinstance(result.get("run"), dict) else None

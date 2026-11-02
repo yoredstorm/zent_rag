@@ -3738,6 +3738,7 @@ async def _exec_capability_call(rctx: NodeContext) -> NodeOutcome:
             run_id=rctx.execution.run_id,
             instance_id=rctx.execution.instance_id,
             node_id=rctx.node_id,
+            principal=rctx.execution.principal,
         )
     except BindingError as exc:
         return NodeOutcome(error=f"{exc.code}: {exc.message}"[:300])
@@ -3768,6 +3769,50 @@ async def _exec_data_query(rctx: NodeContext) -> NodeOutcome:
         )
     from src.platform.workflows.bindings import BindingError, execute_binding
 
+    expected_binding = str(cfg.get("binding_ref") or "").strip()
+    expected_hash = str(cfg.get("binding_hash") or "").strip()
+    binding_uuid = None
+    if expected_binding:
+        from uuid import UUID as _UUID
+
+        from src.platform.workflows.bindings import binding_plan_hash, get_binding
+
+        try:
+            binding_uuid = _UUID(expected_binding)
+        except (TypeError, ValueError):
+            return NodeOutcome(
+                error="PLAN_STALE: binding_ref invalido",
+                output={
+                    "status": "ERROR",
+                    "reason_code": "PLAN_STALE",
+                    "binding_ref": expected_binding,
+                    "capability": capability_ref,
+                },
+            )
+        pinned = await get_binding(
+            rctx.organization_id, binding_uuid, workspace_id=rctx.workspace_id
+        )
+        if pinned is None:
+            return NodeOutcome(
+                error="PLAN_STALE: binding no vigente",
+                output={
+                    "status": "ERROR",
+                    "reason_code": "PLAN_STALE",
+                    "binding_ref": expected_binding,
+                    "capability": capability_ref,
+                },
+            )
+        if expected_hash and binding_plan_hash(pinned) != expected_hash:
+            return NodeOutcome(
+                error="PLAN_STALE: el binding cambio desde la publicacion",
+                output={
+                    "status": "ERROR",
+                    "reason_code": "PLAN_STALE",
+                    "binding_ref": expected_binding,
+                    "binding_hash": expected_hash,
+                    "capability": capability_ref,
+                },
+            )
     try:
         result = await execute_binding(
             rctx.organization_id,
@@ -3780,40 +3825,50 @@ async def _exec_data_query(rctx: NodeContext) -> NodeOutcome:
             run_id=rctx.execution.run_id,
             instance_id=rctx.execution.instance_id,
             node_id=rctx.node_id,
+            principal=rctx.execution.principal,
+            binding_ref=binding_uuid,
+            expected_binding_hash=expected_hash or None,
         )
     except BindingError as exc:
+        from src.platform.workflows.data_result import error_envelope
+
         return NodeOutcome(
-            output={
-                "status": "ERROR",
-                "found": False,
-                "record": None,
-                "rows": [],
-                "reason_code": exc.code,
-                "message": exc.message[:300],
-                "capability": capability_ref,
-            }
+            error=f"{exc.code}: {exc.message}"[:300],
+            output=error_envelope(
+                exc.code,
+                capability_ref=capability_ref,
+                correlation_id=rctx.execution.correlation_id,
+            ),
         )
     output = dict(result.get("output") or {})
     expected_binding = str(cfg.get("binding_ref") or "").strip()
     actual_binding = str(output.get("binding_ref") or "").strip()
     if expected_binding and actual_binding and expected_binding != actual_binding:
+        from src.platform.workflows.data_result import error_envelope
+
         return NodeOutcome(
-            output={
-                **output,
-                "status": "ERROR",
-                "reason_code": "BINDING_CHANGED",
-                "message": "el binding cambió desde la configuración del nodo",
-            }
+            error="BINDING_CHANGED: el binding cambió desde la publicación",
+            output=error_envelope(
+                "BINDING_CHANGED",
+                capability_ref=capability_ref,
+                correlation_id=rctx.execution.correlation_id,
+            ),
         )
+    from src.platform.workflows.data_result import success_envelope
+
+    output = success_envelope(output, capability_ref=capability_ref)
     output["capability"] = capability_ref
     output["provider_kind"] = result.get("provider_kind")
-    output.setdefault("status", "FOUND" if output.get("found") else "NOT_FOUND")
     return NodeOutcome(output=output)
 
 
 async def _exec_intent_route(rctx: NodeContext) -> NodeOutcome:
     """Identifica una solicitud contra rutas cerradas; no ejecuta la ruta."""
-    from src.platform.workflows.intent_route import IntentConfigError, classify_intent
+    from src.platform.workflows.intent_route import (
+        IntentConfigError,
+        classify_intent,
+        merge_conversation_turn,
+    )
 
     cfg = rctx.node.config
     raw_text = cfg.get("text") or cfg.get("message") or "{{trigger.message}}"
@@ -3837,7 +3892,45 @@ async def _exec_intent_route(rctx: NodeContext) -> NodeOutcome:
         result = classify_intent(intent_config, text)
     except IntentConfigError as exc:
         return NodeOutcome(error=exc.message[:300])
+    state_value = None
+    duplicate = False
+    state_key = str(cfg.get("state_key") or "intent")[:60]
+    use_state = bool(cfg.get("conversation_state", True))
+    if use_state and rctx.execution.instance_id is not None:
+        from src.platform.workflows.instances import get_instance
+
+        instance = await get_instance(
+            rctx.organization_id,
+            rctx.execution.instance_id,
+            workspace_id=rctx.workspace_id,
+        )
+        previous = ((instance or {}).get("state") or {}).get("conversation", {}).get(state_key)
+        message_id = str(
+            (rctx.trigger or {}).get("message_id")
+            or (rctx.payload or {}).get("message_id")
+            or ""
+        )[:120] or None
+        state, result, duplicate = merge_conversation_turn(
+            previous,
+            result,
+            text,
+            message_id=message_id,
+        )
+        state_value = state.model_dump(mode="json")
+        if not rctx.simulate:
+            from src.platform.workflows.instances import mutate_instance_state
+
+            await mutate_instance_state(
+                rctx.organization_id,
+                rctx.execution.instance_id,
+                op="set",
+                path=f"conversation.{state_key}",
+                value=state_value,
+            )
     output = result.model_dump(mode="json")
+    if state_value is not None:
+        output["conversation_state"] = state_value
+        output["duplicate_message"] = duplicate
     if rctx.simulate:
         return NodeOutcome(
             simulated=True,

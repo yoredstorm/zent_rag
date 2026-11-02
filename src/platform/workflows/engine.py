@@ -15,6 +15,7 @@ import hmac
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -341,6 +342,7 @@ async def run_workflow(
     preload_scope: list[str] | None = None,
     definition_source: str | None = None,
     effective_policy_snapshot: dict | None = None,
+    principal: Any | None = None,
 ) -> dict:
     """Ejecuta el workflow bajo un ExecutionContext explícito.
 
@@ -404,6 +406,20 @@ async def run_workflow(
     eff_org = UUID(str(row_org))
     eff_ws = UUID(str(row_ws)) if row_ws else (workspace_id or None)
     corr = (correlation_id or "").strip() or f"wf:{workflow_id}"
+
+    if principal is not None:
+        from src.platform.workflows.principal import validate_principal_scope
+
+        try:
+            validate_principal_scope(principal, eff_org, eff_ws)
+        except ValueError as exc:
+            return {
+                "run_id": str(run_id) if run_id else None,
+                "workflow_id": str(workflow_id),
+                "status": "failed",
+                "code": "IDENTITY_REQUIRED",
+                "error": str(exc)[:200],
+            }
 
     from src.platform.workflows.definition import (
         DEFINITION_SOURCES,
@@ -694,6 +710,8 @@ async def run_workflow(
         trigger_type=trig,
         permissions=perms,
         correlation_id=corr,
+        principal=principal,
+        principal_hash=principal.public_ref() if principal is not None else None,
         simulate=bool(simulate),
         instance_id=UUID(str(instance_id)) if instance_id else None,
         effective_policy=effective_policy,

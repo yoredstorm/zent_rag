@@ -7,6 +7,7 @@
 # =============================================================================
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -22,7 +23,11 @@ from src.platform.managed_db.service import (
     provision_managed_database,
     run_schema_admin_sql,
 )
-from src.platform.workflows.bindings import _execute_managed_select, upsert_binding
+from src.platform.workflows.bindings import (
+    BindingError,
+    _execute_managed_select,
+    upsert_binding,
+)
 
 
 async def _cleanup(db_name: str, roles: list[str]) -> None:
@@ -160,5 +165,134 @@ async def test_p19_01_real_managed_query_is_parameterized_and_read_only(
             assert "read-only" in str(exc.value).lower() or "read only" in str(exc.value).lower()
         finally:
             await session.close()
+    finally:
+        await _cleanup(managed["db_name"], roles)
+
+
+async def test_verified_principal_enforces_ownership_for_a_not_b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.platform.managed_db import service as managed_service
+    from src.platform.workflows.principal import VerifiedPrincipal
+
+    async def _allow(*_args, **_kwargs):
+        return None
+
+    async def _entitlements(*_args, **_kwargs):
+        return {"entitlements": {"managed_db": True, "managed_db_max_mb": 256}}
+
+    monkeypatch.setattr(managed_service, "check_entitlement", _allow)
+    monkeypatch.setattr(managed_service, "get_org_entitlements", _entitlements)
+
+    organization = await PostgresOrganizationRepository().create_organization(
+        uuid4(), f"P19 Principal {uuid4().hex[:6]}"
+    )
+    workspace = await PostgresWorkspaceRepository().create_workspace(
+        organization.id, "Default", "default"
+    )
+    ctx = TenantContext(
+        tenant_id=organization.id,
+        roles=frozenset({"owner"}),
+        permissions=frozenset({"*"}),
+        scopes=frozenset({"portal"}),
+        auth_type="portal_session",
+    )
+    managed = await provision_managed_database(ctx, workspace.id)
+    roles = [
+        f"zent_schema_admin_{str(organization.id).replace('-', '')[:8]}_{str(workspace.id).replace('-', '')[:8]}",
+        f"zent_query_reader_{str(organization.id).replace('-', '')[:8]}_{str(workspace.id).replace('-', '')[:8]}",
+    ]
+    try:
+        await run_schema_admin_sql(
+            organization.id,
+            workspace.id,
+            'CREATE TABLE IF NOT EXISTS "p19_balances" ('
+            '"customer_id" TEXT NOT NULL, "points" INTEGER NOT NULL);',
+        )
+        await run_schema_admin_sql(
+            organization.id,
+            workspace.id,
+            'INSERT INTO "p19_balances" ("customer_id", "points") VALUES '
+            "('CUST-A', 120), ('CUST-B', 40);",
+        )
+        plan = {
+            "schema": "zent.data.query.binding/v1",
+            "scope": "workspace",
+            "resource": {"schema": "public", "name": "p19_balances", "kind": "table"},
+            "operation": "get_one",
+            "projection": ["customer_id", "points"],
+            "allowed_columns": ["customer_id", "points"],
+            "ownership": {
+                "field": "customer_id",
+                "principal_claim": "customer_ref",
+                "required": True,
+            },
+            "policy": {"max_rows": 1, "timeout_ms": 3000, "read_only": True},
+        }
+        binding = await upsert_binding(
+            organization.id,
+            f"p19.balance.{uuid4().hex[:8]}",
+            "managed_db",
+            config=plan,
+            workspace_id=workspace.id,
+        )
+        now = datetime.now(timezone.utc)
+
+        def _principal(subject: str) -> VerifiedPrincipal:
+            return VerifiedPrincipal(
+                organization_id=organization.id,
+                workspace_id=workspace.id,
+                actor_id=uuid4(),
+                subject_id=subject,
+                authn_method="portal_session",
+                assurance_level="high",
+                verified_at=now,
+                expires_at=now + timedelta(minutes=10),
+                claims={"customer_ref": subject},
+            )
+
+        result_a = await _execute_managed_select(
+            organization.id,
+            binding,
+            {"params": {}},
+            workspace_id=workspace.id,
+            principal=_principal("CUST-A"),
+        )
+        assert result_a["status"] == "FOUND"
+        assert result_a["record"]["customer_id"] == "CUST-A"
+        assert result_a["record"]["points"] == 120
+
+        result_b = await _execute_managed_select(
+            organization.id,
+            binding,
+            {"params": {}},
+            workspace_id=workspace.id,
+            principal=_principal("CUST-B"),
+        )
+        assert result_b["status"] == "FOUND"
+        assert result_b["record"]["customer_id"] == "CUST-B"
+        assert result_b["record"]["points"] == 40
+
+        with pytest.raises(Exception) as exc:
+            await _execute_managed_select(
+                organization.id,
+                binding,
+                {"params": {}},
+                workspace_id=workspace.id,
+                principal=None,
+            )
+        assert "identidad" in str(exc.value).lower()
+
+        other_org = uuid4()
+        with pytest.raises(BindingError):
+            await _execute_managed_select(
+                organization.id,
+                binding,
+                {"params": {}},
+                workspace_id=workspace.id,
+                principal=_principal("CUST-A").model_copy(
+                    update={"organization_id": other_org}
+                ),
+            )
     finally:
         await _cleanup(managed["db_name"], roles)
