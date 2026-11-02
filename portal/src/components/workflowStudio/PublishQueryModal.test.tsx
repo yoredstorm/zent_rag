@@ -26,6 +26,22 @@ describe("PublishQueryModal", () => {
           connectors: [{ id: "c-1", name: "ERP", type: "postgres", status: "active" }],
         });
       }
+      if (path.includes("publication-policy")) {
+        return Promise.resolve({
+          policy: {
+            resources: [
+              {
+                schema: "catalog",
+                table: "product_prices",
+                columns: ["sku", "price"],
+                sensitive_columns: [],
+                operations: ["get_one", "list", "count"],
+                max_rows: 5,
+              },
+            ],
+          },
+        });
+      }
       if (path.includes("/discover")) {
         return Promise.resolve({
           tables: [

@@ -1,7 +1,8 @@
 # P19.1-08 — Conectores PostgreSQL: TLS, SSRF y pooling
 
-- **Estado:** PARTIAL. Política de red/TLS y cache acotado implementados;
-  certificación con CA real, rotación y 100 concurrentes pendiente.
+- **Estado:** PARTIAL. Política de red/TLS, handshake con CA propia, cache
+  acotado y 100 lecturas concurrentes sin errores; falta SLO productivo y
+  rotación con Secret Store real.
 
 ## Hallazgo AS-IS
 
@@ -46,12 +47,14 @@
 | Producción exige TLS | PASS | idem |
 | `ssl=require` rechazado en prod | PASS | `test_production_rejects_ssl_require...` |
 | `verify-full` con check_hostname | PASS | `test_verify_full_builds...` |
+| Handshake real con CA y hostname | PASS (CA propia, hostname incorrecto rechazado) | `test_tls_verify_full_rejects_wrong_hostname` |
+| Cache de engines acotado | PASS | `test_engine_cache_is_bounded...` |
 | Metadata/puerto bloqueado | PASS | `test_metadata_and_forbidden_ports...` |
 | Allowlist de host | PASS | `test_host_allowlist_is_enforced` |
 | PostgreSQL externo real | PASS | `test_workflow_data_p19_external.py` |
-| CA inválida / hostname incorrecto | NOT_RUN | falta servidor TLS de prueba |
-| 100 consultas concurrentes | NOT_RUN | falta carga real |
-| Rotación de credencial | NOT_RUN | falta integración Secret Store |
+| CA inválida / hostname incorrecto | PASS hostname; CA inválida NOT_RUN | `test_tls_verify_full...` |
+| 100 consultas concurrentes | PASS local: 100 requests, 0 errors, concurrencia 10; p50 5583 ms, p95 7143 ms, p99 8111 ms (sin SLO) | `scripts/cert/p19_connector_load.py` |
+| Rotación de credencial | PARTIAL: cache key incluye fingerprint; falta prueba con Secret Store real | `connector_security.py` |
 | DNS rebinding | PARTIAL | se valida resolución, no se fija IP |
 
 ## Rutas

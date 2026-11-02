@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
-import { Button, Field, Modal, Select } from "../ui";
+import { Button, Field, Input, Modal, Select } from "../ui";
 
 type Connector = { id: string; name: string; type: string; status: string };
 type Table = {
@@ -13,6 +13,20 @@ type Table = {
   schema: string;
   is_view: boolean;
   columns: { name: string; data_type: string; is_primary_key: boolean }[];
+};
+
+type PolicyResource = {
+  schema: string;
+  table: string;
+  columns: string[];
+  sensitive_columns: string[];
+  operations: string[];
+  max_rows: number;
+};
+
+type PolicyResponse = {
+  policy: { resources: PolicyResource[] } | null;
+  status?: string;
 };
 
 type PublishedPlan = {
@@ -40,12 +54,27 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [keyColumn, setKeyColumn] = useState("");
   const [operation, setOperation] = useState("get_one");
+  const [policyResources, setPolicyResources] = useState<PolicyResource[]>([]);
+  const [purpose, setPurpose] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const selectedTable = useMemo(
     () => tables.find((table) => `${table.schema}.${table.name}` === resource) ?? null,
     [tables, resource],
+  );
+  const selectedRule = useMemo(
+    () =>
+      policyResources.find(
+        (item) =>
+          selectedTable && item.schema === selectedTable.schema && item.table === selectedTable.name,
+      ) ?? null,
+    [policyResources, selectedTable],
+  );
+  const sensitiveSelected = useMemo(
+    () =>
+      selectedColumns.filter((column) => selectedRule?.sensitive_columns.includes(column)),
+    [selectedColumns, selectedRule],
   );
 
   async function loadConnectors() {
@@ -74,10 +103,37 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
           organizationId: session.organizationId,
         },
       );
-      setTables(data.tables ?? []);
+      const policy = await api<PolicyResponse>(
+        `/api/v1/workflows/data-sources/connector:${connectorId}/publication-policy`,
+        {
+          token: session.token,
+          organizationId: session.organizationId,
+        },
+      );
+      const allowed = policy.policy?.resources ?? [];
+      setPolicyResources(allowed);
+      if (allowed.length === 0) {
+        setTables([]);
+        setError("Este conector no tiene una política de publicación. Un administrador debe crearla.");
+        return;
+      }
+      const filtered = (data.tables ?? [])
+        .map((table) => {
+          const rule = allowed.find(
+            (item) => item.schema === table.schema && item.table === table.name,
+          );
+          if (!rule) return null;
+          return {
+            ...table,
+            columns: table.columns.filter((column) => rule.columns.includes(column.name)),
+          };
+        })
+        .filter((table): table is Table => Boolean(table));
+      setTables(filtered);
       setResource("");
       setSelectedColumns([]);
       setKeyColumn("");
+      setPurpose("");
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "No pude descubrir tablas.");
     } finally {
@@ -93,6 +149,10 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
 
   async function publish() {
     if (!session || !connectorId || !resource || selectedColumns.length === 0) return;
+    if (sensitiveSelected.length > 0 && purpose.trim().length < 10) {
+      setError("Las columnas sensibles requieren un propósito de al menos 10 caracteres.");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -117,6 +177,7 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
               : null,
           max_rows: operation === "get_one" ? 1 : 50,
           label: selectedTable ? `${selectedTable.name}` : resource,
+          purpose: purpose.trim() || null,
         }),
       });
       onPublished(published);
@@ -215,11 +276,28 @@ export function PublishQueryModal({ open, onOpenChange, onPublished }: Props) {
                       }
                     />
                     {column.name}
+                    {selectedRule?.sensitive_columns.includes(column.name) && (
+                      <span className="text-[10px] text-warning">sensible</span>
+                    )}
                     <span className="text-[10px] text-faint">{column.data_type}</span>
                   </label>
                 ))}
               </div>
             </div>
+            {sensitiveSelected.length > 0 && (
+              <Field
+                label="Propósito de las columnas sensibles"
+                hint="Obligatorio. Se audita; no se guarda ningún valor de datos."
+                required
+              >
+                <Input
+                  value={purpose}
+                  onChange={(event) => setPurpose(event.target.value)}
+                  placeholder="Ej.: verificar el correo del titular autenticado"
+                  data-testid="wf-dq-purpose"
+                />
+              </Field>
+            )}
           </>
         )}
         {error && <p className="text-[12px] text-danger">{error}</p>}

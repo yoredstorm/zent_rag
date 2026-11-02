@@ -294,5 +294,18 @@ async def test_verified_principal_enforces_ownership_for_a_not_b(
                     update={"organization_id": other_org}
                 ),
             )
+
+        expired = _principal("CUST-A").model_copy(
+            update={"expires_at": now - timedelta(seconds=1)}
+        )
+        with pytest.raises(BindingError) as expired_exc:
+            await _execute_managed_select(
+                organization.id,
+                binding,
+                {"params": {}},
+                workspace_id=workspace.id,
+                principal=expired,
+            )
+        assert expired_exc.value.code == "IDENTITY_REQUIRED"
     finally:
         await _cleanup(managed["db_name"], roles)

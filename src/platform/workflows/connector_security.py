@@ -230,7 +230,7 @@ def get_connector_engine(dsn: str, target: ConnectorTarget) -> AsyncEngine:
     if cached:
         _ENGINES.pop(key, None)
         _dispose_later(cached.engine)
-    while len(_ENGINES) >= max(1, _MAX_ENGINES):
+    while len(_ENGINES) >= max(1, int(os.environ.get("RAG_CONNECTOR_POOL_MAX", str(_MAX_ENGINES)))):
         oldest_key = min(_ENGINES, key=lambda item: _ENGINES[item].last_used)
         _dispose_later(_ENGINES.pop(oldest_key).engine)
     engine = create_async_engine(

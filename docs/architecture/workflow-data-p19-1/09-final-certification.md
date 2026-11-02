@@ -17,8 +17,10 @@ Motivos del NO-GO:
 
 - G02 no tiene prueba de revocación viva durante WAIT ni RLS de proveedor.
 - G05/G06 no tienen Playwright, axe, usuarios reales ni gold set de 80 casos.
-- G07 no tiene 100 reservas concurrentes, doble commit ni multi-ítem atómico.
-- G08 no tiene CA inválida/hostname incorrecto, rotación ni carga concurrente.
+- G07 no tiene prueba de crash/reboot, reconciliación ledger ni expiración bajo
+  job real.
+- G08 no tiene SLO productivo, rotación con Secret Store real ni prueba de
+  red del cliente.
 - G09 no tiene SLO medidos, DR ni soporte operativo certificado.
 
 No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
@@ -30,12 +32,12 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 | G00 | CI/arquitectura | Invariantes + PR CI | PASS (run 41383152164) | `scripts/cert/run_invariants.py`; run del PR | Sí |
 | G01 | Publicación/PII | Permisos, allowlist, PII, auditoría, preview stale | PASS local | `test_workflow_data_p19_governance.py` (4) | Sí |
 | G02 | Identidad/ownership | Principal, scope, expiración, A/B, sin principal | PASS local; revocación WAIT NOT_RUN | `test_workflow_data_p19_principal.py`, integración PostgreSQL | Sí |
-| G03 | Binding drift | Mutar tabla con mismo ID, hash, revisiones | PASS local; snapshot release PARTIAL | `test_workflow_data_p19_binding_pin.py` | Sí |
+| G03 | Binding drift | Mutar tabla con mismo ID, hash, revisiones, plan stale UI | PASS local; snapshot release PARTIAL | `test_workflow_data_p19_binding_pin.py`; `DataQueryForm` | Sí |
 | G04 | Estados/errores | NOT_FOUND, TIMEOUT, DENIED, run failed | PASS local | `test_workflow_data_p19_node.py` (10) | Sí |
-| G05 | UX | Cero columnas, sin reload, tipos, typecheck | PASS parcial; E2E/a11y/humano NOT_RUN | Vitest focalizado | Sí para self-service |
-| G06 | Conversación | v2, slots, idempotencia, turn limit | PASS unitario; 4+ turnos E2E NOT_RUN | `test_workflow_data_p19_intent.py` | Sí para piloto conversacional |
-| G07 | Inventario | Adaptador, expiración, idempotencia | PARTIAL; concurrencia NOT_RUN | `test_workflow_data_p19_*`; script | Sí para escrituras |
-| G08 | Conexiones | Red, TLS, allowlist, external real | PASS unitario + external; CA/load NOT_RUN | `test_workflow_data_p19_connector_security.py` | Sí para DB externa |
+| G05 | UX | Cero columnas, sin reload, tipos, política, typecheck | PASS parcial; E2E/a11y/humano NOT_RUN | Vitest `DataQueryForm` + `PublishQueryModal` | Sí para self-service |
+| G06 | Conversación | v2, slots, gold set 80, turn limit | PASS unitario + gold set 100%; 4+ turnos E2E NOT_RUN | `test_workflow_data_p19_goldset.py` | Sí para piloto conversacional |
+| G07 | Inventario | Adaptador, expiración, batch, 100 ops, doble commit | PASS local: 100 ops/20 concurrencia, stock 10, 0 negativo; 2 commits = 1 movement; crash NOT_RUN | `p19_inventory_concurrency.py`, `p19_inventory_double_commit.py` | Sí para escrituras |
+| G08 | Conexiones | Red, TLS handshake CA, allowlist, cache, 100 lecturas | PASS local: 0 errors; p95 7.1 s sin SLO; carga productiva NOT_RUN | `test_workflow_data_p19_connector_security.py`, `p19_connector_load.py` | Sí para DB externa |
 | G09 | Certificación | E2E, adversarial, humanas, SLO | FAIL / incompleto | este documento | Sí |
 
 ## Evidencia ejecutada
@@ -49,6 +51,12 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 | Invariantes de arquitectura | `407 passed` |
 | Vitest `DataQueryForm` | `3 passed` |
 | Vitest `PublishQueryModal` | `1 passed` |
+| Gold set intención 80 casos | `route_accuracy=1.0`, `slot_f1=1.0`, `false_authorizations=0` |
+| Chaos inventario | 100 operaciones, concurrencia 20, stock 10: 10 reserved, 90 conflicts, 0 negativo |
+| Doble commit | 2 commits simultáneos: 1 COMMITTED, 1 ALREADY_APPLIED, 1 movement, on_hand 4 |
+| TLS handshake CA propia | PASS; hostname incorrecto rechazado |
+| Cache de engines | PASS; límite 2 respetado |
+| Carga conector 100 lecturas | PASS local: 0 errores; p95 7143 ms; no es SLO productivo |
 | `npm run typecheck` | PASS |
 | `ruff check src/ tests/ sdk/python` | PASS |
 | Migraciones 178/179 | aplicadas localmente |
@@ -60,9 +68,8 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 - B. Fidelidad: A≠B, DNI no autentica, agente comercial no lee agregado,
   identidad expirada en WAIT, timing de existencia.
 - C. Pedidos: titular, tercero, cancelado, dirección con aprobación.
-- D. Bodega: 100 concurrentes, doble commit, multi-ítem, crash/reboot,
-  reconciliación ledger.
-- E. Seguridad: SQLi, override de metadata, TLS falso, replay, cross-org.
+- D. Bodega: doble commit simultáneo, crash/reboot, reconciliación ledger.
+- E. Seguridad: SQLi, override de metadata, replay, cross-org, carga 100 consultas.
 - F. Usabilidad: 5 usuarios reales, axe, 390/768/1440.
 - Performance/SLO: p50/p95/p99 con hardware/dataset declarados.
 

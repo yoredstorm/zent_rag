@@ -33,6 +33,8 @@
   - aviso de plan legacy;
   - código técnico solo en avanzado.
 - `PublishQueryModal` refresca y devuelve el plan publicado.
+- `PublishQueryModal` carga la política del conector, oculta tablas/columnas no
+  autorizadas, marca columnas sensibles y exige propósito para publicarlas.
 - `aria-live` en el resultado; estados vacíos conservan el botón de publicar.
 
 ## Rutas/archivos
@@ -51,6 +53,7 @@
 | Seleccionar plan, llenar SKU, probar | PASS | idem |
 | Data Picker inserta referencia | PASS | idem |
 | Cero columnas al elegir tabla | PASS | `PublishQueryModal.test.tsx` |
+| Filtro por política y propósito sensible | PASS unitario (mock) | idem |
 | Typecheck | PASS | `npm run typecheck` |
 | Publicar sin reload / canvas intacto | NOT_RUN | requiere Playwright con canvas real |
 | axe/teclado/390-768-1440 | PARTIAL | axe no ejecutado en este cambio |

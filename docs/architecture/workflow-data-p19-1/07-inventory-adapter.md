@@ -1,8 +1,8 @@
 # P19.1-07 — Inventario: adaptador, reservas y efectos
 
-- **Estado:** PARTIAL. SQL extraído del core, idempotencia corregida y barrido
-  periódico agregado; multi-ítem atómico y pruebas de 100 concurrencias
-  pendientes.
+- **Estado:** PARTIAL. SQL extraído del core, idempotencia, barrido periódico,
+  batch atómico, 100 operaciones concurrentes y doble commit probados; crash/
+  reboot y reconciliación ledger pendientes.
 
 ## Hallazgo AS-IS
 
@@ -24,6 +24,7 @@
   - `expire_inventory_reservations` con `pg_try_advisory_xact_lock`,
     `FOR UPDATE SKIP LOCKED` y batch.
 - `src/scripts/expire_inventory_reservations.py` como entrypoint de cron/worker.
+- `reserve_stock_batch` reserva varias líneas en una transacción; todo o nada.
 - Invariantes conservadas: `available = on_hand - reserved`, row locks, TTL con
   `NOW()` de DB, ledger `UNIQUE(idempotency_key)`, commit consume una sola vez.
 
@@ -33,9 +34,9 @@
 |---|---|---|
 | Suite P19 existente (incluye bodega) | PASS | `test_workflow_data_p19_*` |
 | External PostgreSQL | PASS | `test_workflow_data_p19_external.py` |
-| 50–100 reservas concurrentes | NOT_RUN | falta prueba de carga real |
-| Doble commit simultáneo | NOT_RUN | falta test concurrente PostgreSQL |
-| Multi-ítem atómico | NOT_IMPLEMENTED | pendiente |
+| 100 operaciones, concurrencia 20, stock 10 | PASS: 10 reserved, 90 CONFLICT, reserved=10, active=10, sin negativo | `scripts/cert/p19_inventory_concurrency.py` |
+| Doble commit simultáneo | PASS: 1 COMMITTED + 1 ALREADY_APPLIED, 1 movement | `scripts/cert/p19_inventory_double_commit.py` |
+| Multi-ítem atómico | PASS unitario (validación); falta E2E | `reserve_stock_batch` |
 | Job de expiración | PARTIAL | función + script; cron no conectado |
 | Crash/reboot worker | NOT_RUN | pendiente |
 | Garantía `available >= 0` en DB | PARTIAL | CHECK `reserved >=0`; falta constraint que ligue `on_hand - reserved` |
