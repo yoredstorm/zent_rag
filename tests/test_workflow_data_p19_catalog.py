@@ -240,7 +240,7 @@ async def test_preview_redacts_sensitive_fields_and_rejects_other_workspace(
         workspace.id,
         UUID(binding["id"]),
         {},
-        permissions={"workflows:read"},
+        permissions={"data_queries:preview"},
     )
     assert result["preview"] is True
     assert result["result"]["rows"][0]["customer_email"] == "***"
@@ -253,7 +253,7 @@ async def test_preview_redacts_sensitive_fields_and_rejects_other_workspace(
             other_workspace.id,
             UUID(binding["id"]),
             {},
-            permissions={"workflows:read"},
+            permissions={"data_queries:preview"},
         )
     assert exc.value.code == "RESOURCE_NOT_EXPOSED"
 

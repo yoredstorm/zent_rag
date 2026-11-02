@@ -41,6 +41,10 @@ class ExecutionContext:
     correlation_id: str | None = None
     workspace_id: UUID | None = None
     actor_id: UUID | None = None
+    #: Identidad verificada del titular para lecturas con ownership.
+    #: None en flujos sin identidad; el ejecutor falla cerrado si el plan la exige.
+    principal: Any = None
+    principal_hash: str | None = None
     simulate: bool = False
     #: Segmento de una WorkflowInstance (workflows durables). None en runs
     #: standalone: el comportamiento existente no cambia.
@@ -543,6 +547,7 @@ async def execute_graph(
         timeout_ms = max(1, int(node.timeout_ms or 60_000))
         handler = node_def.execute
         last_error: str | None = None
+        last_output: dict[str, Any] = {}
         exec_ = None
         attempt = 0
         while attempt < max_attempts:
@@ -579,6 +584,7 @@ async def execute_graph(
                 break
             if outcome is not None and outcome.error:
                 last_error = outcome.error
+                last_output = dict(outcome.output or {})
         if exec_ is None:
             message = last_error or "error de nodo"
             exec_ = NodeExecution(
@@ -586,6 +592,7 @@ async def execute_graph(
                 error=message,
                 retries=attempt - 1,
                 output={
+                    **last_output,
                     "typed_port": port_for_message(message),
                     "error_contract": error_contract(None, message),
                 },
@@ -988,6 +995,7 @@ async def _run_node_once(ctx: ExecutionContext, node_def, rctx, started: datetim
     max_attempts = max(1, int((node.retry_policy or {}).get("max_attempts", 1) or 1))
     timeout_ms = max(1, int(node.timeout_ms or 60_000))
     last_error: str | None = None
+    last_output: dict[str, Any] = {}
     outcome = None
     attempt = 0
     while attempt < max_attempts:
@@ -1012,6 +1020,7 @@ async def _run_node_once(ctx: ExecutionContext, node_def, rctx, started: datetim
             break
         if outcome is not None and outcome.error:
             last_error = outcome.error
+            last_output = dict(outcome.output or {})
     if outcome is None:
         message = last_error or "error de nodo"
         return NodeExecution(
@@ -1019,6 +1028,7 @@ async def _run_node_once(ctx: ExecutionContext, node_def, rctx, started: datetim
             error=message,
             retries=attempt - 1,
             output={
+                **last_output,
                 "typed_port": port_for_message(message),
                 "error_contract": error_contract(None, message),
             },

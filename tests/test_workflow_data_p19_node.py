@@ -1,5 +1,5 @@
 # =============================================================================
-# P19-03 — Nodo «Consultar registros» alineado al binder canónico.
+# P19-03 / P19.1-04 - Nodo "Consultar registros" alineado al binder canónico.
 # =============================================================================
 from __future__ import annotations
 
@@ -92,14 +92,14 @@ async def test_data_query_uses_binding_output(monkeypatch: pytest.MonkeyPatch) -
         _ctx(
             {
                 "capability": "p19.price.lookup",
-                "binding_ref": "b-1",
                 "params": {"sku": "{{trigger.sku}}"},
             }
         )
     )
-    # El contexto no tiene trigger; la referencia queda como texto y el binder
-    # real la validaría. Aquí solo verificamos la delegación.
+    assert outcome.error is None
+    assert outcome.output["schema"] == "zent.workflow.data-query.result/v2"
     assert outcome.output["status"] == "FOUND"
+    assert outcome.output["category"] == "domain"
     assert outcome.output["found"] is True
     assert outcome.output["binding_ref"] == "b-1"
     assert outcome.output["capability"] == "p19.price.lookup"
@@ -123,7 +123,6 @@ async def test_data_query_resolves_previous_intent_entity(monkeypatch: pytest.Mo
     rctx = _ctx(
         {
             "capability": "p19.price.lookup",
-            "binding_ref": "b-1",
             "params": {"sku": "{{nodes.intent.output.entities.sku}}"},
         }
     )
@@ -136,6 +135,22 @@ async def test_data_query_resolves_previous_intent_entity(monkeypatch: pytest.Mo
 async def test_data_query_detects_binding_change(monkeypatch: pytest.MonkeyPatch) -> None:
     import src.platform.workflows.bindings as bindings
 
+    binding_id = uuid4()
+    config = {
+        "schema": "zent.data.query.binding/v1",
+        "resource": {"schema": "public", "name": "prices", "kind": "table"},
+        "projection": ["sku"],
+    }
+    pinned = {
+        "id": str(binding_id),
+        "capability_ref": "p19.price.lookup",
+        "provider_kind": "managed_db",
+        "config": config,
+    }
+
+    async def _get_binding(*_args, **_kwargs):
+        return pinned
+
     async def _execute(*_args, **_kwargs):
         return {
             "provider_kind": "managed_db",
@@ -147,8 +162,18 @@ async def test_data_query_detects_binding_change(monkeypatch: pytest.MonkeyPatch
             },
         }
 
+    monkeypatch.setattr(bindings, "get_binding", _get_binding)
     monkeypatch.setattr(bindings, "execute_binding", _execute)
-    outcome = await _exec_data_query(_ctx({"capability": "p19.price.lookup", "binding_ref": "b-1", "params": {}}))
+    outcome = await _exec_data_query(
+        _ctx(
+            {
+                "capability": "p19.price.lookup",
+                "binding_ref": str(binding_id),
+                "params": {},
+            }
+        )
+    )
+    assert outcome.error is not None
     assert outcome.output["status"] == "ERROR"
     assert outcome.output["reason_code"] == "BINDING_CHANGED"
 
@@ -161,10 +186,45 @@ async def test_data_query_maps_binding_error_to_status(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(bindings, "execute_binding", _execute)
     outcome = await _exec_data_query(_ctx({"capability": "p19.loyalty", "params": {}}))
-    assert outcome.error is None
+    assert outcome.error is not None
     assert outcome.output["status"] == "ERROR"
+    assert outcome.output["category"] == "security"
     assert outcome.output["reason_code"] == "PERMISSION_DENIED"
     assert outcome.output["found"] is False
+    assert outcome.output["safe_message"] == "No tienes permiso para esta lectura."
+    assert "sin identidad" not in str(outcome.output)
+
+
+async def test_data_query_not_found_is_domain_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.platform.workflows.bindings as bindings
+
+    async def _execute(*_args, **_kwargs):
+        return {
+            "provider_kind": "managed_db",
+            "output": {"status": "NOT_FOUND", "found": False, "reason_code": "NOT_FOUND"},
+        }
+
+    monkeypatch.setattr(bindings, "execute_binding", _execute)
+    outcome = await _exec_data_query(_ctx({"capability": "p19.price", "params": {}}))
+    assert outcome.error is None
+    assert outcome.output["status"] == "NOT_FOUND"
+    assert outcome.output["category"] == "domain"
+    assert outcome.output["safe_message"] == "No hay coincidencias."
+
+
+async def test_data_query_timeout_is_operational_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.platform.workflows.bindings as bindings
+
+    async def _execute(*_args, **_kwargs):
+        raise bindings.BindingError("TIMEOUT", "statement timeout")
+
+    monkeypatch.setattr(bindings, "execute_binding", _execute)
+    outcome = await _exec_data_query(_ctx({"capability": "p19.price", "params": {}}))
+    assert outcome.error is not None
+    assert outcome.output["status"] == "ERROR"
+    assert outcome.output["category"] == "operational"
+    assert outcome.output["retryable"] is True
+    assert outcome.output["safe_message"] == "La consulta tardó demasiado."
 
 
 async def test_data_query_simulation_does_not_execute(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,7 +234,57 @@ async def test_data_query_simulation_does_not_execute(monkeypatch: pytest.Monkey
         raise AssertionError("no debe ejecutar")
 
     monkeypatch.setattr(bindings, "execute_binding", _execute)
-    outcome = await _exec_data_query(_ctx({"capability": "p19.price.lookup", "params": {"sku": "A"}}, simulate=True))
+    outcome = await _exec_data_query(
+        _ctx({"capability": "p19.price.lookup", "params": {"sku": "A"}}, simulate=True)
+    )
     assert outcome.simulated is True
     assert outcome.output["status"] == "SIMULATED"
     assert outcome.planned["kind"] == "data_query"
+
+
+async def test_data_query_timeout_fails_the_run_not_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.platform.workflows.bindings as bindings
+    from src.platform.workflows.ir import WorkflowGraph
+    from src.platform.workflows.runtime import execute_graph
+
+    async def _execute(*_args, **_kwargs):
+        raise bindings.BindingError("TIMEOUT", "statement timeout")
+
+    monkeypatch.setattr(bindings, "execute_binding", _execute)
+    graph = {
+        "workflow_version": 2,
+        "nodes": [
+            {
+                "id": "q",
+                "type": "data_query",
+                "label": "Consulta",
+                "config": {"capability": "p19.price", "params": {}},
+            },
+            {"id": "end", "type": "end", "label": "Fin", "config": {}},
+        ],
+        "edges": [
+            {"id": "e1", "from_node": "q", "from_port": "out", "to_node": "end", "to_port": "in"}
+        ],
+        "variables": {},
+        "entrypoints": ["q"],
+        "metadata": {},
+    }
+    result = await execute_graph(
+        WorkflowGraph.from_dict(graph),
+        ExecutionContext(
+            organization_id=uuid4(),
+            workspace_id=uuid4(),
+            workflow_id=uuid4(),
+            run_id=uuid4(),
+            actor_type="user",
+            trigger_type="manual",
+            permissions=frozenset({"workflows:run"}),
+        ),
+        {},
+        persist_execution=False,
+    )
+    assert result.status != "completed"
+    assert result.node_executions["q"].status == "failed"
+    assert result.node_executions["q"].output["reason_code"] == "TIMEOUT"

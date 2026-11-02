@@ -1243,9 +1243,25 @@ def get_capability_dispatcher():
     async def _workflow_handler(request, decision):
         from src.platform.auth.scopes import permission_satisfied
         from src.platform.workflows.engine import WorkflowAccessError, run_workflow
+        from src.platform.workflows.principal import VerifiedPrincipal
 
         if not permission_satisfied(request.permissions, "workflows:run"):
             return denied(decision.capability, handler="workflow_engine")
+        principal = None
+        if request.user_id is not None and request.organization_id is not None and request.workspace_id is not None:
+            from datetime import datetime, timedelta, timezone
+
+            now = datetime.now(timezone.utc)
+            principal = VerifiedPrincipal(
+                organization_id=request.organization_id,
+                workspace_id=request.workspace_id,
+                actor_id=request.user_id,
+                subject_id=str(request.user_id),
+                authn_method="api_token",
+                assurance_level="medium",
+                verified_at=now,
+                expires_at=now + timedelta(minutes=30),
+            )
         try:
             result = await run_workflow(
                 request.workflow_id,
@@ -1259,6 +1275,7 @@ def get_capability_dispatcher():
                 correlation_id=request.trace_id,
                 resume=decision.capability == "workflow.resume",
                 run_id=request.run_id if decision.capability == "workflow.resume" else None,
+                principal=principal,
             )
         except WorkflowAccessError as exc:
             return denied(

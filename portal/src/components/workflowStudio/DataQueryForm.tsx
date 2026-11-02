@@ -6,7 +6,7 @@
  * SQL, tabla, columnas, límite ni conexión.
  */
 import { Database, Play, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import type { ParameterLevel } from "../../lib/businessSchema";
@@ -39,6 +39,7 @@ type DataQueryPlan = {
 
 type PreviewResult = {
   status?: string;
+  category?: string;
   found?: boolean;
   record?: Record<string, unknown> | null;
   rows?: Record<string, unknown>[];
@@ -47,12 +48,15 @@ type PreviewResult = {
   source_ref?: string;
   duration_ms?: number;
   reason_code?: string | null;
+  safe_message?: string;
   message?: string;
 };
 
 type PreviewResponse = {
   preview: boolean;
   redacted_fields: string[];
+  legacy_plan?: boolean;
+  policy_hash?: string | null;
   result: PreviewResult;
 };
 
@@ -91,6 +95,26 @@ function coerceParam(type: string, value: string): unknown {
   return value;
 }
 
+function paramInputType(type: string): string {
+  if (type === "date") return "date";
+  if (type === "datetime") return "datetime-local";
+  return "text";
+}
+
+function previewRows(result: PreviewResult): Record<string, unknown>[] {
+  if (result.record) return [result.record];
+  return result.rows ?? [];
+}
+
+function previewMessage(result: PreviewResult): string {
+  if (result.safe_message) return result.safe_message;
+  if (result.status === "FOUND") return "Encontré la información.";
+  if (result.status === "NOT_FOUND") return "No hay coincidencias.";
+  if (result.status === "MULTIPLE_MATCHES") return "Hay varias coincidencias.";
+  if (result.status === "SIMULATED") return "Vista previa simulada; no es un dato certificado.";
+  return "No se pudo completar la consulta.";
+}
+
 export function DataQueryForm({ config, onChange, level = "simple", dataSources = [] }: Props) {
   const { session } = useAuth();
   const [plans, setPlans] = useState<DataQueryPlan[]>([]);
@@ -101,31 +125,30 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
   const [busy, setBusy] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
 
-  useEffect(() => {
-    if (!session) return;
-    let alive = true;
+  const loadPlans = useCallback(async (): Promise<DataQueryPlan[]> => {
+    if (!session) return [];
     setLoading(true);
-    api<{ plans: DataQueryPlan[] }>("/api/v1/workflows/data-query/plans", {
-      token: session.token,
-      organizationId: session.organizationId,
-    })
-      .then((data) => {
-        if (!alive) return;
-        setPlans(data.plans ?? []);
-        setError("");
-      })
-      .catch((exc) => {
-        if (!alive) return;
-        setPlans([]);
-        setError(exc instanceof Error ? exc.message : "No pude cargar las consultas publicadas.");
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+    try {
+      const data = await api<{ plans: DataQueryPlan[] }>("/api/v1/workflows/data-query/plans", {
+        token: session.token,
+        organizationId: session.organizationId,
       });
-    return () => {
-      alive = false;
-    };
+      const next = data.plans ?? [];
+      setPlans(next);
+      setError("");
+      return next;
+    } catch (exc) {
+      setPlans([]);
+      setError(exc instanceof Error ? exc.message : "No pude cargar las consultas publicadas.");
+      return [];
+    } finally {
+      setLoading(false);
+    }
   }, [session]);
+
+  useEffect(() => {
+    void loadPlans();
+  }, [loadPlans]);
 
   const selected = useMemo(
     () =>
@@ -189,6 +212,24 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
     }
   }
 
+  async function handlePublished(published: {
+    binding_ref: string;
+    capability_ref: string;
+  }) {
+    setPublishOpen(false);
+    const next = await loadPlans();
+    const target = next.find((plan) => plan.binding_ref === published.binding_ref);
+    if (target) {
+      onChange({
+        capability: target.capability_ref,
+        binding_ref: target.binding_ref,
+        params: {},
+      });
+      setPreview(null);
+      setPreviewError("");
+    }
+  }
+
   if (loading) {
     return <p className="text-[12px] text-faint">Cargando consultas autorizadas…</p>;
   }
@@ -225,7 +266,7 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
         <PublishQueryModal
           open={publishOpen}
           onOpenChange={setPublishOpen}
-          onPublished={() => window.location.reload()}
+          onPublished={handlePublished}
         />
       </>
     );
@@ -277,12 +318,31 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
                   required={parameter.required}
                   hint={`${parameter.operator} · ${parameter.type}`}
                 >
-                  <Input
-                    value={String(params[parameter.name] ?? "")}
-                    onChange={(event) => setParam(parameter, event.target.value)}
-                    placeholder={parameter.required ? "Obligatorio" : "Opcional"}
-                    data-testid={`wf-dq-param-${parameter.name}`}
-                  />
+                  {parameter.type === "boolean" ? (
+                    <Select
+                      value={String(params[parameter.name] ?? "")}
+                      onChange={(event) => setParam(parameter, event.target.value)}
+                      data-testid={`wf-dq-param-${parameter.name}`}
+                    >
+                      <option value="">Elige un valor.</option>
+                      <option value="true">Sí</option>
+                      <option value="false">No</option>
+                    </Select>
+                  ) : (
+                    <Input
+                      type={paramInputType(parameter.type)}
+                      inputMode={
+                        ["integer", "number", "decimal"].includes(parameter.type)
+                          ? "decimal"
+                          : undefined
+                      }
+                      step={parameter.type === "integer" ? "1" : undefined}
+                      value={String(params[parameter.name] ?? "")}
+                      onChange={(event) => setParam(parameter, event.target.value)}
+                      placeholder={parameter.required ? "Obligatorio" : "Opcional"}
+                      data-testid={`wf-dq-param-${parameter.name}`}
+                    />
+                  )}
                   {dataSources.length > 0 && (
                     <div className="mt-1">
                       <DataPicker
@@ -332,23 +392,48 @@ export function DataQueryForm({ config, onChange, level = "simple", dataSources 
                   {preview.result.duration_ms ?? 0} ms
                 </span>
               </div>
+              <p className="text-[12px] text-text" role="status" aria-live="polite">
+                {previewMessage(preview.result)}
+              </p>
               <p className="text-[11px] text-faint">
                 Fuente: {preview.result.source_ref ?? selected.resource_ref}
                 {preview.redacted_fields.length > 0
                   ? ` · redactado: ${preview.redacted_fields.join(", ")}`
                   : ""}
               </p>
-              {preview.result.record && (
-                <pre className="max-h-40 overflow-auto rounded-sm bg-soft p-2 font-mono text-[10px] text-text">
-                  {JSON.stringify(preview.result.record, null, 2)}
-                </pre>
+              {preview.legacy_plan && (
+                <p className="rounded-sm border border-warning/30 bg-warning/5 p-1.5 text-[11px] text-muted">
+                  Plan anterior sin política versionada. Revisar y republicar antes de usarlo en
+                  producción.
+                </p>
               )}
-              {preview.result.rows && preview.result.rows.length > 0 && (
-                <pre className="max-h-40 overflow-auto rounded-sm bg-soft p-2 font-mono text-[10px] text-text">
-                  {JSON.stringify(preview.result.rows, null, 2)}
-                </pre>
+              {previewRows(preview.result).length > 0 && (
+                <div className="max-h-48 overflow-auto rounded-sm border border-border">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="bg-soft text-faint">
+                      <tr>
+                        {Object.keys(previewRows(preview.result)[0] ?? {}).map((key) => (
+                          <th key={key} className="px-2 py-1 font-medium">
+                            {key}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewRows(preview.result).slice(0, 5).map((row, index) => (
+                        <tr key={index} className="border-t border-border">
+                          {Object.keys(previewRows(preview.result)[0] ?? {}).map((key) => (
+                            <td key={key} className="px-2 py-1 text-text">
+                              {String(row[key] ?? "—")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-              {preview.result.reason_code && (
+              {preview.result.reason_code && level === "advanced" && (
                 <p className="font-mono text-[10px] text-danger">{preview.result.reason_code}</p>
               )}
             </div>

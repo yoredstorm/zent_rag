@@ -734,6 +734,7 @@ async def start_workflow_instance(
     correlation_id: str | None = None,
     expires_at: datetime | None = None,
     definition: dict | None = None,
+    principal: Any | None = None,
 ) -> dict:
     """Crea la instancia (definición congelada) y ejecuta el primer segmento.
 
@@ -940,6 +941,7 @@ async def start_workflow_instance(
         permissions=permissions,
         system_context=system_context,
         correlation=correlation_id,
+        principal=principal,
     )
     fresh = await get_instance(org, instance_id)
     return {
@@ -1115,6 +1117,7 @@ async def _run_instance_segment(
     preload_ports: dict[str, str] | None = None,
     preload_scope: list[str] | None = None,
     run_seq: int | None = None,
+    principal: Any | None = None,
 ) -> dict:
     """Ejecuta un segmento de la instancia reutilizando run_workflow."""
     from src.platform.workflows.engine import run_workflow
@@ -1146,6 +1149,7 @@ async def _run_instance_segment(
         or {},
         preload_ports=preload_ports,
         preload_scope=preload_scope,
+        principal=principal,
     )
 
 
@@ -1490,6 +1494,7 @@ async def signal_workflow_instance(
     instance_id: UUID | None = None,
     workflow_id: UUID | None = None,
     workspace_id: UUID | None = None,
+    principal: Any | None = None,
 ) -> dict:
     """Registra un evento y reanuda las instancias WAITING compatibles.
 
@@ -1600,7 +1605,12 @@ async def signal_workflow_instance(
     resumed: list[dict[str, Any]] = []
     for inst in instances:
         port = "timeout" if et == _TIMEOUT_EVENT else "out"
-        out = await _claim_and_resume(inst, signal_row={"id": signal_id, "payload": payload or {}}, port=port)
+        out = await _claim_and_resume(
+            inst,
+            signal_row={"id": signal_id, "payload": payload or {}},
+            port=port,
+            principal=principal,
+        )
         resumed.append({"instance_id": inst["id"], **out})
         if out.get("status") == "payload_invalid":
             return {
@@ -1817,7 +1827,11 @@ def _payload_schema_errors(
 
 
 async def _claim_and_resume(
-    instance: dict[str, Any], *, signal_row: dict[str, Any] | None, port: str
+    instance: dict[str, Any],
+    *,
+    signal_row: dict[str, Any] | None,
+    port: str,
+    principal: Any | None = None,
 ) -> dict:
     """Claim atómico + segmento nuevo. Un solo ganador; el resto queda pending."""
     if signal_row is not None:
@@ -1906,6 +1920,7 @@ async def _claim_and_resume(
         actor_type="signal",
         system_context=True,
         preload_ports={str(wait_node): effective_port} if wait_node else None,
+        principal=principal,
     )
     # El run puede haber vuelto a WAITING (handle_segment_result ya corrió).
     fresh = await get_instance(org, iid)

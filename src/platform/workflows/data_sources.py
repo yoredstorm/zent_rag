@@ -123,12 +123,22 @@ async def publish_data_query_plan(
     body: dict[str, Any],
     *,
     permissions: frozenset[str] | set[str] | None = None,
+    actor_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Publica un plan canónico desde una tabla descubierta del conector."""
     from src.connectors.plugin import get_plugin
     from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
     from src.infrastructure.secrets.secret_store_resolver import get_secret_store
-    from src.platform.workflows.bindings import upsert_binding
+    from src.platform.workflows.bindings import _plan_hash, upsert_binding
+    from src.platform.workflows.data_governance import (
+        DataPolicyError,
+        authorize_publication,
+        record_publication_event,
+    )
+
+    permissions = set(permissions or ())
+    if "data_queries:publish" not in permissions and "*" not in permissions and "admin:*" not in permissions:
+        raise DataSourceError(403, "PERMISSION_DENIED", "falta el permiso data_queries:publish")
 
     source_ref = str(body.get("connector_ref") or "")
     source_kind, connector_id = _parse_source_ref(source_ref)
@@ -152,6 +162,10 @@ async def publish_data_query_plan(
     if not isinstance(projection, list) or not projection:
         raise DataSourceError(400, "INVALID_PARAMS", "projection requerida")
     projection = [str(column) for column in projection][:50]
+    if "*" in projection:
+        raise DataSourceError(400, "INVALID_PARAMS", "SELECT * no está permitido")
+    if len(set(projection)) != len(projection):
+        raise DataSourceError(400, "INVALID_PARAMS", "proyección duplicada")
 
     config_json = connector.config_json if isinstance(connector.config_json, dict) else {}
     secrets = await get_secret_store().get(organization_id, connector_id)
@@ -214,16 +228,30 @@ async def publish_data_query_plan(
         )
     allowed = set(projection) | {item["field"] for item in parameters}
     allowed |= {item["field"] for item in required}
+    purpose = str(body.get("purpose") or "").strip()[:300]
+    try:
+        stored_policy, sensitive, policy_max_rows = await authorize_publication(
+            organization_id,
+            workspace_id,
+            connector_id,
+            schema_name=schema_name,
+            table_name=table_name,
+            operation=operation,
+            fields=allowed,
+            permissions=permissions,
+            purpose=purpose,
+        )
+    except DataPolicyError as exc:
+        raise DataSourceError(exc.status_code, exc.code, exc.message) from exc
     try:
         max_rows = int(body.get("max_rows") or (1 if operation == "get_one" else 50))
     except (TypeError, ValueError):
         max_rows = 50
-    max_rows = min(max(max_rows, 1), 500)
+    max_rows = min(max(max_rows, 1), min(500, policy_max_rows))
     suffix = uuid4().hex[:8]
-    capability_ref = str(
-        body.get("capability_ref")
-        or f"data.{schema_name}.{table_name}.{operation}.{suffix}"
-    )[:120]
+    # La referencia la genera el servidor: el cliente no elige ni reutiliza
+    # una capacidad publicada para sustituir su plan.
+    capability_ref = f"data.{schema_name}.{table_name}.{operation}.{suffix}"[:120]
     plan = {
         "schema": "zent.data.query.binding/v1",
         "scope": "workspace",
@@ -245,6 +273,9 @@ async def publish_data_query_plan(
             for column in allowed
             if column in columns
         },
+        "sensitive_columns": sorted(sensitive),
+        "purpose": purpose or None,
+        "policy_hash": str(stored_policy.get("policy_hash") or ""),
     }
     binding = await upsert_binding(
         organization_id,
@@ -252,6 +283,23 @@ async def publish_data_query_plan(
         "connected_db",
         config=plan,
         workspace_id=workspace_id,
+        created_by=actor_id,
+    )
+    await record_publication_event(
+        organization_id,
+        workspace_id,
+        action="plan.published",
+        actor_id=actor_id,
+        connector_id=connector_id,
+        binding_id=binding.get("id"),
+        capability_ref=capability_ref,
+        resource_ref=plan["resource_ref"],
+        selected_columns=projection,
+        sensitive_columns=sorted(sensitive),
+        purpose=purpose or None,
+        policy_digest=str(stored_policy.get("policy_hash") or ""),
+        plan_digest=_plan_hash(plan),
+        metadata={"operation": operation, "max_rows": max_rows},
     )
     invalidate_data_catalog(organization_id, workspace_id)
     return {
@@ -262,6 +310,8 @@ async def publish_data_query_plan(
         "projection": projection,
         "parameters": parameters,
         "max_rows": max_rows,
+        "sensitive_columns": sorted(sensitive),
+        "policy_hash": plan["policy_hash"],
     }
 
 
@@ -606,7 +656,15 @@ async def preview_data_query(
     params: dict[str, Any] | None,
     *,
     permissions: frozenset[str] | set[str] | None = None,
+    principal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from src.platform.workflows.data_governance import (
+        DataPolicyError,
+        require_permission,
+        validate_plan_against_policy,
+    )
+
+    require_permission(permissions, "data_queries:preview")
     binding = await get_binding(organization_id, binding_id, workspace_id=workspace_id)
     if binding is None:
         raise DataSourceError(404, "RESOURCE_NOT_EXPOSED", "binding no expuesto")
@@ -620,6 +678,21 @@ async def preview_data_query(
         raise DataSourceError(403, "PERMISSION_DENIED", "workspace no autorizado")
     if plan.scope == "workspace" and str(binding.get("workspace_id") or "") != str(workspace_id):
         raise DataSourceError(403, "PERMISSION_DENIED", "workspace no autorizado")
+
+    legacy_plan = not bool(plan.policy_hash)
+    if not legacy_plan and plan.connection_ref is not None:
+        try:
+            await validate_plan_against_policy(
+                organization_id,
+                workspace_id,
+                plan.connection_ref,
+                schema_name=plan.resource.schema_name or "public",
+                table_name=plan.resource.name,
+                fields=_plan_columns(plan),
+                plan_policy_digest=plan.policy_hash,
+            )
+        except DataPolicyError as exc:
+            raise DataSourceError(exc.status_code, exc.code, exc.message) from exc
 
     preview_policy = plan.policy.model_copy(
         update={
@@ -639,6 +712,7 @@ async def preview_data_query(
                 preview_binding,
                 {"params": dict(params or {})},
                 workspace_id=workspace_id,
+                principal=principal,
             )
         else:
             result = await _execute_managed_select(
@@ -646,11 +720,13 @@ async def preview_data_query(
                 preview_binding,
                 {"params": dict(params or {})},
                 workspace_id=workspace_id,
+                principal=principal,
             )
     except BindingError as exc:
         raise DataSourceError(400, exc.code, exc.message) from exc
 
-    sensitive = {column for column in _plan_columns(plan) if is_sensitive_column(column)}
+    sensitive = set(plan.sensitive_columns)
+    sensitive |= {column for column in _plan_columns(plan) if is_sensitive_column(column)}
     redacted: list[str] = []
     if isinstance(result.get("record"), dict):
         result["record"], redacted = await _redact_record(result["record"], sensitive)
@@ -662,4 +738,10 @@ async def preview_data_query(
                 redacted.extend(field for field in fields if field not in redacted)
                 out_rows.append(clean)
         result["rows"] = out_rows
-    return {"preview": True, "redacted_fields": redacted, "result": result}
+    return {
+        "preview": True,
+        "redacted_fields": redacted,
+        "legacy_plan": legacy_plan,
+        "policy_hash": plan.policy_hash,
+        "result": result,
+    }
