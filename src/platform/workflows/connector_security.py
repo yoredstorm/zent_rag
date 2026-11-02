@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import os
 import socket
@@ -189,7 +190,9 @@ async def prepare_connector_target(
             str(organization_id),
             str(workspace_id or ""),
             str(connector_id),
-            dsn.split("@", 1)[-1],
+            hashlib.sha256(
+                f"{dsn}|{password}".encode("utf-8")
+            ).hexdigest(),
         ),
     )
 
