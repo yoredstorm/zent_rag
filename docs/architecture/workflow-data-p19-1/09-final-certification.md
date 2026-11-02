@@ -19,7 +19,8 @@ Motivos del NO-GO:
 - G05/G06 no tienen Playwright, axe, usuarios reales ni gold set de 80 casos.
 - G07 no tiene prueba de crash/reboot, reconciliación ledger ni expiración bajo
   job real.
-- G08 no tiene CA inválida/hostname incorrecto, rotación ni carga concurrente.
+- G08 no tiene SLO productivo, rotación con Secret Store real ni prueba de
+  red del cliente.
 - G09 no tiene SLO medidos, DR ni soporte operativo certificado.
 
 No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
@@ -36,7 +37,7 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 | G05 | UX | Cero columnas, sin reload, tipos, política, typecheck | PASS parcial; E2E/a11y/humano NOT_RUN | Vitest `DataQueryForm` + `PublishQueryModal` | Sí para self-service |
 | G06 | Conversación | v2, slots, gold set 80, turn limit | PASS unitario + gold set 100%; 4+ turnos E2E NOT_RUN | `test_workflow_data_p19_goldset.py` | Sí para piloto conversacional |
 | G07 | Inventario | Adaptador, expiración, batch, 100 ops, doble commit | PASS local: 100 ops/20 concurrencia, stock 10, 0 negativo; 2 commits = 1 movement; crash NOT_RUN | `p19_inventory_concurrency.py`, `p19_inventory_double_commit.py` | Sí para escrituras |
-| G08 | Conexiones | Red, TLS handshake CA, allowlist, cache, external real | PASS unitario + external; carga 100 NOT_RUN | `test_workflow_data_p19_connector_security.py` (7) | Sí para DB externa |
+| G08 | Conexiones | Red, TLS handshake CA, allowlist, cache, 100 lecturas | PASS local: 0 errors; p95 7.1 s sin SLO; carga productiva NOT_RUN | `test_workflow_data_p19_connector_security.py`, `p19_connector_load.py` | Sí para DB externa |
 | G09 | Certificación | E2E, adversarial, humanas, SLO | FAIL / incompleto | este documento | Sí |
 
 ## Evidencia ejecutada
@@ -55,6 +56,7 @@ No se compensa con promedio: cualquier gate crítico `NOT_RUN` bloquea.
 | Doble commit | 2 commits simultáneos: 1 COMMITTED, 1 ALREADY_APPLIED, 1 movement, on_hand 4 |
 | TLS handshake CA propia | PASS; hostname incorrecto rechazado |
 | Cache de engines | PASS; límite 2 respetado |
+| Carga conector 100 lecturas | PASS local: 0 errores; p95 7143 ms; no es SLO productivo |
 | `npm run typecheck` | PASS |
 | `ruff check src/ tests/ sdk/python` | PASS |
 | Migraciones 178/179 | aplicadas localmente |
