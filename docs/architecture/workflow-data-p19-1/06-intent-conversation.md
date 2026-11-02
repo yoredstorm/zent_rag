@@ -1,7 +1,7 @@
 # P19.1-06 — Intención multivuelta, slots y recuperación durable
 
-- **Estado:** PARTIAL. Contrato v2, rutas configurables y slots durables
-  implementados; desambiguación de productos, gold set y UI conversacional
+- **Estado:** PARTIAL. Contrato v2, rutas configurables, slots durables y gold
+  set de 80 casos implementados; desambiguación de productos y UI conversacional
   completa pendientes.
 
 ## Hallazgo AS-IS
@@ -48,8 +48,8 @@
 | Slot durable “el de un kilo” | PASS | `test_conversation_slot_fill_is_durable_and_idempotent` |
 | Mensaje duplicado idempotente | PASS | idem |
 | Límite de turnos | PASS | `test_conversation_turn_limit_returns_other` |
+| Gold set 80 casos: route accuracy / slot F1 | PASS 1.00 / 1.00; false authorizations 0 | `scripts/cert/evaluate_intent_goldset.py` |
 | 4+ turnos con WAIT/RESUME real | NOT_RUN | falta E2E durable con DB real |
-| Gold set 80 casos / macro-F1 | NOT_RUN | no se creó el dataset |
 | Desambiguación de 2 productos | NOT_RUN | no implementada |
 
 ## Compatibilidad y rollback
