@@ -807,52 +807,20 @@ class PostgresSqlExpert(SqlExpert):
         No usa la Managed DB ni el esquema interno de ZENT. La sesión es
         read-only y la validación reutiliza el mismo SQL Expert existente.
         """
-        from sqlalchemy.ext.asyncio import async_sessionmaker
-
         from src.connectors.plugin import get_plugin
-        from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
-        from src.infrastructure.secrets.secret_store_resolver import get_secret_store
-        from src.platform.workflows.connector_security import (
-            get_connector_engine,
-            prepare_connector_target,
+        from src.platform.workflows.external_connector import (
+            resolve_external_postgres_connection,
         )
 
-        connector = await PostgresConnectorRepository().get_connector(
-            organization_id, connector_id
+        resolved = await resolve_external_postgres_connection(
+            organization_id=organization_id,
+            connector_id=connector_id,
+            workspace_id=workspace_id,
         )
-        if connector is None or str(connector.status or "").lower() != "active":
-            return SqlQueryResult(sql="", error="SOURCE_UNAVAILABLE")
-        if str(connector.type or "").lower() not in ("postgres", "postgresql"):
-            return SqlQueryResult(sql="", error="PROVIDER_NOT_SUPPORTED")
-        if (
-            workspace_id is not None
-            and connector.workspace_id
-            and str(connector.workspace_id) != str(workspace_id)
-        ):
-            return SqlQueryResult(sql="", error="PERMISSION_DENIED")
-        config = dict(connector.config_json or {})
-        secret = await get_secret_store().get(organization_id, connector_id)
-        password = secret.get("password") if isinstance(secret, dict) else None
-        if not password:
-            return SqlQueryResult(sql="", error="NEEDS_CREDENTIALS")
-        try:
-            from urllib.parse import quote_plus
-
-            target = await prepare_connector_target(
-                organization_id=organization_id,
-                workspace_id=workspace_id,
-                connector_id=connector_id,
-                config=config,
-                password=str(password),
-            )
-            dsn = (
-                f"postgresql+asyncpg://{quote_plus(target.user)}:"
-                f"{quote_plus(target.password)}@{target.host}:{target.port}/"
-                f"{quote_plus(target.database)}"
-            )
-            engine = get_connector_engine(dsn, target)
-        except Exception as exc:  # noqa: BLE001
-            return SqlQueryResult(sql="", error=str(exc)[:300])
+        if resolved.error:
+            return SqlQueryResult(sql="", error=resolved.error)
+        config = resolved.config
+        secret = resolved.secret
 
         plugin = get_plugin("postgres", config, secret or {})
         try:
@@ -952,7 +920,9 @@ class PostgresSqlExpert(SqlExpert):
         sql = self._clean_sql(llm_response.content.strip())
         if not sql or sql.upper().startswith("NO_QUERY"):
             return SqlQueryResult(sql="", error="Cannot generate query for this question")
-        session = async_sessionmaker(engine, expire_on_commit=False)()
+        if resolved.session_factory is None:
+            return SqlQueryResult(sql="", error="SOURCE_UNAVAILABLE")
+        session = resolved.session_factory()
         self._query_session_override = session
         try:
             try:
