@@ -354,7 +354,82 @@ class DataOnboardingService:
         )
         public = self.public(updated or row)
         public["connection"] = test_payload
+        if test_payload.get("ok"):
+            await self._ensure_database_source(organization_id, session_id, updated or row)
+            refreshed = await self._require(organization_id, session_id)
+            public = self.public(refreshed)
+            public["connection"] = test_payload
         return public
+
+    async def _ensure_database_source(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        row: dict,
+    ) -> str | None:
+        """Crea/recupera el kb_source que hace visible la BD a Fuentes/agentes.
+
+        El conector y el catálogo son capas técnicas; agentes y la página
+        Fuentes leen `kb_sources`. Sin este puente la ingesta termina pero la
+        fuente no aparece en el selector del agente.
+        """
+        from src.api.deps import get_connector_repo, get_source_repo
+
+        connector_id = row.get("connector_id")
+        if not connector_id:
+            return None
+        connector = await get_connector_repo().get_connector(
+            organization_id, UUID(str(connector_id))
+        )
+        if connector is None:
+            return None
+        repo = get_source_repo()
+        workspace_id = _workspace_uuid(row)
+        source_name = str(connector.name or "Base de datos")
+        config = {
+            "connector_id": str(connector.id),
+            "engine": str(connector.type or "postgres"),
+            "host": str((connector.config_json or {}).get("host") or ""),
+            "database": str((connector.config_json or {}).get("database") or ""),
+        }
+        sources = await repo.list_sources(organization_id, workspace_id=workspace_id)
+        source = next(
+            (
+                item
+                for item in sources
+                if str((item.config_json or {}).get("connector_id") or "") == str(connector.id)
+                or (item.type == config["engine"] and item.name == source_name)
+            ),
+            None,
+        )
+        if source is None:
+            try:
+                source = await repo.create_source(
+                    organization_id,
+                    source_name,
+                    config["engine"],
+                    config_json=config,
+                    workspace_id=workspace_id,
+                )
+            except Exception:
+                # Nombre duplicado u otra carrera: reintenta con sufijo único.
+                source = await repo.create_source(
+                    organization_id,
+                    f"{source_name} ({str(connector.id)[:8]})",
+                    config["engine"],
+                    config_json=config,
+                    workspace_id=workspace_id,
+                )
+        await repo.update_source(
+            organization_id,
+            source.id,
+            status="connected",
+            config_json=config,
+        )
+        await self._store.update(
+            organization_id, session_id, kb_source_id=source.id
+        )
+        return str(source.id)
 
     async def connect_upload(
         self,
@@ -757,6 +832,17 @@ class DataOnboardingService:
                     state_json=state,
                 )
                 row = updated or await self._require(organization_id, session_id)
+                if row.get("kb_source_id"):
+                    try:
+                        from src.api.deps import get_source_repo
+
+                        await get_source_repo().update_source(
+                            organization_id,
+                            UUID(str(row["kb_source_id"])),
+                            status="ready",
+                        )
+                    except Exception:  # noqa: BLE001 - no bloquea el wizard
+                        pass
             elif phase == "FAILED":
                 updated = await self._store.update(
                     organization_id, session_id, status="FAILED"
@@ -1491,6 +1577,9 @@ class DataOnboardingService:
 
         if not row.get("connector_id"):
             raise DataOnboardingError("Connect a database first", 400)
+        if not row.get("kb_source_id"):
+            await self._ensure_database_source(organization_id, session_id, row)
+            row = await self._require(organization_id, session_id)
         result = await start_discovery_scan(
             job_repo=get_job_repo(),
             catalog_store=self._catalog,
