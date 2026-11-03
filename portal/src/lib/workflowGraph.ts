@@ -633,13 +633,28 @@ export function layoutGraph(graph: WorkflowGraph): WorkflowGraph {
   }
   const byLevel: Record<number, string[]> = {};
   for (const n of graph.nodes) byLevel[levelOf[n.id] ?? 0] = [...(byLevel[levelOf[n.id] ?? 0] ?? []), n.id];
-  const placed = new Set(graph.nodes.filter((n) => n.position.x !== 0 || n.position.y !== 0).map((n) => n.id));
+  const placed = new Set(
+    graph.nodes
+      .filter(
+        (n) =>
+          Number.isFinite(n.position?.x) &&
+          Number.isFinite(n.position?.y) &&
+          (n.position.x !== 0 || n.position.y !== 0),
+      )
+      .map((n) => n.id),
+  );
   graph.nodes.forEach((n) => {
     if (placed.has(n.id)) return;
     const level = levelOf[n.id] ?? 0;
     const siblings = byLevel[level] ?? [n.id];
     const idx = Math.max(0, siblings.indexOf(n.id));
-    n.position = { x: level * 300, y: Math.max(idx * 150 - ((siblings.length - 1) * 150) / 2, 0) };
+    const columns = 4;
+    const column = level % columns;
+    const row = Math.floor(level / columns);
+    n.position = {
+      x: column * 300,
+      y: (row + idx) * 150,
+    };
   });
   return graph;
 }

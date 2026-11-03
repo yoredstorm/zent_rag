@@ -51,6 +51,7 @@ import {
   effectNodes,
   emptyGraph,
   graphIssues,
+  layoutGraph,
   newGraphNodeId,
   nodeMeta,
   prepareGraphForSave,
@@ -273,7 +274,7 @@ export default function WorkflowStudioPage() {
     setDescription(d.description || "");
     const storedLevel = d.editor_state?.config_level;
     setConfigLevel(storedLevel === "guided" || storedLevel === "advanced" ? storedLevel : "simple");
-    const g = d.graph ?? starterGraph();
+    const g = layoutGraph(d.graph ?? starterGraph());
     setGraph(g);
     setSavedSignature(
       JSON.stringify({
@@ -554,7 +555,7 @@ export default function WorkflowStudioPage() {
     if (!recovery) return;
     setName(recovery.name);
     setDescription(recovery.description);
-    setGraph(recovery.graph);
+    setGraph(layoutGraph(recovery.graph));
     setRecovery(null);
     setConflict(false);
   }

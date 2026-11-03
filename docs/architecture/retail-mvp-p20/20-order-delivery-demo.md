@@ -106,6 +106,12 @@ resultado.
 - Instancia: `6c8e5ef0-433f-42ab-b85c-38514aabe65f`
 - Nodo `sin_direccion`; no se creó pedido.
 
+## Canvas
+
+Los nodos reciben posiciones deterministas en el grafo. Si un workflow importado
+o creado por API no trae `position`, el Studio aplica `layoutGraph` antes de
+pintar. Sin eso, el canvas calculaba paths SVG con `NaN` y quedaba bloqueado.
+
 ## Límites
 
 - No hay cobro real. La aprobación humana es la simulación de pago.
