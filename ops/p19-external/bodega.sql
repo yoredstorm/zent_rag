@@ -139,4 +139,4 @@ END $$;
 GRANT USAGE ON SCHEMA bodega TO p19_reader, p19_writer;
 GRANT SELECT ON ALL TABLES IN SCHEMA bodega TO p19_reader;
 GRANT SELECT ON bodega.products, bodega.order_items, bodega.product_catalog_v TO p19_writer;
-GRANT SELECT, INSERT, UPDATE ON bodega.stock, bodega.stock_movements, bodega.stock_reservations, bodega.orders TO p19_writer;
+GRANT SELECT, INSERT, UPDATE ON bodega.stock, bodega.stock_movements, bodega.stock_reservations, bodega.orders, bodega.order_items TO p19_writer;

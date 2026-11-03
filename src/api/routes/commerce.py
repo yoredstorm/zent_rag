@@ -237,8 +237,12 @@ async def sales_funnel_readiness(request: Request):
 
 @router.get("/kpis", summary="KPIs del embudo de ventas")
 async def kpis(request: Request, workflow_id: str | None = None):
+    from src.platform.commerce import cart
+
     org = UUID(str(require_permission(request, "workflows:read").organization_id))
-    return await store.workflow_kpis(org, workflow_id=workflow_id)
+    payload = await store.workflow_kpis(org, workflow_id=workflow_id)
+    payload.update(await cart.cart_kpis(org))
+    return payload
 
 
 # ---------------------------------------------------------------------------

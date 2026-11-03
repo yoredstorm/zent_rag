@@ -12,15 +12,15 @@
 | G00 | base/CI | CI verde, invariantes | PASS |
 | G01 | fuente SQL única | tests P20-01, dos conectores | PARTIAL |
 | G02 | discovery/PII | estados honestos, profiling seguro | PARTIAL |
-| G03 | grants/ownership | runtime grants + A/B | BLOCKED P20-04 |
-| G04 | tools tipadas | precio/stock backend | BLOCKED P20-05 |
-| G05 | 6+ turnos/WAIT | E2E durable | NOT_RUN |
+| G03 | grants/ownership | runtime grants + A/B | PASS backend; UI NOT_RUN P20-04 |
+| G04 | tools tipadas | precio/stock backend | PASS P20-05 |
+| G05 | 6+ turnos/WAIT | E2E durable | PARTIAL P20-08 (historial); slots/WAIT NOT_RUN |
 | G06 | carrito/quote/stock | concurrencia y precio cambiante | PARTIAL P20-10: CAS + precio recalculado; carga concurrente NOT_RUN |
-| G07 | checkout simulado | webhook verificado/dedupe | BLOCKED P20-11 |
-| G08 | postventa | A/B, identidad | BLOCKED P20-12 |
-| G09 | architect | draft con recursos reales | BLOCKED P20-13 |
-| G10 | E2E C01–C25 | PostgreSQL externo, Playwright | NOT_RUN |
-| G11 | runbooks/rollback | métricas, rollback | PARTIAL |
+| G07 | checkout simulado | webhook verificado/dedupe | PARTIAL P20-11: manual MVP E2E PASS; Stripe/PSP NOT_IMPLEMENTED |
+| G08 | postventa | A/B, identidad | PARTIAL P20-12: ownership por conversación PASS; identidad externa BLOCKED |
+| G09 | architect | draft con recursos reales | PARTIAL P20-13: plantilla publicada; draft E2E NOT_RUN |
+| G10 | E2E C01-C25 | PostgreSQL externo, Playwright | PARTIAL P20-17: checkout externo manual PASS local; 25 escenarios NOT_RUN |
+| G11 | runbooks/rollback | métricas, rollback | PASS documentado P20-18; carga NOT_RUN |
 
 ## Pruebas P20-01 ejecutadas
 
@@ -58,18 +58,26 @@
 | `get_price_and_stock` total decimal | PASS | idem |
 | `NOT_FOUND` sin 500 | PASS | idem |
 | Presentación «arroz de 1 kg» | PASS (local, runtime real) | `05-catalog-tools.md` |
-| Carrito/quote/checkout | PARTIAL: carrito temporal PASS; checkout NOT_RUN | `10-cart-session.md`; P20-11 |
+| Carrito/quote/checkout | PASS carrito + checkout manual; Stripe NO_IMPLEMENTED | `10-cart-session.md`, `09-checkout-externo.md` |
 | Carrito TTL / purga | PASS (local, Postgres real) | `tests/test_p20_cart.py` |
 | Carrito CAS / idempotencia | PASS | idem |
 | Carrito externo Bodega | PASS en tools (POST HTTP con conversación real) | `10-cart-session.md` |
 | Carrito multi-turno HTTP | PASS (local): agrega, cambia, consulta, quita | `tests/test_p20_cart.py` + HTTP |
-| Carrito en Workflow Studio / binding | NOT_RUN | P20-09 |
+| Carrito en Workflow Studio / binding | PASS local (plantilla 181 + E2E externo) | `09-checkout-externo.md` |
+| Checkout manual E2E externo | PASS local: carrito, orden, proyección, reserva, aprobación, PAID, commit | `ops/p20/e2e_checkout_manual.py` |
+| Checkout ZENT interno E2E | PASS | `tests/test_p20_retail_e2e.py` |
+| Postventa por conversación | PASS local; número ajeno NOT_FOUND | `tests/test_p20_cart.py`, HTTP |
+| Postventa identidad externa | BLOCKED: sin auth de cliente | P20-12 |
+| KPI carritos | PASS | `tests/test_p20_cart.py`, portal `SalesFunnelKpis.test.tsx` |
+| Aislamiento workspace inventario | PASS | `tests/test_p20_inventory_binding.py` |
+| Architect draft E2E | NOT_RUN | P20-13 |
+| E2E C01-C25 completo | PARTIAL | P20-17 |
 | Nodo pago manual MVP | PASS | `tests/test_p20_manual_payment.py` |
 | Pago manual sin aprobación | PASS (pending_approval) | idem |
 | Pago manual aprobado | PASS (`provider=manual_mvp`) | idem |
 | Pago manual en producción | PASS (bloqueado) | idem |
-| Stripe/PSP real | NOT_RUN | P20-11
-| Postventa con identidad | NOT_RUN | P20-12 |
+| Stripe/PSP real | NOT_RUN | P20-11 |
+| Postventa con identidad externa | BLOCKED | P20-12 |
 
 
 ## Comandos
@@ -77,6 +85,8 @@
 ```powershell
 uv run --frozen --no-sync pytest tests/test_p20_sql_source_integrity.py -q
 uv run --frozen --no-sync pytest tests/test_data_onboarding.py::test_database_onboarding_creates_visible_kb_source -q
-npx vitest run src/components/agentStudio/AgentSourcePicker.test.tsx
+uv run --frozen --no-sync pytest tests/test_p20_cart.py tests/test_p20_retail_e2e.py tests/test_p20_inventory_binding.py -q
+uv run --frozen --no-sync pytest tests/certification/workflows/test_checkout_snapshot.py -q
+npx vitest run src/components/commerce/SalesFunnelKpis.test.tsx
 uv run --frozen --no-sync python scripts/cert/p20_migrate_sql_sources.py --dry-run
 ```

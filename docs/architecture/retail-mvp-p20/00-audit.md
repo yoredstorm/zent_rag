@@ -47,10 +47,10 @@ IDs estables y scope:
 | Catálogo semántico | discovery + sugerencias, sin modelo comercial aprobado | modelo/manifest revisable | MISSING P20-03 |
 | Grants por agente | P19.1 documenta, no implementa grants específicos | `agent_data_grants` + allowlist de recursos en `query_database` | PARTIAL P20-04 (backend; UI y tools tipadas pendientes) |
 | Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 (tabla temporal + TTL + tools; falta embudo) |
-| Sales funnel | 40 nodos existentes, demo interno | adaptar a capacidades externas | PARTIAL P20-09 |
-| Checkout | proveedor abstracto, sin sandbox dedicado | nodo manual MVP temporal; Stripe/PSP real pendiente | PARTIAL P20-11 |
-| Postventa | órdenes externas disponibles por SQL | identidad + owner filter | BLOCKED P20-12 |
-| Observabilidad | métricas/timeline existentes | métricas de venta y grants | PARTIAL P20-15 |
+| Sales funnel | 40 nodos existentes, demo interno | plantilla `retail_checkout_manual` externa | PARTIAL P20-09 (checkout; funnel conversacional sigue en agente) |
+| Checkout | proveedor abstracto, sin sandbox dedicado | nodo manual MVP temporal + proyección Bodega + stock batch | PASS local P20-11; Stripe NO_IMPLEMENTED |
+| Postventa | órdenes externas disponibles por SQL | identidad + owner filter | PASS por conversación P20-12; identidad externa BLOCKED |
+| Observabilidad | métricas/timeline existentes | métricas de venta, carrito y grants | PARTIAL P20-15 (carrito + portal) |
 
 ## 3. Hallazgos P0/P1
 

@@ -225,6 +225,10 @@ async def main() -> None:
         ("bodega.stock.reserve", "reserve_stock"),
         ("bodega.stock.commit", "commit_stock"),
         ("bodega.stock.release", "release_stock"),
+        ("bodega.stock.reserve_batch", "reserve_stock_batch"),
+        ("bodega.stock.commit_batch", "commit_order_stock"),
+        ("bodega.stock.release_batch", "release_order_stock"),
+        ("bodega.order.create", "create_order"),
     ):
         await upsert_binding(
             org_id,
@@ -243,6 +247,10 @@ async def main() -> None:
                 "bodega.stock.reserve",
                 "bodega.stock.commit",
                 "bodega.stock.release",
+                "bodega.stock.reserve_batch",
+                "bodega.stock.commit_batch",
+                "bodega.stock.release_batch",
+                "bodega.order.create",
             ]
         )
     )  # noqa: T201

@@ -773,6 +773,7 @@ _CONSULT_TOOLS = (
     "get_product",
     "get_price_and_stock",
     "cart_get",
+    "get_my_order",
 )
 
 

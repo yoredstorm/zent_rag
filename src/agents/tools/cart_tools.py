@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from decimal import Decimal, InvalidOperation
 from typing import Any, ClassVar
+from uuid import UUID
 
 from src.agents.tools.base import Tool, ToolContext, ToolResult
 from src.agents.tools.catalog_tools import (
@@ -39,14 +40,43 @@ def _conversation(ctx: ToolContext) -> str:
     return str(ctx.conversation_id)
 
 
-def _session_kwargs(ctx: ToolContext) -> dict[str, Any]:
-    """Sesión por usuario y conversación: evita IDOR entre clientes."""
+def _session_kwargs(
+    ctx: ToolContext,
+    *,
+    workspace_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Sesión por conversación; el store filtra por user_id cuando existe."""
     conversation = _conversation(ctx)
     return {
-        "cart_key": f"user:{ctx.user_id or 'anonymous'}:conversation:{conversation}",
+        "cart_key": f"conversation:{conversation}",
         "conversation_id": conversation,
+        "workspace_id": workspace_id,
+        "user_id": ctx.user_id,
         "ttl_seconds": _ttl(ctx),
     }
+
+
+def _source_workspace(source: dict[str, Any] | None) -> UUID | None:
+    raw = (source or {}).get("workspace_id")
+    if not raw:
+        return None
+    try:
+        return UUID(str(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _workspace_from_source(
+    ctx: ToolContext,
+) -> tuple[UUID | None, str | None]:
+    source, session, error = await _authorized_catalog_source(
+        ctx, "store.products.search"
+    )
+    if error or source is None or session is None:
+        return None, error or "SOURCE_UNAVAILABLE"
+    workspace_id = _source_workspace(source)
+    await session.close()
+    return workspace_id, None
 
 
 def _dump(payload: dict[str, Any], *, status: str = "OK") -> ToolResult:
@@ -156,6 +186,8 @@ async def _refresh(
     ctx: ToolContext,
     session: Any,
     payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
 ) -> dict[str, Any]:
     items = payload.get("items") or []
     if not items:
@@ -163,7 +195,7 @@ async def _refresh(
     overrides = await _price_overrides(session, items)
     return await cart_store.get_cart(
         ctx.tenant_id,
-        **_session_kwargs(ctx),
+        **_session_kwargs(ctx, workspace_id=workspace_id),
         price_overrides=overrides,
         create=False,
     )
@@ -212,25 +244,31 @@ class CartGetTool(Tool):
     timeout_seconds: ClassVar[float] = 30.0
 
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
-        try:
-            payload = await cart_store.get_cart(
-                ctx.tenant_id,
-                **_session_kwargs(ctx),
-                create=False,
-            )
-        except ValueError as exc:
-            return ToolResult(error=str(exc))
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(error=f"CART_READ_FAILED: {str(exc)[:180]}")
-        if not payload.get("items"):
-            return _dump(payload, status="EMPTY")
         source, session, error = await _authorized_catalog_source(
             ctx, "store.products.search"
         )
         if error or source is None or session is None:
             return ToolResult(error=error or "SOURCE_UNAVAILABLE")
+        workspace_id = _source_workspace(source)
         try:
-            refreshed = await _refresh(ctx, session, payload)
+            payload = await cart_store.get_cart(
+                ctx.tenant_id,
+                **_session_kwargs(ctx, workspace_id=workspace_id),
+                create=False,
+            )
+        except ValueError as exc:
+            await session.close()
+            return ToolResult(error=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            await session.close()
+            return ToolResult(error=f"CART_READ_FAILED: {str(exc)[:180]}")
+        if not payload.get("items"):
+            await session.close()
+            return _dump(payload, status="EMPTY")
+        try:
+            refreshed = await _refresh(
+                ctx, session, payload, workspace_id=workspace_id
+            )
             return _dump(refreshed)
         except Exception as exc:  # noqa: BLE001
             return ToolResult(
@@ -272,7 +310,9 @@ class CartAddTool(Tool):
         try:
             existing = await cart_store.get_cart(
                 ctx.tenant_id,
-                **_session_kwargs(ctx),
+                **_session_kwargs(
+                    ctx, workspace_id=_source_workspace(source)
+                ),
                 create=False,
             )
             current = next(
@@ -293,7 +333,9 @@ class CartAddTool(Tool):
                 )
             payload = await cart_store.add_item(
                 ctx.tenant_id,
-                **_session_kwargs(ctx),
+                **_session_kwargs(
+                    ctx, workspace_id=_source_workspace(source)
+                ),
                 sku=sku,
                 name=str(row.get("name") or sku),
                 unit=str(row.get("unit") or "UNIT"),
@@ -343,13 +385,22 @@ class CartSetQuantityTool(Tool):
         try:
             payload = await cart_store.set_quantity(
                 ctx.tenant_id,
-                **_session_kwargs(ctx),
+                **_session_kwargs(
+                    ctx, workspace_id=_source_workspace(source)
+                ),
                 sku=sku,
                 quantity=quantity,
                 source_id=source["source_id"],
             )
             try:
-                return _dump(await _refresh(ctx, session, payload))
+                return _dump(
+                    await _refresh(
+                        ctx,
+                        session,
+                        payload,
+                        workspace_id=_source_workspace(source),
+                    )
+                )
             except Exception:  # noqa: BLE001 - la mutación ya se confirmó
                 return _dump(
                     {**payload, "price_refresh_warning": "no se pudo refrescar"}
@@ -381,10 +432,13 @@ class CartRemoveTool(Tool):
         sku = str(arguments.get("sku") or "").strip()
         if not sku:
             return ToolResult(error="INVALID_ARGUMENT: sku requerido")
+        workspace_id, error = await _workspace_from_source(ctx)
+        if error:
+            return ToolResult(error=error)
         try:
             current = await cart_store.get_cart(
                 ctx.tenant_id,
-                **_session_kwargs(ctx),
+                **_session_kwargs(ctx, workspace_id=workspace_id),
                 create=False,
             )
             if not current.get("items"):
@@ -399,7 +453,7 @@ class CartRemoveTool(Tool):
             )
             payload = await cart_store.remove_item(
                 ctx.tenant_id,
-                **_session_kwargs(ctx),
+                **_session_kwargs(ctx, workspace_id=workspace_id),
                 sku=sku,
                 source_id=source_id,
             )
@@ -420,10 +474,13 @@ class CartClearTool(Tool):
     timeout_seconds: ClassVar[float] = 30.0
 
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
+        workspace_id, error = await _workspace_from_source(ctx)
+        if error:
+            return ToolResult(error=error)
         try:
             payload = await cart_store.clear_cart(
                 ctx.tenant_id,
-                **_session_kwargs(ctx),
+                **_session_kwargs(ctx, workspace_id=workspace_id),
             )
             return _dump(payload, status="EMPTY")
         except ValueError as exc:

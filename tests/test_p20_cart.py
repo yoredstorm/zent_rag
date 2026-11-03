@@ -28,6 +28,10 @@ async def _cleanup(organization_id) -> None:
             {"oid": str(organization_id)},
         )
         await session.execute(
+            text("DELETE FROM commerce_orders WHERE organization_id = :oid"),
+            {"oid": str(organization_id)},
+        )
+        await session.execute(
             text(
                 "DELETE FROM workflow_capability_bindings "
                 "WHERE organization_id = :oid"
@@ -187,6 +191,193 @@ async def test_cart_recalculates_price_from_catalog() -> None:
         )
         assert refreshed["items"][0]["unit_price"] == 5.10
         assert refreshed["total"] == 10.20
+    finally:
+        await _cleanup(organization_id)
+
+
+async def test_cart_closes_into_order_and_cannot_reuse_session() -> None:
+    organization_id = uuid4()
+    conversation_id = uuid4()
+    try:
+        product = await _product(organization_id)
+        await cart.add_item(
+            organization_id,
+            conversation_id=conversation_id,
+            product_id=product["product_id"],
+            quantity=2,
+        )
+        order = await cart.create_order_from_cart(
+            organization_id,
+            conversation_id=conversation_id,
+            customer={"name": "Cliente demo"},
+        )
+        assert order["status"] == "AWAITING_PAYMENT"
+        assert order["total"] == 9.60
+        assert order["conversation_id"] == str(conversation_id)
+        assert len(order["items"]) == 1
+        assert order["items"][0]["sku"] == product["sku"]
+        assert order["metadata"]["source"] == "commerce_cart"
+
+        assert (
+            await cart.get_cart(
+                organization_id, conversation_id=conversation_id
+            )
+        )["status"] == "empty"
+        retry = await cart.create_order_from_cart(
+            organization_id, conversation_id=conversation_id
+        )
+        assert retry["order_id"] == order["order_id"]
+
+        again = await execute_commerce_capability(
+            organization_id,
+            "sales.order.create",
+            {"conversation_id": str(conversation_id)},
+        )
+        assert again["order"]["order_id"] == order["order_id"]
+    finally:
+        await _cleanup(organization_id)
+
+
+async def test_external_cart_closes_with_backend_price_snapshot() -> None:
+    organization_id = uuid4()
+    conversation_id = uuid4()
+    source_id = uuid4()
+    try:
+        await cart.add_item(
+            organization_id,
+            conversation_id=conversation_id,
+            sku="BD-ARROZ-01",
+            name="Arroz extra 1 kg",
+            unit="kg",
+            unit_price="4.80",
+            currency="PEN",
+            source_id=source_id,
+            price_source="external:bodega.product_catalog_v",
+            quantity=3,
+        )
+        order = await cart.create_order_from_cart(
+            organization_id, conversation_id=conversation_id
+        )
+        assert order["total"] == 14.40
+        assert order["items"][0]["sku"] == "BD-ARROZ-01"
+        assert order["cart"]["items"][0]["price_source"].startswith("external:")
+    finally:
+        await _cleanup(organization_id)
+
+
+async def test_order_ownership_is_conversation_scoped() -> None:
+    organization_id = uuid4()
+    conversation_id = uuid4()
+    other_conversation = uuid4()
+    try:
+        product = await _product(organization_id)
+        await cart.add_item(
+            organization_id,
+            conversation_id=conversation_id,
+            product_id=product["product_id"],
+            quantity=1,
+        )
+        order = await cart.create_order_from_cart(
+            organization_id, conversation_id=conversation_id
+        )
+        own = await store.get_order_for_conversation(
+            organization_id,
+            conversation_id=str(conversation_id),
+            order_number=order["order_number"],
+        )
+        assert own is not None
+        assert own["order_id"] == order["order_id"]
+        assert (
+            await store.get_order_for_conversation(
+                organization_id,
+                conversation_id=str(other_conversation),
+                order_number=order["order_number"],
+            )
+            is None
+        )
+        assert (
+            await store.get_order_for_conversation(
+                organization_id, conversation_id=str(other_conversation)
+            )
+            is None
+        )
+    finally:
+        await _cleanup(organization_id)
+
+
+async def test_cart_kpis_counts_active_and_checked_out() -> None:
+    organization_id = uuid4()
+    try:
+        product = await _product(organization_id)
+        await cart.add_item(
+            organization_id,
+            conversation_id=uuid4(),
+            product_id=product["product_id"],
+            quantity=1,
+        )
+        checked = uuid4()
+        await cart.add_item(
+            organization_id,
+            conversation_id=checked,
+            product_id=product["product_id"],
+            quantity=1,
+        )
+        await cart.create_order_from_cart(
+            organization_id, conversation_id=checked
+        )
+        metrics = await cart.cart_kpis(organization_id)
+        assert metrics["carts"]["active"] == 1
+        assert metrics["carts"]["checked_out"] == 1
+        assert metrics["carts"]["items_active"] == 1
+    finally:
+        await _cleanup(organization_id)
+
+
+async def test_get_my_order_tool_blocks_other_conversations() -> None:
+    from src.agents.tools.base import ToolContext
+    from src.agents.tools.order_tools import GetMyOrderTool
+
+    organization_id = uuid4()
+    conversation_id = uuid4()
+    try:
+        product = await _product(organization_id)
+        await cart.add_item(
+            organization_id,
+            conversation_id=conversation_id,
+            product_id=product["product_id"],
+            quantity=1,
+        )
+        order = await cart.create_order_from_cart(
+            organization_id, conversation_id=conversation_id
+        )
+        own_ctx = ToolContext(
+            tenant_id=organization_id,
+            conversation_id=conversation_id,
+            permissions=frozenset({"tool:query_database"}),
+        )
+        result = await GetMyOrderTool().execute(own_ctx, {})
+        assert result.error is None
+        assert order["order_number"] in (result.output or "")
+
+        other_ctx = ToolContext(
+            tenant_id=organization_id,
+            conversation_id=uuid4(),
+            permissions=frozenset({"tool:query_database"}),
+        )
+        other = await GetMyOrderTool().execute(
+            other_ctx, {"order_number": order["order_number"]}
+        )
+        assert other.error is None
+        assert "NOT_FOUND" in (other.output or "")
+        assert order["order_number"] not in (other.output or "")
+
+        anonymous = ToolContext(
+            tenant_id=organization_id,
+            permissions=frozenset({"tool:query_database"}),
+        )
+        missing = await GetMyOrderTool().execute(anonymous, {})
+        assert missing.error
+        assert missing.error.startswith("IDENTITY_REQUIRED")
     finally:
         await _cleanup(organization_id)
 

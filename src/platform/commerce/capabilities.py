@@ -158,6 +158,38 @@ async def execute_commerce_capability(
             order_id=payload.get("order_id"),
         )
     if capability_ref == C.CAP_ORDER_CREATE:
+        items = _list_arg(payload.get("items"))
+        if not items and (
+            payload.get("cart_id")
+            or payload.get("cart_key")
+            or payload.get("conversation_id")
+            or payload.get("workflow_instance_id")
+            or instance_id
+        ):
+            order = await cart.create_order_from_cart(
+                organization_id,
+                cart_key=payload.get("cart_key"),
+                conversation_id=payload.get("conversation_id"),
+                workflow_instance_id=payload.get("workflow_instance_id") or instance_id,
+                workspace_id=workspace_id,
+                user_id=payload.get("user_id"),
+                customer=payload.get("customer") or {},
+                currency=payload.get("currency") or config.get("currency"),
+                business_operation_id=payload.get("business_operation_id"),
+                workflow_id=workflow_id,
+                metadata={"node_id": node_id, "reservation_policy": (
+                    payload.get("reservation_policy")
+                    or config.get("reservation_policy")
+                    or C.RESERVATION_POLICY_CHECKOUT
+                )},
+            )
+            return {
+                "order": order,
+                **{
+                    k: order[k]
+                    for k in ("order_id", "order_number", "status", "total", "currency")
+                },
+            }
         business_operation_id = str(
             payload.get("business_operation_id")
             or (f"order:{instance_id}" if instance_id else "")

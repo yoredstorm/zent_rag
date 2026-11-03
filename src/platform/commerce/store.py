@@ -1019,6 +1019,154 @@ async def create_order(
     return await get_order(organization_id, order_id=str(row.id))
 
 
+async def create_order_from_snapshot(
+    organization_id: UUID,
+    *,
+    lines: list[dict[str, Any]],
+    currency: str = "PEN",
+    customer: dict[str, Any] | None = None,
+    cart: dict[str, Any] | None = None,
+    business_operation_id: str | None = None,
+    workflow_id: str | None = None,
+    workflow_instance_id: str | None = None,
+    conversation_id: str | None = None,
+    workspace_id: UUID | None = None,
+    status: str = C.ORDER_AWAITING_PAYMENT,
+    metadata: dict[str, Any] | None = None,
+    order_number: str | None = None,
+) -> dict[str, Any]:
+    """Crea la orden desde líneas YA resueltas por el backend.
+
+    No consulta el catálogo interno: se usa para carritos externos (Bodega)
+    cuyos precios fueron resueltos por la tool/capacidad autorizada. El total
+    se recalcula con Decimal; el cliente nunca envía precios.
+    """
+    await ensure_commerce_tables()
+    if not lines:
+        raise CommerceError("EMPTY_CART", "la orden requiere al menos un ítem")
+    if business_operation_id:
+        existing = await find_order_by_operation(
+            organization_id, business_operation_id
+        )
+        if existing:
+            return existing
+    resolved_currency = (currency or "PEN").upper()[:3]
+    normalized: list[dict[str, Any]] = []
+    subtotal = Decimal("0")
+    for line in lines:
+        quantity = _dec(line.get("quantity") or 1)
+        if quantity <= 0:
+            raise CommerceError("INVALID_QUANTITY", "la cantidad debe ser positiva")
+        unit_price = _dec(line.get("unit_price") or 0)
+        if unit_price < 0:
+            raise CommerceError("INVALID_PRICE", "el precio no puede ser negativo")
+        line_currency = str(line.get("currency") or resolved_currency).upper()[:3]
+        if line_currency != resolved_currency:
+            raise CommerceError(
+                "CURRENCY_MISMATCH",
+                f"la orden está en {resolved_currency}, la línea en {line_currency}",
+            )
+        line_total = (unit_price * quantity).quantize(Decimal("0.01"))
+        subtotal += line_total
+        product_id = line.get("product_id")
+        if product_id:
+            try:
+                product_id = str(UUID(str(product_id)))
+            except (TypeError, ValueError) as exc:
+                raise CommerceError("PRODUCT_ID_INVALID", "product_id inválido") from exc
+        normalized.append(
+            {
+                "product_id": product_id or None,
+                "sku": str(line.get("sku") or "")[:80],
+                "name": str(line.get("name") or line.get("sku") or "")[:240],
+                "unit": str(line.get("unit") or "UNIT")[:16],
+                "quantity": float(quantity),
+                "unit_price": float(unit_price.quantize(Decimal("0.0001"))),
+                "line_total": float(line_total),
+                "currency": line_currency,
+                "price_source": str(line.get("price_source") or "")[:80] or None,
+            }
+        )
+    total = subtotal.quantize(Decimal("0.01"))
+    session = await get_async_session()
+    try:
+        number = order_number or await _next_order_number(session, organization_id)
+        row = (
+            await session.execute(
+                text(
+                    "INSERT INTO commerce_orders (organization_id, workspace_id, order_number, status, "
+                    "customer, cart, subtotal, total, currency, workflow_id, workflow_instance_id, "
+                    "conversation_id, business_operation_id, metadata) VALUES (:oid, :ws, :number, :status, "
+                    "CAST(:customer AS jsonb), CAST(:cart AS jsonb), :subtotal, :total, :cur, :wf, :iid, "
+                    ":conv, :boi, CAST(:meta AS jsonb)) "
+                    "ON CONFLICT (organization_id, business_operation_id) WHERE business_operation_id "
+                    "IS NOT NULL DO NOTHING "
+                    "RETURNING id, order_number, status, subtotal, total, currency, created_at"
+                ),
+                {
+                    "oid": str(organization_id),
+                    "ws": str(workspace_id) if workspace_id else None,
+                    "number": number,
+                    "status": status,
+                    "customer": json.dumps(customer or {}, ensure_ascii=False, default=str),
+                    "cart": json.dumps(
+                        cart or {"items": normalized},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    "subtotal": str(subtotal),
+                    "total": str(total),
+                    "cur": resolved_currency,
+                    "wf": str(workflow_id) if workflow_id else None,
+                    "iid": str(workflow_instance_id) if workflow_instance_id else None,
+                    "conv": str(conversation_id) if conversation_id else None,
+                    "boi": business_operation_id or None,
+                    "meta": json.dumps(metadata or {}, ensure_ascii=False, default=str),
+                },
+            )
+        ).fetchone()
+        if row is None:
+            await session.rollback()
+            existing = await find_order_by_operation(
+                organization_id, business_operation_id or ""
+            )
+            if existing:
+                return existing
+            raise CommerceError("ORDER_CONFLICT", "no se pudo crear la orden")
+        for line in normalized:
+            await session.execute(
+                text(
+                    "INSERT INTO commerce_order_items (organization_id, order_id, product_id, sku, "
+                    "name, quantity, unit, unit_price, line_total, currency, metadata) VALUES "
+                    "(:oid, :order_id, :pid, :sku, :name, :qty, :unit, :price, :line_total, :cur, "
+                    "CAST(:meta AS jsonb))"
+                ),
+                {
+                    "oid": str(organization_id),
+                    "order_id": str(row.id),
+                    "pid": line["product_id"],
+                    "sku": line["sku"],
+                    "name": line["name"],
+                    "qty": str(_dec(line["quantity"])),
+                    "unit": line["unit"],
+                    "price": str(_dec(line["unit_price"])),
+                    "line_total": str(_dec(line["line_total"])),
+                    "cur": line["currency"],
+                    "meta": json.dumps(
+                        {"price_source": line["price_source"]},
+                        ensure_ascii=False,
+                    ),
+                },
+            )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+    return await get_order(organization_id, order_id=str(row.id))
+
+
 async def _next_order_number(session: Any, organization_id: UUID) -> str:
     row = (
         await session.execute(
@@ -1738,6 +1886,60 @@ async def workflow_kpis(organization_id: UUID, *, workflow_id: str | None = None
             round(_f(avg_row.avg_seconds), 2) if avg_row and avg_row.avg_seconds is not None else None
         ),
     }
+
+
+async def list_orders_by_conversation(
+    organization_id: UUID,
+    *,
+    conversation_id: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Órdenes de UNA conversación. Ownership explícito para postventa."""
+    await ensure_commerce_tables()
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id FROM commerce_orders "
+                    "WHERE organization_id = :oid AND conversation_id = :cid "
+                    "ORDER BY created_at DESC LIMIT :lim"
+                ),
+                {
+                    "oid": str(organization_id),
+                    "cid": str(conversation_id),
+                    "lim": max(1, min(int(limit), 50)),
+                },
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    orders: list[dict[str, Any]] = []
+    for row in rows:
+        order = await get_order(organization_id, order_id=str(row.id))
+        if order and order.get("conversation_id") == str(conversation_id):
+            orders.append(order)
+    return orders
+
+
+async def get_order_for_conversation(
+    organization_id: UUID,
+    *,
+    conversation_id: str,
+    order_number: str | None = None,
+) -> dict[str, Any] | None:
+    """Orden por número solo si pertenece a la conversación (anti-IDOR)."""
+    if not order_number:
+        orders = await list_orders_by_conversation(
+            organization_id, conversation_id=conversation_id, limit=1
+        )
+        return orders[0] if orders else None
+    order = await get_order(organization_id, order_number=str(order_number))
+    if order is None:
+        return None
+    if order.get("conversation_id") != str(conversation_id):
+        return None
+    return order
 
 
 async def list_orders(

@@ -44,7 +44,7 @@ def test_latest_migration_is_current() -> None:
         for path in VERSIONS.glob("*.py")
         if path.stem.split("_", 1)[0].isdigit()
     )
-    assert numbers[-1] == 180
+    assert numbers[-1] == 181
 
 
 def test_migration_180_cart_is_aditive_and_chained() -> None:
@@ -58,6 +58,16 @@ def test_migration_180_cart_is_aditive_and_chained() -> None:
     assert "ON DELETE CASCADE" in source
     assert "sales.cart.remove" in source
     assert "CREATE TABLE IF NOT EXISTS commerce_orders" not in source
+
+
+def test_migration_181_publishes_checkout_template() -> None:
+    module = _load_migration("181_retail_checkout_manual.py")
+    assert module.revision == "181"
+    assert module.down_revision == "180"
+    source = (VERSIONS / "181_retail_checkout_manual.py").read_text()
+    assert "retail_checkout_manual" in source
+    assert "workflow_templates" in source
+    assert "src.platform" not in source
 
 
 def test_migration_169_persists_test_reports_only() -> None:

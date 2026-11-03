@@ -1,0 +1,704 @@
+{
+  "product": {
+    "applies_to": [
+      "WORKFLOWS"
+    ],
+    "capabilities": [
+      "sales.cart.get",
+      "sales.order.create",
+      "sales.order.mark_paid",
+      "bodega.order.create",
+      "bodega.stock.reserve_batch",
+      "bodega.stock.commit_batch",
+      "bodega.stock.release_batch",
+      "payments.manual.validate",
+      "conversation.send"
+    ],
+    "category": "sales",
+    "certification": {
+      "gold_workflow": false,
+      "temporary": true
+    },
+    "configuration_schema": {
+      "properties": {
+        "cart_ttl_seconds": {
+          "default": 3600,
+          "type": "integer"
+        },
+        "currency": {
+          "default": "PEN",
+          "type": "string"
+        },
+        "manual_instructions": {
+          "type": "string"
+        },
+        "reservation_ttl_seconds": {
+          "default": 900,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "entitlements": {
+      "workflows": 1
+    },
+    "events": [],
+    "featured": {
+      "homepage": false
+    },
+    "included_assets": [
+      {
+        "alias": "checkout",
+        "kind": "workflow_template",
+        "ref": "retail_checkout_manual"
+      }
+    ],
+    "long_description": "Checkout externo MVP: carrito temporal, orden ZENT, proyección a Bodega, reserva/commit de stock y pago manual con aprobación. Temporal hasta Stripe/PSP.",
+    "name": "Retail Checkout Manual (MVP temporal)",
+    "pricing": {
+      "model": "FREE"
+    },
+    "privacy": {
+      "contains_personal_data": true,
+      "data_classes": [
+        "customer_contact"
+      ]
+    },
+    "product_type": "WORKFLOW_TEMPLATE",
+    "security": {
+      "contains_secrets": false,
+      "llm_controls_amount": false,
+      "monetary_values": "server_side"
+    },
+    "short_description": "Cierra el carrito de la conversación, reserva stock real y valida el pago con aprobación humana. Nodo manual temporal hasta integrar Stripe/PSP.",
+    "slug": "retail-checkout-manual",
+    "status": "PUBLISHED",
+    "tags": [
+      "retail",
+      "checkout",
+      "manual",
+      "mvp"
+    ],
+    "version": 1
+  },
+  "template": {
+    "category": "ventas",
+    "description": "Cierra el carrito de la conversación, reserva stock real y valida el pago con aprobación humana. Nodo manual temporal hasta integrar Stripe/PSP.",
+    "graph": {
+      "edges": [
+        {
+          "from_node": "pedido",
+          "from_port": "out",
+          "id": "e1",
+          "to_node": "carrito",
+          "to_port": "in"
+        },
+        {
+          "from_node": "carrito",
+          "from_port": "out",
+          "id": "e2",
+          "to_node": "carrito_lleno",
+          "to_port": "in"
+        },
+        {
+          "from_node": "carrito_lleno",
+          "from_port": "then",
+          "id": "e3",
+          "to_node": "crear_orden",
+          "to_port": "in"
+        },
+        {
+          "from_node": "crear_orden",
+          "from_port": "out",
+          "id": "e4",
+          "to_node": "proyectar_bodega",
+          "to_port": "in"
+        },
+        {
+          "from_node": "proyectar_bodega",
+          "from_port": "out",
+          "id": "e5",
+          "to_node": "reservar_stock",
+          "to_port": "in"
+        },
+        {
+          "from_node": "reservar_stock",
+          "from_port": "out",
+          "id": "e6",
+          "to_node": "instrucciones",
+          "to_port": "in"
+        },
+        {
+          "from_node": "instrucciones",
+          "from_port": "out",
+          "id": "e7",
+          "to_node": "validar_pago",
+          "to_port": "in"
+        },
+        {
+          "from_node": "validar_pago",
+          "from_port": "out",
+          "id": "e8",
+          "to_node": "marcar_pagada",
+          "to_port": "in"
+        },
+        {
+          "from_node": "marcar_pagada",
+          "from_port": "out",
+          "id": "e9",
+          "to_node": "commit_stock",
+          "to_port": "in"
+        },
+        {
+          "from_node": "commit_stock",
+          "from_port": "out",
+          "id": "e10",
+          "to_node": "confirmar",
+          "to_port": "in"
+        },
+        {
+          "from_node": "confirmar",
+          "from_port": "out",
+          "id": "e11",
+          "to_node": "resultado",
+          "to_port": "in"
+        },
+        {
+          "from_node": "resultado",
+          "from_port": "out",
+          "id": "e12",
+          "to_node": "fin",
+          "to_port": "in"
+        },
+        {
+          "from_node": "carrito_lleno",
+          "from_port": "else",
+          "id": "e13",
+          "to_node": "carrito_vacio",
+          "to_port": "in"
+        },
+        {
+          "from_node": "carrito_vacio",
+          "from_port": "out",
+          "id": "e14",
+          "to_node": "fin_vacio",
+          "to_port": "in"
+        }
+      ],
+      "entrypoints": [
+        "pedido"
+      ],
+      "metadata": {
+        "applies_to": [
+          "WORKFLOWS"
+        ],
+        "category": "ventas",
+        "template": "retail_checkout_manual",
+        "temporary_manual_payment": true
+      },
+      "nodes": [
+        {
+          "config": {},
+          "id": "pedido",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Checkout solicitado",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "trigger_webhook"
+        },
+        {
+          "config": {
+            "capability": "sales.cart.get",
+            "inputs": {
+              "conversation_id": "{{trigger.conversation_id}}",
+              "ttl_seconds": "{{variables.cart_ttl_seconds}}"
+            }
+          },
+          "id": "carrito",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Leer carrito",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "field": "{{nodes.carrito.output.count}}",
+            "operator": ">",
+            "value": 0
+          },
+          "id": "carrito_lleno",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "¿Carrito con items?",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            },
+            {
+              "name": "then",
+              "type": "json"
+            },
+            {
+              "name": "else",
+              "type": "json"
+            }
+          ],
+          "type": "condition"
+        },
+        {
+          "config": {
+            "capability": "sales.order.create",
+            "inputs": {
+              "business_operation_id": "{{trigger.order_operation_id}}",
+              "conversation_id": "{{trigger.conversation_id}}",
+              "currency": "{{variables.currency}}",
+              "customer": {
+                "name": "{{trigger.customer_name}}",
+                "ref": "{{trigger.customer_ref}}"
+              }
+            }
+          },
+          "id": "crear_orden",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Crear orden ZENT",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "bodega.order.create",
+            "inputs": {
+              "currency": "{{nodes.crear_orden.output.currency}}",
+              "customer_ref": "{{trigger.customer_ref}}",
+              "items": "{{nodes.carrito.output.items}}",
+              "order_number": "{{nodes.crear_orden.output.order_number}}"
+            }
+          },
+          "id": "proyectar_bodega",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Proyectar orden a Bodega",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "bodega.stock.reserve_batch",
+            "inputs": {
+              "items": "{{nodes.carrito.output.items}}",
+              "order_number": "{{nodes.crear_orden.output.order_number}}",
+              "ttl_seconds": "{{variables.reservation_ttl_seconds}}"
+            }
+          },
+          "id": "reservar_stock",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Reservar stock real",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "conversation_id": "{{trigger.conversation_id}}",
+              "message": "Pedido {{nodes.crear_orden.output.order_number}} por {{nodes.crear_orden.output.total}} {{nodes.crear_orden.output.currency}}.\n{{variables.manual_instructions}}",
+              "title": "Pago manual pendiente"
+            }
+          },
+          "error_policy": "continue",
+          "id": "instrucciones",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Enviar instrucciones",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "amount": "{{nodes.crear_orden.output.total}}",
+            "currency": "{{nodes.crear_orden.output.currency}}",
+            "expires_minutes": 1440,
+            "instructions": "{{variables.manual_instructions}}",
+            "order_id": "{{nodes.crear_orden.output.order_id}}",
+            "payment_reference": "{{trigger.payment_reference}}"
+          },
+          "id": "validar_pago",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Validación manual de pago (MVP temporal)",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "manual_payment_validation"
+        },
+        {
+          "config": {
+            "capability": "sales.order.mark_paid",
+            "inputs": {
+              "order_id": "{{nodes.crear_orden.output.order_id}}",
+              "payment_reference": "{{nodes.validar_pago.output.approval_id}}",
+              "provider": "manual_mvp"
+            }
+          },
+          "id": "marcar_pagada",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Marcar orden pagada",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "bodega.stock.commit_batch",
+            "inputs": {
+              "order_number": "{{nodes.crear_orden.output.order_number}}"
+            }
+          },
+          "id": "commit_stock",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Confirmar stock Bodega",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "conversation_id": "{{trigger.conversation_id}}",
+              "message": "Listo. Pedido {{nodes.crear_orden.output.order_number}} pagado y stock confirmado.",
+              "title": "Pedido confirmado"
+            }
+          },
+          "error_policy": "continue",
+          "id": "confirmar",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Confirmar al cliente",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {
+            "section": "sales",
+            "summary": "Pedido {{nodes.crear_orden.output.order_number}} pagado con validación manual MVP.",
+            "title": "Venta concretada"
+          },
+          "error_policy": "continue",
+          "id": "resultado",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Registrar venta",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "business_result"
+        },
+        {
+          "config": {},
+          "id": "fin",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Fin",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "end"
+        },
+        {
+          "config": {
+            "capability": "conversation.send",
+            "inputs": {
+              "conversation_id": "{{trigger.conversation_id}}",
+              "message": "No hay productos en el carrito para cobrar.",
+              "title": "Carrito vacío"
+            }
+          },
+          "error_policy": "continue",
+          "id": "carrito_vacio",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Carrito vacío",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "capability_call"
+        },
+        {
+          "config": {},
+          "id": "fin_vacio",
+          "input_ports": [
+            {
+              "name": "in",
+              "type": "json"
+            }
+          ],
+          "label": "Fin (sin items)",
+          "output_ports": [
+            {
+              "name": "out",
+              "type": "json"
+            }
+          ],
+          "type": "end"
+        }
+      ],
+      "variables": {
+        "cart_ttl_seconds": 3600,
+        "currency": "PEN",
+        "manual_instructions": "Pago manual MVP: verifica el abono sandbox y aprueba este paso. Este nodo es temporal.",
+        "reservation_ttl_seconds": 900
+      },
+      "workflow_version": 2
+    },
+    "name": "Retail Checkout Manual (MVP temporal)",
+    "package": {
+      "capabilities": [
+        {
+          "kind": "capability",
+          "ref": "sales.cart.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.mark_paid",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.order.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.stock.reserve_batch",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.stock.commit_batch",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.stock.release_batch",
+          "requirement": "optional"
+        },
+        {
+          "kind": "capability",
+          "ref": "payments.manual.validate",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "conversation.send",
+          "requirement": "required"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "capability",
+          "ref": "sales.cart.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.order.mark_paid",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.order.create",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.stock.reserve_batch",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.stock.commit_batch",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "bodega.stock.release_batch",
+          "requirement": "optional"
+        },
+        {
+          "kind": "capability",
+          "ref": "payments.manual.validate",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "conversation.send",
+          "requirement": "required"
+        }
+      ],
+      "events": [],
+      "metadata": {
+        "applies_to": [
+          "WORKFLOWS"
+        ],
+        "category": "ventas",
+        "description": "Cierra el carrito de la conversación, reserva stock real y valida el pago con aprobación humana. Nodo manual temporal hasta integrar Stripe/PSP.",
+        "min_zent_version": null,
+        "name": "Retail Checkout Manual (MVP temporal)"
+      },
+      "package_version": "1.0.0",
+      "parameters": {
+        "cart_ttl_seconds": 3600,
+        "currency": "PEN",
+        "manual_instructions": "Pago manual MVP: verifica el abono sandbox y aprueba este paso. Este nodo es temporal.",
+        "reservation_ttl_seconds": 900
+      },
+      "permissions": [
+        "workflows:run",
+        "external_actions:execute"
+      ],
+      "schema": "zent.workflow.package/v1",
+      "security": {
+        "contains_secrets": false,
+        "tenant_scoped": false
+      },
+      "tests": [
+        "carrito con items → orden ZENT + proyección Bodega + reserva",
+        "aprobación humana → orden PAID + stock Bodega committed",
+        "carrito vacío → no crea orden",
+        "producción → nodo manual bloqueado"
+      ]
+    },
+    "slug": "retail_checkout_manual",
+    "trigger_config": {},
+    "trigger_type": "webhook"
+  }
+}

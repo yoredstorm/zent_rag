@@ -228,6 +228,7 @@ async def _select_session(
     *,
     cart_key: str,
     workspace_id: UUID | None,
+    user_id: Any = None,
     for_update: bool = False,
 ) -> Any | None:
     sql = (
@@ -238,13 +239,20 @@ async def _select_session(
         "WHERE organization_id = :oid AND cart_key = :key "
         "AND status = 'active' AND expires_at > NOW() "
         + _workspace_sql()
+        + "AND (CAST(:uid AS uuid) IS NULL OR user_id IS NULL "
+        "OR user_id = CAST(:uid AS uuid)) "
     )
     if for_update:
         sql += "FOR UPDATE"
     return (
         await session.execute(
             text(sql),
-            {"oid": str(organization_id), "key": cart_key, "ws": workspace_id},
+            {
+                "oid": str(organization_id),
+                "key": cart_key,
+                "ws": workspace_id,
+                "uid": user_id,
+            },
         )
     ).fetchone()
 
@@ -266,6 +274,7 @@ async def _get_or_create_locked(
         organization_id,
         cart_key=cart_key,
         workspace_id=workspace_id,
+        user_id=user_id,
         for_update=True,
     )
     if row is not None:
@@ -311,6 +320,7 @@ async def _get_or_create_locked(
         organization_id,
         cart_key=cart_key,
         workspace_id=workspace_id,
+        user_id=user_id,
         for_update=True,
     )
     if row is None:
@@ -551,6 +561,7 @@ async def get_cart(
             organization_id,
             cart_key=key,
             workspace_id=workspace_id,
+            user_id=user_id,
         )
         if cart_row is None:
             if not create:
@@ -1003,6 +1014,7 @@ async def set_quantity(
             organization_id,
             cart_key=key,
             workspace_id=workspace_id,
+            user_id=user_id,
             for_update=True,
         )
         if cart_row is None:
@@ -1079,6 +1091,7 @@ async def remove_item(
             organization_id,
             cart_key=key,
             workspace_id=workspace_id,
+            user_id=user_id,
             for_update=True,
         )
         if cart_row is None:
@@ -1146,6 +1159,7 @@ async def clear_cart(
             organization_id,
             cart_key=key,
             workspace_id=workspace_id,
+            user_id=user_id,
             for_update=True,
         )
         if cart_row is None:
@@ -1179,14 +1193,249 @@ async def clear_cart(
         await session.close()
 
 
+async def create_order_from_cart(
+    organization_id: UUID,
+    *,
+    cart_key: str | None = None,
+    conversation_id: Any = None,
+    workflow_instance_id: Any = None,
+    workspace_id: UUID | None = None,
+    user_id: Any = None,
+    customer: dict[str, Any] | None = None,
+    currency: str | None = None,
+    business_operation_id: str | None = None,
+    workflow_id: Any = None,
+    status: str = "AWAITING_PAYMENT",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Cierra una sesión de carrito en una orden ZENT.
+
+    El carrito se bloquea, se recalculan las líneas y se crea una orden
+    idempotente. La sesión pasa a `checked_out` y deja de ser reutilizable.
+    Las líneas externas usan el último precio resuelto por el backend; las
+    internas se revalidan contra `commerce_products`.
+    """
+    from src.platform.commerce import store
+
+    await ensure_cart_tables()
+    key = resolve_cart_key(
+        cart_key=cart_key,
+        conversation_id=conversation_id,
+        workflow_instance_id=workflow_instance_id,
+    )
+    session = await get_async_session()
+    try:
+        await _purge_expired(session, organization_id)
+        cart_row = await _select_session(
+            session,
+            organization_id,
+            cart_key=key,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            for_update=True,
+        )
+        if cart_row is None:
+            # Reintento idempotente después del checkout: el carrito ya pasó a
+            # `checked_out`, pero la conversación conserva su orden pendiente.
+            if conversation_id:
+                recent = await store.list_orders_by_conversation(
+                    organization_id,
+                    conversation_id=str(conversation_id),
+                    limit=1,
+                )
+                if recent and recent[0]["status"] in (
+                    "AWAITING_PAYMENT",
+                    "AWAITING_CONFIRMATION",
+                ):
+                    return recent[0]
+            raise CommerceError("CART_NOT_FOUND", "no hay carrito activo")
+        items = await _load_items(session, cart_row.id)
+        if not items:
+            raise CommerceError("EMPTY_CART", "el carrito está vacío")
+
+        resolved_currency = str(currency or cart_row.currency or "PEN").upper()[:3]
+        lines: list[dict[str, Any]] = []
+        for item in items:
+            item_currency = str(item.currency or resolved_currency).upper()[:3]
+            if item_currency != resolved_currency:
+                raise CommerceError(
+                    "CURRENCY_MISMATCH",
+                    f"el carrito está en {item_currency}, la orden en {resolved_currency}",
+                )
+            name = str(item.name)
+            unit = str(item.unit)
+            price = Decimal(str(item.unit_price))
+            if item.product_id:
+                product = (
+                    await session.execute(
+                        text(
+                            "SELECT id, name, unit, price, currency, active "
+                            "FROM commerce_products WHERE organization_id = :oid "
+                            "AND id = :pid LIMIT 1"
+                        ),
+                        {"oid": str(organization_id), "pid": item.product_id},
+                    )
+                ).fetchone()
+                if product is None or not product.active:
+                    raise CommerceError(
+                        "PRODUCT_UNAVAILABLE",
+                        f"producto no disponible: {item.sku}",
+                    )
+                name = str(product.name)
+                unit = str(product.unit or unit)
+                price = Decimal(str(product.price))
+                item_currency = str(product.currency or item_currency).upper()[:3]
+            elif not str(item.price_source or "").startswith("external:"):
+                raise CommerceError(
+                    "PRICE_SOURCE_UNTRUSTED",
+                    f"línea externa sin fuente autorizada: {item.sku}",
+                )
+            lines.append(
+                {
+                    "product_id": str(item.product_id) if item.product_id else None,
+                    "sku": str(item.sku),
+                    "name": name,
+                    "unit": unit,
+                    "quantity": float(Decimal(str(item.quantity))),
+                    "unit_price": float(price.quantize(Decimal("0.0001"))),
+                    "currency": item_currency,
+                    "price_source": str(item.price_source or "commerce"),
+                }
+            )
+
+        order = await store.create_order_from_snapshot(
+            organization_id,
+            lines=lines,
+            currency=resolved_currency,
+            customer=customer or {},
+            cart={
+                "cart_id": str(cart_row.id),
+                "cart_key": str(cart_row.cart_key),
+                "revision": int(cart_row.revision),
+                "items": lines,
+                "summary": format_cart_summary(
+                    [
+                        {
+                            **line,
+                            "line_total": float(
+                                (
+                                    Decimal(str(line["unit_price"]))
+                                    * Decimal(str(line["quantity"]))
+                                ).quantize(Decimal("0.01"))
+                            ),
+                        }
+                        for line in lines
+                    ],
+                    sum(
+                        Decimal(str(line["unit_price"]))
+                        * Decimal(str(line["quantity"]))
+                        for line in lines
+                    ),
+                    resolved_currency,
+                ),
+            },
+            business_operation_id=(
+                business_operation_id or f"cart-checkout:{cart_row.id}"
+            ),
+            workflow_id=str(workflow_id) if workflow_id else None,
+            workflow_instance_id=(
+                str(workflow_instance_id) if workflow_instance_id else None
+            ),
+            conversation_id=(
+                str(conversation_id)
+                if conversation_id
+                else (
+                    str(cart_row.conversation_id)
+                    if cart_row.conversation_id
+                    else None
+                )
+            ),
+            workspace_id=workspace_id,
+            status=status,
+            metadata={
+                **(metadata or {}),
+                "source": "commerce_cart",
+                "cart_id": str(cart_row.id),
+                "cart_revision": int(cart_row.revision),
+            },
+        )
+        await session.execute(
+            text(
+                "UPDATE commerce_cart_sessions SET status = :status, "
+                "revision = revision + 1, updated_at = NOW() WHERE id = :id"
+            ),
+            {"status": CART_STATUS_CHECKED_OUT, "id": cart_row.id},
+        )
+        await session.commit()
+        return order
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+async def cart_kpis(organization_id: UUID) -> dict[str, Any]:
+    """Métricas de carrito para observabilidad del MVP."""
+    await ensure_cart_tables()
+    session = await get_async_session()
+    try:
+        status_rows = (
+            await session.execute(
+                text(
+                    "SELECT status, COUNT(*) AS n FROM commerce_cart_sessions "
+                    "WHERE organization_id = :oid GROUP BY status"
+                ),
+                {"oid": str(organization_id)},
+            )
+        ).fetchall()
+        items_row = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) AS n FROM commerce_cart_items i "
+                    "JOIN commerce_cart_sessions s ON s.id = i.cart_id "
+                    "WHERE s.organization_id = :oid AND s.status = 'active'"
+                ),
+                {"oid": str(organization_id)},
+            )
+        ).fetchone()
+        expiring_row = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) AS n FROM commerce_cart_sessions "
+                    "WHERE organization_id = :oid AND status = 'active' "
+                    "AND expires_at <= NOW() + INTERVAL '5 minutes'"
+                ),
+                {"oid": str(organization_id)},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    by_status = {str(r.status): int(r.n) for r in status_rows}
+    return {
+        "carts": {
+            "active": by_status.get(CART_STATUS_ACTIVE, 0),
+            "checked_out": by_status.get(CART_STATUS_CHECKED_OUT, 0),
+            "expired": by_status.get(CART_STATUS_EXPIRED, 0),
+            "items_active": int(items_row.n or 0) if items_row else 0,
+            "expiring_soon": int(expiring_row.n or 0) if expiring_row else 0,
+            "by_status": by_status,
+        }
+    }
+
+
 __all__ = [
     "CART_MAX_ITEMS",
     "CART_STATUS_ACTIVE",
+    "CART_STATUS_CHECKED_OUT",
+    "CART_STATUS_EXPIRED",
     "CART_TTL_DEFAULT_SECONDS",
     "CART_TTL_MAX_SECONDS",
     "CART_TTL_MIN_SECONDS",
     "add_item",
+    "cart_kpis",
     "clear_cart",
+    "create_order_from_cart",
     "empty_cart_payload",
     "ensure_cart_tables",
     "get_cart",

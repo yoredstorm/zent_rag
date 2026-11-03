@@ -1331,6 +1331,7 @@ def register_builtin_tools(
         GetPriceAndStockTool,
         GetProductTool,
     )
+    from src.agents.tools.order_tools import GetMyOrderTool
 
     register_tool(FindProductsTool())
     register_tool(GetProductTool())
@@ -1340,6 +1341,7 @@ def register_builtin_tools(
     register_tool(CartSetQuantityTool())
     register_tool(CartRemoveTool())
     register_tool(CartClearTool())
+    register_tool(GetMyOrderTool())
     if tabular_query is not None:
         register_tool(QueryTabularDataTool(tabular_query))
     try:
