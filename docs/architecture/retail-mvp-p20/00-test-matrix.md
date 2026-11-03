@@ -1,7 +1,7 @@
 # P20-00 — Matriz de pruebas y release gates
 
-- **HEAD:** `c4a20a591fae83f4bccda4817ec4193e5293c2b1`
-- **CI:** run `41581528575`, success.
+- **HEAD:** `d71dcfbce1a61b2e36f16b22c68c8d87d2a73544`
+- **CI:** run `41585035889`, success.
 - **Regla:** PASS solo con ejecución y evidencia; mocks no prueban PostgreSQL
   externo, concurrencia, pago ni usuarios.
 
