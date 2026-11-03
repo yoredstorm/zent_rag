@@ -37,6 +37,8 @@
    un número ajeno responde `ORDER_NOT_FOUND`.
 9. KPIs de carrito en `/api/v1/commerce/kpis`.
 10. Plantilla `retail_checkout_manual` publicada por migración 181.
+11. Manifiesto comercial versionado y preset `POST /agents/retail-seller`
+    con prompt, tools y grants.
 
 ## Por qué producción sigue NO-GO
 

@@ -44,8 +44,10 @@ IDs estables y scope:
 | Fuente en Agent picker | se mostraba como documento pendiente | “Base de datos conectada”, sin indexar | IMPLEMENTED |
 | Query viva del agente | `query_database` usa SQL Expert/Managed DB | `execute_external` por conector externo; fallback interno bloqueado | IMPLEMENTED P20-02 (read-only) |
 | Tools comerciales | solo `query_database` NL→SQL | `find_products`, `get_product`, `get_price_and_stock` con precio/stock backend | PARTIAL P20-05 |
-| Catálogo semántico | discovery + sugerencias, sin modelo comercial aprobado | modelo/manifest revisable | MISSING P20-03 |
-| Grants por agente | P19.1 documenta, no implementa grants específicos | `agent_data_grants` + allowlist de recursos en `query_database` | PARTIAL P20-04 (backend; UI y tools tipadas pendientes) |
+| Catálogo semántico | discovery + sugerencias, sin modelo comercial aprobado | manifiesto comercial versionado | IMPLEMENTED P20-03 (backend) |
+| Grants por agente | P19.1 documenta, no implementa grants específicos | `agent_data_grants` + allowlist de recursos en `query_database` | PASS backend; UI NOT_RUN P20-04 |
+| Wizard Crear vendedor | no existía | endpoint `POST /agents/retail-seller` + preset | IMPLEMENTED backend P20-06; UI NOT_RUN |
+| Prompt/grounding retail | prompt libre | reglas de autoridad y tools | IMPLEMENTED P20-07 |
 | Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 (tabla temporal + TTL + tools; falta embudo) |
 | Sales funnel | 40 nodos existentes, demo interno | plantilla `retail_checkout_manual` externa | PARTIAL P20-09 (checkout; funnel conversacional sigue en agente) |
 | Checkout | proveedor abstracto, sin sandbox dedicado | nodo manual MVP temporal + proyección Bodega + stock batch | PASS local P20-11; Stripe NO_IMPLEMENTED |

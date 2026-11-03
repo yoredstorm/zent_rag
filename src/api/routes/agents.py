@@ -132,6 +132,14 @@ class CreateAgentRequest(BaseModel):
     config: AgentConfig | None = None
 
 
+class RetailSellerRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    workspace_id: UUID
+    source_id: str = Field(..., min_length=1, max_length=120)
+    model: str | None = Field(default=None, max_length=100)
+    cart_ttl_seconds: int = Field(default=3600, ge=1, le=604800)
+
+
 class UpdateAgentRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
@@ -276,6 +284,57 @@ async def create_agent(
     except Exception:  # noqa: BLE001
         pass
     return _agent_response(agent, warnings=warnings)
+
+
+@router.post(
+    "/retail-seller",
+    status_code=201,
+    summary="Crear vendedor retail sobre una fuente externa",
+)
+async def create_retail_seller_endpoint(
+    body: RetailSellerRequest,
+    request: Request,
+):
+    from src.platform.agents.retail_seller import create_retail_seller
+    from src.platform.billing.plan_limits import (
+        PlanLimitError,
+        check_resource_limit,
+        plan_limit_detail,
+    )
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    await _require_own_workspace(ctx, body.workspace_id)
+    try:
+        await check_resource_limit(ctx.organization_id, "agents")
+    except PlanLimitError as exc:
+        raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
+    try:
+        result = await create_retail_seller(
+            ctx.organization_id,
+            name=body.name,
+            workspace_id=body.workspace_id,
+            source_id=body.source_id,
+            created_by=ctx.user_id,
+            model=body.model,
+            cart_ttl_seconds=body.cart_ttl_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": str(exc),
+                "message": "La fuente no existe o no pertenece al workspace.",
+            },
+        ) from exc
+    await _audit().write(
+        ctx,
+        "agent.retail_seller_created",
+        "agent",
+        UUID(result["agent_id"]),
+        metadata={"source_id": body.source_id},
+    )
+    return result
 
 
 @router.get("/assistants", summary="Living assistants: agentes y sus automatizaciones")

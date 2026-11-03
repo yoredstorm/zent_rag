@@ -49,11 +49,16 @@
 | `¿Qué tablas tienes?` con discovery real | PASS (local, runtime real) | idem |
 | Contexto multi-turno «¿Y el de 5 kg?» | PASS mínimo | Historial textual por `conversation_id`; slots/WAIT P20-08 |
 | Slots durables / WAIT-RESUME | NOT_RUN | P20-08 completo |
-| Grants por agente/capability | NOT_RUN | P20-04 |
-| Grant activo limita recursos | PASS (local, runtime real) | `04-data-grants.md` |
+| Catálogo semántico / manifiesto | PASS | `tests/test_p20_retail_seller.py`, `GET /commerce/catalog/manifest` |
+| Crear vendedor backend | PASS unitario | `tests/test_p20_retail_seller.py` |
+| Crear vendedor API real | PASS local (fuente P19, 10 tools, 5 grants) | `POST /agents/retail-seller` |
+| Crear vendedor UI/wizard | NOT_RUN | P20-06 |
+| Prompt retail/grounding | PASS | `RETAIL_SELLER_PROMPT` |
+| Grants por agente/capability | PASS backend | `04-data-grants.md` |
+| Grant activo limita recursos | PASS (local, runtime real) | idem |
 | Sin grant, `PERMISSION_DENIED` | PASS (local, runtime real) | idem |
 | `row_scope` falla cerrado | PASS | `tests/test_p20_external_sql_query.py` |
-| UI de grants | NOT_RUN | P20-04 pendiente |
+| UI de grants | NOT_RUN | P20-04 |
 | `find_products` precio/stock backend | PASS | `tests/test_p20_catalog_tools.py` |
 | `get_price_and_stock` total decimal | PASS | idem |
 | `NOT_FOUND` sin 500 | PASS | idem |
