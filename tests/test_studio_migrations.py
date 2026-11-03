@@ -44,7 +44,20 @@ def test_latest_migration_is_current() -> None:
         for path in VERSIONS.glob("*.py")
         if path.stem.split("_", 1)[0].isdigit()
     )
-    assert numbers[-1] == 179
+    assert numbers[-1] == 180
+
+
+def test_migration_180_cart_is_aditive_and_chained() -> None:
+    module = _load_migration("180_commerce_cart_sessions.py")
+    assert module.revision == "180"
+    assert module.down_revision == "179"
+    source = (VERSIONS / "180_commerce_cart_sessions.py").read_text()
+    assert "CREATE TABLE IF NOT EXISTS commerce_cart_sessions" in source
+    assert "CREATE TABLE IF NOT EXISTS commerce_cart_items" in source
+    assert "CREATE TABLE IF NOT EXISTS commerce_cart_operations" in source
+    assert "ON DELETE CASCADE" in source
+    assert "sales.cart.remove" in source
+    assert "CREATE TABLE IF NOT EXISTS commerce_orders" not in source
 
 
 def test_migration_169_persists_test_reports_only() -> None:
