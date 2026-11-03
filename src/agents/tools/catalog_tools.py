@@ -169,6 +169,7 @@ class FindProductsTool(Tool):
     name: ClassVar[str] = "find_products"
     description: ClassVar[str] = (
         "Busca productos reales por nombre o SKU en la base conectada. "
+        "Si no envías query, lista los primeros productos del catálogo. "
         "Devuelve sku, nombre, categoría, unidad, precio, moneda y stock "
         "disponible. Úsala para catálogo, precios y disponibilidad; no "
         "inventes valores."
@@ -176,8 +177,8 @@ class FindProductsTool(Tool):
     input_schema: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "minLength": 1, "maxLength": 120},
-            "question": {"type": "string", "minLength": 1, "maxLength": 120},
+            "query": {"type": "string", "maxLength": 120},
+            "question": {"type": "string", "maxLength": 120},
             "category": {"type": "string", "maxLength": 80},
             "unit": {"type": "string", "maxLength": 40},
             "max_results": {"type": "integer", "minimum": 1, "maximum": 20},
@@ -190,8 +191,6 @@ class FindProductsTool(Tool):
         query = str(
             arguments.get("query") or arguments.get("question") or ""
         ).strip()
-        if not query:
-            return ToolResult(error="INVALID_ARGUMENT: query requerida")
         source, session, error = await _authorized_catalog_source(
             ctx, "store.products.search"
         )

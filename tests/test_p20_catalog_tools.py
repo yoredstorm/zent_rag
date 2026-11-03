@@ -98,6 +98,37 @@ async def test_find_products_returns_backend_price_and_stock(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_find_products_without_query_lists_catalog(monkeypatch) -> None:
+    session = _FakeSession(
+        [
+            {
+                "sku": "BD-ARROZ-01",
+                "name": "Arroz extra 1 kg",
+                "category": "abarrotes",
+                "unit": "kg",
+                "price": "4.80",
+                "currency": "PEN",
+                "available": 53,
+            }
+        ]
+    )
+
+    async def _fake_source(*_args, **_kwargs):
+        return _source(), session, None
+
+    monkeypatch.setattr(
+        "src.agents.tools.catalog_tools._authorized_catalog_source",
+        _fake_source,
+    )
+    result = await FindProductsTool().execute(_ctx(), {})
+
+    payload = json.loads(result.output)
+    assert result.error is None
+    assert payload["status"] == "FOUND"
+    assert payload["data"][0]["sku"] == "BD-ARROZ-01"
+
+
+@pytest.mark.asyncio
 async def test_get_price_and_stock_computes_decimal_line_total(monkeypatch) -> None:
     session = _FakeSession(
         [
