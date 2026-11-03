@@ -794,13 +794,20 @@ export function useAgentStudio() {
           }
         }
       }
+      const databaseSources = hasDbSources(
+        sourceTypesForSelection(sources, config.source_ids),
+      );
       setTurns((prev) => [
         ...prev,
         {
           role: "assistant",
           text: answer || "(sin respuesta)",
           sources: used,
-          emptyHint: Boolean(config.source_ids.length) && used.length === 0 && errors.length === 0,
+          emptyHint:
+            Boolean(config.source_ids.length) &&
+            used.length === 0 &&
+            errors.length === 0 &&
+            !databaseSources,
           error: errors[0],
           runId: runId ?? undefined,
           question: message,
