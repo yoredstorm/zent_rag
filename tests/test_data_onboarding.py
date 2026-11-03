@@ -793,6 +793,56 @@ async def test_database_onboarding_creates_visible_kb_source(
 
 
 @pytest.mark.asyncio
+async def test_database_connection_reports_ssrf_block_before_discovery(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.connectors import plugin as plugin_module
+    from src.connectors.plugin import ConnectorError
+
+    class _BlockedPlugin:
+        async def validate(self):
+            raise ConnectorError(
+                "Blocked private network IP: 192.168.1.10 "
+                "(add host to connector config ssrf_allowlist to allow)"
+            )
+
+        async def test_connection(self):  # pragma: no cover - no debe llamarse
+            raise AssertionError("test_connection no debe correr si validate falla")
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        plugin_module, "get_plugin", lambda *args, **kwargs: _BlockedPlugin()
+    )
+    org = await _create_org(async_client, "DB SSRF")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "database"}
+    )
+    sid = created.json()["id"]
+    connected = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/database",
+        headers=headers,
+        json={
+            "name": "ERP privado",
+            "engine": "postgres",
+            "host": "192.168.1.10",
+            "port": 5432,
+            "database": "erp",
+            "username": "zent",
+            "password": "secret",
+            "ssl": False,
+        },
+    )
+    assert connected.status_code == 200, connected.text
+    body = connected.json()
+    assert body["connection"]["ok"] is False
+    assert "Blocked private network IP" in body["connection"]["message"]
+    assert body["status"] == "FAILED"
+
+
+@pytest.mark.asyncio
 async def test_viewer_cannot_approve_review(async_client: AsyncClient) -> None:
     org = await _create_org(async_client, "Review RBAC")
     owner = await _owner_headers(org)

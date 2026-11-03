@@ -11,6 +11,12 @@ const IDLE_PHRASES = [
   "Separando lo importante…",
 ];
 
+const DATABASE_PHRASES = [
+  "Conectando al catálogo real.",
+  "Leyendo tablas y columnas.",
+  "Buscando claves y relaciones.",
+];
+
 export function AnalysisProgressStep({
   headline,
   phases,
@@ -18,11 +24,13 @@ export function AnalysisProgressStep({
   showTech,
   onToggleTech,
   onContinue,
+  onRetry,
   ready,
   percent = 0,
   glimpses = [],
   files = [],
   status = null,
+  kind = null,
   learningSessionId = null,
 }: {
   headline: string;
@@ -31,11 +39,13 @@ export function AnalysisProgressStep({
   showTech: boolean;
   onToggleTech: () => void;
   onContinue: () => void;
+  onRetry?: () => void;
   ready: boolean;
   percent?: number;
   glimpses?: AnalyzeGlimpse[];
   files?: ProgressFile[];
   status?: string | null;
+  kind?: string | null;
   learningSessionId?: string | null;
 }) {
   const pages =
@@ -50,21 +60,27 @@ export function AnalysisProgressStep({
     String(technical?.catalog_phase ?? "").toUpperCase() === "FAILED" ||
     String(status ?? "").toUpperCase() === "FAILED";
   const catalogPhase = String(technical?.catalog_phase ?? "");
+  const stalled = Boolean(technical?.stalled);
+  const errorMessage = String(
+    technical?.job_error ?? technical?.catalog_error ?? ""
+  ).trim();
+  const errorHint = String(technical?.error_hint ?? "").trim();
   const processed = Number(technical?.records_processed ?? 0);
+  const phrases = kind === "database" ? DATABASE_PHRASES : IDLE_PHRASES;
 
   useEffect(() => {
     if (ready || visibleGlimpses.length) return;
     const id = window.setInterval(() => {
-      setIdleIdx((i) => (i + 1) % IDLE_PHRASES.length);
+      setIdleIdx((i) => (i + 1) % phrases.length);
     }, 2000);
     return () => window.clearInterval(id);
-  }, [ready, visibleGlimpses.length]);
+  }, [ready, visibleGlimpses.length, phrases.length]);
 
   const live = ready
     ? "Ya entendí lo suficiente. Revisa cuando quieras."
     : visibleGlimpses.length
       ? visibleGlimpses[visibleGlimpses.length - 1].text
-      : IDLE_PHRASES[idleIdx];
+      : phrases[idleIdx];
 
   return (
     <div className="max-w-xl">
@@ -78,13 +94,48 @@ export function AnalysisProgressStep({
         data-testid="analyze-ring"
       >
         <p className="text-sm font-medium text-text">
-          {failed ? "La ingesta no terminó" : ready ? "Listo para revisar" : "En proceso"}
+          {failed
+            ? "La ingesta no terminó"
+            : stalled
+              ? "La ingesta está sin avance"
+              : ready
+                ? "Listo para revisar"
+                : "En proceso"}
         </p>
         {failed ? (
-          <p className="mt-1 text-xs leading-relaxed text-danger" role="alert">
-            El job falló. Abre los detalles técnicos y corrige la conexión o la fuente antes de
-            reintentar.
-          </p>
+          <div className="mt-1 space-y-2 text-xs leading-relaxed" role="alert">
+            <p className="text-danger">
+              {errorMessage ||
+                "El job falló. Revisa la conexión y vuelve a intentar."}
+            </p>
+            {errorHint && <p className="text-muted">{errorHint}</p>}
+            {onRetry && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onRetry}
+                data-testid="analyze-retry"
+              >
+                Reintentar análisis
+              </button>
+            )}
+          </div>
+        ) : stalled ? (
+          <div className="mt-1 space-y-2 text-xs leading-relaxed">
+            <p className="text-warning">
+              El job no reporta avance reciente. Puedes esperar o reintentar.
+            </p>
+            {onRetry && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onRetry}
+                data-testid="analyze-retry"
+              >
+                Reintentar análisis
+              </button>
+            )}
+          </div>
         ) : (
           <>
             {percent > 0 && (

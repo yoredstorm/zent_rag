@@ -610,4 +610,35 @@ describe("wizard UI steps 3–6", () => {
     );
     expect(within(queue).getByRole("button", { name: "Subir igual" })).toBeInTheDocument();
   });
+
+  it("Analizar muestra el error real y permite reintentar", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(
+      <AnalysisProgressStep
+        headline="Zent está entendiendo tus datos"
+        phases={[{ id: "content", label: "Contenido analizado", state: "active" }]}
+        showTech={false}
+        onToggleTech={() => {}}
+        onContinue={() => {}}
+        onRetry={onRetry}
+        ready={false}
+        percent={17}
+        status="FAILED"
+        kind="database"
+        technical={{
+          job_status: "dead",
+          job_error:
+            "ConnectorError: Blocked private network IP: 192.168.65.254",
+          error_hint:
+            "Agrega el host de la base a «Hosts permitidos (SSRF)» en la conexión y vuelve a probar.",
+        }}
+      />
+    );
+    expect(screen.getByTestId("analyze-ring")).toHaveTextContent("La ingesta no terminó");
+    expect(screen.getByRole("alert")).toHaveTextContent(/Blocked private network/i);
+    expect(screen.getByText(/Hosts permitidos/i)).toBeInTheDocument();
+    await user.click(screen.getByTestId("analyze-retry"));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
 });

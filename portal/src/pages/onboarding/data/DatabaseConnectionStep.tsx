@@ -8,6 +8,24 @@ const ENGINES = [
   { id: "db2", label: "DB2", port: 50000 },
 ];
 
+function isPrivateHost(host: string): boolean {
+  const value = host.trim().toLowerCase();
+  if (!value) return false;
+  if (value === "localhost" || value.endsWith(".internal") || value.endsWith(".local")) {
+    return true;
+  }
+  const ipv4 = value.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return false;
+  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 192 && b === 168) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 169 && b === 254)
+  );
+}
+
 export function DatabaseConnectionStep({
   onSubmit,
   busy,
@@ -36,12 +54,31 @@ export function DatabaseConnectionStep({
   const [allowlist, setAllowlist] = useState("");
   const [schemas, setSchemas] = useState("");
   const [timeoutSec, setTimeoutSec] = useState("");
+  const [formError, setFormError] = useState("");
+  const privateHost = isPrivateHost(host);
+  const allowlistEntries = allowlist
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const hostAllowed = allowlistEntries.some(
+    (value) =>
+      value.toLowerCase() === host.trim().toLowerCase() ||
+      host.trim().toLowerCase().endsWith(`.${value.toLowerCase()}`)
+  );
 
   return (
     <form
       className="max-w-xl space-y-4"
       onSubmit={(e) => {
         e.preventDefault();
+        setFormError("");
+        if (privateHost && !hostAllowed) {
+          setFormError(
+            "Este host es privado. Agrégalo en «Hosts permitidos (SSRF)» para que el análisis pueda conectarse."
+          );
+          setAdvanced(true);
+          return;
+        }
         onSubmit({
           name,
           engine,
@@ -52,10 +89,7 @@ export function DatabaseConnectionStep({
           password,
           ssl,
           advanced: {
-            ssrf_allowlist: allowlist
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
+            ssrf_allowlist: allowlistEntries,
             allowed_schemas: schemas
               .split(",")
               .map((s) => s.trim())
@@ -92,6 +126,32 @@ export function DatabaseConnectionStep({
         Host
         <input className="input mt-1 w-full" value={host} onChange={(e) => setHost(e.target.value)} required />
       </label>
+      {privateHost && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-text">
+          <p>
+            Host privado detectado. El análisis bloquea redes privadas salvo que
+            autorices este host explícitamente.
+          </p>
+          {!hostAllowed && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm mt-2"
+              onClick={() => {
+                setAllowlist((current) =>
+                  [...new Set([...current.split(",").map((v) => v.trim()).filter(Boolean), host.trim()])].join(
+                    ", "
+                  )
+                );
+                setAdvanced(true);
+                setFormError("");
+              }}
+            >
+              Permitir {host.trim() || "este host"}
+            </button>
+          )}
+          {hostAllowed && <p className="mt-1 text-success">Host autorizado para el análisis.</p>}
+        </div>
+      )}
       <label className="block text-sm">
         Puerto
         <input
@@ -125,7 +185,7 @@ export function DatabaseConnectionStep({
         SSL
       </label>
       <button type="button" className="text-xs text-accent" onClick={() => setAdvanced((v) => !v)}>
-        {advanced ? "Ocultar avanzado" : "Advanced Settings"}
+        {advanced ? "Ocultar opciones avanzadas" : "Opciones avanzadas"}
       </button>
       {advanced && (
         <>
@@ -133,10 +193,14 @@ export function DatabaseConnectionStep({
             Hosts permitidos (SSRF)
             <input
               className="input mt-1 w-full"
-              placeholder="localhost, 10.0.0.4"
+              placeholder="localhost, 10.0.0.4, host.docker.internal"
               value={allowlist}
               onChange={(e) => setAllowlist(e.target.value)}
             />
+            <span className="mt-1 block text-xs text-muted">
+              Necesario para localhost, 127.0.0.1, 10.x, 192.168.x, 172.16-31.x o
+              host.docker.internal.
+            </span>
           </label>
           <label className="block text-sm">
             Esquemas permitidos
@@ -161,6 +225,11 @@ export function DatabaseConnectionStep({
       <button type="submit" className="btn btn-primary" disabled={busy}>
         {busy ? "Probando…" : "Probar conexión"}
       </button>
+      {formError && (
+        <p className="text-sm text-danger" role="alert">
+          {formError}
+        </p>
+      )}
       {result && (
         <div className="panel p-4 text-sm">
           <p className="font-medium">{result.ok ? "Conexión correcta" : "No se pudo conectar"}</p>
