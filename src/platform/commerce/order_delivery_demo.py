@@ -87,6 +87,47 @@ def _edge(
     return edge
 
 
+def _layout_nodes(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
+    """Posiciones deterministas para el canvas (columnas por nivel)."""
+    incoming = {node["id"]: 0 for node in nodes}
+    outgoing: dict[str, list[str]] = {node["id"]: [] for node in nodes}
+    for edge in edges:
+        source = edge["from_node"]
+        target = edge["to_node"]
+        if source not in incoming or target not in incoming:
+            continue
+        incoming[target] += 1
+        outgoing[source].append(target)
+
+    level = {node_id: 0 for node_id in incoming}
+    queue = [node_id for node_id, degree in incoming.items() if degree == 0]
+    head = 0
+    while head < len(queue):
+        current = queue[head]
+        head += 1
+        for target in outgoing[current]:
+            level[target] = max(level[target], level[current] + 1)
+            incoming[target] -= 1
+            if incoming[target] == 0:
+                queue.append(target)
+
+    groups: dict[int, list[str]] = {}
+    for node in nodes:
+        groups.setdefault(level[node["id"]], []).append(node["id"])
+    positions: dict[str, dict[str, float]] = {}
+    columns = 4
+    for value in sorted(groups):
+        column = value % columns
+        row = value // columns
+        for index, node_id in enumerate(groups[value]):
+            positions[node_id] = {
+                "x": 80 + column * 320,
+                "y": 80 + (row + index) * 160,
+            }
+    for node in nodes:
+        node["position"] = positions.get(node["id"], {"x": 80, "y": 80})
+
+
 def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
     """Grafo del ejemplo. Entrada manual por payload del run."""
     params = {**DEFAULT_PARAMETERS, **(parameters or {})}
@@ -386,6 +427,8 @@ def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
         _edge("e25", "aviso_recojo", "resultado"),
         _edge("e26", "resultado", "fin"),
     ]
+
+    _layout_nodes(nodes, edges)
 
     return {
         "workflow_version": 2,

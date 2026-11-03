@@ -68,6 +68,18 @@ describe("workflowGraph — IR del canvas", () => {
     expect(not.position.y).toBe(llm.position.y);
   });
 
+  it("layoutGraph rellena posiciones vacías de grafos importados", () => {
+    const g = emptyGraph("webhook");
+    const n = makeNode("notify", { x: 0, y: 0 });
+    n.id = "sin_posicion";
+    n.position = {} as unknown as { x: number; y: number };
+    g.nodes.push(n);
+    layoutGraph(g);
+    const positioned = g.nodes.find((item) => item.id === "sin_posicion")!;
+    expect(Number.isFinite(positioned.position.x)).toBe(true);
+    expect(Number.isFinite(positioned.position.y)).toBe(true);
+  });
+
   it("prepareGraphForSave marca el subgrafo del for_each y fixea la versión", () => {
     const g = emptyGraph("webhook");
     const fe = makeNode("for_each", { x: 300, y: 0 });

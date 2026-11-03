@@ -72,6 +72,13 @@ def test_demo_graph_uses_durable_state_across_approval() -> None:
     assert "{{variables.delivery_mode}}" not in blob
 
 
+def test_demo_graph_has_finite_canvas_positions() -> None:
+    graph = build_graph()
+    for node in graph["nodes"]:
+        assert isinstance(node["position"]["x"], (int, float))
+        assert isinstance(node["position"]["y"], (int, float))
+
+
 def test_demo_payload_is_repeatable_and_has_backend_inputs() -> None:
     first = demo_payload(order_number="SIM-CUST-A-001")
     second = demo_payload(order_number="SIM-CUST-A-001")
