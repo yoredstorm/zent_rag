@@ -1748,6 +1748,9 @@ class DataOnboardingService:
             organization_id=organization_id,
             connector_id=UUID(row["connector_id"]),
             kb_source_id=UUID(row["kb_source_id"]) if row.get("kb_source_id") else None,
+            # Sin workspace el catálogo queda invisible para el resolver
+            # semántico, que filtra por workspace al responder preguntas.
+            workspace_id=UUID(row["workspace_id"]) if row.get("workspace_id") else None,
         )
         catalog_source_id = result.get("catalog_source_id") or result.get("source_id")
         state = merge_state(row.get("state") or {}, {"job_id": result.get("job_id")})

@@ -434,6 +434,7 @@ async def start_discovery_scan(
     organization_id: UUID,
     connector_id: UUID,
     kb_source_id: UUID | None = None,
+    workspace_id: UUID | None = None,
     scan_type: str = ScanType.INITIAL.value,
     scan_interval_hours: int = 0,
 ) -> dict:
@@ -444,6 +445,7 @@ async def start_discovery_scan(
         organization_id=organization_id,
         connector_id=connector_id,
         kb_source_id=kb_source_id,
+        workspace_id=workspace_id,
     )
     source_id = catalog_source_id["id"]
     if scan_interval_hours:

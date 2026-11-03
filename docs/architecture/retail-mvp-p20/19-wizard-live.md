@@ -71,3 +71,33 @@ El conector existente se corrigió localmente agregando:
 
 Para una instalación nueva, el wizard lo pide explícitamente. No se habilita
 ninguna red privada por defecto.
+
+## Segundo hallazgo: catálogo invisible por workspace
+
+Al preguntar `cuéntame qué productos vendes`, el agente respondía con el error
+`Zent necesita saber qué campo es el precio`. El catálogo tenía `UnitPrice`
+mapeado, así que el problema no era el modelo semántico.
+
+Causa: `start_discovery_scan` creaba `catalog_sources` sin `workspace_id`.
+`list_fields_all` filtra por workspace cuando el resolver recibe uno:
+
+```sql
+JOIN catalog_sources s ON t.source_id = s.id
+WHERE s.workspace_id = :wid
+```
+
+Con `workspace_id` nulo, el resolver veía cero campos y devolvía
+`CONTEXT_MISSING`.
+
+Correcciones:
+
+- `start_discovery_scan` acepta y propaga `workspace_id`.
+- `_analyze_database` pasa el workspace de la sesión de onboarding.
+- El registro existente se reparó con
+  `UPDATE catalog_sources SET workspace_id = ...`.
+- El resolver ya devuelve `bodega.product_catalog_v.price` para preguntas de
+  precio y el error deja de aparecer.
+
+Las preguntas de stock siguen usando las tools tipadas
+(`get_price_and_stock`), que leen `available`/`on_hand` directamente.
+
