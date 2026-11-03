@@ -116,3 +116,6 @@ resultado.
   demo, no de producción.
 - Publicar el workflow exige el gate de release; para la demo se ejecuta en
   `draft` con permiso `workflows:run`.
+- El run del primer segmento queda en `pending_approval`; la instancia durable
+  es la autoridad y queda `COMPLETED` después de aprobar. Los segmentos
+  posteriores aparecen como runs `succeeded`.
