@@ -38,6 +38,34 @@ function renderChat(turns: Parameters<typeof AgentTestChat>[0]["turns"]) {
 }
 
 describe("AgentTestChat · presentación de la respuesta", () => {
+  it("no pide esperar indexado cuando la fuente es una base de datos", () => {
+    const database: KnowledgeSource = {
+      id: "db1",
+      name: "Bodega pepito",
+      type: "sql",
+      status: "ready",
+      document_count: 0,
+      last_sync: null,
+    };
+    render(
+      <MemoryRouter>
+        <AgentTestChat
+          turns={[]}
+          input=""
+          status=""
+          playing={false}
+          inactive={false}
+          sources={[database]}
+          selectedIds={["db1"]}
+          onInput={() => {}}
+          onSubmit={(event) => event.preventDefault()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByTestId("chat-wait-index")).toBeNull();
+  });
+
   it("renderiza markdown: la negrita se ve como negrita, no como asteriscos", () => {
     renderChat([
       {

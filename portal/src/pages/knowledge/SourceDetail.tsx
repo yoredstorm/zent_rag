@@ -472,7 +472,7 @@ export default function SourceDetailPage() {
               </span>
               <StatusBadge
                 status={source.status}
-                label={sourceReadiness(source.status).label}
+                label={sourceReadiness(source.status, source.type).label}
               />
             </>
           ) : undefined

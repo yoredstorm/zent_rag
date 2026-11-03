@@ -2,6 +2,7 @@ import { Database, MagnifyingGlass } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Checkbox, EmptyState, Input, SkeletonBlock, cn } from "../ui";
+import { isDatabaseSource } from "../../lib/sourceKinds";
 import type { IngestionJob, KnowledgeSource } from "./types";
 
 export const INDEXING_COPY =
@@ -11,19 +12,6 @@ export const MAX_AGENT_SOURCES = 500;
 export const AGENT_SOURCE_CAP_MSG = "Un agente admite como máximo 500 fuentes.";
 
 const ACTIVE_JOB = new Set(["pending", "running"]);
-const DATABASE_SOURCE_TYPES = new Set([
-  "sql",
-  "postgres",
-  "postgresql",
-  "mysql",
-  "mssql",
-  "oracle",
-  "snowflake",
-]);
-
-function isDatabaseSource(source: KnowledgeSource): boolean {
-  return DATABASE_SOURCE_TYPES.has(source.type.toLowerCase());
-}
 
 export function latestJobForSource(sourceId: string, jobs: IngestionJob[]): IngestionJob | undefined {
   return jobs.find((job) => job.source_id === sourceId);

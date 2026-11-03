@@ -9,6 +9,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
+import { isDatabaseSource } from "../../lib/sourceKinds";
 import { flowFromAgentStepsLegacy } from "../../pages/chat/runPlaygroundTurn";
 import {
   CUSTOM_PROFILE,
@@ -244,7 +245,9 @@ export function useAgentStudio() {
     void refresh(true);
     let wasPending = false;
     const timer = window.setInterval(() => {
-      const waitingSources = sourcesRef.current.some((source) => !source.document_count);
+      const waitingSources = sourcesRef.current.some(
+        (source) => !source.document_count && !isDatabaseSource(source),
+      );
       const activeJobs = jobsRef.current.some(
         (job) => job.status === "pending" || job.status === "running",
       );

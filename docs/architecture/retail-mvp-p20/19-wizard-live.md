@@ -101,3 +101,35 @@ Correcciones:
 Las preguntas de stock siguen usando las tools tipadas
 (`get_price_and_stock`), que leen `available`/`on_hand` directamente.
 
+## Tercer hallazgo: base de datos tratada como documento sin indexar
+
+El Agent Studio mostraba:
+
+```text
+Espera a que termine el indexado; ahora mismo no hay nada que buscar.
+```
+
+aunque la fuente `Bodega pepito` estaba `ready` y el agente respondía por API.
+
+Causa: la UI decidía «indexado» con `document_count > 0`. Una base de datos no
+genera documentos, así que `document_count` siempre es 0. Eso marcaba la fuente
+como pendiente en tres lugares:
+
+- el aviso del chat de prueba;
+- el contador «1 fuente conectada · 1 en proceso»;
+- el poll de 3 s que nunca terminaba;
+- la etiqueta «Procesando» para `status=ready`.
+
+Corrección:
+
+- `isDatabaseSource` distingue `sql`, `postgres`, `mysql`, `mssql`, `oracle`,
+  `snowflake` y `db2`.
+- El aviso de indexado y el contador ignoran fuentes de base de datos.
+- `sourceReadiness("ready", "sql")` muestra «Base de datos conectada».
+- El poll de fuentes solo espera documentos reales.
+
+El 70% del encabezado es otra cosa: readiness de publicación
+(modelo, prompt, knowledge, datasource y tools). Los 3 puntos restantes son
+evaluación, versión y deployment; no bloquean el chat.
+
+
