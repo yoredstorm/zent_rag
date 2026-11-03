@@ -132,4 +132,9 @@ El 70% del encabezado es otra cosa: readiness de publicación
 (modelo, prompt, knowledge, datasource y tools). Los 3 puntos restantes son
 evaluación, versión y deployment; no bloquean el chat.
 
+El chat tampoco debe decir «No encontró nada en las fuentes elegidas» después de
+una respuesta SQL correcta. Las tools de base de datos no producen ids de
+documentos RAG; ese aviso ahora se omite cuando el agente tiene fuentes de datos.
+
+
 
