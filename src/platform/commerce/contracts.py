@@ -31,6 +31,11 @@ CAP_STOCK_COMMIT = "inventory.commit"
 # --- Capacidades de ventas ---------------------------------------------------
 CAP_ORDER_CREATE = "sales.order.create"
 CAP_CART_QUOTE = "sales.cart.quote"
+CAP_CART_GET = "sales.cart.get"
+CAP_CART_ADD = "sales.cart.add"
+CAP_CART_SET_QUANTITY = "sales.cart.set_quantity"
+CAP_CART_REMOVE = "sales.cart.remove"
+CAP_CART_CLEAR = "sales.cart.clear"
 CAP_ORDER_GET = "sales.order.get"
 CAP_ORDER_CONFIRM = "sales.order.confirm"
 CAP_ORDER_MARK_PAID = "sales.order.mark_paid"
@@ -54,6 +59,11 @@ COMMERCE_CAPABILITIES: tuple[str, ...] = (
     CAP_STOCK_COMMIT,
     CAP_ORDER_CREATE,
     CAP_CART_QUOTE,
+    CAP_CART_GET,
+    CAP_CART_ADD,
+    CAP_CART_SET_QUANTITY,
+    CAP_CART_REMOVE,
+    CAP_CART_CLEAR,
     CAP_ORDER_GET,
     CAP_ORDER_CONFIRM,
     CAP_ORDER_MARK_PAID,
@@ -254,6 +264,68 @@ _CHECKOUT_OUTPUT: dict[str, Any] = {
     },
 }
 
+_CART_SESSION_INPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "cart_key": {"type": "string"},
+        "conversation_id": {"type": "string"},
+        "workflow_instance_id": {"type": "string"},
+        "ttl_seconds": {"type": "integer"},
+        "expected_revision": {"type": "integer"},
+        "idempotency_key": {"type": "string"},
+    },
+}
+
+_CART_ADD_INPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "cart_key": {"type": "string"},
+        "conversation_id": {"type": "string"},
+        "workflow_instance_id": {"type": "string"},
+        "ttl_seconds": {"type": "integer"},
+        "expected_revision": {"type": "integer"},
+        "idempotency_key": {"type": "string"},
+        "product_id": {"type": "string"},
+        "sku": {"type": "string"},
+        "quantity": {"type": "number"},
+        "currency": {"type": "string"},
+    },
+}
+
+_CART_ITEM_INPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "cart_key": {"type": "string"},
+        "conversation_id": {"type": "string"},
+        "workflow_instance_id": {"type": "string"},
+        "ttl_seconds": {"type": "integer"},
+        "expected_revision": {"type": "integer"},
+        "idempotency_key": {"type": "string"},
+        "sku": {"type": "string"},
+        "source_id": {"type": "string"},
+        "quantity": {"type": "number"},
+    },
+}
+
+_CART_OUTPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "cart_id": {"type": "string"},
+        "cart_key": {"type": "string"},
+        "status": {"type": "string"},
+        "revision": {"type": "integer"},
+        "currency": {"type": "string"},
+        "items": {"type": "array"},
+        "issues": {"type": "array"},
+        "count": {"type": "integer"},
+        "subtotal": {"type": "number"},
+        "total": {"type": "number"},
+        "summary": {"type": "string"},
+        "expires_at": {"type": "string"},
+        "ttl_seconds": {"type": "integer"},
+    },
+}
+
 _ORDER_OUTPUT: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -334,20 +406,42 @@ CAPABILITY_CONTRACTS: dict[str, dict[str, Any]] = {
     CAP_CART_QUOTE: {
         "input": {
             "type": "object",
-            "required": ["items"],
-            "properties": {"items": {"type": "array"}, "currency": {"type": "string"}},
-        },
-        "output": {
-            "type": "object",
             "properties": {
                 "items": {"type": "array"},
-                "count": {"type": "integer"},
-                "subtotal": {"type": "number"},
-                "total": {"type": "number"},
                 "currency": {"type": "string"},
+                "cart_key": {"type": "string"},
+                "conversation_id": {"type": "string"},
+                "workflow_instance_id": {"type": "string"},
+                "ttl_seconds": {"type": "integer"},
             },
         },
+        "output": _CART_OUTPUT,
         "read_only": True,
+    },
+    CAP_CART_GET: {
+        "input": _CART_SESSION_INPUT,
+        "output": _CART_OUTPUT,
+        "read_only": True,
+    },
+    CAP_CART_ADD: {
+        "input": _CART_ADD_INPUT,
+        "output": _CART_OUTPUT,
+        "read_only": False,
+    },
+    CAP_CART_SET_QUANTITY: {
+        "input": _CART_ITEM_INPUT,
+        "output": _CART_OUTPUT,
+        "read_only": False,
+    },
+    CAP_CART_REMOVE: {
+        "input": _CART_ITEM_INPUT,
+        "output": _CART_OUTPUT,
+        "read_only": False,
+    },
+    CAP_CART_CLEAR: {
+        "input": _CART_SESSION_INPUT,
+        "output": _CART_OUTPUT,
+        "read_only": False,
     },
     CAP_ORDER_GET: {"input": _ORDER_REF_INPUT, "output": _ORDER_OUTPUT, "read_only": True},
     CAP_ORDER_CONFIRM: {"input": _ORDER_REF_INPUT, "output": _ORDER_OUTPUT, "read_only": False},

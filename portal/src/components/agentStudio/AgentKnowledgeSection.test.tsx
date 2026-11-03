@@ -78,4 +78,18 @@ describe("AgentKnowledgeSection", () => {
     expect(screen.queryByTestId("agent-knowledge-list")).toBeNull();
     expect(screen.getByText("Cargando fuentes…")).toBeInTheDocument();
   });
+
+  it("no marca en proceso una base de datos sin documentos", () => {
+    const database = makeSource(1, {
+      name: "Bodega pepito",
+      type: "sql",
+      status: "ready",
+      document_count: 0,
+    });
+    renderSection([database], [database.id]);
+
+    expect(screen.getByText("1 fuente conectada")).toBeInTheDocument();
+    expect(screen.queryByText(/en proceso/)).toBeNull();
+    expect(screen.getByText("Base de datos conectada")).toBeInTheDocument();
+  });
 });

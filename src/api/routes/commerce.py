@@ -186,6 +186,23 @@ async def list_provider_events(request: Request, limit: int = 50):
 # ---------------------------------------------------------------------------
 # Readiness del embudo + KPIs
 # ---------------------------------------------------------------------------
+@router.get(
+    "/catalog/manifest",
+    summary="Manifiesto comercial revisable del catálogo retail",
+)
+async def catalog_manifest(
+    request: Request,
+    source_id: str | None = None,
+    connector_id: str | None = None,
+):
+    from src.platform.commerce.catalog_manifest import retail_catalog_manifest
+
+    require_permission(request, "workflows:read")
+    return retail_catalog_manifest(
+        source_id=source_id, connector_id=connector_id
+    )
+
+
 @router.get("/sales-funnel/readiness", summary="Checklist de configuración del embudo")
 async def sales_funnel_readiness(request: Request):
     """Checklist ✓ / ! que la UI muestra sin errores técnicos."""
@@ -237,8 +254,12 @@ async def sales_funnel_readiness(request: Request):
 
 @router.get("/kpis", summary="KPIs del embudo de ventas")
 async def kpis(request: Request, workflow_id: str | None = None):
+    from src.platform.commerce import cart
+
     org = UUID(str(require_permission(request, "workflows:read").organization_id))
-    return await store.workflow_kpis(org, workflow_id=workflow_id)
+    payload = await store.workflow_kpis(org, workflow_id=workflow_id)
+    payload.update(await cart.cart_kpis(org))
+    return payload
 
 
 # ---------------------------------------------------------------------------

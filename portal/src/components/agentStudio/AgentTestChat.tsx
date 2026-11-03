@@ -18,6 +18,7 @@ import { renderMarkdownHtml } from "../../lib/markdown";
 import FlowDrawer from "../../pages/chat/FlowDrawer";
 import { EvalCaseDialog } from "../evaluation/EvalCaseDialog";
 import { Badge, Button, IconButton, LoadingDots, Panel, PanelHeader, Textarea } from "../ui";
+import { isDatabaseSource } from "../../lib/sourceKinds";
 import { SUGGESTED_QUESTIONS, type KnowledgeSource } from "./types";
 
 /** Traza compacta: perfil solicitado, aplicado y validación del turno real. */
@@ -155,7 +156,10 @@ export function AgentTestChat({
   );
   const nameById = new Map(sources.map((s) => [s.id, s.name]));
   const waitingOnIndex = sources.some(
-    (source) => selectedIds.includes(source.id) && !source.document_count,
+    (source) =>
+      selectedIds.includes(source.id) &&
+      !source.document_count &&
+      !isDatabaseSource(source),
   );
   const blocked = playing || inactive || !input.trim() || Boolean(disabledReason);
   const selectedSources = sources.filter((source) => selectedIds.includes(source.id));

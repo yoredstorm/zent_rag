@@ -2033,7 +2033,20 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         agent_role = None
         pinned = getattr(rctx.instance, "policy_snapshot", None) if rctx.instance else None
         entry = None
-        if isinstance(pinned, dict):
+        snapshot_status = "LIVE_DRAFT"
+        snapshot_source = "live"
+        pinned_snapshot: dict[str, Any] | None = None
+        if rctx.instance is not None:
+            # Una instancia durable NUNCA completa su configuración desde el
+            # agente vivo. Sin snapshot verificable, la ejecución se bloquea.
+            if not isinstance(pinned, dict) or not pinned.get("agents"):
+                return NodeOutcome(
+                    error=(
+                        "agent_snapshot_missing: la instancia no tiene snapshot de "
+                        "agente certificado. Ejecución bloqueada (UNCERTIFIED_LEGACY)."
+                    ),
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                )
             entry = next(
                 (
                     item
@@ -2042,39 +2055,122 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
                 ),
                 None,
             )
-        if entry is not None:
-            pinned_snapshot = entry.get("config_snapshot")
-            if isinstance(pinned_snapshot, dict) and pinned_snapshot:
-                from src.platform.deployments.versions import (
-                    execution_fingerprints,
-                    resolve_agent,
-                    snapshot_agent,
+            if entry is None:
+                return NodeOutcome(
+                    error=(
+                        f"agent_snapshot_missing: el agente {agent_id} no está en el "
+                        "snapshot de la instancia."
+                    ),
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
                 )
+            if entry.get("is_active") is False:
+                return NodeOutcome(
+                    error=(
+                        f"agent_inactive: el agente {agent_id} fue desactivado; "
+                        "la instancia no puede ejecutarlo."
+                    ),
+                    output={"agent_snapshot_status": "BLOCKED_INACTIVE"},
+                )
+            candidate = entry.get("config_snapshot")
+            if not isinstance(candidate, dict) or not candidate:
+                return NodeOutcome(
+                    error=(
+                        "agent_snapshot_invalid: snapshot de agente incompleto; "
+                        "se requiere re-certificación."
+                    ),
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                )
+            from src.platform.deployments.versions import (
+                AgentSnapshotError,
+                execution_fingerprints,
+                validate_agent_snapshot,
+            )
 
-                live_fingerprint = execution_fingerprints(
-                    snapshot_agent(agent)
-                ).get("config_fingerprint")
-                pinned_fingerprint = entry.get("config_fingerprint")
-                if pinned_fingerprint and live_fingerprint != pinned_fingerprint:
-                    logger.warning(
-                        "workflow agent config changed after instance start; "
-                        "using pinned revision",
-                        agent_id=str(agent_id),
-                        workflow_run_id=str(rctx.execution.run_id),
-                    )
-                agent = resolve_agent(agent, pinned_snapshot)
-            else:
-                logger.warning(
-                    "workflow instance has no pinned agent snapshot (legacy); "
-                    "live agent config used, do not certify this instance",
+            try:
+                validate_agent_snapshot(candidate)
+            except AgentSnapshotError as exc:
+                return NodeOutcome(
+                    error=f"agent_snapshot_invalid: {exc.issue}",
+                    output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                )
+            pinned_fingerprint = str(entry.get("config_fingerprint") or "")
+            computed = execution_fingerprints(candidate).get("config_fingerprint")
+            if pinned_fingerprint and computed and pinned_fingerprint != computed:
+                logger.error(
+                    "workflow agent snapshot hash mismatch",
                     agent_id=str(agent_id),
                     workflow_run_id=str(rctx.execution.run_id),
                 )
+                return NodeOutcome(
+                    error=(
+                        "agent_snapshot_hash_mismatch: el snapshot pinneado no "
+                        "coincide con su huella; ejecución bloqueada."
+                    ),
+                    output={"agent_snapshot_status": "HASH_MISMATCH"},
+                )
+            pinned_snapshot = candidate
+            snapshot_status = "PINNED_INSTANCE"
+            snapshot_source = "instance"
             agent_role = entry.get("role")
+        else:
+            certified = (getattr(rctx.execution, "agent_snapshots", None) or {}).get(
+                str(agent_id)
+            )
+            if isinstance(certified, dict) and certified:
+                from src.platform.deployments.versions import (
+                    AgentSnapshotError,
+                    validate_agent_snapshot,
+                )
+
+                try:
+                    validate_agent_snapshot(certified)
+                except AgentSnapshotError as exc:
+                    return NodeOutcome(
+                        error=f"agent_snapshot_invalid: {exc.issue}",
+                        output={"agent_snapshot_status": "UNCERTIFIED_LEGACY"},
+                    )
+                pinned_snapshot = certified
+                snapshot_status = "VERIFIED_PUBLISHED"
+                snapshot_source = "published"
+            elif str(getattr(rctx.execution, "definition_source", "")) == "published":
+                # Certificado antiguo sin snapshot: se mantiene el run, pero la
+                # UI y la auditoría deben verlo como no certificado.
+                snapshot_status = "UNCERTIFIED_LEGACY"
+                snapshot_source = "live_legacy"
+                logger.warning(
+                    "published workflow has no pinned agent snapshot (legacy); "
+                    "live agent config used, do not certify this run",
+                    agent_id=str(agent_id),
+                    workflow_run_id=str(rctx.execution.run_id),
+                )
+        if pinned_snapshot is not None:
+            from src.platform.deployments.versions import resolve_agent
+
+            agent = resolve_agent(agent, pinned_snapshot, strict=True)
         if agent_role is None:
             agent_role = await get_agent_role(rctx.organization_id, agent_id)
         if agent_role is not None:
             agent = apply_role_to_agent(agent, agent_role)
+        try:
+            logger.info(
+                "workflow.agent_snapshot",
+                organization_id=str(rctx.organization_id),
+                workspace_id=str(rctx.workspace_id or ""),
+                workflow_run_id=str(rctx.execution.run_id),
+                instance_id=str(rctx.execution.instance_id or ""),
+                agent_id=str(agent_id),
+                agent_version_id=(
+                    entry.get("agent_version_id") if isinstance(entry, dict) else None
+                ),
+                snapshot_status=snapshot_status,
+                snapshot_source=snapshot_source,
+                config_fingerprint=(
+                    entry.get("config_fingerprint") if isinstance(entry, dict) else None
+                ),
+                tools_count=len(agent.tools or []),
+            )
+        except Exception:  # noqa: BLE001 — auditoría no tumba el nodo
+            pass
         org_config = await _org_config_json(rctx.organization_id)
         context_payload, context_truncated, context_summary, requested_reads = (
             await _agent_context_payload(rctx)
@@ -2118,6 +2214,14 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
             "agent_id": str(agent_id),
             "model": result.model,
             "cost": result.cost,
+            "agent_snapshot_status": snapshot_status,
+            "agent_snapshot_source": snapshot_source,
+            "agent_config_fingerprint": (
+                entry.get("config_fingerprint") if isinstance(entry, dict) else None
+            ),
+            "agent_version_id": (
+                entry.get("agent_version_id") if isinstance(entry, dict) else None
+            ),
         }
         raw_status = str(getattr(result, "status", "") or "")
         if raw_status == "limit_reached":
@@ -3634,12 +3738,205 @@ async def _exec_capability_call(rctx: NodeContext) -> NodeOutcome:
             run_id=rctx.execution.run_id,
             instance_id=rctx.execution.instance_id,
             node_id=rctx.node_id,
+            principal=rctx.execution.principal,
         )
     except BindingError as exc:
         return NodeOutcome(error=f"{exc.code}: {exc.message}"[:300])
     output = dict(result.get("output") or {})
     output["capability"] = capability_ref
     output["provider_kind"] = result.get("provider_kind")
+    return NodeOutcome(output=output)
+
+
+async def _exec_data_query(rctx: NodeContext) -> NodeOutcome:
+    """Consulta declarativa autorizada; el nodo no elige tabla ni escribe SQL."""
+    cfg = rctx.node.config
+    capability_ref = str(cfg.get("capability") or cfg.get("capability_ref") or "").strip()
+    if not capability_ref:
+        return NodeOutcome(error="data_query requiere capability")
+    params = _resolve_ref(cfg.get("params") or {}, rctx)
+    if not isinstance(params, dict):
+        return NodeOutcome(error="data_query requiere params como objeto")
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={
+                "kind": "data_query",
+                "capability": capability_ref,
+                "params": params,
+            },
+            output={"status": "SIMULATED", "capability": capability_ref, "simulated": True},
+        )
+    from src.platform.workflows.bindings import BindingError, execute_binding
+
+    expected_binding = str(cfg.get("binding_ref") or "").strip()
+    expected_hash = str(cfg.get("binding_hash") or "").strip()
+    binding_uuid = None
+    if expected_binding:
+        from uuid import UUID as _UUID
+
+        from src.platform.workflows.bindings import binding_plan_hash, get_binding
+
+        try:
+            binding_uuid = _UUID(expected_binding)
+        except (TypeError, ValueError):
+            return NodeOutcome(
+                error="PLAN_STALE: binding_ref invalido",
+                output={
+                    "status": "ERROR",
+                    "reason_code": "PLAN_STALE",
+                    "binding_ref": expected_binding,
+                    "capability": capability_ref,
+                },
+            )
+        pinned = await get_binding(
+            rctx.organization_id, binding_uuid, workspace_id=rctx.workspace_id
+        )
+        if pinned is None:
+            return NodeOutcome(
+                error="PLAN_STALE: binding no vigente",
+                output={
+                    "status": "ERROR",
+                    "reason_code": "PLAN_STALE",
+                    "binding_ref": expected_binding,
+                    "capability": capability_ref,
+                },
+            )
+        if expected_hash and binding_plan_hash(pinned) != expected_hash:
+            return NodeOutcome(
+                error="PLAN_STALE: el binding cambio desde la publicacion",
+                output={
+                    "status": "ERROR",
+                    "reason_code": "PLAN_STALE",
+                    "binding_ref": expected_binding,
+                    "binding_hash": expected_hash,
+                    "capability": capability_ref,
+                },
+            )
+    try:
+        result = await execute_binding(
+            rctx.organization_id,
+            capability_ref,
+            {"params": params},
+            workspace_id=rctx.workspace_id,
+            source="workflow",
+            actor_id=rctx.execution.actor_id,
+            workflow_id=rctx.execution.workflow_id,
+            run_id=rctx.execution.run_id,
+            instance_id=rctx.execution.instance_id,
+            node_id=rctx.node_id,
+            principal=rctx.execution.principal,
+            binding_ref=binding_uuid,
+            expected_binding_hash=expected_hash or None,
+        )
+    except BindingError as exc:
+        from src.platform.workflows.data_result import error_envelope
+
+        return NodeOutcome(
+            error=f"{exc.code}: {exc.message}"[:300],
+            output=error_envelope(
+                exc.code,
+                capability_ref=capability_ref,
+                correlation_id=rctx.execution.correlation_id,
+            ),
+        )
+    output = dict(result.get("output") or {})
+    expected_binding = str(cfg.get("binding_ref") or "").strip()
+    actual_binding = str(output.get("binding_ref") or "").strip()
+    if expected_binding and actual_binding and expected_binding != actual_binding:
+        from src.platform.workflows.data_result import error_envelope
+
+        return NodeOutcome(
+            error="BINDING_CHANGED: el binding cambió desde la publicación",
+            output=error_envelope(
+                "BINDING_CHANGED",
+                capability_ref=capability_ref,
+                correlation_id=rctx.execution.correlation_id,
+            ),
+        )
+    from src.platform.workflows.data_result import success_envelope
+
+    output = success_envelope(output, capability_ref=capability_ref)
+    output["capability"] = capability_ref
+    output["provider_kind"] = result.get("provider_kind")
+    return NodeOutcome(output=output)
+
+
+async def _exec_intent_route(rctx: NodeContext) -> NodeOutcome:
+    """Identifica una solicitud contra rutas cerradas; no ejecuta la ruta."""
+    from src.platform.workflows.intent_route import (
+        IntentConfigError,
+        classify_intent,
+        merge_conversation_turn,
+    )
+
+    cfg = rctx.node.config
+    raw_text = cfg.get("text") or cfg.get("message") or "{{trigger.message}}"
+    text = _resolve_ref(raw_text, rctx)
+    if not isinstance(text, str):
+        text = str(text or "")
+    intent_config = {
+        key: value
+        for key, value in cfg.items()
+        if key
+        in {
+            "schema",
+            "intent_schema",
+            "routes",
+            "confidence_min",
+            "ambiguity_policy",
+            "decision_source",
+        }
+    }
+    try:
+        result = classify_intent(intent_config, text)
+    except IntentConfigError as exc:
+        return NodeOutcome(error=exc.message[:300])
+    state_value = None
+    duplicate = False
+    state_key = str(cfg.get("state_key") or "intent")[:60]
+    use_state = bool(cfg.get("conversation_state", True))
+    if use_state and rctx.execution.instance_id is not None:
+        from src.platform.workflows.instances import get_instance
+
+        instance = await get_instance(
+            rctx.organization_id,
+            rctx.execution.instance_id,
+            workspace_id=rctx.workspace_id,
+        )
+        previous = ((instance or {}).get("state") or {}).get("conversation", {}).get(state_key)
+        message_id = str(
+            (rctx.trigger or {}).get("message_id")
+            or (rctx.payload or {}).get("message_id")
+            or ""
+        )[:120] or None
+        state, result, duplicate = merge_conversation_turn(
+            previous,
+            result,
+            text,
+            message_id=message_id,
+        )
+        state_value = state.model_dump(mode="json")
+        if not rctx.simulate:
+            from src.platform.workflows.instances import mutate_instance_state
+
+            await mutate_instance_state(
+                rctx.organization_id,
+                rctx.execution.instance_id,
+                op="set",
+                path=f"conversation.{state_key}",
+                value=state_value,
+            )
+    output = result.model_dump(mode="json")
+    if state_value is not None:
+        output["conversation_state"] = state_value
+        output["duplicate_message"] = duplicate
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "intent_route", "text": text[:200]},
+            output={**output, "simulated": True},
+        )
     return NodeOutcome(output=output)
 
 
@@ -3653,8 +3950,15 @@ async def _exec_stop(rctx: NodeContext) -> NodeOutcome:
 
 async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
-    action = str(cfg.get("action") or "acción sensible")
-    summary = str(cfg.get("summary") or cfg.get("message") or "")
+    action = str(
+        _resolve_ref(cfg.get("action") or "acción sensible", rctx) or "acción sensible"
+    )
+    summary = str(
+        _resolve_ref(cfg.get("summary") or cfg.get("message") or "", rctx) or ""
+    )
+    data = _resolve_ref(cfg.get("data") or {}, rctx)
+    if not isinstance(data, dict):
+        data = {}
     expires_minutes = int(cfg.get("expires_minutes", 1440) or 1440)
     requested_by = rctx.execution.actor_id
     snapshot = _approval_context_snapshot(rctx)
@@ -3668,6 +3972,7 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
                 "status": "pending",
                 "action": action,
                 "summary": summary,
+                "data": data,
                 "context": snapshot,
             },
             control="wait_approval",
@@ -3680,6 +3985,13 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
         requested_by,
         expires_minutes,
         context=snapshot,
+        capability_ref=str(cfg.get("capability_ref") or cfg.get("capability") or "") or None,
+        target_node_id=str(cfg.get("target_node_id") or "") or None,
+        approval_scope=(
+            cfg.get("approval_scope")
+            if isinstance(cfg.get("approval_scope"), dict)
+            else None
+        ),
     )
     return NodeOutcome(
         output={
@@ -3687,6 +3999,7 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
             "status": "pending",
             "action": action,
             "summary": summary,
+            "data": data,
             "context": snapshot,
         },
         control="wait_approval",
@@ -3778,6 +4091,9 @@ async def _create_approval(
     expires_minutes: int,
     *,
     context: dict[str, Any] | None = None,
+    capability_ref: str | None = None,
+    target_node_id: str | None = None,
+    approval_scope: dict[str, Any] | None = None,
 ) -> UUID:
     from datetime import datetime, timedelta, timezone
     from uuid import uuid4
@@ -3788,15 +4104,24 @@ async def _create_approval(
 
     approval_id = uuid4()
     expires = datetime.now(timezone.utc) + timedelta(minutes=max(expires_minutes, 1))
+    scope = dict(approval_scope or {})
+    if not scope.get("scope_type"):
+        scope["scope_type"] = (
+            "node" if target_node_id else "capability" if capability_ref else "run"
+        )
+    instance_id = getattr(execution, "instance_id", None)
     session = await get_async_session()
     try:
         await session.execute(
             text(
                 "INSERT INTO workflow_approvals "
                 "(id, run_id, workflow_id, organization_id, workspace_id, node_id, "
-                "action, summary, requested_by, expires_at, context) "
+                "action, summary, requested_by, expires_at, context, instance_id, "
+                "workflow_version, graph_hash, capability_ref, target_node_id, "
+                "approval_scope) "
                 "VALUES (:id, :rid, :wid, :oid, :ws, :nid, :action, :summary, :by, :exp, "
-                "CAST(:context AS jsonb))"
+                "CAST(:context AS jsonb), :iid, :wver, :ghash, :cap, :target, "
+                "CAST(:scope AS jsonb))"
             ),
             {
                 "id": approval_id,
@@ -3810,6 +4135,12 @@ async def _create_approval(
                 "by": requested_by,
                 "exp": expires,
                 "context": json.dumps(context or {}, ensure_ascii=False, default=str),
+                "iid": str(instance_id) if instance_id else None,
+                "wver": getattr(execution, "workflow_version", None),
+                "ghash": getattr(execution, "graph_hash", None),
+                "cap": (capability_ref or "")[:160] or None,
+                "target": (target_node_id or "")[:120] or None,
+                "scope": json.dumps(scope, ensure_ascii=False, default=str),
             },
         )
         await session.commit()
@@ -4495,6 +4826,30 @@ def _register_defaults() -> None:
         execute=_exec_query_business_data,
         **semantic_metadata("query_business_data"),
     )
+    registry.register(
+        "data_query",
+        version=1,
+        label="Consultar registros",
+        category="data",
+        risk_level="normal",
+        capabilities=frozenset({READ_DB}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_data_query,
+        **semantic_metadata("data_query"),
+    )
+    registry.register(
+        "intent_route",
+        version=1,
+        label="Identificar solicitud",
+        category="logic",
+        risk_level="normal",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_intent_route,
+        **semantic_metadata("intent_route"),
+    )
 
     # AI
     registry.register(
@@ -4788,6 +5143,13 @@ def _register_defaults() -> None:
             execute=_handler,
             **semantic_metadata(f"state_{_op}"),
         )
+
+    # MVP temporal: se elimina al integrar Stripe/PSP real.
+    from src.platform.workflows.manual_payment import (
+        register_manual_payment_node,
+    )
+
+    register_manual_payment_node(registry)
 
 
 _register_defaults()

@@ -30,6 +30,13 @@ const KPIS: FunnelKpis = {
     by_status: {},
   },
   sales: { revenue_paid: { PEN: 11.4 } },
+  carts: {
+    active: 4,
+    checked_out: 2,
+    expired: 1,
+    items_active: 6,
+    expiring_soon: 1,
+  },
   average_completion_seconds: 42.1,
 };
 
@@ -62,6 +69,8 @@ describe("SalesFunnelKpis", () => {
     expect(screen.getByTestId("funnel-kpi-completed-sales")).toHaveTextContent("4");
     expect(screen.getByTestId("funnel-kpi-abandoned")).toHaveTextContent("3");
     expect(screen.getByTestId("funnel-kpi-failed")).toHaveTextContent("1");
+    expect(screen.getByTestId("funnel-kpi-carts-active")).toHaveTextContent("4");
+    expect(screen.getByTestId("funnel-kpi-carts-expiring")).toHaveTextContent("1");
     expect(screen.getByTestId("funnel-kpi-avg-completion")).toHaveTextContent("42 s");
     expect(screen.getByTestId("funnel-kpi-revenue-paid")).toHaveTextContent(/11[.,]40/);
     expect(screen.getByTestId("funnel-kpi-revenue-paid")).toHaveTextContent(/S\//);

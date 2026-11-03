@@ -12,8 +12,8 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from src.platform.commerce import cart, store
 from src.platform.commerce import contracts as C
-from src.platform.commerce import store
 from src.platform.commerce.payments import service as payments
 from src.platform.commerce.payments.base import PaymentProviderError
 
@@ -158,6 +158,38 @@ async def execute_commerce_capability(
             order_id=payload.get("order_id"),
         )
     if capability_ref == C.CAP_ORDER_CREATE:
+        items = _list_arg(payload.get("items"))
+        if not items and (
+            payload.get("cart_id")
+            or payload.get("cart_key")
+            or payload.get("conversation_id")
+            or payload.get("workflow_instance_id")
+            or instance_id
+        ):
+            order = await cart.create_order_from_cart(
+                organization_id,
+                cart_key=payload.get("cart_key"),
+                conversation_id=payload.get("conversation_id"),
+                workflow_instance_id=payload.get("workflow_instance_id") or instance_id,
+                workspace_id=workspace_id,
+                user_id=payload.get("user_id"),
+                customer=payload.get("customer") or {},
+                currency=payload.get("currency") or config.get("currency"),
+                business_operation_id=payload.get("business_operation_id"),
+                workflow_id=workflow_id,
+                metadata={"node_id": node_id, "reservation_policy": (
+                    payload.get("reservation_policy")
+                    or config.get("reservation_policy")
+                    or C.RESERVATION_POLICY_CHECKOUT
+                )},
+            )
+            return {
+                "order": order,
+                **{
+                    k: order[k]
+                    for k in ("order_id", "order_number", "status", "total", "currency")
+                },
+            }
         business_operation_id = str(
             payload.get("business_operation_id")
             or (f"order:{instance_id}" if instance_id else "")
@@ -186,10 +218,62 @@ async def execute_commerce_capability(
         )
         return {"order": order, **{k: order[k] for k in ("order_id", "order_number", "status", "total", "currency")}}
     if capability_ref == C.CAP_CART_QUOTE:
-        return await store.quote_cart(
+        items = _list_arg(payload.get("items"))
+        if items:
+            return await store.quote_cart(
+                organization_id,
+                items=items,
+                currency=payload.get("currency") or config.get("currency"),
+            )
+        return await cart.get_cart(
             organization_id,
-            items=_list_arg(payload.get("items")),
-            currency=payload.get("currency") or config.get("currency"),
+            create=False,
+            **_cart_session_kwargs(payload, config, workspace_id, instance_id),
+            currency=str(payload.get("currency") or config.get("currency") or "PEN"),
+        )
+    if capability_ref == C.CAP_CART_GET:
+        return await cart.get_cart(
+            organization_id,
+            create=False,
+            **_cart_session_kwargs(payload, config, workspace_id, instance_id),
+            currency=str(payload.get("currency") or config.get("currency") or "PEN"),
+        )
+    if capability_ref == C.CAP_CART_ADD:
+        return await cart.add_item(
+            organization_id,
+            **_cart_session_kwargs(payload, config, workspace_id, instance_id),
+            currency=str(payload.get("currency") or config.get("currency") or "PEN"),
+            product_id=payload.get("product_id"),
+            sku=payload.get("sku"),
+            quantity=payload.get("quantity") or 1,
+            expected_revision=payload.get("expected_revision"),
+            idempotency_key=payload.get("idempotency_key"),
+        )
+    if capability_ref == C.CAP_CART_SET_QUANTITY:
+        return await cart.set_quantity(
+            organization_id,
+            **_cart_session_kwargs(payload, config, workspace_id, instance_id),
+            sku=str(payload.get("sku") or ""),
+            quantity=payload.get("quantity"),
+            source_id=payload.get("source_id"),
+            expected_revision=payload.get("expected_revision"),
+            idempotency_key=payload.get("idempotency_key"),
+        )
+    if capability_ref == C.CAP_CART_REMOVE:
+        return await cart.remove_item(
+            organization_id,
+            **_cart_session_kwargs(payload, config, workspace_id, instance_id),
+            sku=str(payload.get("sku") or ""),
+            source_id=payload.get("source_id"),
+            expected_revision=payload.get("expected_revision"),
+            idempotency_key=payload.get("idempotency_key"),
+        )
+    if capability_ref == C.CAP_CART_CLEAR:
+        return await cart.clear_cart(
+            organization_id,
+            **_cart_session_kwargs(payload, config, workspace_id, instance_id),
+            expected_revision=payload.get("expected_revision"),
+            idempotency_key=payload.get("idempotency_key"),
         )
     if capability_ref == C.CAP_ORDER_GET:
         order = await _order_from_inputs(organization_id, payload)
@@ -218,6 +302,27 @@ async def execute_commerce_capability(
     raise store.CommerceError(
         "CAPABILITY_UNKNOWN", f"capacidad commerce no soportada: {capability_ref}"
     )
+
+
+def _cart_session_kwargs(
+    payload: dict[str, Any],
+    config: dict[str, Any],
+    workspace_id: UUID | None,
+    instance_id: Any,
+) -> dict[str, Any]:
+    """Identidad de carrito y TTL resueltos por el workflow, no por el LLM."""
+    return {
+        "cart_key": payload.get("cart_key"),
+        "conversation_id": payload.get("conversation_id"),
+        "workflow_instance_id": payload.get("workflow_instance_id") or instance_id,
+        "workspace_id": workspace_id,
+        "ttl_seconds": (
+            payload.get("ttl_seconds")
+            or config.get("cart_ttl_seconds")
+            or config.get("ttl_seconds")
+        ),
+        "user_id": payload.get("user_id"),
+    }
 
 
 async def _order_from_inputs(organization_id: UUID, payload: dict[str, Any]) -> dict[str, Any] | None:

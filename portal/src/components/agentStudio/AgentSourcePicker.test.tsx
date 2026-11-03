@@ -87,6 +87,32 @@ describe("AgentSourcePicker", () => {
     expect(onIndex).toHaveBeenCalledWith("s1");
   });
 
+  it("no ofrece indexar una fuente de base de datos", () => {
+    const database: KnowledgeSource = {
+      ...EMPTY,
+      id: "db1",
+      name: "ERP externo P19",
+      type: "postgres",
+      status: "ready",
+    };
+    render(
+      <MemoryRouter>
+        <AgentSourcePicker
+          sources={[database]}
+          selectedIds={["db1"]}
+          jobs={[]}
+          loading={false}
+          onToggle={() => {}}
+          onIndex={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Base de datos conectada")).toBeInTheDocument();
+    expect(screen.queryByText(/Aún no indexada/)).toBeNull();
+    expect(screen.queryByTestId("source-index-db1")).toBeNull();
+    expect(screen.queryByTestId("source-indexing-copy")).toBeNull();
+  });
+
   it("filtra por nombre", async () => {
     const user = userEvent.setup();
     render(

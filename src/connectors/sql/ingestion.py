@@ -380,7 +380,10 @@ class PostgresIngestionService(IngestionService):
         )
 
         if full_refresh:
-            await self._vector_store.delete_by_organization(organization_id)
+            raise RuntimeError(
+                "FULL_REFRESH_UNSUPPORTED: full refresh no está permitido; "
+                "use una operación scoped por fuente"
+            )
 
         if job_id:
             from src.connectors.sql.queue import update_job_status
@@ -559,12 +562,9 @@ class PostgresIngestionService(IngestionService):
                 table=f"{schema_name}.{table_name}",
             )
         elif full_refresh:
-            await self._vector_store.delete_by_organization(organization_id)
-            if self._cache:
-                await self._cache.delete(sync_ts_key)
-            logger.info(
-                "Full sync (full_refresh=True)",
-                table=f"{schema_name}.{table_name}",
+            raise RuntimeError(
+                "FULL_REFRESH_UNSUPPORTED: full refresh no está permitido; "
+                "use una operación scoped por fuente"
             )
         elif has_updated_at and self._cache:
             since_ts = await self._cache.get(sync_ts_key)

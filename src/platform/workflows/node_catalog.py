@@ -49,6 +49,7 @@ NODE_NEXT_STEPS: dict[str, tuple[str, ...]] = {
     "ai_decision": ("llm", "kb_query", "human_approval", "notify", "stop"),
     "condition": ("llm", "notify", "human_approval", "stop"),
     "human_approval": ("notify", "business_result", "stop"),
+    "manual_payment_validation": ("business_result", "notify", "stop"),
     "filter": ("llm", "for_each", "notify"),
     "for_each": ("join", "notify", "business_result"),
     "join": ("llm", "condition", "notify"),
@@ -268,6 +269,36 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         requires=("managed_db",),
         optional_dependencies=("knowledge_bases",),
         supports_knowledge=True,
+    ),
+    "data_query": _meta(
+        "Consultar registros",
+        "Consulta una tabla o vista autorizada con filtros y columnas aprobadas.",
+        long_description=(
+            "El plan vive en el servidor: conexión, tabla, columnas, filtros obligatorios, "
+            "orden y límite. El nodo solo envía parámetros declarados y recibe un contrato "
+            "tipado (encontrado, no encontrado, varias coincidencias, error). No escribe SQL."
+        ),
+        when_to_use=(
+            "necesitas un dato exacto o una lista de una fuente autorizada",
+            "quieres rutas explícitas para encontrado, no encontrado y error",
+        ),
+        when_not_to_use=(
+            "necesitas una pregunta abierta o análisis semántico; usa Consultar datos de negocio",
+            "necesitas escribir o modificar datos; usa una acción de negocio aprobada",
+        ),
+        examples=(
+            {
+                "title": "Precio por SKU",
+                "config": {
+                    "capability": "p19.price.lookup",
+                    "binding_ref": "uuid",
+                    "params": {"sku": "{{nodes.intent.output.entities.sku}}"},
+                },
+            },
+        ),
+        context_reads=("trigger", "variables", "data"),
+        context_writes=("data",),
+        supports_simulation=True,
     ),
     "marketplace_action": _meta(
         "Acción de integración",
@@ -640,6 +671,38 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
     # ------------------------------------------------------------------
     # Control
     # ------------------------------------------------------------------
+    "manual_payment_validation": _meta(
+        "Validación manual de pago (MVP temporal)",
+        "Pausa el flujo hasta que una persona confirme un pago de prueba.",
+        long_description=(
+            "NODO TEMPORAL para MVP. No cobra ni crea órdenes: exige una "
+            "aprobación humana verificable y devuelve provider=manual_mvp. "
+            "Se elimina cuando se integre Stripe/PSP real. Bloqueado en "
+            "producción."
+        ),
+        when_to_use=(
+            "demo MVP sin pasarela de pago real",
+            "validar un abono sandbox con aprobación humana",
+        ),
+        when_not_to_use=(
+            "producción o cobro real",
+            "existe un proveedor de pagos firmado y verificado",
+        ),
+        examples=(
+            {
+                "title": "Validar pago manual sandbox",
+                "config": {
+                    "order_id": "{{nodes.crear_orden.output.order_id}}",
+                    "amount": "{{nodes.resumen_carrito.output.total}}",
+                    "currency": "PEN",
+                    "payment_reference": "SIMULADO-001",
+                    "expires_minutes": 1440,
+                },
+            },
+        ),
+        context_reads=("trigger", "variables"),
+        supports_simulation=True,
+    ),
     "human_approval": _meta(
         "Esperar aprobación",
         "Pausa hasta que una persona apruebe.",
@@ -785,6 +848,35 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         ),
         context_reads=("trigger", "variables"),
         context_writes=("decisions",),
+        supports_simulation=True,
+    ),
+    "intent_route": _meta(
+        "Identificar solicitud",
+        "Reconoce precio, puntos, pedido u otra solicitud y extrae entidades.",
+        long_description=(
+            "Contrato zent.workflow.intent.route/v1. Rutas cerradas, entidades "
+            "sanitizadas, confianza y slots faltantes. No ejecuta la ruta ni "
+            "concede acceso: la identidad y los permisos se validan después."
+        ),
+        when_to_use=(
+            "el siguiente paso depende de la intención del mensaje",
+            "necesitas precio, puntos o estado de pedido como rutas explícitas",
+        ),
+        when_not_to_use=(
+            "la acción ya está decidida y no depende del mensaje",
+            "necesitas una decisión binaria simple; usa una condición",
+        ),
+        examples=(
+            {
+                "title": "Identificar la intención del mensaje",
+                "config": {
+                    "confidence_min": 0.75,
+                    "ambiguity_policy": "ask_clarification",
+                },
+            },
+        ),
+        context_reads=("trigger", "variables", "data"),
+        context_writes=("decisions", "entities"),
         supports_simulation=True,
     ),
     "subworkflow_call": _meta(

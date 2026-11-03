@@ -14,6 +14,7 @@ import { useState } from "react";
 import { AgentSourcePicker } from "./AgentSourcePicker";
 import type { IngestionJob, KnowledgeSource } from "./types";
 import { Button, SkeletonBlock } from "../ui";
+import { isDatabaseSource } from "../../lib/sourceKinds";
 import { sourceReadiness } from "../../pages/knowledge/sourceState";
 
 /** Filas visibles antes de ofrecer "Ver las N fuentes". */
@@ -44,7 +45,9 @@ export function AgentKnowledgeSection({
   const [managing, setManaging] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const selected = sources.filter((source) => selectedIds.includes(source.id));
-  const pending = selected.filter((source) => !source.document_count).length;
+  const pending = selected.filter(
+    (source) => !source.document_count && !isDatabaseSource(source),
+  ).length;
   const visible = showAll ? selected : selected.slice(0, VISIBLE_SOURCES);
   const collapsible = selected.length > VISIBLE_SOURCES;
 
@@ -115,9 +118,9 @@ export function AgentKnowledgeSection({
                   </span>
                   <span
                     className="shrink-0 text-xs text-faint tabular-nums"
-                    title={sourceReadiness(source.status).detail}
+                    title={sourceReadiness(source.status, source.type).detail}
                   >
-                    {sourceReadiness(source.status).label}
+                    {sourceReadiness(source.status, source.type).label}
                   </span>
                 </li>
               ))}

@@ -2,6 +2,7 @@ import { Database, MagnifyingGlass } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Checkbox, EmptyState, Input, SkeletonBlock, cn } from "../ui";
+import { isDatabaseSource } from "../../lib/sourceKinds";
 import type { IngestionJob, KnowledgeSource } from "./types";
 
 export const INDEXING_COPY =
@@ -17,6 +18,9 @@ export function latestJobForSource(sourceId: string, jobs: IngestionJob[]): Inge
 }
 
 function humanStatus(source: KnowledgeSource, job: IngestionJob | undefined): string {
+  if (isDatabaseSource(source)) {
+    return source.status === "error" ? "Error de conexión" : "Base de datos conectada";
+  }
   if (source.document_count > 0) return `${source.document_count} docs`;
   if (job?.status === "pending") return "En cola";
   if (job?.status === "running") {
@@ -35,6 +39,9 @@ function railState(
   source: KnowledgeSource,
   job: IngestionJob | undefined,
 ): "ready" | "queued" | "running" | "warning" | "failed" {
+  if (isDatabaseSource(source)) {
+    return source.status === "error" ? "failed" : "ready";
+  }
   if (job?.status === "failed" || job?.status === "dead") return "failed";
   if (job?.status === "running") return "running";
   if (job?.status === "pending") return "queued";
@@ -138,7 +145,12 @@ export function AgentSourcePicker({
     );
   }
 
-  const waiting = sources.some((source) => selectedIds.includes(source.id) && !source.document_count);
+  const waiting = sources.some(
+    (source) =>
+      selectedIds.includes(source.id) &&
+      !source.document_count &&
+      !isDatabaseSource(source),
+  );
   // Config vieja: ids guardados que ya no existen (la fuente se borró o se volvió
   // a importar). Se avisa antes de guardar y se puede limpiar en un clic.
   const knownIds = new Set(sources.map((source) => source.id));
@@ -221,7 +233,8 @@ export function AgentSourcePicker({
             {visible.map((source) => {
               const checked = selectedIds.includes(source.id);
               const job = latestJobForSource(source.id, jobs);
-              const empty = !source.document_count;
+              const database = isDatabaseSource(source);
+              const empty = !source.document_count && !database;
               const active = Boolean(job && ACTIVE_JOB.has(job.status));
               const progress = Math.max(0, Math.min(100, job?.progress ?? 0));
               return (

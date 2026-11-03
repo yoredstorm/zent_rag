@@ -43,6 +43,13 @@ export type FunnelKpis = {
     by_status?: Record<string, number>;
   };
   sales: { revenue_paid: Record<string, number> };
+  carts?: {
+    active: number;
+    checked_out: number;
+    expired: number;
+    items_active: number;
+    expiring_soon: number;
+  };
   average_completion_seconds: number | null;
 };
 
@@ -186,6 +193,23 @@ export function SalesFunnelKpis({ className = "" }: { className?: string }) {
                 value={kpis.orders.abandoned}
                 hint="Pedidos sin pago: espera vencida o sin confirmar."
                 icon={Hourglass}
+              />
+            </div>
+            <div data-testid="funnel-kpi-carts-active">
+              <Metric
+                label="Carritos activos"
+                value={kpis.carts?.active ?? 0}
+                hint="Sesiones temporales con items, aún sin cerrar."
+                icon={Hourglass}
+              />
+            </div>
+            <div data-testid="funnel-kpi-carts-expiring">
+              <Metric
+                label="Carritos por vencer"
+                value={kpis.carts?.expiring_soon ?? 0}
+                hint="Carritos activos que expiran en los próximos 5 minutos."
+                icon={Timer}
+                tone={(kpis.carts?.expiring_soon ?? 0) > 0 ? "danger" : "default"}
               />
             </div>
             <div data-testid="funnel-kpi-failed">

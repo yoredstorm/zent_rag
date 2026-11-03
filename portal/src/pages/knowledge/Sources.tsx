@@ -584,7 +584,7 @@ export default function KnowledgeSourcesPage() {
                           </Link>
                           <StatusBadge
                             status={s.status}
-                            label={sourceReadiness(s.status).label}
+                            label={sourceReadiness(s.status, s.type).label}
                           />
                           <span className="text-xs text-faint">
                             {sourceTypeLabel(s.type, s.config?.managed)}

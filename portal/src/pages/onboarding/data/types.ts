@@ -147,6 +147,16 @@ export type ProgressDetails = {
   job_ids?: string[];
   job_status?: string | null;
   job_progress?: number | null;
+  job_error?: string | null;
+  job_attempts?: number | null;
+  job_updated_at?: string | null;
+  job_started_at?: string | null;
+  last_update_seconds_ago?: number | null;
+  stalled?: boolean;
+  error_code?: string | null;
+  error_hint?: string | null;
+  catalog_phase?: string | null;
+  catalog_error?: string | null;
   files?: ProgressFile[];
   [key: string]: unknown;
 };

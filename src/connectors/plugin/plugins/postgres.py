@@ -119,17 +119,15 @@ class PostgresPlugin(ConnectorPlugin):
             await self.close()
 
     async def _discover_tables(self, conn, max_tables: int) -> list[TableSchema]:
+        excluded = ", ".join(f"'{schema}'" for schema in sorted(_SYSTEM_SCHEMAS))
         rows = (
             await conn.execute(
                 text(
                     "SELECT table_schema, table_name, table_type "
                     "FROM information_schema.tables "
-                    "WHERE table_schema NOT IN :excluded "
+                    f"WHERE table_schema NOT IN ({excluded}) "
                     "ORDER BY table_schema, table_name LIMIT :limit"
-                ).bindparams(
-                    excluded=tuple(sorted(_SYSTEM_SCHEMAS)),
-                    limit=max_tables,
-                )
+                ).bindparams(limit=max_tables)
             )
         ).fetchall()
         return [
@@ -250,7 +248,7 @@ class PostgresPlugin(ConnectorPlugin):
                                 column_comment=stat.get("comment") if stat else None,
                                 null_ratio=stat.get("null_frac") if stat else None,
                                 cardinality=stat.get("n_distinct") if stat else None,
-                                distinct_values=stat.get("common_vals") or [],
+                                distinct_values=(stat.get("common_vals") if stat else []) or [],
                                 pii_flags=pii_flags_for_column(c.name),
                                 sensitive=is_sensitive_column(c.name),
                                 sample_disabled=is_sensitive_column(c.name),

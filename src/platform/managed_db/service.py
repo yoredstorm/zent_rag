@@ -283,7 +283,10 @@ def _dsn(*, user: str, password: str, host: str, port: int | str, database: str)
 
 
 async def open_managed_query_session(
-    organization_id: UUID, workspace_id: UUID | None = None
+    organization_id: UUID,
+    workspace_id: UUID | None = None,
+    *,
+    database_id: UUID | None = None,
 ) -> AsyncSession | None:
     """Reader-only session against the workspace managed DB, or None."""
     await ensure_managed_schema()
@@ -294,6 +297,9 @@ async def open_managed_query_session(
             "WHERE organization_id = :oid"
         )
         params: dict = {"oid": organization_id}
+        if database_id is not None:
+            sql += " AND id = :did"
+            params["did"] = str(database_id)
         if workspace_id is not None:
             sql += " AND workspace_id = :wid"
             params["wid"] = workspace_id

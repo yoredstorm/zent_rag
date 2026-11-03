@@ -428,35 +428,68 @@
       "idempotency_required": false,
       "input_schema": {
         "properties": {
+          "cart_key": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
           "currency": {
             "type": "string"
           },
           "items": {
             "type": "array"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          },
+          "workflow_instance_id": {
+            "type": "string"
           }
         },
-        "required": [
-          "items"
-        ],
         "type": "object"
       },
       "name": "Cotizar carrito",
       "output_schema": {
         "properties": {
+          "cart_id": {
+            "type": "string"
+          },
+          "cart_key": {
+            "type": "string"
+          },
           "count": {
             "type": "integer"
           },
           "currency": {
             "type": "string"
           },
+          "expires_at": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array"
+          },
           "items": {
             "type": "array"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
           },
           "subtotal": {
             "type": "number"
           },
+          "summary": {
+            "type": "string"
+          },
           "total": {
             "type": "number"
+          },
+          "ttl_seconds": {
+            "type": "integer"
           }
         },
         "type": "object"
@@ -470,6 +503,446 @@
       ],
       "read_only": true,
       "ref": "sales.cart.quote"
+    },
+    {
+      "description": "Carrito temporal de la sesión con TTL",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "cart_key": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          },
+          "workflow_instance_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Consultar carrito",
+      "output_schema": {
+        "properties": {
+          "cart_id": {
+            "type": "string"
+          },
+          "cart_key": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array"
+          },
+          "items": {
+            "type": "array"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": true,
+      "ref": "sales.cart.get"
+    },
+    {
+      "description": "Agrega una línea con precio del backend",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "cart_key": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          },
+          "workflow_instance_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Agregar al carrito",
+      "output_schema": {
+        "properties": {
+          "cart_id": {
+            "type": "string"
+          },
+          "cart_key": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array"
+          },
+          "items": {
+            "type": "array"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.cart.add"
+    },
+    {
+      "description": "Fija la cantidad de una línea",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "cart_key": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          },
+          "workflow_instance_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Cambiar cantidad",
+      "output_schema": {
+        "properties": {
+          "cart_id": {
+            "type": "string"
+          },
+          "cart_key": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array"
+          },
+          "items": {
+            "type": "array"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.cart.set_quantity"
+    },
+    {
+      "description": "Elimina una línea del carrito",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "cart_key": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          },
+          "workflow_instance_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Quitar del carrito",
+      "output_schema": {
+        "properties": {
+          "cart_id": {
+            "type": "string"
+          },
+          "cart_key": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array"
+          },
+          "items": {
+            "type": "array"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.cart.remove"
+    },
+    {
+      "description": "Borra todas las líneas sin cerrar la sesión",
+      "financial": false,
+      "idempotency_required": false,
+      "input_schema": {
+        "properties": {
+          "cart_key": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          },
+          "workflow_instance_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "Vaciar carrito",
+      "output_schema": {
+        "properties": {
+          "cart_id": {
+            "type": "string"
+          },
+          "cart_key": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array"
+          },
+          "items": {
+            "type": "array"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "provider_kinds": [
+        "commerce",
+        "managed_db",
+        "connected_db",
+        "rest_api",
+        "marketplace_action"
+      ],
+      "read_only": false,
+      "ref": "sales.cart.clear"
     },
     {
       "description": "Estado de la orden",
@@ -1098,6 +1571,11 @@
       "catalog.products.search",
       "catalog.product.get",
       "sales.cart.quote",
+      "sales.cart.get",
+      "sales.cart.add",
+      "sales.cart.set_quantity",
+      "sales.cart.remove",
+      "sales.cart.clear",
       "inventory.stock.get",
       "sales.order.create",
       "sales.order.mark_paid",
@@ -1118,6 +1596,13 @@
         "allow_cross_sell": {
           "default": false,
           "type": "boolean"
+        },
+        "cart_ttl_seconds": {
+          "default": 3600,
+          "description": "TTL del carrito temporal por sesión",
+          "maximum": 604800,
+          "minimum": 1,
+          "type": "integer"
         },
         "completion_message": {
           "type": "string"
@@ -2930,6 +3415,7 @@
         "affirmative_operator": "not_contains",
         "allow_alternatives": true,
         "allow_cross_sell": false,
+        "cart_ttl_seconds": 3600,
         "closer_markers": "nada",
         "completion_message": "¡Pago confirmado! Tu pedido está en preparación.",
         "confirmation_message": "¿Confirmas el pedido?",
@@ -2957,6 +3443,31 @@
         {
           "kind": "capability",
           "ref": "sales.cart.quote",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.add",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.set_quantity",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.remove",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.clear",
           "requirement": "required"
         },
         {
@@ -3004,6 +3515,31 @@
         {
           "kind": "capability",
           "ref": "sales.cart.quote",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.get",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.add",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.set_quantity",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.remove",
+          "requirement": "required"
+        },
+        {
+          "kind": "capability",
+          "ref": "sales.cart.clear",
           "requirement": "required"
         },
         {
@@ -3075,6 +3611,7 @@
         "affirmative_operator": "not_contains",
         "allow_alternatives": true,
         "allow_cross_sell": false,
+        "cart_ttl_seconds": 3600,
         "closer_markers": "nada",
         "completion_message": "¡Pago confirmado! Tu pedido está en preparación.",
         "confirmation_message": "¿Confirmas el pedido?",

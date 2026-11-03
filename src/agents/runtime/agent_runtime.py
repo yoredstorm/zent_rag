@@ -493,6 +493,7 @@ class AgentRunResult:
     answer: str
     message: str = ""
     user_id: UUID | None = None
+    conversation_id: UUID | None = None
     deployment_id: UUID | None = None
     version_id: UUID | None = None
     environment: str | None = None
@@ -764,7 +765,16 @@ def _classify_tool_failure(error: str) -> str:
 
 #: Tools que consultan las fuentes del agente. Si una falla y no quedó ninguna
 #: evidencia, la abstención es OPERATIVA: la búsqueda no llegó a ejecutarse.
-_CONSULT_TOOLS = ("search_knowledge", "query_tabular_data", "query_database")
+_CONSULT_TOOLS = (
+    "search_knowledge",
+    "query_tabular_data",
+    "query_database",
+    "find_products",
+    "get_product",
+    "get_price_and_stock",
+    "cart_get",
+    "get_my_order",
+)
 
 
 def _retrieval_unavailable(
@@ -800,17 +810,29 @@ def _filter_tools_by_sources(
     - ``query_database``: solo con fuentes SQL.
     - ``query_tabular_data``: solo con CSV/Excel o fuentes SQL.
     - ``call_api``: solo con allowlist de APIs del tenant.
+    - ``search_knowledge``: solo si hay fuentes documentales; un agente
+      conectado únicamente a una BD no debe buscar en documentos.
 
     Devuelve ``(tools_filtradas, omitidas)``; ``omitidas`` es la lista de
     ``{"tool": ..., "reason": ...}`` que se expone en "Ver flujo".
     """
     has_db = bool(source_types & _DB_SOURCE_TYPES)
     has_tabular = bool(source_types & _TABULAR_SOURCE_TYPES)
+    has_knowledge = bool(source_types - _DB_SOURCE_TYPES) or not source_types
     allowlist = [str(a).strip() for a in (api_allowlist or []) if str(a).strip()]
     omitted: list[dict] = []
     filtered: list[str] = []
+    db_tools = {
+        "query_database",
+        "find_products",
+        "get_product",
+        "get_price_and_stock",
+    }
     for name in tools:
-        if name == "query_database" and not has_db:
+        if name == "search_knowledge" and not has_knowledge:
+            omitted.append({"tool": name, "reason": "no_knowledge_sources"})
+            continue
+        if name in db_tools and not has_db:
             omitted.append({"tool": name, "reason": "no_data_sources"})
             continue
         if name == "query_tabular_data" and not (has_tabular or has_db):
@@ -829,6 +851,7 @@ async def _agent_source_types(agent: Agent) -> set[str] | None:
     ``None`` = no se pudo determinar (permisivo: no se filtran tools).
     """
     raw_ids = (agent.config_json or {}).get("source_ids") or []
+    kb_ids = (agent.config_json or {}).get("knowledge_base_ids") or []
     ids = [str(sid).strip() for sid in raw_ids if str(sid).strip()][:100]
     try:
         from sqlalchemy import bindparam
@@ -860,7 +883,12 @@ async def _agent_source_types(agent: Agent) -> set[str] | None:
                 ).fetchall()
         finally:
             await session.close()
-        return {str(row[0]) for row in rows if row[0]}
+        types = {str(row[0]) for row in rows if row[0]}
+        if kb_ids:
+            # Un KB documental mantiene habilitada la búsqueda aunque el
+            # agente solo declare una fuente SQL en `source_ids`.
+            types.add("knowledge_base")
+        return types
     except Exception as exc:  # noqa: BLE001 - nunca rompe el run
         logger.warning("source-aware tools skipped", error=str(exc)[:200])
         return None
@@ -2064,6 +2092,7 @@ class AgentRuntime:
         ctx = ToolContext(
             tenant_id=agent.organization_id,
             user_id=request.user_id,
+            agent_id=agent.id,
             role=request.role,
             permissions=request.permissions,
             agent_permissions=agent_permissions,
@@ -2080,6 +2109,7 @@ class AgentRuntime:
             answer="",
             message=request.message,
             user_id=request.user_id,
+            conversation_id=request.conversation_id,
             role=request.role,
             deployment_id=request.deployment_id,
             version_id=request.version_id,
@@ -2763,7 +2793,38 @@ class AgentRuntime:
                 {"type": "context", "sections": sorted(str(key) for key in request.context)}
             )
 
-        history: list[str] = [f"USER QUESTION: {request.message}"]
+        history: list[str] = []
+        if request.conversation_id is not None:
+            try:
+                from src.agents.runtime.trace_store import load_conversation_turns
+
+                prior_turns = await load_conversation_turns(
+                    request.agent.organization_id,
+                    request.agent.id,
+                    request.conversation_id,
+                    user_id=request.user_id,
+                    limit=6,
+                )
+                for turn in prior_turns:
+                    history.append(f"USER: {turn['message']}")
+                    history.append(f"ASSISTANT: {turn['answer']}")
+                if prior_turns:
+                    history.append(
+                        "SYSTEM NOTE: prior turns are context only. Re-query "
+                        "price, stock, totals and order state before asserting "
+                        "them."
+                    )
+                    result.steps.append(
+                        {
+                            "type": "conversation_history",
+                            "turns": len(prior_turns),
+                        }
+                    )
+            except Exception as exc:  # noqa: BLE001 - contexto nunca rompe
+                logger.warning(
+                    "Conversation history load failed", error=str(exc)[:160]
+                )
+        history.append(f"USER QUESTION: {request.message}")
         # El cierre por presupuesto (timeout/error) necesita lo reunido hasta el
         # corte para no devolver una respuesta vacía.
         _runtime_scratch(result)["history"] = history

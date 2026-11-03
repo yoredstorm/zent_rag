@@ -1,0 +1,119 @@
+{
+  "schema": "zent.p18_5.gates/v1",
+  "baseline_sha": "e6c42c2579df0e997ef2a0a0d0916f05dc735bef",
+  "branch": "fix/p18-5-security-execution-live-studio",
+  "updated_at": "2026-10-31T00:00:00Z",
+  "decision": "GO_LOCAL_DEV",
+  "gates": [
+    {
+      "id": "P18.5-00",
+      "name": "Baseline forense, threat model y matriz de gates",
+      "status": "PASS",
+      "p0_open": 0,
+      "evidence": "docs/architecture/workflow-p18-5/00-baseline-threat-model.md",
+      "tests": "20 passed baseline workflow suite"
+    },
+    {
+      "id": "P18.5-01",
+      "name": "Snapshots inmutables y pinning ejecutable de agentes",
+      "status": "PASS",
+      "p0_open": 0,
+      "evidence": "docs/architecture/workflow-p18-5/01-agent-snapshot.md",
+      "tests": "6 passed"
+    },
+    {
+      "id": "P18.5-02",
+      "name": "Aislamiento real de workspaces",
+      "status": "PASS",
+      "p0_open": 0,
+      "evidence": "docs/architecture/workflow-p18-5/02-workspace-authorization.md",
+      "tests": "2 passed, 1 skipped"
+    },
+    {
+      "id": "P18.5-03",
+      "name": "Aprobaciones verificables",
+      "status": "PASS",
+      "p0_open": 0,
+      "evidence": "docs/architecture/workflow-p18-5/03-verified-approval.md",
+      "tests": "4 passed"
+    },
+    {
+      "id": "P18.5-04",
+      "name": "Revocaciones y RBAC en WAIT/RESUME",
+      "status": "PASS",
+      "p0_open": 0,
+      "evidence": "docs/architecture/workflow-p18-5/04-revocation-resume.md",
+      "tests": "3 passed"
+    },
+    {
+      "id": "P18.5-05",
+      "name": "Idempotencia de efectos y replay intencional",
+      "status": "PASS",
+      "evidence": "docs/architecture/workflow-p18-5/05-effect-idempotency.md",
+      "tests": "2 passed"
+    },
+    {
+      "id": "P18.5-06",
+      "name": "Contratos de payload /test y /run",
+      "status": "PASS",
+      "evidence": "docs/architecture/workflow-p18-5/06-payload-contract.md",
+      "tests": "2 passed"
+    },
+    {
+      "id": "P18.5-07",
+      "name": "Historial con hashes y procedencia",
+      "status": "PASS",
+      "evidence": "docs/architecture/workflow-p18-5/07-history-provenance.md",
+      "tests": "unit/UI + 150 backend regression"
+    },
+    {
+      "id": "P18.5-08",
+      "name": "Timeline durable con cursor y permisos",
+      "status": "PASS",
+      "evidence": "docs/architecture/workflow-p18-5/08-execution-timeline.md",
+      "tests": "2 passed"
+    },
+    {
+      "id": "P18.5-09",
+      "name": "Test Studio en vivo RUNNING/WAIT/RESUME/COMPLETED",
+      "status": "PASS",
+      "evidence": "docs/architecture/workflow-p18-5/09-live-test-studio.md",
+      "tests": "112 UI passed + 1 Playwright passed"
+    },
+    {
+      "id": "P18.5-10",
+      "name": "Recorrido de canvas basado en traza real",
+      "status": "PASS",
+      "note": "Estructura vs recorrido corregido; proyección visual de ramas queda P2",
+      "evidence": "docs/architecture/workflow-p18-5/10-canvas-trace.md"
+    },
+    {
+      "id": "P18.5-11",
+      "name": "Robustez React, accesibilidad y semántica",
+      "status": "NOT_RUN",
+      "note": "typecheck/lint/UI verdes; axe y lector de pantalla no ejecutados",
+      "evidence": "docs/architecture/workflow-p18-5/11-ui-robustness.md"
+    },
+    {
+      "id": "P18.5-12",
+      "name": "E2E adversariales de seguridad y efectividad",
+      "status": "NOT_RUN",
+      "note": "Backend adversarial verde; E2E de aprobación/replay/workspace/historial/accesibilidad pendientes",
+      "evidence": "docs/architecture/workflow-p18-5/12-certification.md"
+    },
+    {
+      "id": "P18.5-13",
+      "name": "Chaos, rendimiento y observabilidad operacional",
+      "status": "NOT_RUN",
+      "note": "Sin baseline P95/P99 ni caos Redis/Postgres/provider",
+      "evidence": "docs/architecture/workflow-p18-5/13-resilience-performance.md"
+    },
+    {
+      "id": "P18.5-14",
+      "name": "Usabilidad, auditoría final y GO/NO-GO",
+      "status": "NOT_RUN",
+      "note": "Decision memo GO_LOCAL_DEV emitido; 5 usuarios reales no ejecutados",
+      "evidence": "docs/architecture/workflow-p18-5/14-final-go-no-go.md"
+    }
+  ]
+}

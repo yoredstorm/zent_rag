@@ -63,6 +63,59 @@ def _job_status(job) -> str | None:
     return getattr(job.status, "value", str(job.status))
 
 
+_ACTIVE_JOB_STATUSES = ("pending", "queued", "running")
+_FAILED_JOB_STATUSES = ("failed", "dead", "canceled")
+_PRIVATE_HOST_MARKERS = (
+    "blocked private network",
+    "blocked host",
+    "ssrf",
+    "private network",
+)
+
+
+def _job_error(job) -> str | None:
+    if job is None:
+        return None
+    summary = getattr(job, "error_summary", None) or {}
+    if isinstance(summary, dict):
+        error = summary.get("error") or summary.get("detail") or summary.get("reason")
+        if error:
+            return str(error)[:500]
+    return None
+
+
+def _error_details(error: str | None) -> tuple[str | None, str | None]:
+    """Código accionable y hint para el wizard, sin filtrar detalles internos."""
+    text = (error or "").lower()
+    if not text:
+        return None, None
+    if any(marker in text for marker in _PRIVATE_HOST_MARKERS):
+        return (
+            "PRIVATE_HOST_BLOCKED",
+            "Agrega el host de la base a «Hosts permitidos (SSRF)» en la "
+            "conexión y vuelve a probar.",
+        )
+    if "connection" in text or "timeout" in text:
+        return (
+            "SOURCE_UNREACHABLE",
+            "Revisa host, puerto, credenciales y que la base acepte conexiones.",
+        )
+    return "INGESTION_FAILED", "Revisa los detalles técnicos y vuelve a intentar."
+
+
+def _age_seconds(value: Any) -> float | None:
+    from datetime import datetime, timezone
+
+    if value is None:
+        return None
+    try:
+        if getattr(value, "tzinfo", None) is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - value).total_seconds())
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _scope_source_ids(row: dict) -> list[str]:
     """Ids de catálogo/fuente que cuelgan de la sesión (multi-archivo incluido)."""
     return list(
@@ -312,6 +365,11 @@ class DataOnboardingService:
         plugin = get_plugin(engine, config, secrets or {})
         test_payload: dict[str, Any]
         try:
+            # El test de conexión no debe dar "ok" si el guard SSRF va a
+            # bloquear el discovery después. Validamos el host ANTES de probar.
+            validate = getattr(plugin, "validate", None)
+            if validate is not None:
+                await validate()
             result = await asyncio.wait_for(plugin.test_connection(), timeout=20)
             test_payload = {
                 "ok": result.ok,
@@ -354,7 +412,90 @@ class DataOnboardingService:
         )
         public = self.public(updated or row)
         public["connection"] = test_payload
+        if test_payload.get("ok"):
+            await self._ensure_database_source(organization_id, session_id, updated or row)
+            refreshed = await self._require(organization_id, session_id)
+            public = self.public(refreshed)
+            public["connection"] = test_payload
         return public
+
+    async def _ensure_database_source(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        row: dict,
+    ) -> str | None:
+        """Crea/recupera el kb_source que hace visible la BD a Fuentes/agentes.
+
+        El conector y el catálogo son capas técnicas; agentes y la página
+        Fuentes leen `kb_sources`. Sin este puente la ingesta termina pero la
+        fuente no aparece en el selector del agente.
+        """
+        from src.api.deps import get_connector_repo, get_source_repo
+
+        connector_id = row.get("connector_id")
+        if not connector_id:
+            return None
+        connector = await get_connector_repo().get_connector(
+            organization_id, UUID(str(connector_id))
+        )
+        if connector is None:
+            return None
+        repo = get_source_repo()
+        workspace_id = _workspace_uuid(row)
+        source_name = str(connector.name or "Base de datos")
+        config = {
+            "connector_id": str(connector.id),
+            "engine": str(connector.type or "postgres"),
+            "host": str((connector.config_json or {}).get("host") or ""),
+            "database": str((connector.config_json or {}).get("database") or ""),
+            "source_mode": "schema_only",
+            "connection_status": "connected",
+            "catalog_status": "discovered",
+            "snapshot_status": "not_supported",
+            "allowed_resources": [],
+            "revision": 1,
+        }
+        # El registry de conocimiento indexa fuentes SQL como `sql`; el motor
+        # real queda en config.engine. `postgres` no es un tipo de kb_source.
+        source_type = "sql"
+        sources = await repo.list_sources(organization_id, workspace_id=workspace_id)
+        source = next(
+            (
+                item
+                for item in sources
+                if str((item.config_json or {}).get("connector_id") or "") == str(connector.id)
+            ),
+            None,
+        )
+        if source is None:
+            try:
+                source = await repo.create_source(
+                    organization_id,
+                    source_name,
+                    source_type,
+                    config_json=config,
+                    workspace_id=workspace_id,
+                )
+            except Exception:
+                # Nombre duplicado u otra carrera: reintenta con sufijo único.
+                source = await repo.create_source(
+                    organization_id,
+                    f"{source_name} ({str(connector.id)[:8]})",
+                    source_type,
+                    config_json=config,
+                    workspace_id=workspace_id,
+                )
+        await repo.update_source(
+            organization_id,
+            source.id,
+            status="connected",
+            config_json=config,
+        )
+        await self._store.update(
+            organization_id, session_id, kb_source_id=source.id
+        )
+        return str(source.id)
 
     async def connect_upload(
         self,
@@ -724,6 +865,29 @@ class DataOnboardingService:
     async def analyze(self, ctx: TenantContext, session_id: UUID) -> dict:
         organization_id = ctx.organization_id
         row = await self._require(organization_id, session_id)
+        if row["kind"] == "database" and row["status"] in (
+            "DISCOVERING",
+            "ANALYZING",
+        ):
+            state = row.get("state") or {}
+            job_id = state.get("job_id")
+            if job_id:
+                from src.api.deps import get_job_repo
+
+                try:
+                    job = await get_job_repo().get_job(
+                        organization_id, UUID(str(job_id))
+                    )
+                except Exception:  # noqa: BLE001
+                    job = None
+                if _job_status(job) in _ACTIVE_JOB_STATUSES:
+                    public = self.public(row)
+                    public["job"] = {
+                        "job_id": str(job_id),
+                        "catalog_source_id": row.get("catalog_source_id"),
+                        "already_running": True,
+                    }
+                    return public
         await self._store.update(
             organization_id, session_id, status="ANALYZING", step="analyze"
         )
@@ -757,9 +921,34 @@ class DataOnboardingService:
                     state_json=state,
                 )
                 row = updated or await self._require(organization_id, session_id)
+                if row.get("kb_source_id"):
+                    try:
+                        from src.api.deps import get_source_repo
+
+                        await get_source_repo().update_source(
+                            organization_id,
+                            UUID(str(row["kb_source_id"])),
+                            status="ready",
+                        )
+                    except Exception:  # noqa: BLE001 - no bloquea el wizard
+                        pass
             elif phase == "FAILED":
+                error = (source or {}).get("scan_error") or "La fuente no respondió"
+                code, hint = _error_details(str(error))
+                state = merge_state(
+                    row.get("state") or {},
+                    {
+                        "catalog_phase": phase,
+                        "last_error": str(error)[:500],
+                        "error_code": code,
+                        "error_hint": hint,
+                    },
+                )
                 updated = await self._store.update(
-                    organization_id, session_id, status="FAILED"
+                    organization_id,
+                    session_id,
+                    status="FAILED",
+                    state_json=state,
                 )
                 row = updated or row
         done_through = {
@@ -817,8 +1006,54 @@ class DataOnboardingService:
                 logger.warning("onboarding jobs lookup failed", error=str(exc)[:200])
         first_job = jobs_by_id.get(job_ids[0]) if job_ids else None
         if first_job is not None:
-            technical["job_status"] = _job_status(first_job)
+            job_status = _job_status(first_job)
+            job_error = _job_error(first_job)
+            technical["job_status"] = job_status
             technical["records_processed"] = first_job.records_processed
+            technical["job_attempts"] = getattr(first_job, "attempts", None)
+            technical["job_error"] = job_error
+            technical["job_updated_at"] = (
+                first_job.updated_at.isoformat()
+                if getattr(first_job, "updated_at", None)
+                else None
+            )
+            technical["job_started_at"] = (
+                first_job.started_at.isoformat()
+                if getattr(first_job, "started_at", None)
+                else None
+            )
+            age = _age_seconds(getattr(first_job, "updated_at", None))
+            technical["last_update_seconds_ago"] = (
+                round(age) if age is not None else None
+            )
+            if job_status in _FAILED_JOB_STATUSES:
+                code, hint = _error_details(job_error)
+                technical["error_code"] = code
+                technical["error_hint"] = hint
+                if row["status"] in ("DISCOVERING", "ANALYZING"):
+                    state = merge_state(
+                        session_state,
+                        {
+                            "last_error": job_error,
+                            "error_code": code,
+                            "error_hint": hint,
+                        },
+                    )
+                    updated = await self._store.update(
+                        organization_id,
+                        session_id,
+                        status="FAILED",
+                        state_json=state,
+                    )
+                    row = updated or row
+                    session_state = state
+            elif job_status in _ACTIVE_JOB_STATUSES:
+                technical["stalled"] = bool(age is not None and age > 120)
+                technical["error_hint"] = (
+                    "El job sigue en cola sin avance. Puedes reintentar."
+                    if technical["stalled"]
+                    else None
+                )
         progresses = [
             float(job.progress)
             for job in jobs_by_id.values()
@@ -850,6 +1085,19 @@ class DataOnboardingService:
             )
             if source:
                 technical["catalog_phase"] = source.get("phase")
+                if source.get("scan_error"):
+                    technical["catalog_error"] = str(source["scan_error"])[:500]
+                    code, hint = _error_details(str(source["scan_error"]))
+                    technical.setdefault("error_code", code)
+                    technical.setdefault("error_hint", hint)
+        state = row.get("state") or {}
+        if state.get("job_error") and not technical.get("job_error"):
+            technical["job_error"] = state["job_error"]
+        if technical.get("job_error") or technical.get("catalog_error"):
+            error = technical.get("job_error") or technical.get("catalog_error")
+            code, hint = _error_details(str(error))
+            technical.setdefault("error_code", code)
+            technical.setdefault("error_hint", hint)
         understanding = (row.get("state") or {}).get("understanding") or {}
         return {
             "session": self.public(row),
@@ -1491,12 +1739,18 @@ class DataOnboardingService:
 
         if not row.get("connector_id"):
             raise DataOnboardingError("Connect a database first", 400)
+        if not row.get("kb_source_id"):
+            await self._ensure_database_source(organization_id, session_id, row)
+            row = await self._require(organization_id, session_id)
         result = await start_discovery_scan(
             job_repo=get_job_repo(),
             catalog_store=self._catalog,
             organization_id=organization_id,
             connector_id=UUID(row["connector_id"]),
             kb_source_id=UUID(row["kb_source_id"]) if row.get("kb_source_id") else None,
+            # Sin workspace el catálogo queda invisible para el resolver
+            # semántico, que filtra por workspace al responder preguntas.
+            workspace_id=UUID(row["workspace_id"]) if row.get("workspace_id") else None,
         )
         catalog_source_id = result.get("catalog_source_id") or result.get("source_id")
         state = merge_state(row.get("state") or {}, {"job_id": result.get("job_id")})

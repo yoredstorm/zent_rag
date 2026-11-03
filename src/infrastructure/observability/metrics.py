@@ -1244,6 +1244,25 @@ grounding_missing_premise_total = Counter(
 )
 
 
+data_query_binding_drift_denied_total = Counter(
+    "data_query_binding_drift_denied_total",
+    "Consultas denegadas por binding/plan cambiado",
+    labelnames=["organization_id", "reason"],
+)
+
+data_query_plan_stale_total = Counter(
+    "data_query_plan_stale_total",
+    "Consultas detenidas por plan/policy stale",
+    labelnames=["organization_id", "reason"],
+)
+
+data_query_version_total = Counter(
+    "data_query_version_total",
+    "Consultas ejecutadas por version de plan",
+    labelnames=["organization_id", "plan_version"],
+)
+
+
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.
 

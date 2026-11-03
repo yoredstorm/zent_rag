@@ -11,6 +11,12 @@ const IDLE_PHRASES = [
   "Separando lo importante…",
 ];
 
+const DATABASE_PHRASES = [
+  "Conectando al catálogo real.",
+  "Leyendo tablas y columnas.",
+  "Buscando claves y relaciones.",
+];
+
 export function AnalysisProgressStep({
   headline,
   phases,
@@ -18,9 +24,13 @@ export function AnalysisProgressStep({
   showTech,
   onToggleTech,
   onContinue,
+  onRetry,
   ready,
+  percent = 0,
   glimpses = [],
   files = [],
+  status = null,
+  kind = null,
   learningSessionId = null,
 }: {
   headline: string;
@@ -29,31 +39,48 @@ export function AnalysisProgressStep({
   showTech: boolean;
   onToggleTech: () => void;
   onContinue: () => void;
+  onRetry?: () => void;
   ready: boolean;
   percent?: number;
   glimpses?: AnalyzeGlimpse[];
   files?: ProgressFile[];
   status?: string | null;
+  kind?: string | null;
   learningSessionId?: string | null;
 }) {
   const pages =
     typeof technical?.pages === "number" ? ` (${String(technical.pages)} páginas)` : "";
   const visibleGlimpses = glimpses.slice(0, 12);
   const [idleIdx, setIdleIdx] = useState(0);
+  const progress = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  const jobStatus = String(technical?.job_status ?? status ?? "").toLowerCase();
+  const failed =
+    jobStatus === "failed" ||
+    jobStatus === "dead" ||
+    String(technical?.catalog_phase ?? "").toUpperCase() === "FAILED" ||
+    String(status ?? "").toUpperCase() === "FAILED";
+  const catalogPhase = String(technical?.catalog_phase ?? "");
+  const stalled = Boolean(technical?.stalled);
+  const errorMessage = String(
+    technical?.job_error ?? technical?.catalog_error ?? ""
+  ).trim();
+  const errorHint = String(technical?.error_hint ?? "").trim();
+  const processed = Number(technical?.records_processed ?? 0);
+  const phrases = kind === "database" ? DATABASE_PHRASES : IDLE_PHRASES;
 
   useEffect(() => {
     if (ready || visibleGlimpses.length) return;
     const id = window.setInterval(() => {
-      setIdleIdx((i) => (i + 1) % IDLE_PHRASES.length);
+      setIdleIdx((i) => (i + 1) % phrases.length);
     }, 2000);
     return () => window.clearInterval(id);
-  }, [ready, visibleGlimpses.length]);
+  }, [ready, visibleGlimpses.length, phrases.length]);
 
   const live = ready
     ? "Ya entendí lo suficiente. Revisa cuando quieras."
     : visibleGlimpses.length
       ? visibleGlimpses[visibleGlimpses.length - 1].text
-      : IDLE_PHRASES[idleIdx];
+      : phrases[idleIdx];
 
   return (
     <div className="max-w-xl">
@@ -67,13 +94,80 @@ export function AnalysisProgressStep({
         data-testid="analyze-ring"
       >
         <p className="text-sm font-medium text-text">
-          {ready ? "Listo para revisar" : "En proceso"}
+          {failed
+            ? "La ingesta no terminó"
+            : stalled
+              ? "La ingesta está sin avance"
+              : ready
+                ? "Listo para revisar"
+                : "En proceso"}
         </p>
-        <p className="mt-1 text-xs leading-relaxed text-muted">
-          {ready
-            ? "El procesamiento terminó. Revisa lo encontrado antes de continuar."
-            : "No mostramos un porcentaje: el backend no expone avance por etapas. Las fases de abajo reflejan señales reales."}
-        </p>
+        {failed ? (
+          <div className="mt-1 space-y-2 text-xs leading-relaxed" role="alert">
+            <p className="text-danger">
+              {errorMessage ||
+                "El job falló. Revisa la conexión y vuelve a intentar."}
+            </p>
+            {errorHint && <p className="text-muted">{errorHint}</p>}
+            {onRetry && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onRetry}
+                data-testid="analyze-retry"
+              >
+                Reintentar análisis
+              </button>
+            )}
+          </div>
+        ) : stalled ? (
+          <div className="mt-1 space-y-2 text-xs leading-relaxed">
+            <p className="text-warning">
+              El job no reporta avance reciente. Puedes esperar o reintentar.
+            </p>
+            {onRetry && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onRetry}
+                data-testid="analyze-retry"
+              >
+                Reintentar análisis
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            {percent > 0 && (
+              <div className="mt-2">
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span data-testid="analyze-percent">{progress}%</span>
+                  {catalogPhase && <span>{catalogPhase}</span>}
+                </div>
+                <div
+                  className="mt-1 h-1.5 overflow-hidden rounded-full bg-border"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progress}
+                  aria-label="Avance de la ingesta"
+                >
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width] duration-500"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <p className="mt-1 text-xs leading-relaxed text-muted">
+              {ready
+                ? "El procesamiento terminó. Revisa lo encontrado antes de continuar."
+                : percent > 0
+                  ? `Avance real del job${processed > 0 ? ` · ${processed} registros` : ""}.`
+                  : "Conectando y preparando la lectura. Las fases de abajo son señales reales."}
+            </p>
+          </>
+        )}
       </div>
       <p className="mt-3 text-sm text-text" aria-live="polite" data-testid="analyze-live">
         {live}

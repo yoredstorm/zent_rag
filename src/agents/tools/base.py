@@ -20,6 +20,7 @@ class ToolContext:
 
     tenant_id: UUID
     user_id: UUID | None = None
+    agent_id: UUID | None = None
     role: str = "admin"
     permissions: frozenset[str] = frozenset()
     # FASE 03 (S18): grants explícitos del agente. None = compat (caller);

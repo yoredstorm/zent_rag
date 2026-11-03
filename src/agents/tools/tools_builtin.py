@@ -921,10 +921,10 @@ class QueryDatabaseTool(Tool):
 
     name: ClassVar[str] = "query_database"
     description: ClassVar[str] = (
-        "Haz preguntas analíticas sobre los datos de negocio del tenant "
-        "(ventas, clientes, stock, etc) y sobre los Excel/CSV ingestados: "
-        "las tablas materializadas viven con prefijo `zent_` "
-        "(p. ej. zent_atpco_attributes). Devuelve filas de la BD. "
+        "Consulta datos de negocio reales en la fuente del agente: catálogo, "
+        "productos, precios, stock, pedidos, ventas o tablas materializadas "
+        "`zent_*`. Usa esta herramienta para preguntas de datos; "
+        "search_knowledge es solo para documentos. "
         "Input: question (pregunta en lenguaje natural)."
     )
     input_schema: ClassVar[dict] = {
@@ -935,10 +935,71 @@ class QueryDatabaseTool(Tool):
         },
     }
     permission: ClassVar[str] = "tool:query_database"
-    timeout_seconds: ClassVar[float] = 30.0
+    timeout_seconds: ClassVar[float] = 60.0
+
+    #: Preguntas de estructura que se responden con metadata real.
+    _SCHEMA_INTENT: ClassVar[re.Pattern[str]] = re.compile(
+        r"\b(tablas?|columnas?|esquemas?|estructura|campos?)\b"
+        r"|\bqu[eé]\s+datos\s+(tienes|hay)\b"
+        r"|\bqu[eé]\s+puedo\s+consultar\b"
+        r"|\bschema\b",
+        re.IGNORECASE,
+    )
 
     def __init__(self, sql_expert: SqlExpert) -> None:
         self._sql_expert = sql_expert
+
+    async def _external_database_source(
+        self, ctx: ToolContext
+    ) -> tuple[dict | None, str | None]:
+        """Resuelve la fuente DB externa declarada por el agente.
+
+        Solo usa `source_ids` efectivos (scope del agente ∩ scope del caller).
+        Si hay más de un conector distinto, falla cerrado: el agente debe
+        declarar una única fuente de datos para responder.
+        """
+        source_ids = [
+            str(item).strip()
+            for item in ((ctx.org_config or {}).get("source_ids") or [])
+            if str(item).strip()
+        ]
+        if not source_ids:
+            return None, None
+
+        from src.platform.agents.database_access import (
+            resolve_agent_database_source,
+        )
+
+        source, source_error = await resolve_agent_database_source(
+            organization_id=ctx.tenant_id,
+            user_id=ctx.user_id,
+            source_ids=source_ids,
+        )
+        if source_error:
+            return None, source_error
+        if source is None:
+            return None, None
+
+        from src.platform.agents.data_grants import allowed_query_resources
+
+        source_workspace = (
+            UUID(source.workspace_id) if source.workspace_id else None
+        )
+        allowed_resources, grant_error = await allowed_query_resources(
+            ctx.tenant_id,
+            ctx.agent_id,
+            workspace_id=source_workspace,
+        )
+        if grant_error:
+            return None, grant_error
+        return {
+            "source_id": source.source_id,
+            "name": source.name,
+            "connector_id": source.connector_id,
+            "workspace_id": source.workspace_id,
+            "source_mode": source.source_mode,
+            "allowed_resources": sorted(allowed_resources),
+        }, None
 
     async def _materialized_schema_hint(self, ctx: ToolContext) -> str:
         """Esquema compacto de las tablas materializadas (`zent_*`) de la org.
@@ -978,34 +1039,119 @@ class QueryDatabaseTool(Tool):
         except Exception:  # noqa: BLE001 - el hint nunca rompe la tool
             return ""
 
+    async def _execute_external(
+        self,
+        ctx: ToolContext,
+        source: dict,
+        question: str,
+        *,
+        start: float,
+    ) -> ToolResult:
+        """Ejecuta la pregunta contra la BD externa ya resuelta y validada."""
+        executor = getattr(self._sql_expert, "execute_external", None)
+        if executor is None:
+            return ToolResult(
+                error="EXTERNAL_SQL_UNSUPPORTED: el motor SQL no soporta "
+                "consultas externas",
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+        connector_id = str(source.get("connector_id") or "")
+        try:
+            result = await executor(
+                organization_id=ctx.tenant_id,
+                connector_id=UUID(connector_id),
+                workspace_id=UUID(str(source["workspace_id"]))
+                if source.get("workspace_id")
+                else None,
+                question=question,
+                role=ctx.role,
+                permissions=(ctx.org_config or {}).get("sql"),
+                user_id=ctx.user_id,
+                allowed_resources=set(source.get("allowed_resources") or []),
+            )
+        except ValueError:
+            return ToolResult(
+                error="SOURCE_UNAVAILABLE: identificador de conector inválido",
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                error=str(exc), latency_ms=(time.perf_counter() - start) * 1000
+            )
+
+        meta = {
+            "source_id": source.get("source_id"),
+            "connector_id": connector_id,
+            "source_mode": source.get("source_mode"),
+        }
+        if result.error:
+            return ToolResult(
+                error=result.error,
+                latency_ms=(time.perf_counter() - start) * 1000,
+                meta=meta,
+            )
+        if result.row_count == 0:
+            return ToolResult(
+                output="(no rows)",
+                latency_ms=(time.perf_counter() - start) * 1000,
+                meta=meta,
+            )
+        header = " | ".join(result.columns)
+        rows = "\n".join(" | ".join(row) for row in result.rows[:25])
+        output = (
+            f"Columns: {header}\n"
+            f"Rows ({result.row_count} total"
+            f"{'+, truncated' if result.truncated else ''}):\n{rows}"
+        )
+        return ToolResult(
+            output=output[:6000],
+            truncated=len(output) > 6000,
+            latency_ms=(time.perf_counter() - start) * 1000,
+            meta=meta,
+        )
+
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
         start = time.perf_counter()
         question = str(arguments.get("question") or "")
 
+        external, source_error = await self._external_database_source(ctx)
+        if source_error:
+            return ToolResult(
+                error=source_error,
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+
         # Rechazo rápido (sin LLM): si la pregunta es de definición/identidad
         # ("quién es X") y no tiene ninguna señal analítica, el SQL Expert
         # solo puede fallar caro. Se guía al LLM a la vía documental.
-        from src.agents.tools.sql_router import SqlIntentRouter
+        # Las preguntas de estructura de una BD externa sí aplican.
+        if external is None or not self._SCHEMA_INTENT.search(question):
+            from src.agents.tools.sql_router import SqlIntentRouter
 
-        profile = SqlIntentRouter.signal_profile(question)
-        analytical = (
-            profile["aggregation"]
-            + profile["ranking"]
-            + profile["date"]
-            + profile["catalog"]
-        )
-        if analytical == 0 and (
-            profile["entity"] == 0
-            or profile["definitional"] > 0
-            or profile["rag"] > 0
-        ):
-            return ToolResult(
-                error=(
-                    "Esta pregunta no parece ser sobre datos/tablas (SQL no "
-                    "aplica). Usa search_knowledge para documentos o formula "
-                    "una pregunta de datos con tablas, columnas o métricas."
-                ),
-                latency_ms=(time.perf_counter() - start) * 1000,
+            profile = SqlIntentRouter.signal_profile(question)
+            analytical = (
+                profile["aggregation"]
+                + profile["ranking"]
+                + profile["date"]
+                + profile["catalog"]
+            )
+            if analytical == 0 and (
+                profile["entity"] == 0
+                or profile["definitional"] > 0
+                or profile["rag"] > 0
+            ):
+                return ToolResult(
+                    error=(
+                        "Esta pregunta no parece ser sobre datos/tablas (SQL no "
+                        "aplica). Usa search_knowledge para documentos o formula "
+                        "una pregunta de datos con tablas, columnas o métricas."
+                    ),
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
+
+        if external is not None:
+            return await self._execute_external(
+                ctx, external, question, start=start
             )
 
         try:
@@ -1173,6 +1319,29 @@ def register_builtin_tools(
     register_tool(SearchKnowledgeTool(retriever, embedder=embedder, tabular_query=tabular_query))
     register_tool(QueryDatabaseTool(sql_expert))
     register_tool(CallApiTool())
+    from src.agents.tools.cart_tools import (
+        CartAddTool,
+        CartClearTool,
+        CartGetTool,
+        CartRemoveTool,
+        CartSetQuantityTool,
+    )
+    from src.agents.tools.catalog_tools import (
+        FindProductsTool,
+        GetPriceAndStockTool,
+        GetProductTool,
+    )
+    from src.agents.tools.order_tools import GetMyOrderTool
+
+    register_tool(FindProductsTool())
+    register_tool(GetProductTool())
+    register_tool(GetPriceAndStockTool())
+    register_tool(CartGetTool())
+    register_tool(CartAddTool())
+    register_tool(CartSetQuantityTool())
+    register_tool(CartRemoveTool())
+    register_tool(CartClearTool())
+    register_tool(GetMyOrderTool())
     if tabular_query is not None:
         register_tool(QueryTabularDataTool(tabular_query))
     try:
@@ -1182,4 +1351,4 @@ def register_builtin_tools(
         logger.info("Marketplace agent tool registered", count=4)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Marketplace tool registration failed", error=str(exc)[:150])
-    logger.info("Builtin agent tools registered", count=4)
+    logger.info("Builtin agent tools registered", count=7)

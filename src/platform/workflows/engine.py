@@ -15,6 +15,7 @@ import hmac
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -57,6 +58,7 @@ _ACTION_NODE_TYPES = frozenset(
         "business_node",
         "business_result",
         "human_approval",
+        "manual_payment_validation",
         "capability_call",
         "wait_event",
         "state_set",
@@ -341,6 +343,7 @@ async def run_workflow(
     preload_scope: list[str] | None = None,
     definition_source: str | None = None,
     effective_policy_snapshot: dict | None = None,
+    principal: Any | None = None,
 ) -> dict:
     """Ejecuta el workflow bajo un ExecutionContext explícito.
 
@@ -404,6 +407,20 @@ async def run_workflow(
     eff_org = UUID(str(row_org))
     eff_ws = UUID(str(row_ws)) if row_ws else (workspace_id or None)
     corr = (correlation_id or "").strip() or f"wf:{workflow_id}"
+
+    if principal is not None:
+        from src.platform.workflows.principal import validate_principal_scope
+
+        try:
+            validate_principal_scope(principal, eff_org, eff_ws)
+        except ValueError as exc:
+            return {
+                "run_id": str(run_id) if run_id else None,
+                "workflow_id": str(workflow_id),
+                "status": "failed",
+                "code": "IDENTITY_REQUIRED",
+                "error": str(exc)[:200],
+            }
 
     from src.platform.workflows.definition import (
         DEFINITION_SOURCES,
@@ -669,6 +686,21 @@ async def run_workflow(
     # set queda VACÍO (fail-closed): un caller nuevo que olvide permisos no
     # hereda `external_actions:execute` por accidente.
     perms = resolve_workflow_permissions(permissions, system_context=system_context)
+    graph_nodes = (definition.get("graph") or {}).get("nodes") or []
+    has_agent_nodes = any(
+        isinstance(node, dict)
+        and node.get("type") == "llm"
+        and (node.get("config") or {}).get("agent_id")
+        for node in graph_nodes
+    )
+    agent_snapshots = dict(definition.get("agent_snapshots") or {})
+    if source == "instance":
+        pinned_agents = (definition.get("policy_snapshot") or {}).get("agents") or []
+        agent_snapshot_legacy = bool(has_agent_nodes and not pinned_agents)
+    elif source == "published":
+        agent_snapshot_legacy = bool(has_agent_nodes and not agent_snapshots)
+    else:
+        agent_snapshot_legacy = False
     exec_ctx = ExecutionContext(
         organization_id=eff_org,
         workspace_id=eff_ws,
@@ -679,9 +711,16 @@ async def run_workflow(
         trigger_type=trig,
         permissions=perms,
         correlation_id=corr,
+        principal=principal,
+        principal_hash=principal.public_ref() if principal is not None else None,
         simulate=bool(simulate),
         instance_id=UUID(str(instance_id)) if instance_id else None,
         effective_policy=effective_policy,
+        agent_snapshots=agent_snapshots,
+        graph_hash=definition.get("graph_hash"),
+        workflow_version=workflow_version,
+        definition_source=definition.get("definition_source"),
+        agent_snapshot_legacy=agent_snapshot_legacy,
     )
 
     started = datetime.now(timezone.utc)
@@ -1074,6 +1113,16 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
     if row is None:
         return None
     tcfg = row.trigger_config if isinstance(row.trigger_config, dict) else {}
+    graph = row.graph if isinstance(row.graph, dict) else {}
+    if not graph:
+        from src.platform.workflows.ir import LegacyWorkflowAdapter
+
+        graph = LegacyWorkflowAdapter.steps_to_graph(
+            row.steps or [], str(row.trigger_type or "webhook"), tcfg
+        ).to_dict()
+    from src.platform.workflows.release_policy import graph_fingerprint
+
+    draft_graph_hash = graph_fingerprint(graph)
     return {
         "id": str(row.id),
         "name": row.name,
@@ -1082,6 +1131,7 @@ async def get_workflow(organization_id: UUID, workflow_id: UUID) -> dict | None:
         "trigger_config": _public_trigger_config(tcfg),
         "steps": row.steps,
         "graph": row.graph,
+        "graph_hash": draft_graph_hash,
         "workflow_version": int(row.workflow_version or 1),
         "graph_source": row.graph_source,
         "workspace_id": str(row.workspace_id) if row.workspace_id else None,
@@ -1417,21 +1467,36 @@ async def create_from_template(
 # ---------------------------------------------------------------------------
 # Runs y trazabilidad
 # ---------------------------------------------------------------------------
-async def list_runs(organization_id: UUID, workflow_id: UUID, limit: int = 50) -> dict:
+async def list_runs(
+    organization_id: UUID,
+    workflow_id: UUID,
+    limit: int = 50,
+    *,
+    workspace_id: UUID | None = None,
+) -> dict:
     session = await get_async_session()
     try:
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT r.id, r.workflow_id, r.status, r.started_at, r.completed_at, "
-                    "r.duration_ms, r.error, r.simulate, r.correlation_id, w.name AS workflow_name "
-                    "FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id "
-                    "WHERE r.workflow_id = :wid AND w.organization_id = :oid "
-                    "ORDER BY r.started_at DESC LIMIT :lim"
-                ),
-                {"wid": workflow_id, "oid": organization_id, "lim": min(int(limit), 200)},
+        sql = (
+            "SELECT r.id, r.workflow_id, r.status, r.started_at, r.completed_at, "
+            "r.duration_ms, r.error, r.simulate, r.correlation_id, r.graph_hash, "
+            "w.name AS workflow_name "
+            "FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id "
+            "WHERE r.workflow_id = :wid AND w.organization_id = :oid "
+        )
+        params: dict = {
+            "wid": workflow_id,
+            "oid": organization_id,
+            "lim": min(int(limit), 200),
+        }
+        if workspace_id is not None:
+            # Defensa en el query final: no solo en el path/middleware.
+            sql += (
+                "AND (COALESCE(r.workspace_id, w.workspace_id) IS NULL "
+                "OR COALESCE(r.workspace_id, w.workspace_id) = CAST(:ws AS uuid)) "
             )
-        ).fetchall()
+            params["ws"] = str(workspace_id)
+        sql += "ORDER BY r.started_at DESC LIMIT :lim"
+        rows = (await session.execute(text(sql), params)).fetchall()
     finally:
         await session.close()
     return {
@@ -1447,29 +1512,41 @@ async def list_runs(organization_id: UUID, workflow_id: UUID, limit: int = 50) -
                 "error": r.error,
                 "simulate": bool(r.simulate),
                 "correlation_id": r.correlation_id,
+                "graph_hash": getattr(r, "graph_hash", None),
             }
             for r in rows
         ]
     }
 
 
-async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
+async def run_detail(
+    organization_id: UUID,
+    run_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
+) -> dict | None:
     session = await get_async_session()
     try:
-        run = (
-            await session.execute(
-                text(
-                    "SELECT r.id, r.workflow_id, r.status, r.started_at, r.completed_at, "
-                    "r.duration_ms, r.error, r.trigger_payload, r.simulate, r.correlation_id, "
-                    "r.workspace_id, r.run_mode, r.target_node_id, r.source_run_id, "
-                    "r.instance_id, r.instance_seq, "
-                    "w.name AS workflow_name, w.organization_id "
-                    "FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id "
-                    "WHERE r.id = :rid"
-                ),
-                {"rid": run_id},
+        sql = (
+            "SELECT r.id, r.workflow_id, r.status, r.started_at, r.completed_at, "
+            "r.duration_ms, r.error, r.trigger_payload, r.simulate, r.correlation_id, "
+            "r.workspace_id, r.run_mode, r.target_node_id, r.source_run_id, "
+            "r.instance_id, r.instance_seq, r.graph_hash, "
+            "r.effective_scope_hash AS policy_hash, "
+            "r.published_version_id, r.definition_source, "
+            "w.name AS workflow_name, w.organization_id, w.workflow_version, "
+            "w.workspace_id AS workflow_workspace_id "
+            "FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id "
+            "WHERE r.id = :rid"
+        )
+        params: dict = {"rid": run_id}
+        if workspace_id is not None:
+            sql += (
+                " AND (COALESCE(r.workspace_id, w.workspace_id) IS NULL "
+                "OR COALESCE(r.workspace_id, w.workspace_id) = CAST(:ws AS uuid))"
             )
-        ).fetchone()
+            params["ws"] = str(workspace_id)
+        run = (await session.execute(text(sql), params)).fetchone()
         if run is None or str(run.organization_id) != str(organization_id):
             return None
         steps = (
@@ -1512,6 +1589,24 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         for step in steps_payload
         if step.get("node_type") in _ACTION_NODE_TYPES
     ]
+    agent_snapshot_hash = next(
+        (
+            (step.get("output") or {}).get("agent_config_fingerprint")
+            for step in steps_payload
+            if isinstance(step.get("output"), dict)
+            and (step.get("output") or {}).get("agent_config_fingerprint")
+        ),
+        None,
+    )
+    agent_snapshot_status = next(
+        (
+            (step.get("output") or {}).get("agent_snapshot_status")
+            for step in steps_payload
+            if isinstance(step.get("output"), dict)
+            and (step.get("output") or {}).get("agent_snapshot_status")
+        ),
+        None,
+    )
     run_context: dict = {}
     contributions: list = []
     events: list = []
@@ -1549,6 +1644,24 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         "instance_id": str(run.instance_id) if getattr(run, "instance_id", None) else None,
         "instance_seq": getattr(run, "instance_seq", None),
         "workspace_id": str(run.workspace_id) if run.workspace_id else None,
+        "graph_hash": getattr(run, "graph_hash", None),
+        "policy_hash": getattr(run, "policy_hash", None),
+        "published_version_id": (
+            str(run.published_version_id)
+            if getattr(run, "published_version_id", None)
+            else None
+        ),
+        "workflow_version": int(getattr(run, "workflow_version", 0) or 0) or None,
+        "definition_source": getattr(run, "definition_source", None),
+        "simulated": bool(run.simulate),
+        "effective_level": "simulation" if bool(run.simulate) else "real",
+        "provider_verified": False,
+        "agent_snapshot_hash": agent_snapshot_hash,
+        "agent_snapshot_status": agent_snapshot_status,
+        "has_provenance": bool(
+            getattr(run, "graph_hash", None)
+            or getattr(run, "published_version_id", None)
+        ),
         "steps": steps_payload,
         "context": run_context,
         "contributions": contributions,
@@ -2020,13 +2133,57 @@ async def decide_approval(
                 "status": "forbidden",
                 "error": "self_approval",
             }
-        await session.execute(
-            text(
-                "UPDATE workflow_approvals SET status = :dec, decided_by = :by, "
-                "decision_comment = :cm, decided_at = NOW() WHERE id = :aid"
-            ),
-            {"dec": decision, "by": decided_by, "cm": comment, "aid": approval_id},
-        )
+        # Actualización atómica: dos decisiones concurrentes no pueden ganar.
+        updated = (
+            await session.execute(
+                text(
+                    "UPDATE workflow_approvals SET status = :dec, decided_by = :by, "
+                    "decision_comment = :cm, decided_at = NOW() "
+                    "WHERE id = :aid AND organization_id = :oid AND status = 'pending' "
+                    "AND (expires_at IS NULL OR expires_at > NOW()) "
+                    "RETURNING id"
+                ),
+                {
+                    "dec": decision,
+                    "by": decided_by,
+                    "cm": comment,
+                    "aid": approval_id,
+                    "oid": organization_id,
+                },
+            )
+        ).fetchone()
+        if updated is None:
+            current = (
+                await session.execute(
+                    text(
+                        "SELECT status, expires_at FROM workflow_approvals "
+                        "WHERE id = :aid AND organization_id = :oid"
+                    ),
+                    {"aid": approval_id, "oid": organization_id},
+                )
+            ).fetchone()
+            await session.commit()
+            status = str(getattr(current, "status", "") or "")
+            if current is not None and current.expires_at is not None:
+                expires = current.expires_at
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                if expires <= datetime.now(timezone.utc):
+                    status = "expired"
+                    await session.execute(
+                        text(
+                            "UPDATE workflow_approvals SET status = 'expired' "
+                            "WHERE id = :aid AND organization_id = :oid "
+                            "AND status = 'pending'"
+                        ),
+                        {"aid": approval_id, "oid": organization_id},
+                    )
+                    await session.commit()
+            return {
+                "approval_id": str(approval_id),
+                "status": status or "conflict",
+                "already": True,
+            }
         await session.commit()
         run_id, workflow_id = row.run_id, row.workflow_id
     finally:

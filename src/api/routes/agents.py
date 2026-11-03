@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -131,6 +132,14 @@ class CreateAgentRequest(BaseModel):
     config: AgentConfig | None = None
 
 
+class RetailSellerRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    workspace_id: UUID
+    source_id: str = Field(..., min_length=1, max_length=120)
+    model: str | None = Field(default=None, max_length=100)
+    cart_ttl_seconds: int = Field(default=3600, ge=1, le=604800)
+
+
 class UpdateAgentRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
@@ -141,6 +150,20 @@ class UpdateAgentRequest(BaseModel):
     model: str | None = Field(default=None, max_length=100)
     is_active: bool | None = None
     config: AgentConfig | None = None
+
+
+class AgentDataGrantIn(BaseModel):
+    """Grant explícito de datos para un agente (P20-04)."""
+
+    capability_ref: str = Field(default="store.query_database", max_length=120)
+    resource_ref: str = Field(default="", max_length=200)
+    scopes: list[str] = Field(default_factory=lambda: ["read"], max_length=10)
+    row_scope: dict[str, Any] = Field(default_factory=dict)
+    expires_at: datetime | None = None
+
+
+class AgentDataGrantsIn(BaseModel):
+    grants: list[AgentDataGrantIn] = Field(default_factory=list, max_length=100)
 
 
 def parse_agent_config(raw: dict | None) -> dict:
@@ -261,6 +284,57 @@ async def create_agent(
     except Exception:  # noqa: BLE001
         pass
     return _agent_response(agent, warnings=warnings)
+
+
+@router.post(
+    "/retail-seller",
+    status_code=201,
+    summary="Crear vendedor retail sobre una fuente externa",
+)
+async def create_retail_seller_endpoint(
+    body: RetailSellerRequest,
+    request: Request,
+):
+    from src.platform.agents.retail_seller import create_retail_seller
+    from src.platform.billing.plan_limits import (
+        PlanLimitError,
+        check_resource_limit,
+        plan_limit_detail,
+    )
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    await _require_own_workspace(ctx, body.workspace_id)
+    try:
+        await check_resource_limit(ctx.organization_id, "agents")
+    except PlanLimitError as exc:
+        raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
+    try:
+        result = await create_retail_seller(
+            ctx.organization_id,
+            name=body.name,
+            workspace_id=body.workspace_id,
+            source_id=body.source_id,
+            created_by=ctx.user_id,
+            model=body.model,
+            cart_ttl_seconds=body.cart_ttl_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": str(exc),
+                "message": "La fuente no existe o no pertenece al workspace.",
+            },
+        ) from exc
+    await _audit().write(
+        ctx,
+        "agent.retail_seller_created",
+        "agent",
+        UUID(result["agent_id"]),
+        metadata={"source_id": body.source_id},
+    )
+    return result
 
 
 @router.get("/assistants", summary="Living assistants: agentes y sus automatizaciones")
@@ -1394,3 +1468,74 @@ async def revoke_share_link_endpoint(agent_id: str, link_id: str, request: Reque
     if not ok:
         raise HTTPException(404, "Link not found")
     return {"status": "revoked"}
+
+
+@router.get("/{agent_id}/data-grants", summary="Grants de datos del agente")
+async def list_agent_data_grants(agent_id: str, request: Request):
+    from src.platform.agents.data_grants import get_agent_data_grants
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:read")
+    agent = await _get_owned_agent(ctx, agent_id)
+    grants = await get_agent_data_grants(
+        ctx.organization_id,
+        agent.id,
+        workspace_id=agent.workspace_id,
+    )
+    return {
+        "agent_id": str(agent.id),
+        "workspace_id": str(agent.workspace_id) if agent.workspace_id else None,
+        "grants": [
+            {
+                "capability_ref": grant["capability_ref"],
+                "resource_ref": grant["resource_ref"],
+                "scopes": grant["scopes"],
+                "row_scope": grant["row_scope"],
+                "expires_at": grant["expires_at"],
+            }
+            for grant in grants
+        ],
+        "count": len(grants),
+    }
+
+
+@router.put("/{agent_id}/data-grants", summary="Reemplazar grants de datos del agente")
+async def replace_agent_data_grants(
+    agent_id: str,
+    body: AgentDataGrantsIn,
+    request: Request,
+):
+    from src.platform.agents.data_grants import set_agent_data_grants
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    agent = await _get_owned_agent(ctx, agent_id)
+    try:
+        await set_agent_data_grants(
+            ctx.organization_id,
+            agent.id,
+            [grant.model_dump() for grant in body.grants],
+            workspace_id=agent.workspace_id,
+        )
+    except ValueError as exc:
+        if str(exc) == "agent_not_found":
+            raise HTTPException(404, "Agent not found") from exc
+        raise
+    await _audit().write(
+        ctx,
+        "agent.data_grants.replace",
+        "agent",
+        agent.id,
+        ip_address=request.client.host if request.client else None,
+        metadata={
+            "count": len(body.grants),
+            "capabilities": sorted({g.capability_ref for g in body.grants}),
+            "resources": sorted({g.resource_ref for g in body.grants if g.resource_ref}),
+        },
+    )
+    return {
+        "agent_id": str(agent.id),
+        "workspace_id": str(agent.workspace_id) if agent.workspace_id else None,
+        "grants": [grant.model_dump(mode="json") for grant in body.grants],
+        "count": len(body.grants),
+    }

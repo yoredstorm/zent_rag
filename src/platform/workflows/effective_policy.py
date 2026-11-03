@@ -13,7 +13,10 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
+from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
+
+logger = get_logger(__name__)
 
 POLICY_SCHEMA_VERSION = "1"
 AUTONOMY_RANK = {
@@ -74,6 +77,11 @@ class EffectiveExecutionPolicy(BaseModel):
     policy_version: str = "v1"
     definition_source: str = "draft"
     policy_hash: str = ""
+    #: true si no se pudo leer el deny-overlay vigente (revocaciones). El PEP
+    #: bloquea escrituras; las lecturas pueden seguir con política documentada.
+    policy_store_error: bool = False
+    #: epoch monotónico del overlay aplicado (informativo/auditoría).
+    revocation_epoch: int = 0
 
     def with_hash(self) -> "EffectiveExecutionPolicy":
         payload = self.model_dump(mode="json", exclude={"policy_hash"})
@@ -258,6 +266,17 @@ async def _role_bindings(organization_id: UUID, graph: dict[str, Any]) -> tuple[
     return bindings, approval_required, autonomy_max, wellness
 
 
+def _is_missing_table(exc: Exception) -> bool:
+    """UndefinedTable de Postgres; una caída/conexión NO es tabla ausente."""
+    code = getattr(getattr(exc, "orig", None), "sqlstate", None) or getattr(
+        exc, "sqlstate", None
+    )
+    if str(code) == "42P01":
+        return True
+    folded = str(exc).lower()
+    return "does not exist" in folded and "workflow_policy_revocations" in folded
+
+
 async def _revocations(
     organization_id: UUID, workspace_id: UUID | None, workflow_id: UUID, solution_id: str | None
 ) -> set[str]:
@@ -281,14 +300,71 @@ async def _revocations(
                 },
             )
         ).fetchall()
-    except Exception:  # noqa: BLE001 — instalaciones sin la tabla
-        return set()
+    except Exception as exc:  # noqa: BLE001 — tabla ausente != base caída
+        # Una instalación sin la tabla es distinta de una caída: si la tabla no
+        # existe, el deny-overlay es vacío. Cualquier otro error se propaga para
+        # que el llamador decida fail-closed; nunca se convierte en set().
+        if _is_missing_table(exc):
+            return set()
+        raise
     finally:
         await session.close()
     refs: set[str] = set()
     for row in rows:
         refs.add(str(row.capability_ref or "*"))
     return refs
+
+
+async def overlay_restrictive_policy(
+    policy: EffectiveExecutionPolicy,
+    *,
+    organization_id: UUID,
+    workspace_id: UUID | None,
+    workflow_id: UUID,
+    solution_id: str | None = None,
+    permissions: frozenset[str] | None = None,
+) -> EffectiveExecutionPolicy:
+    """Aplica el deny-overlay vigente sobre un snapshot inmutable.
+
+    NUNCA reconstruye desde el agente/workflow vivo: parte de la política
+    congelada y solo puede agregar revocaciones o reducir RBAC. Si la lectura
+    de revocaciones falla, devuelve la política con ``policy_store_error`` para
+    que el PEP bloquee escrituras (fail closed) sin inventar un set() vacío.
+    """
+    try:
+        live = await _revocations(
+            organization_id, workspace_id, workflow_id, solution_id
+        )
+        store_error = False
+    except Exception as exc:  # noqa: BLE001 — fail closed, no fail open
+        logger.warning(
+            "workflow policy revocation overlay unavailable",
+            organization_id=str(organization_id),
+            workflow_id=str(workflow_id),
+            error=str(exc)[:240],
+        )
+        live = {"*"}
+        store_error = True
+    revoked = frozenset(set(policy.revoked_capabilities) | set(live))
+    rbac = frozenset(policy.rbac_scopes)
+    if permissions is not None:
+        current = frozenset(permissions)
+        rbac = rbac & current if rbac else current
+    changed = (
+        revoked != policy.revoked_capabilities
+        or rbac != policy.rbac_scopes
+        or store_error
+    )
+    if not changed:
+        return policy
+    return policy.model_copy(
+        update={
+            "revoked_capabilities": revoked,
+            "rbac_scopes": rbac,
+            "policy_store_error": store_error,
+            "revocation_epoch": int(policy.revocation_epoch) + 1,
+        }
+    ).with_hash()
 
 
 async def resolve_effective_policy(
@@ -305,9 +381,34 @@ async def resolve_effective_policy(
     """Resuelve la autoridad efectiva desde entidades persistidas."""
     if instance_policy:
         try:
-            return EffectiveExecutionPolicy.model_validate(instance_policy)
-        except Exception:  # noqa: BLE001 — snapshot viejo: se re-resuelve
-            pass
+            pinned_policy = EffectiveExecutionPolicy.model_validate(instance_policy)
+        except Exception:  # noqa: BLE001 — snapshot corrupto: fail closed
+            logger.error(
+                "workflow instance policy corrupt; denying sensitive execution",
+                organization_id=str(organization_id),
+                workflow_id=str(workflow_id),
+            )
+            return EffectiveExecutionPolicy(
+                organization_id=str(organization_id),
+                workspace_id=str(workspace_id) if workspace_id else None,
+                workflow_id=str(workflow_id),
+                actor_id=str(actor_id) if actor_id else None,
+                actor_type=actor_type,
+                rbac_scopes=frozenset(),
+                capability_scope=frozenset(),
+                revoked_capabilities=frozenset({"*"}),
+                definition_source="instance",
+                policy_store_error=True,
+            ).with_hash()
+        pinned_solution = pinned_policy.solution_id
+        return await overlay_restrictive_policy(
+            pinned_policy,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            workflow_id=workflow_id,
+            solution_id=pinned_solution,
+            permissions=permissions,
+        )
     row = await _workflow_row(organization_id, workflow_id)
     if row is None:
         return EffectiveExecutionPolicy(
@@ -343,6 +444,24 @@ async def resolve_effective_policy(
         safety_profile = "wellness"
     from src.platform.workflows.release_policy import _active_bindings_fingerprint
 
+    try:
+        live_revocations = await _revocations(
+            organization_id,
+            workspace_id,
+            workflow_id,
+            str(solution.id) if solution is not None else None,
+        )
+        policy_store_error = False
+    except Exception as exc:  # noqa: BLE001 — fail closed
+        logger.warning(
+            "workflow policy revocations unavailable at resolution",
+            organization_id=str(organization_id),
+            workflow_id=str(workflow_id),
+            error=str(exc)[:240],
+        )
+        live_revocations = {"*"}
+        policy_store_error = True
+
     policy = EffectiveExecutionPolicy(
         organization_id=str(organization_id),
         workspace_id=str(workspace_id) if workspace_id else None,
@@ -359,16 +478,10 @@ async def resolve_effective_policy(
         autonomy_max=autonomy_max,
         approval_required=approval_required,
         safety_profile=safety_profile,
-        revoked_capabilities=frozenset(
-            await _revocations(
-                organization_id,
-                workspace_id,
-                workflow_id,
-                str(solution.id) if solution is not None else None,
-            )
-        ),
+        revoked_capabilities=frozenset(live_revocations),
         policy_version=str(row.policy_version or "v1"),
         definition_source=str((definition or {}).get("definition_source") or "draft"),
+        policy_store_error=policy_store_error,
     )
     return policy.with_hash()
 

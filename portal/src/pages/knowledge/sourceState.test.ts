@@ -21,4 +21,12 @@ describe("sourceReadiness", () => {
       label: "No medido",
     });
   });
+
+  it("una base de datos conectada está lista aunque no tenga documentos", () => {
+    expect(sourceReadiness("ready", "sql")).toMatchObject({
+      key: "ready",
+      label: "Base de datos conectada",
+    });
+    expect(sourceReadiness("error", "sql").key).toBe("attention");
+  });
 });

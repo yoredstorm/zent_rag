@@ -38,6 +38,7 @@ export type WorkflowDetail = {
   steps: WorkflowStep[];
   graph?: WorkflowGraph | null;
   graph_source?: string;
+  graph_hash?: string | null;
   workflow_version?: number;
   status: string;
   editor_state?: { mode?: string; config_level?: string };
@@ -63,6 +64,7 @@ export type WorkflowRun = {
   duration_ms: number | null;
   error: string | null;
   simulate?: boolean;
+  graph_hash?: string | null;
 };
 
 export type WorkflowVersion = {

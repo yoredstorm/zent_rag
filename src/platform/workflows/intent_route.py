@@ -1,0 +1,421 @@
+# =============================================================================
+# P19-04 — Contrato de intención de negocio y extracción de entidades.
+#
+# Decisión de alcance: no hay un clasificador global ni un orquestador nuevo.
+# Este módulo implementa el motor genérico de reglas deterministas y el
+# contrato tipado reutilizable por el nodo intent_route. Las rutas concretas,
+# su vocabulario y sus extractores viven en un pack de vertical
+# (src/verticals/p19_demo/intent_routes.py); el motor no conoce negocios.
+# Un LLM futuro solo podrá proponer; la ruta y los permisos se validan contra
+# el grafo y el plan autorizado.
+# =============================================================================
+from __future__ import annotations
+
+import re
+import unicodedata
+from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
+from functools import lru_cache
+from typing import Any, Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+INTENT_SCHEMA = "zent.workflow.intent.route/v1"
+INTENT_SCHEMA_V2 = "zent.workflow.intent.route/v2"
+MAX_INPUT_CHARS = 2000
+MAX_ENTITY_CHARS = 80
+
+
+class IntentRoutePack(Protocol):
+    """Política de rutas inyectada por un vertical; el motor solo la consume."""
+
+    route_ids: tuple[str, ...]
+    keywords: dict[str, tuple[str, ...]]
+    injection_patterns: tuple[str, ...]
+    ownership_risk_patterns: tuple[str, ...]
+    identity_routes: frozenset[str]
+
+    def default_routes(self) -> list[IntentRouteSpec]: ...
+
+    def extract_entities(self, route_id: str, raw: str, normalized: str) -> dict[str, str]: ...
+
+    def extra_missing_slots(self, route_id: str, entities: dict[str, str]) -> list[str]: ...
+
+
+@lru_cache(maxsize=1)
+def _default_pack() -> IntentRoutePack:
+    """Pack demo usado cuando el workflow no declara rutas (compatibilidad P19)."""
+    from src.verticals.p19_demo.intent_routes import build_pack
+
+    return build_pack()
+
+
+class IntentConfigError(ValueError):
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
+class IntentRouteSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_]*$")
+    description: str = Field(default="", max_length=300)
+    entities: list[str] = Field(default_factory=list, max_length=10)
+    examples: list[str] = Field(default_factory=list, max_length=20)
+    negative_examples: list[str] = Field(default_factory=list, max_length=20)
+    keywords: list[str] = Field(default_factory=list, max_length=40)
+    required_entities: list[str] = Field(default_factory=list, max_length=10)
+    requires_identity_verification: bool = False
+    priority: int = Field(default=0, ge=-100, le=100)
+
+    @field_validator("keywords")
+    @classmethod
+    def _keywords(cls, value: list[str]) -> list[str]:
+        for item in value:
+            if not item or len(item) > 60:
+                raise ValueError(f"keyword invalida: {item!r}")
+        return [item.casefold() for item in value]
+
+    @field_validator("entities", "required_entities")
+    @classmethod
+    def _entity_names(cls, value: list[str]) -> list[str]:
+        for item in value:
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]{0,40}$", item):
+                raise ValueError(f"entidad inválida: {item!r}")
+        return value
+
+
+class IntentRouteConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    intent_schema: Literal[
+        "zent.workflow.intent.route/v1", "zent.workflow.intent.route/v2"
+    ] = Field(default=INTENT_SCHEMA, alias="schema")
+    routes: list[IntentRouteSpec] = Field(min_length=1, max_length=10)
+    confidence_min: float = Field(default=0.75, ge=0.0, le=1.0)
+    ambiguity_policy: Literal["ask_clarification", "other"] = "ask_clarification"
+    decision_source: Literal["rules"] = "rules"
+
+    @field_validator("routes")
+    @classmethod
+    def _routes_unique(cls, value: list[IntentRouteSpec]) -> list[IntentRouteSpec]:
+        ids = [route.id for route in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("rutas duplicadas")
+        if "other" not in ids:
+            raise ValueError("falta la ruta other")
+        return value
+
+
+class IntentResult(BaseModel):
+    intent: str
+    confidence: float
+    entities: dict[str, str] = Field(default_factory=dict)
+    missing_slots: list[str] = Field(default_factory=list)
+    route: str
+    decision_source: str = "rules"
+    reason_codes: list[str] = Field(default_factory=list)
+    requires_identity_verification: bool = False
+
+
+class IntentConversationState(BaseModel):
+    """Estado de conversación persistido en el state de la instancia durable."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    state_schema: Literal["zent.workflow.intent.state/v1"] = Field(
+        default="zent.workflow.intent.state/v1", alias="schema"
+    )
+    active_intent: str = "other"
+    route: str = "other"
+    slots: dict[str, str] = Field(default_factory=dict)
+    missing_slots: list[str] = Field(default_factory=list)
+    awaiting_slot: str | None = None
+    turn_index: int = 0
+    last_message_id: str | None = None
+    expires_at: datetime | None = None
+    requires_identity_verification: bool = False
+
+
+def merge_conversation_turn(
+    previous: dict[str, Any] | None,
+    result: IntentResult,
+    text: str,
+    *,
+    message_id: str | None = None,
+    max_turns: int = 12,
+    ttl_minutes: int = 120,
+) -> tuple[IntentConversationState, IntentResult, bool]:
+    """Mezcla el turno con el estado durable. No crea memoria paralela."""
+    now = datetime.now(timezone.utc)
+    prior: IntentConversationState | None = None
+    if isinstance(previous, dict) and previous:
+        try:
+            prior = IntentConversationState.model_validate(previous)
+        except ValidationError:
+            prior = None
+    if prior is not None and prior.expires_at is not None and prior.expires_at <= now:
+        prior = None
+    if prior is not None and message_id and prior.last_message_id == message_id:
+        return prior, result, True
+    turn = (prior.turn_index if prior else 0) + 1
+    if turn > max_turns:
+        state = IntentConversationState(
+            active_intent="other",
+            route="other",
+            turn_index=turn,
+            last_message_id=message_id,
+            expires_at=now + timedelta(minutes=ttl_minutes),
+        )
+        return (
+            state,
+            IntentResult(
+                intent="other",
+                confidence=0.0,
+                route="other",
+                reason_codes=["TURN_LIMIT"],
+                missing_slots=["clarification"],
+            ),
+            False,
+        )
+
+    awaiting = prior.awaiting_slot if prior else None
+    if awaiting and result.intent == "other" and str(text or "").strip():
+        value = _sanitize_entity(str(text)[:MAX_ENTITY_CHARS])
+        if value:
+            slots = dict(prior.slots if prior else {})
+            slots[awaiting] = value
+            missing = [slot for slot in (prior.missing_slots if prior else []) if slot != awaiting]
+            active = prior.active_intent if prior else "other"
+            effective = IntentResult(
+                intent=active,
+                confidence=max(result.confidence, 0.75),
+                entities={**slots},
+                missing_slots=missing,
+                route=active,
+                decision_source="rules",
+                reason_codes=["SLOT_FILLED"],
+                requires_identity_verification=bool(
+                    prior.requires_identity_verification if prior else False
+                ),
+            )
+            state = IntentConversationState(
+                active_intent=active,
+                route=active,
+                slots=slots,
+                missing_slots=missing,
+                awaiting_slot=missing[0] if missing else None,
+                turn_index=turn,
+                last_message_id=message_id,
+                expires_at=now + timedelta(minutes=ttl_minutes),
+                requires_identity_verification=effective.requires_identity_verification,
+            )
+            return state, effective, False
+
+    slots = dict(result.entities)
+    missing = list(result.missing_slots)
+    state = IntentConversationState(
+        active_intent=result.intent,
+        route=result.route,
+        slots=slots,
+        missing_slots=missing,
+        awaiting_slot=missing[0] if missing and missing != ["clarification"] else None,
+        turn_index=turn,
+        last_message_id=message_id,
+        expires_at=now + timedelta(minutes=ttl_minutes),
+        requires_identity_verification=result.requires_identity_verification,
+    )
+    return state, result, False
+
+
+def default_routes() -> list[IntentRouteSpec]:
+    """Rutas del pack por defecto; compatibilidad con workflows P19 sin config."""
+    return _default_pack().default_routes()
+
+
+def parse_intent_config(
+    config: dict[str, Any] | None,
+    pack: IntentRoutePack | None = None,
+) -> IntentRouteConfig:
+    active = pack or _default_pack()
+    raw = dict(config or {})
+    if not raw.get("routes"):
+        raw["routes"] = [item.model_dump(mode="json") for item in active.default_routes()]
+    raw.setdefault("schema", INTENT_SCHEMA)
+    if raw.get("routes"):
+        raw["routes"] = [dict(item) for item in raw["routes"]]
+    try:
+        parsed = IntentRouteConfig.model_validate(raw)
+    except ValidationError as exc:
+        details = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}" for item in exc.errors()[:5]
+        )
+        raise IntentConfigError(f"configuración de intención inválida: {details}") from exc
+    if parsed.intent_schema == INTENT_SCHEMA:
+        unknown = sorted({route.id for route in parsed.routes} - set(active.route_ids))
+        if unknown:
+            raise IntentConfigError(f"ruta no permitida por el pack de intención: {', '.join(unknown)}")
+    return parsed
+
+
+def _normalize(text: str) -> str:
+    lowered = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", lowered.lower()).strip()
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text)
+
+
+def _sanitize_entity(value: str | None) -> str | None:
+    if not value:
+        return None
+    clean = re.sub(r"[\x00-\x1f<>{}]", " ", str(value))
+    clean = re.sub(r"\s+", " ", clean).strip(" .,;:!?")
+    if not clean:
+        return None
+    return clean[:MAX_ENTITY_CHARS]
+
+
+def _close(token: str, keyword: str) -> bool:
+    if token == keyword:
+        return True
+    if len(token) < 4 or len(keyword) < 4:
+        return False
+    return SequenceMatcher(None, token, keyword).ratio() >= 0.84
+
+
+def _score_route(route: IntentRouteSpec, normalized: str, keywords: dict[str, tuple[str, ...]]) -> int:
+    route_keywords = tuple(route.keywords) + keywords.get(route.id, ())
+    score = 0
+    for token in _tokens(normalized):
+        if any(_close(token, keyword) for keyword in route_keywords):
+            score += 1
+    for example in route.examples:
+        for token in _tokens(_normalize(example)):
+            if token in _tokens(normalized) and len(token) >= 4:
+                score += 1
+                break
+    return score + int(route.priority or 0)
+
+
+def classify_intent(
+    config: dict[str, Any] | None,
+    text: str,
+    pack: IntentRoutePack | None = None,
+) -> IntentResult:
+    """Clasificación determinista con rutas cerradas y entidades sanitizadas."""
+    active = pack or _default_pack()
+    parsed = parse_intent_config(config, active)
+    raw = str(text or "")
+    if len(raw) > MAX_INPUT_CHARS:
+        return IntentResult(
+            intent="other",
+            confidence=0.0,
+            route="other",
+            reason_codes=["INPUT_TOO_LONG"],
+        )
+    normalized = _normalize(raw)
+    if not normalized:
+        return IntentResult(
+            intent="other",
+            confidence=0.0,
+            route="other",
+            reason_codes=["EMPTY_INPUT"],
+        )
+    if any(pattern in normalized for pattern in active.injection_patterns):
+        return IntentResult(
+            intent="other",
+            confidence=0.0,
+            route="other",
+            reason_codes=["PROMPT_INJECTION_REJECTED"],
+        )
+
+    scores = {
+        route.id: _score_route(route, normalized, active.keywords)
+        for route in parsed.routes
+        if route.id != "other"
+    }
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_id, top_score = ranked[0] if ranked else ("other", 0)
+    second_score = ranked[1][1] if len(ranked) > 1 else 0
+    matched = [(route_id, score) for route_id, score in ranked if score > 0]
+
+    if len(matched) > 1 and second_score >= max(1, top_score - 1):
+        return IntentResult(
+            intent="other",
+            confidence=0.4,
+            route="other",
+            decision_source="rules",
+            reason_codes=["MULTI_INTENT"],
+            missing_slots=["clarification"],
+        )
+
+    if top_score <= 0:
+        return IntentResult(
+            intent="other",
+            confidence=0.0,
+            route="other",
+            reason_codes=["LOW_CONFIDENCE", "UNKNOWN_INTENT"],
+            missing_slots=["clarification"],
+        )
+
+    confidence = min(0.99, 0.55 + 0.25 * min(top_score, 3) / 3 + 0.2 * ((top_score - second_score) / top_score))
+    route_spec = next(route for route in parsed.routes if route.id == top_id)
+    if confidence < parsed.confidence_min:
+        return IntentResult(
+            intent="other",
+            confidence=round(confidence, 2),
+            route="other",
+            reason_codes=["LOW_CONFIDENCE"],
+            missing_slots=["clarification"],
+        )
+
+    entities = active.extract_entities(top_id, raw, normalized)
+    missing_slots = [entity for entity in route_spec.required_entities if entity not in entities]
+    for slot in active.extra_missing_slots(top_id, entities):
+        if slot not in missing_slots:
+            missing_slots.append(slot)
+    requires_identity = route_spec.requires_identity_verification or top_id in active.identity_routes
+    if missing_slots:
+        return IntentResult(
+            intent=top_id,
+            confidence=round(confidence, 2),
+            route=top_id,
+            entities=entities,
+            missing_slots=missing_slots,
+            reason_codes=["MISSING_SLOT"],
+            requires_identity_verification=requires_identity,
+        )
+
+    reason_codes = ["RULES_MATCH"]
+    if any(pattern in normalized for pattern in active.ownership_risk_patterns):
+        reason_codes.append("OWNERSHIP_NOT_VERIFIED")
+        requires_identity = True
+    return IntentResult(
+        intent=top_id,
+        confidence=round(confidence, 2),
+        entities=entities,
+        missing_slots=[],
+        route=top_id,
+        decision_source="rules",
+        reason_codes=reason_codes,
+        requires_identity_verification=requires_identity,
+    )
+
+
+__all__ = [
+    "INTENT_SCHEMA",
+    "INTENT_SCHEMA_V2",
+    "IntentConfigError",
+    "IntentConversationState",
+    "IntentResult",
+    "IntentRouteConfig",
+    "IntentRoutePack",
+    "IntentRouteSpec",
+    "classify_intent",
+    "default_routes",
+    "merge_conversation_turn",
+    "parse_intent_config",
+]

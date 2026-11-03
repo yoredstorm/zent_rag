@@ -80,7 +80,7 @@ test.describe("Workflow Studio", () => {
     await expect(page.getByTestId("wf-payload-wrapped")).toBeVisible();
     await page.getByTestId("wf-test").click();
 
-    await expect(page.getByTestId("wf-run-inspector")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("wf-result-tab-path")).toBeVisible({ timeout: 30_000 });
     const answer = page.getByTestId("wf-chat-answer");
     const system = page.getByTestId("wf-chat-system");
     await expect(async () => {
@@ -90,6 +90,8 @@ test.describe("Workflow Studio", () => {
     await expect(page.getByText(/^Dry-run: simulated$/)).toHaveCount(0);
 
     // Un paso del run salta al nodo en el lienzo.
+    await page.getByTestId("wf-result-tab-path").click();
+    await expect(page.getByTestId("wf-run-inspector")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("wf-step-jump").first().click();
     await expect(page.getByTestId("wf-node-config")).toBeVisible({ timeout: 10_000 });
 

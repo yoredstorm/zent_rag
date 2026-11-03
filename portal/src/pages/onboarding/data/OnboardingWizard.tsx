@@ -53,6 +53,7 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [progress, setProgress] = useState<ProgressPayload | null>(null);
+  const [pollNonce, setPollNonce] = useState(0);
   const [tech, setTech] = useState(false);
   const [understanding, setUnderstanding] = useState<Understanding>({});
   const [questions, setQuestions] = useState<Array<{ id: string; text: string }>>([]);
@@ -185,6 +186,54 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
     void runAnalyze();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uiStep, current?.id]);
+
+  useEffect(() => {
+    if (uiStep !== "analyze" || !current || !session) return;
+    const token = session.token;
+    const organizationId = session.organizationId;
+    const id = current.id;
+    const terminal = new Set([
+      "REVIEW_REQUIRED",
+      "TESTING",
+      "READY",
+      "NEEDS_ATTENTION",
+      "FAILED",
+    ]);
+    let cancelled = false;
+    let timer = 0;
+    let delay = 1500;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const prog = await api<ProgressPayload>(`${API}/sessions/${id}/progress`, {
+          token,
+          organizationId,
+        });
+        if (cancelled) return;
+        setProgress(prog);
+        setCurrent(prog.session);
+        const jobStatus = String(prog.technical_details?.job_status ?? "");
+        if (
+          terminal.has(prog.session.status) ||
+          ["failed", "dead"].includes(jobStatus)
+        ) {
+          return;
+        }
+      } catch {
+        /* progress is best-effort; reintenta con backoff */
+      }
+      delay = Math.min(Math.round(delay * 1.2), 5000);
+      timer = window.setTimeout(tick, delay);
+    };
+
+    timer = window.setTimeout(tick, 800);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiStep, current?.id, pollNonce]);
 
   useEffect(() => {
     const gdrive = search.get("gdrive");
@@ -444,8 +493,6 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
     const token = session.token;
     const organizationId = session.organizationId;
     const id = current.id;
-    const done = new Set(["REVIEW_REQUIRED", "TESTING", "READY", "NEEDS_ATTENTION", "FAILED"]);
-    let stopPoll = false;
 
     const pollOnce = async () => {
       const prog = await api<ProgressPayload>(`${API}/sessions/${id}/progress`, {
@@ -457,38 +504,18 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
       return prog;
     };
 
-    void (async () => {
-      for (let i = 0; i < 40; i++) {
-        if (stopPoll) return;
-        try {
-          const prog = await pollOnce();
-          if (done.has(prog.session.status)) return;
-        } catch {
-          /* progress optional during analyze */
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-      }
-    })();
-
     try {
       await api(`${API}/sessions/${id}/analyze`, {
         method: "POST",
         token,
         organizationId,
       });
-      stopPoll = true;
       await pollOnce();
-      const und = await api<Understanding>(`${API}/sessions/${id}/understanding`, {
-        token,
-        organizationId,
-      });
-      setUnderstanding(und);
+      setPollNonce((value) => value + 1);
       setUiStep("analyze");
     } catch (e) {
-      stopPoll = true;
       setError(e instanceof Error ? e.message : "Error");
     } finally {
-      stopPoll = true;
       setBusy(false);
     }
   }
@@ -810,11 +837,13 @@ export default function OnboardingWizardPage() {  const { session } = useAuth();
           showTech={tech}
           onToggleTech={() => setTech((v) => !v)}
           onContinue={goReview}
+          onRetry={runAnalyze}
           ready={analyzeReady}
           percent={progress?.percent}
           glimpses={progress?.glimpses}
           files={progress?.technical_details?.files ?? []}
           status={current?.status}
+          kind={kind}
           learningSessionId={progress?.learning_session_id ?? null}
         />
       )}

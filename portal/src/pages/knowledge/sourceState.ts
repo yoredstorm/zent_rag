@@ -1,3 +1,5 @@
+import { isDatabaseSourceType } from "../../lib/sourceKinds";
+
 export type SourceReadinessKey =
   | "received"
   | "processing"
@@ -40,7 +42,20 @@ const STATES: Record<SourceReadinessKey, Omit<SourceReadiness, "key">> = {
   },
 };
 
-export function sourceReadiness(status: string): SourceReadiness {
+export function sourceReadiness(status: string, type?: string): SourceReadiness {
+  if (isDatabaseSourceType(type)) {
+    if (status === "error") return { key: "attention", ...STATES.attention };
+    if (status === "created") return { key: "received", ...STATES.received };
+    if (["indexed", "ready", "connected", "profiled"].includes(status)) {
+      return {
+        key: "ready",
+        label: "Base de datos conectada",
+        detail: "La conexión y el catálogo están listos para consultarse.",
+        tone: "ok",
+      };
+    }
+    return { key: "processing", ...STATES.processing };
+  }
   if (status === "indexed") return { key: "ready", ...STATES.ready };
   if (status === "error") return { key: "attention", ...STATES.attention };
   if (["created", "connected"].includes(status)) {

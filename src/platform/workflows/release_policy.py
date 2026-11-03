@@ -541,7 +541,12 @@ async def _target_is_legacy_baseline(
     return graph_fingerprint(baseline_graph) == graph_fingerprint(graph)
 
 
-async def _agent_fingerprint(organization_id: UUID, graph: dict[str, Any]) -> tuple[dict, dict, list[str]]:
+async def _agent_fingerprint(
+    organization_id: UUID,
+    graph: dict[str, Any],
+    *,
+    include_snapshots: bool = False,
+) -> tuple[dict, dict, list[str]]:
     nodes = [item for item in graph.get("nodes") or [] if isinstance(item, dict)]
     agent_ids = sorted(
         {
@@ -600,6 +605,11 @@ async def _agent_fingerprint(organization_id: UUID, graph: dict[str, Any]) -> tu
                     "role_profile_id": str(row.role_profile_id) if row.role_profile_id else None,
                     "status_live": str(row.status),
                     **execution_fingerprints(snapshot),
+                    **(
+                        {"config_snapshot": snapshot}
+                        if include_snapshots
+                        else {}
+                    ),
                 }
             )
             if row.role_profile_id:

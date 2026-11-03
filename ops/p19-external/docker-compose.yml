@@ -1,0 +1,32 @@
+name: p19-external
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: p19-external-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${P19_DB:-zent_external_mvp}
+      POSTGRES_USER: ${P19_ADMIN_USER:-p19_admin}
+      POSTGRES_PASSWORD: ${P19_ADMIN_PASSWORD:-p19_admin_dev_2026}
+      P19_READER_USER: ${P19_READER_USER:-p19_reader}
+      P19_READER_PASSWORD: ${P19_READER_PASSWORD:-p19_reader_dev_2026}
+    ports:
+      - "${P19_EXTERNAL_PORT:-55432}:5432"
+    volumes:
+      - p19_external_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - p19-external-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  p19_external_data:
+
+networks:
+  p19-external-net:
+    name: p19-external-net
