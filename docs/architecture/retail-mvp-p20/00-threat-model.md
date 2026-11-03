@@ -5,7 +5,7 @@
 | T01 | Fuente SQL externa lee Managed DB interna | `SQLSourceConnector` + sync | fuga interna | guard `SOURCE_MODE_UNSUPPORTED` | mitigado |
 | T02 | full_refresh borra vectores de otra fuente/org | sync SQL | pérdida de conocimiento | `FULL_REFRESH_UNSUPPORTED` | mitigado |
 | T03 | Dos conectores mismo nombre mezclan fuentes | onboarding | lectura DB equivocada | lookup por connector_id | mitigado |
-| T04 | Precio/stock inyectado por LLM o payload | agente/tool | cobro falso | quote server-side + Decimal | pendiente P20-05/10 |
+| T04 | Precio/stock inyectado por LLM o payload | agente/tool | cobro falso | quote server-side + Decimal | mitigado P20-05/10 (carrito temporal) |
 | T05 | Pedido de CUST-B leído por CUST-A | postventa | PII/IDOR | ownership pre-SQL + principal | bloqueado P20-12 |
 | T06 | “No” interpretado como confirmación | WAIT/carrito | compra no consentida | YES_CONFIRMED explícito | pendiente P20-09 |
 | T07 | Doble commit/reserva | checkout/inventory | sobreventa | idempotencia/ledger/TTL | parcial P19.1 |

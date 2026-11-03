@@ -1319,6 +1319,13 @@ def register_builtin_tools(
     register_tool(SearchKnowledgeTool(retriever, embedder=embedder, tabular_query=tabular_query))
     register_tool(QueryDatabaseTool(sql_expert))
     register_tool(CallApiTool())
+    from src.agents.tools.cart_tools import (
+        CartAddTool,
+        CartClearTool,
+        CartGetTool,
+        CartRemoveTool,
+        CartSetQuantityTool,
+    )
     from src.agents.tools.catalog_tools import (
         FindProductsTool,
         GetPriceAndStockTool,
@@ -1328,6 +1335,11 @@ def register_builtin_tools(
     register_tool(FindProductsTool())
     register_tool(GetProductTool())
     register_tool(GetPriceAndStockTool())
+    register_tool(CartGetTool())
+    register_tool(CartAddTool())
+    register_tool(CartSetQuantityTool())
+    register_tool(CartRemoveTool())
+    register_tool(CartClearTool())
     if tabular_query is not None:
         register_tool(QueryTabularDataTool(tabular_query))
     try:

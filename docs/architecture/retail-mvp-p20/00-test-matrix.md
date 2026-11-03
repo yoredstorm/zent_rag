@@ -15,7 +15,7 @@
 | G03 | grants/ownership | runtime grants + A/B | BLOCKED P20-04 |
 | G04 | tools tipadas | precio/stock backend | BLOCKED P20-05 |
 | G05 | 6+ turnos/WAIT | E2E durable | NOT_RUN |
-| G06 | carrito/quote/stock | concurrencia y precio cambiante | PARTIAL P19.1 |
+| G06 | carrito/quote/stock | concurrencia y precio cambiante | PARTIAL P20-10: CAS + precio recalculado; carga concurrente NOT_RUN |
 | G07 | checkout simulado | webhook verificado/dedupe | BLOCKED P20-11 |
 | G08 | postventa | A/B, identidad | BLOCKED P20-12 |
 | G09 | architect | draft con recursos reales | BLOCKED P20-13 |
@@ -58,7 +58,12 @@
 | `get_price_and_stock` total decimal | PASS | idem |
 | `NOT_FOUND` sin 500 | PASS | idem |
 | Presentación «arroz de 1 kg» | PASS (local, runtime real) | `05-catalog-tools.md` |
-| Carrito/quote/checkout | NOT_RUN | P20-10/11 |
+| Carrito/quote/checkout | PARTIAL: carrito temporal PASS; checkout NOT_RUN | `10-cart-session.md`; P20-11 |
+| Carrito TTL / purga | PASS (local, Postgres real) | `tests/test_p20_cart.py` |
+| Carrito CAS / idempotencia | PASS | idem |
+| Carrito externo Bodega | PASS en tools (POST HTTP con conversación real) | `10-cart-session.md` |
+| Carrito multi-turno HTTP | PASS (local): agrega, cambia, consulta, quita | `tests/test_p20_cart.py` + HTTP |
+| Carrito en Workflow Studio / binding | NOT_RUN | P20-09 |
 | Nodo pago manual MVP | PASS | `tests/test_p20_manual_payment.py` |
 | Pago manual sin aprobación | PASS (pending_approval) | idem |
 | Pago manual aprobado | PASS (`provider=manual_mvp`) | idem |

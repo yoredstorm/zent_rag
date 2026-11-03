@@ -46,7 +46,7 @@ IDs estables y scope:
 | Tools comerciales | solo `query_database` NL→SQL | `find_products`, `get_product`, `get_price_and_stock` con precio/stock backend | PARTIAL P20-05 |
 | Catálogo semántico | discovery + sugerencias, sin modelo comercial aprobado | modelo/manifest revisable | MISSING P20-03 |
 | Grants por agente | P19.1 documenta, no implementa grants específicos | `agent_data_grants` + allowlist de recursos en `query_database` | PARTIAL P20-04 (backend; UI y tools tipadas pendientes) |
-| Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 |
+| Carrito/quote | commerce existente, no conectado a Bodega | quote server-side con Decimal | PARTIAL P20-10 (tabla temporal + TTL + tools; falta embudo) |
 | Sales funnel | 40 nodos existentes, demo interno | adaptar a capacidades externas | PARTIAL P20-09 |
 | Checkout | proveedor abstracto, sin sandbox dedicado | nodo manual MVP temporal; Stripe/PSP real pendiente | PARTIAL P20-11 |
 | Postventa | órdenes externas disponibles por SQL | identidad + owner filter | BLOCKED P20-12 |

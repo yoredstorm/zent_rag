@@ -168,6 +168,7 @@ async def lifespan(app: FastAPI):
             _wf_watchers_task = asyncio.create_task(_workflow_watchers_loop())
             _learning_cycle_task = asyncio.create_task(_learning_cycle_loop())
             _company_discovery_task = asyncio.create_task(_company_discovery_loop())
+            _cart_cleanup_task = asyncio.create_task(_commerce_cart_cleanup_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -182,7 +183,23 @@ async def lifespan(app: FastAPI):
             _wf_watchers_task.cancel()
             _learning_cycle_task.cancel()
             _company_discovery_task.cancel()
+            _cart_cleanup_task.cancel()
             await _run_shutdown()
+
+
+async def _commerce_cart_cleanup_loop() -> None:
+    """Purga carritos de sesión vencidos (TTL configurable por workflow/agente)."""
+    try:
+        while True:
+            try:
+                from src.platform.commerce.cart import purge_expired_carts
+
+                await purge_expired_carts()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Cart cleanup loop error", error=str(exc)[:150])
+            await asyncio.sleep(60)
+    except asyncio.CancelledError:
+        pass
 
 
 async def _webhook_deliveries_loop() -> None:
