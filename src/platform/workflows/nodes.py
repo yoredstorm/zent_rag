@@ -2939,7 +2939,7 @@ async def _exec_notify(rctx: NodeContext) -> NodeOutcome:
             return NodeOutcome(
                 simulated=True,
                 planned={"kind": "notification", "channel": "email", "title": title, "recipients": emails},
-                output={"simulated": True, "channel": "email", "recipients": emails},
+                output={"simulated": True, "channel": "email", "recipients": emails, "text": message},
             )
         if not emails:
             return NodeOutcome(error="No encontramos correos para los destinatarios elegidos.")
@@ -2970,7 +2970,7 @@ async def _exec_notify(rctx: NodeContext) -> NodeOutcome:
                 return NodeOutcome(
                     simulated=True,
                     planned={"kind": "notification", "channel": "webhook", "title": title, "recipients": urls},
-                    output={"simulated": True, "channel": "webhook", "recipients": urls},
+                    output={"simulated": True, "channel": "webhook", "recipients": urls, "text": message},
                 )
             from src.platform.workflows import engine as wf_engine
 
@@ -2991,7 +2991,7 @@ async def _exec_notify(rctx: NodeContext) -> NodeOutcome:
         return NodeOutcome(
             simulated=True,
             planned={"kind": "notification", "channel": channel, "title": title},
-            output={"simulated": True, "channel": channel, "title": title},
+            output={"simulated": True, "channel": channel, "title": title, "text": message},
         )
     sent = await notify(
         organization_id=rctx.organization_id,
@@ -3001,7 +3001,7 @@ async def _exec_notify(rctx: NodeContext) -> NodeOutcome:
         data=data,
         channels=wanted,
     )
-    return NodeOutcome(output={"sent": True, "channel": channel, "result": sent})
+    return NodeOutcome(output={"sent": True, "channel": channel, "result": sent, "text": message})
 
 
 async def _exec_query_business_data(rctx: NodeContext) -> NodeOutcome:

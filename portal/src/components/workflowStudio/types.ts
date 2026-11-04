@@ -143,7 +143,7 @@ export function normalizeTestPayload(raw: string): NormalizedPayload {
   } catch {
     // texto libre: se envuelve abajo
   }
-  return { payload: { message: text, query: text }, wrapped: true };
+  return { payload: { message: text, query: text, text }, wrapped: true };
 }
 
 export type RunStepLike = {
@@ -180,6 +180,9 @@ export function answerFromSteps(steps: RunStepLike[] | undefined): ChatAnswer | 
   }
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const s = list[i];
+    // El wait expone el mensaje del cliente (`signal_received`), no una
+    // respuesta del flujo. Para la burbuja solo cuentan los nodos que hablan.
+    if (s.node_type === "wait_event" || s.node_type === "trigger_event") continue;
     const out = s.output ?? {};
     const text = typeof out.text === "string" ? out.text : "";
     if (text.trim()) {

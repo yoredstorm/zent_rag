@@ -5,10 +5,12 @@ export function WorkflowTestTrace({
   run,
   plannedEffects,
   onSelectNode,
+  onApprovalDecided,
 }: {
   run: RunDetail | null;
   plannedEffects?: RunOut["planned_effects"];
   onSelectNode: (id: string) => void;
+  onApprovalDecided?: () => void;
 }) {
   if (!run) {
     return (
@@ -19,7 +21,12 @@ export function WorkflowTestTrace({
   }
   return (
     <div data-testid="wf-test-trace">
-      <WorkflowRunInspector run={run} plannedEffects={plannedEffects} onSelectNode={onSelectNode} />
+      <WorkflowRunInspector
+        run={run}
+        plannedEffects={plannedEffects}
+        onSelectNode={onSelectNode}
+        onApprovalDecided={onApprovalDecided}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { CheckCircle, Clock, WarningCircle } from "@phosphor-icons/react";
-import { Badge, Button, EmptyState, ErrorInline, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
+import { useState } from "react";
+import { Badge, Button, EmptyState, ErrorInline, Input, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import { humanizeWorkflowError } from "../../lib/workflowErrors";
 import type { WorkflowGraph } from "../../lib/workflowGraph";
 import type { RunDetail } from "../WorkflowRunInspector";
@@ -51,6 +52,8 @@ export function WorkflowTestResult({
   durableStatus,
   durableNotice,
   currentGraphHash,
+  onSendMessage,
+  onApprovalDecided,
   onSelectPane,
   onSelectNode,
   onModify,
@@ -76,6 +79,10 @@ export function WorkflowTestResult({
   durableStatus?: string;
   durableNotice?: string;
   currentGraphHash?: string | null;
+  /** Responde a una instancia durable que espera `conversation.message`. */
+  onSendMessage?: (text: string) => Promise<string | null>;
+  /** Refresca el run tras una aprobación humana. */
+  onApprovalDecided?: () => void;
   onSelectPane: (pane: ResultPane) => void;
   onSelectNode: (id: string) => void;
   onModify: () => void;
@@ -91,6 +98,28 @@ export function WorkflowTestResult({
   const waiting = run?.status === "waiting" || run?.status === "pending_approval";
   const echo = answer?.echo === true;
   const hasResult = Boolean(report || run);
+  const [reply, setReply] = useState("");
+  const [replyError, setReplyError] = useState("");
+  const [sending, setSending] = useState(false);
+  const waitingForMessage =
+    runKind === "execution_run" &&
+    String(durableStatus || "").toUpperCase() === "WAITING" &&
+    Boolean(onSendMessage);
+
+  async function submitReply() {
+    const text = reply.trim();
+    if (!onSendMessage) return;
+    if (!text) {
+      setReplyError("Escribe un mensaje para el flujo.");
+      return;
+    }
+    setSending(true);
+    setReplyError("");
+    const failure = await onSendMessage(text);
+    setSending(false);
+    if (failure) setReplyError(failure);
+    else setReply("");
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="wf-test-result">
@@ -212,7 +241,7 @@ export function WorkflowTestResult({
                 <ErrorInline message={humanizeWorkflowError(answer.error)} className="mb-0" />
               )}
 
-              {!waiting && answer && !answer.error && (
+              {answer && !answer.error && (
                 <article className="rounded-md border border-border bg-raised/40 px-3 py-2.5">
                   <div className="mb-1 flex flex-wrap items-center gap-1.5">
                     <Badge tone="ok">Respuesta</Badge>
@@ -253,6 +282,49 @@ export function WorkflowTestResult({
                 />
               )}
 
+              {waitingForMessage && (
+                <form
+                  className="rounded-md border border-accent/40 bg-raised/40 px-3 py-2.5"
+                  data-testid="wf-conversation-reply"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submitReply();
+                  }}
+                >
+                  <p className="text-[12px] font-medium text-text">Responder al flujo</p>
+                  <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted">
+                    La instancia espera <code>conversation.message</code>. Tu mensaje la
+                    reanuda; no se ejecuta un run nuevo.
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <Input
+                      value={reply}
+                      onChange={(event) => {
+                        setReply(event.target.value);
+                        setReplyError("");
+                      }}
+                      placeholder='Ej. "1", "delivery", "Av. Demo 123", "sí"'
+                      aria-label="Mensaje para el flujo"
+                      data-testid="wf-conversation-input"
+                      disabled={sending}
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={sending || !reply.trim()}
+                      data-testid="wf-conversation-send"
+                    >
+                      {sending ? "Enviando…" : "Enviar"}
+                    </Button>
+                  </div>
+                  {replyError && (
+                    <p className="mt-1.5 text-[11.5px] text-danger" role="alert">
+                      {replyError}
+                    </p>
+                  )}
+                </form>
+              )}
+
               <div className="rounded-md border border-border bg-raised/40 px-3 py-2.5">
                 <p className="text-[12px] font-medium text-text">Componentes del flujo (estructura)</p>
                 <p className="mt-1 text-[11.5px] leading-relaxed text-muted">{flowPreview(graph)}</p>
@@ -277,7 +349,12 @@ export function WorkflowTestResult({
           </TabsContent>
 
           <TabsContent value="path" className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-            <WorkflowTestTrace run={run} plannedEffects={run?.planned_effects} onSelectNode={onSelectNode} />
+            <WorkflowTestTrace
+              run={run}
+              plannedEffects={run?.planned_effects}
+              onSelectNode={onSelectNode}
+              onApprovalDecided={onApprovalDecided}
+            />
           </TabsContent>
 
           <TabsContent value="verification" className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-2">

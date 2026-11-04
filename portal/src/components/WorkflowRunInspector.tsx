@@ -309,10 +309,12 @@ export function WorkflowRunInspector({
   run,
   plannedEffects,
   onSelectNode,
+  onApprovalDecided,
 }: {
   run: RunDetail | null;
   plannedEffects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
   onSelectNode?: (id: string) => void;
+  onApprovalDecided?: () => void;
 }) {
   const [detail, setDetail] = useState<RunStep | null>(null);
   if (!run) return null;
@@ -353,7 +355,9 @@ export function WorkflowRunInspector({
 
       {run.instance_id && <InstanceTimeline instanceId={run.instance_id} />}
 
-      {run.status === "pending_approval" && <WorkflowApprovalPanel runId={run.id} />}
+      {run.status === "pending_approval" && (
+        <WorkflowApprovalPanel runId={run.id} onDecided={onApprovalDecided} />
+      )}
 
       {(run.story ?? []).length > 0 && (
         <ol

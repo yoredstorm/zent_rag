@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { GraphIssue, WorkflowGraph } from "../../lib/workflowGraph";
+import { isConversationalGraph, type GraphIssue, type WorkflowGraph } from "../../lib/workflowGraph";
 import { ConfirmDialog, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import type { RunDetail } from "../WorkflowRunInspector";
 import { WorkflowTestFooter } from "./WorkflowTestFooter";
@@ -57,6 +57,7 @@ export function WorkflowTestPanel({
   const [restoreRaw, setRestoreRaw] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  const conversational = useMemo(() => isConversationalGraph(graph), [graph]);
   const {
     state,
     dispatch,
@@ -65,12 +66,15 @@ export function WorkflowTestPanel({
     elapsedMs,
     executeTest,
     confirmRealRun,
+    sendMessage,
+    refreshInstance,
     loadLastSample,
     showRun,
   } = useWorkflowTestRunner({
     workflowId,
     dirty,
     hasRealLane: Boolean(realLane),
+    conversational,
     onRun,
     onRan,
     onSaveBeforeRun,
@@ -261,6 +265,8 @@ export function WorkflowTestPanel({
             durableStatus={state.durableStatus}
             durableNotice={state.durableNotice}
             currentGraphHash={graphHash}
+            onSendMessage={sendMessage}
+            onApprovalDecided={() => void refreshInstance()}
             onSelectPane={(pane) => dispatch({ type: "show-result", pane })}
             onSelectNode={onSelectNode}
             onModify={() => dispatch({ type: "show-setup" })}

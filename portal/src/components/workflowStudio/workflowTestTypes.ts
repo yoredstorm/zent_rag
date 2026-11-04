@@ -91,6 +91,7 @@ export type TestSessionAction =
   | { type: "show-result"; pane?: ResultPane }
   | { type: "start-test"; level: TestLevel; operationId: number }
   | { type: "start-run"; operationId: number }
+  | { type: "sending-message" }
   | { type: "saving" }
   | { type: "loading-result" }
   | {

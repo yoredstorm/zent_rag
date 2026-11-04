@@ -4,6 +4,7 @@ import {
   effectNodes,
   emptyGraph,
   graphIssues,
+  isConversationalGraph,
   layoutGraph,
   makeNode,
   nodeMeta,
@@ -66,6 +67,37 @@ describe("workflowGraph — IR del canvas", () => {
     expect(llm.position.x).toBeGreaterThan(t.position.x);
     expect(not.position.x).toBeGreaterThan(llm.position.x);
     expect(not.position.y).toBe(llm.position.y);
+  });
+
+  it("layoutGraph termina con ciclos de loop", () => {
+    const g = emptyGraph("event");
+    const a = makeNode("set_variable", { x: 0, y: 0 });
+    a.id = "a";
+    const b = makeNode("wait_event", { x: 0, y: 0 });
+    b.id = "b";
+    const c = makeNode("loop", { x: 0, y: 0 });
+    c.id = "c";
+    g.nodes.push(a, b, c);
+    g.edges.push(
+      { id: "e1", from_node: g.nodes[0].id, from_port: "out", to_node: "a", to_port: "in" },
+      { id: "e2", from_node: "a", from_port: "out", to_node: "b", to_port: "in" },
+      { id: "e3", from_node: "b", from_port: "out", to_node: "c", to_port: "in" },
+      { id: "e4", from_node: "c", from_port: "out", to_node: "a", to_port: "in" },
+    );
+    layoutGraph(g);
+    for (const node of g.nodes) {
+      expect(Number.isFinite(node.position.x)).toBe(true);
+      expect(Number.isFinite(node.position.y)).toBe(true);
+    }
+  });
+
+  it("isConversationalGraph detecta el trigger conversation.message", () => {
+    const g = emptyGraph("webhook");
+    expect(isConversationalGraph(g)).toBe(false);
+    const chat = emptyGraph("event");
+    chat.nodes[0].config = { event_type: "conversation.message" };
+    expect(isConversationalGraph(chat)).toBe(true);
+    expect(isConversationalGraph(null)).toBe(false);
   });
 
   it("layoutGraph rellena posiciones vacías de grafos importados", () => {

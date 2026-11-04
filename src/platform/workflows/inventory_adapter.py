@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -33,6 +34,10 @@ async def execute_inventory_action(
 
     config = binding.get("config") or {}
     action = str(config.get("action") or "")
+    if action == "search_products":
+        return await search_products(
+            organization_id, binding, payload, workspace_id=workspace_id
+        )
     if action == "reserve_stock_batch":
         return await reserve_stock_batch(
             organization_id, binding, payload, workspace_id=workspace_id
@@ -1030,3 +1035,199 @@ async def settle_order_stock(
         raise _query_failure(exc) from exc
     finally:
         await engine.dispose()
+
+
+#: Palabras de una pregunta que no describen el producto. Sin esto,
+#: "tienes arroz" busca el literal y no encuentra nada.
+_QUERY_STOPWORDS = frozenset(
+    {
+        "tienes",
+        "tiene",
+        "hay",
+        "quiero",
+        "quisiera",
+        "busco",
+        "buscame",
+        "necesito",
+        "dame",
+        "vendes",
+        "vende",
+        "precio",
+        "precios",
+        "cuanto",
+        "cuesta",
+        "cuestan",
+        "vale",
+        "de",
+        "del",
+        "el",
+        "la",
+        "los",
+        "las",
+        "un",
+        "una",
+        "unos",
+        "unas",
+        "y",
+        "en",
+        "por",
+        "favor",
+        "hola",
+        "buenas",
+        "me",
+        "mi",
+        "para",
+        "con",
+        "que",
+        "algo",
+        "kilo",
+        "kilos",
+        "kg",
+        "unidad",
+        "unidades",
+    }
+)
+
+
+def _search_terms(text: str) -> list[str]:
+    sku = re.search(r"\b[A-Z][A-Z0-9]{1,7}(?:-[A-Z0-9]{1,10}){1,3}\b", str(text or ""))
+    if sku:
+        return [sku.group(0).lower()]
+    normalized = (
+        unicodedata.normalize("NFKD", str(text or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+    )
+    terms = [
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized)
+        if (len(token) >= 2 or token.isdigit()) and token not in _QUERY_STOPWORDS
+    ]
+    return terms[:6]
+
+
+def _product_search_sql(
+    terms: list[str], *, limit: int
+) -> tuple[str, str, dict[str, Any]]:
+    """SQL fijo (sin interpolación de valores) para buscar por nombre o SKU."""
+    term_params: dict[str, Any] = {
+        f"q{index + 1}": f"%{term}%" for index, term in enumerate(terms)
+    }
+    for index in range(len(terms) + 1, 7):
+        term_params[f"q{index}"] = None
+    and_clause = " AND ".join(
+        f"(CAST(:q{index} AS text) IS NULL OR name ILIKE CAST(:q{index} AS text) "
+        f"OR sku ILIKE CAST(:q{index} AS text))"
+        for index in range(1, 7)
+    )
+    and_sql = (
+        "SELECT sku, name, unit, price, currency, available "
+        "FROM bodega.product_catalog_v WHERE "
+        + and_clause
+        + " ORDER BY name, sku LIMIT :limit"
+    )
+    or_clause = " OR ".join(
+        f"name ILIKE CAST(:q{index} AS text) OR sku ILIKE CAST(:q{index} AS text)"
+        for index in range(1, len(terms) + 1)
+    )
+    or_sql = (
+        "SELECT sku, name, unit, price, currency, available "
+        "FROM bodega.product_catalog_v WHERE "
+        + or_clause
+        + " ORDER BY name, sku LIMIT :limit"
+    )
+    return and_sql, or_sql, {**term_params, "limit": limit}
+
+
+async def search_products(
+    organization_id: UUID,
+    binding: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    workspace_id: UUID | None,
+) -> dict[str, Any]:
+    """Busca productos por texto libre en el catalogo conectado (solo lectura).
+
+    El precio, la moneda y el stock salen de la vista `bodega.product_catalog_v`;
+    el nodo nunca calcula ni inventa esos valores.
+    """
+    from urllib.parse import quote_plus
+
+    from src.infrastructure.postgres.relational_db import PostgresConnectorRepository
+    from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+
+    config = binding.get("config") or {}
+    if config.get("write") is True:
+        raise BindingError("PERMISSION_DENIED", "search_products es solo lectura")
+    try:
+        connector_id = UUID(str(config.get("connector_id") or ""))
+    except (TypeError, ValueError) as exc:
+        raise BindingError("NEEDS_CONFIGURATION", "search requiere connector_id") from exc
+    query = str(payload.get("query") or "").strip()[:120]
+    terms = _search_terms(query)
+    if not terms:
+        return {"status": "NOT_FOUND", "rows": [], "row_count": 0, "terms": []}
+    try:
+        limit = int(payload.get("limit") or config.get("max_rows") or 2)
+    except (TypeError, ValueError):
+        limit = 2
+    limit = min(max(limit, 1), 5)
+
+    connector = await PostgresConnectorRepository().get_connector(
+        organization_id, connector_id
+    )
+    if connector is None or str(connector.status or "").lower() != "active":
+        raise BindingError("RESOURCE_NOT_EXPOSED", "conector de catalogo no disponible")
+    if connector.workspace_id and workspace_id and str(connector.workspace_id) != str(workspace_id):
+        raise BindingError("PERMISSION_DENIED", "el conector pertenece a otro workspace")
+    cfg = connector.config_json if isinstance(connector.config_json, dict) else {}
+    if str(connector.type or "").lower() not in ("postgres", "postgresql"):
+        raise BindingError("PROVIDER_NOT_SUPPORTED", "solo PostgreSQL")
+    host = str(cfg.get("host") or "").strip()
+    database = str(cfg.get("database") or "").strip()
+    user = str(cfg.get("user") or "").strip()
+    if not host or not database or not user:
+        raise BindingError("NEEDS_CONFIGURATION", "conector de catalogo incompleto")
+    secret = await get_secret_store().get(organization_id, connector_id)
+    password = secret.get("password") if isinstance(secret, dict) else None
+    if not password:
+        raise BindingError("NEEDS_CREDENTIALS", "sin credencial de lectura")
+    dsn = (
+        f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(str(password))}"
+        f"@{host}:{int(cfg.get('port') or 5432)}/{quote_plus(database)}"
+    )
+
+    and_sql, or_sql, params = _product_search_sql(terms, limit=limit)
+
+    engine = create_async_engine(dsn, pool_size=1, max_overflow=0, pool_pre_ping=True)
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SET statement_timeout = 3000"))
+            rows = (await conn.execute(text(and_sql), params)).fetchall()
+            if not rows and len(terms) > 1:
+                rows = (
+                    await conn.execute(text(or_sql), params)
+                ).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        raise _query_failure(exc) from exc
+    finally:
+        await engine.dispose()
+
+    data = [
+        {
+            "sku": str(row.sku),
+            "name": str(row.name),
+            "unit": str(row.unit or ""),
+            "price": float(row.price or 0),
+            "currency": str(row.currency or "").strip(),
+            "available": int(row.available or 0),
+        }
+        for row in rows
+    ]
+    return {
+        "status": "FOUND" if data else "NOT_FOUND",
+        "rows": data,
+        "row_count": len(data),
+        "terms": terms,
+    }

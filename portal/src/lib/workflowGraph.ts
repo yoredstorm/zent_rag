@@ -40,8 +40,7 @@ export type WorkflowGraph = {
   metadata: Record<string, unknown>;
 };
 
-let _seq = 0;
-export function newGraphNodeId(): string {
+let _seq = 0;export function newGraphNodeId(): string {
   _seq += 1;
   return `n${Date.now().toString(36)}_${_seq}`;
 }
@@ -621,13 +620,17 @@ export function layoutGraph(graph: WorkflowGraph): WorkflowGraph {
   const levelOf: Record<string, number> = {};
   const queue: string[] = [entry];
   levelOf[entry] = 0;
+  const expanded = new Set<string>();
   while (queue.length) {
     const cur = queue.shift()!;
+    // Un `loop` vuelve a un nodo anterior: sin este corte, el BFS no termina.
+    if (expanded.has(cur)) continue;
+    expanded.add(cur);
     const level = levelOf[cur] ?? 0;
     for (const e of graph.edges) {
       if (e.from_node !== cur) continue;
-      const targetLevel = Math.max(level + 1, levelOf[e.to_node] ?? 0);
-      levelOf[e.to_node] = targetLevel;
+      if (levelOf[e.to_node] !== undefined) continue;
+      levelOf[e.to_node] = level + 1;
       queue.push(e.to_node);
     }
   }
@@ -713,8 +716,23 @@ export function triggerTypeOf(graph: WorkflowGraph): "webhook" | "schedule" | "e
   return "webhook";
 }
 
-/** Extrae trigger_config del nodo trigger (para persistir schedules v2). */
-export function triggerConfigOf(graph: WorkflowGraph): Record<string, unknown> {
+/**
+ * Un grafo conversacional arranca con `conversation.message` y suele tener
+ * waits que esperan respuestas. El panel usa esto para correlacionar mensajes
+ * y para mostrar la caja de respuesta.
+ */
+export function isConversationalGraph(graph: WorkflowGraph | null | undefined): boolean {
+  if (!graph) return false;
+  const entry = graph.entrypoints?.[0];
+  const node =
+    graph.nodes.find((item) => item.id === entry) ??
+    graph.nodes.find((item) => _TRIGGER_TYPES.includes(item.type as (typeof _TRIGGER_TYPES)[number]));
+  if (!node) return false;
+  if (node.type !== "trigger_event") return false;
+  return String(node.config?.event_type ?? "") === "conversation.message";
+}
+
+/** Extrae trigger_config del nodo trigger (para persistir schedules v2). */export function triggerConfigOf(graph: WorkflowGraph): Record<string, unknown> {
   const t = graph.nodes.find((n) => _TRIGGER_TYPES.includes(n.type as (typeof _TRIGGER_TYPES)[number]));
   if (!t) return {};
   const c = { ...t.config };

@@ -34,6 +34,7 @@ La venta queda en `bodega.orders`. El stock se reserva y se confirma en
 ### Bindings
 
 - `bodega.product.get` (`connected_db`, lector).
+- `bodega.product.search` (`inventory`, lector; búsqueda por texto libre).
 - `p19.customer.orders` (`connected_db`, lector).
 - `bodega.order.create` (`inventory`, escritor).
 - `bodega.stock.reserve_batch` (`inventory`, escritor).
@@ -106,6 +107,55 @@ resultado.
 - Instancia: `6c8e5ef0-433f-42ab-b85c-38514aabe65f`
 - Nodo `sin_direccion`; no se creó pedido.
 
+## Flujo conversacional (pedido paso a paso)
+
+- **Workflow:** `caa379cc-e180-4c0f-89cf-3b0df014ab09`
+- **Plantilla:** `bodega_conversational_order`
+- **Estado:** `draft` (ejecutable en modo Real; publicar exige release)
+
+### Qué hace
+
+1. El cliente escribe `tienes arroz?`.
+2. `bodega.product.search` busca por texto libre en `bodega.product_catalog_v`
+   y devuelve hasta 2 coincidencias con precio y stock reales.
+3. Si no hay coincidencias, responde el fallback y termina **sin crear pedido**.
+4. Si hay varias, pregunta `1` o `2` y espera.
+5. Pregunta cantidad, valida stock, pregunta delivery o recojo y, si es delivery,
+   la dirección.
+6. Pide confirmación. Si responde `no`, cancela sin reservar stock.
+7. Crea el pedido, reserva stock y pide aprobación humana. Al aprobar, confirma
+   stock y responde con el total real.
+
+Cada pregunta es un `wait_event` con `event_type=conversation.message`. El
+estado sobrevive entre mensajes en `instance.state.order`. La correlación del
+wait usa `order_number`, así un mensaje no despierta otra conversación.
+
+### Cómo probarlo
+
+- Studio → workflow → **Probar** → **Real** → sandbox → `tienes arroz?`.
+- **Simular no sirve** para este flujo: no ejecuta `capability_call`, así que no
+  hay precio, stock ni pedido reales.
+- Cuando la instancia queda `WAITING`, el panel muestra **Responder al flujo**.
+  Cada mensaje llama `POST /api/v1/workflows/instances/{id}/signal` con
+  `correlation.order_number` y `payload.text`.
+- Al llegar a **Validar pago simulado**, aprobar en la pestaña **Recorrido**.
+
+### Evidencia
+
+- API E2E: instancia `63586936-6c86-4ee6-b10f-5e9968bfb012`, pedido
+  `CONV-E2E-003`, total `9.60 PEN`, stock `37 -> 35`, reserva `committed`,
+  aprobación `161b09a1-9989-4966-9910-410e298c598a`.
+- UI E2E: instancia `f40904de-0ec1-4adc-8ad2-e622b3af1a2e`, pedido
+  `WEB-91881378`, respuesta final
+  `Pedido WEB-91881378 confirmado. Total S/ 9.6. Sale a Av. Demo 123.`,
+  0 errores de consola.
+- Archivos:
+  - `src/platform/commerce/conversational_order_demo.py`
+  - `ops/p19-external/create_conversational_order_workflow.py`
+  - `tests/test_p20_conversational_order_demo.py`
+  - `portal/src/components/workflowStudio/WorkflowTestResult.tsx` (caja de respuesta)
+  - `portal/src/components/workflowStudio/useWorkflowTestRunner.ts` (`sendMessage`)
+
 ## Canvas
 
 Los nodos reciben posiciones deterministas en el grafo. Si un workflow importado
@@ -125,3 +175,6 @@ pintar. Sin eso, el canvas calculaba paths SVG con `NaN` y quedaba bloqueado.
 - El run del primer segmento queda en `pending_approval`; la instancia durable
   es la autoridad y queda `COMPLETED` después de aprobar. Los segmentos
   posteriores aparecen como runs `succeeded`.
+- El flujo conversacional exige `order_number` y `customer_ref` en el primer
+  mensaje. El Studio los genera si faltan; una llamada directa al API debe
+  enviarlos. Sin `order_number` la reserva y el pedido se rechazan.
