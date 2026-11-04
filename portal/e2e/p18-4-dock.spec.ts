@@ -19,7 +19,9 @@ test("el drawer conserva el resultado al cerrar y reabrir", async ({ page }) => 
   await page.getByTestId("wf-test").click();
   await expect(page.getByTestId("wf-result-headline")).toBeVisible({ timeout: 45_000 });
 
-  await page.getByRole("button", { name: "Cerrar panel" }).click();
+  const close = page.getByTestId("wf-simulator-close");
+  if (await close.isVisible()) await close.click();
+  else await page.getByRole("button", { name: "Cerrar panel" }).click();
   await expect(page.getByTestId("wf-test-panel")).toBeHidden();
 
   await page.getByTestId("wf-open-dock").click();

@@ -56,6 +56,22 @@ describe("WorkflowHealthBar", () => {
     expect(screen.getByTestId("wf-readiness-list")).toHaveTextContent("Falta elegir el agente.");
   });
 
+  it("variante chip: resume en la cabecera y despliega el detalle bajo demanda", async () => {
+    stubApi({
+      ready: false,
+      errors: 1,
+      warnings: 0,
+      checks: [{ key: "agents", label: "Agentes", status: "error", message: "Falta elegir el agente.", hint: null }],
+    });
+    const user = userEvent.setup();
+    render(<WorkflowHealthBar workflowId="wf-1" variant="chip" />);
+    const chip = await screen.findByTestId("wf-health-chip");
+    await waitFor(() => expect(chip).toHaveTextContent("1"));
+    expect(screen.queryByTestId("wf-readiness-list")).not.toBeInTheDocument();
+    await user.click(chip);
+    expect(await screen.findByTestId("wf-check-agents")).toHaveTextContent("Falta elegir el agente.");
+  });
+
   it("celebra cuando todo está listo", async () => {
     stubApi({
       ready: true,

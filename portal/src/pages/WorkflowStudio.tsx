@@ -1,32 +1,59 @@
-import { ArrowClockwise, ArrowCounterClockwise, ArrowLeft, Brain, ChatCircleDots, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal } from "@phosphor-icons/react";
+import {
+  ArrowClockwise,
+  ArrowCounterClockwise,
+  ArrowLeft,
+  ArrowsIn,
+  ArrowsOut,
+  Brain,
+  ChartBar,
+  ChatCircleDots,
+  CircleNotch,
+  Code,
+  CornersIn,
+  DotsThreeVertical,
+  FloppyDisk,
+  Lightning,
+  MagicWand,
+  Play,
+  RocketLaunch,
+  Target,
+  X,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { isApiError } from "../lib/errors";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useAuth } from "../auth";
+import { useToast } from "../Toast";
 import { Breadcrumb } from "../components/Breadcrumb";
 import {
+  Badge,
   Button,
-  ButtonLink,
   ConfirmDialog,
   Drawer,
   ErrorInline,
   Field,
   FormActions,
   IconButton,
-  InlineFlash,
   Input,
+  Menu,
+  MenuItem,
+  MenuSeparator,
   PageHeader,
-  SaveStatus,
   SkeletonBlock,
-  StatusBadge,
   Switch,
+  Tooltip,
+  menuItemClass,
+  menuSeparatorClass,
 } from "../components/ui";
-import type { SaveState } from "../components/ui";
 import { WorkflowCanvasEditor } from "../components/WorkflowCanvasEditor";
-import type { RunOverlay } from "../components/WorkflowCanvas";
+import type { CanvasChangeOptions, CanvasHandle, RunOverlay } from "../components/WorkflowCanvas";
 import type { RunDetail } from "../components/WorkflowRunInspector";
+import { RunTracePane, SimulatorDock, type SimulatorState } from "../components/workflowStudio/SimulatorDock";
+import { viewportStorageKey, type Viewport } from "../lib/canvasViewport";
+import { hasUnpublishedChanges, lifecycleIndicator, missionSummary, persistenceIndicator } from "../lib/studioState";
+import { loadStudioPrefs, saveStudioPrefs, type StudioPrefs } from "../lib/studioLayout";
 import { AgentMemoryPanel } from "../components/workflowStudio/AgentMemoryPanel";
 import { SubflowLibraryPanel } from "../components/workflowStudio/SubflowLibraryPanel";
 import { WorkflowApiPanel } from "../components/workflowStudio/WorkflowApiPanel";
@@ -60,6 +87,13 @@ import {
 } from "../lib/workflowGraph";
 
 type StudioState = { hookSecret?: string };
+
+const PERSISTENCE_DOT: Record<string, string> = {
+  dirty: "bg-warn",
+  error: "bg-danger",
+  saved: "bg-ok",
+  clean: "bg-faint",
+};
 
 /** Grafo inicial de un workflow nuevo: trigger webhook conectado a un fin. */
 /** ¿El grafo es el embudo de ventas oficial? (metadata.template de la plantilla). */
@@ -180,11 +214,46 @@ export default function WorkflowStudioPage() {
   const [conflict, setConflict] = useState(false);
   const [recovery, setRecovery] = useState<{ name: string; description: string; graph: WorkflowGraph } | null>(null);
   const saveRef = useRef<() => Promise<boolean>>(async () => false);
+  const canvasRef = useRef<CanvasHandle | null>(null);
+  const [prefs, setPrefs] = useState<StudioPrefs>(loadStudioPrefs);
+  /** Simulador acoplado (desktop). Una vez abierto queda montado para no perder la prueba. */
+  const [simulator, setSimulator] = useState<SimulatorState>("closed");
+  const [simulatorMounted, setSimulatorMounted] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const focusSnapshot = useRef<{ simulator: SimulatorState; viewport: Viewport | null } | null>(null);
+  const [missionOpen, setMissionOpen] = useState(false);
+  const [funnelOpen, setFunnelOpen] = useState(false);
+  const [viewportH, setViewportH] = useState(() => window.innerHeight);
+  const { pushToast } = useToast();
 
   const status = detail?.status ?? "draft";
 
   useEffect(() => {
-    if (panel === "test" && !isDesktop) setDockOpen(true);
+    saveStudioPrefs(prefs);
+  }, [prefs]);
+
+  useEffect(() => {
+    const onResize = () => setViewportH(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const openSimulator = useCallback(() => {
+    if (!isDesktop) {
+      // Deja terminar el click antes de montar el overlay del drawer.
+      window.setTimeout(() => setDockOpen(true), 0);
+      return;
+    }
+    setSimulatorMounted(true);
+    setSimulator("open");
+  }, [isDesktop]);
+
+  useEffect(() => {
+    if (panel !== "test") return;
+    if (isDesktop) {
+      setSimulatorMounted(true);
+      setSimulator("open");
+    } else setDockOpen(true);
   }, [panel, isDesktop]);
 
   useEffect(() => {
@@ -202,15 +271,14 @@ export default function WorkflowStudioPage() {
     [name, description, graph],
   );
   const dirty = !isNew && savedSignature !== "" && signature !== savedSignature;
-  const saveIndicator: SaveState = saving
-    ? "saving"
-    : saveError
-      ? "error"
-      : saveFlash === "saved"
-        ? "saved"
-        : dirty
-          ? "dirty"
-          : "idle";
+  const persistence = persistenceIndicator({ dirty, saving, saveError, justSaved: saveFlash === "saved" });
+  const lifecycle = lifecycleIndicator({
+    status,
+    publishedVersion: detail?.published_version_number,
+    draftChanged: detail?.draft_changed,
+    dirty,
+  });
+  const unpublished = hasUnpublishedChanges({ status, draftChanged: detail?.draft_changed, dirty });
 
   useEffect(() => {
     if (saveFlash !== "saved") return;
@@ -336,12 +404,12 @@ export default function WorkflowStudioPage() {
     void load();
   }, [load]);
 
-  // El estudio vive a pantalla completa: un banner fijo le roba alto al lienzo.
+  // Confirmaciones como toast: un banner fijo le roba alto al lienzo.
   useEffect(() => {
     if (!msg) return;
-    const t = window.setTimeout(() => setMsg(""), 2500);
-    return () => window.clearTimeout(t);
-  }, [msg]);
+    pushToast("success", msg);
+    setMsg("");
+  }, [msg, pushToast]);
 
   function openDrawer(next: StudioDrawer | null) {
     const params = new URLSearchParams(searchParams);
@@ -453,15 +521,17 @@ export default function WorkflowStudioPage() {
     graphRef.current = graph;
   }, [graph]);
 
-  const commitGraph = useCallback((next: WorkflowGraph) => {
+  const commitGraph = useCallback((next: WorkflowGraph, options?: CanvasChangeOptions) => {
     const previous = graphRef.current ?? graph;
     if (previous) {
       const now = Date.now();
-      if (now - historyStampRef.current > 350) {
+      // Ráfagas (teclear, flechas) se agrupan en un paso; un checkpoint
+      // (soltar un arrastre, organizar, conectar) siempre es su propio paso.
+      if (options?.checkpoint || now - historyStampRef.current > 350) {
         historyRef.current.past.push(structuredClone(previous));
         if (historyRef.current.past.length > 40) historyRef.current.past.shift();
         historyRef.current.future = [];
-        historyStampRef.current = now;
+        historyStampRef.current = options?.checkpoint ? 0 : now;
       }
     }
     graphRef.current = next;
@@ -632,6 +702,10 @@ export default function WorkflowStudioPage() {
           organizationId: session.organizationId,
         });
         setRun(detail);
+        if (isDesktop) {
+          setSimulatorMounted(true);
+          setSimulator((current) => (current === "closed" ? "open" : current));
+        }
         const failed = (detail.steps ?? []).find((step) => step.status === "failed");
         if (failed) setError(failed.error || "La ejecución parcial falló.");
       }
@@ -654,6 +728,61 @@ export default function WorkflowStudioPage() {
   function selectFromDock(nodeId: string) {
     setSelectedNode(nodeId);
     setDockOpen(false);
+    window.setTimeout(() => canvasRef.current?.centerNode(nodeId), 0);
+  }
+
+  /** Un resultado del simulador lleva a su nodo: lo selecciona y lo centra. */
+  const focusNodeFromRun = useCallback((nodeId: string) => {
+    setSelectedNode(nodeId);
+    canvasRef.current?.centerNode(nodeId);
+  }, []);
+
+  const enterFocus = useCallback(() => {
+    focusSnapshot.current = { simulator, viewport: canvasRef.current?.getViewport() ?? null };
+    setFocusMode(true);
+  }, [simulator]);
+
+  const exitFocus = useCallback(() => {
+    const snapshot = focusSnapshot.current;
+    focusSnapshot.current = null;
+    setFocusMode(false);
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    if (snapshot) {
+      setSimulator(snapshot.simulator);
+      if (snapshot.viewport) {
+        const view = snapshot.viewport;
+        window.requestAnimationFrame(() => canvasRef.current?.setViewport(view));
+      }
+    }
+  }, []);
+
+  // F alterna el modo enfoque; Esc sale (si el lienzo no usó el Esc para cerrar algo).
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const inOverlay = Boolean(target?.closest?.('[role="dialog"],[role="menu"],[role="listbox"]'));
+      if (event.key === "Escape" && focusMode && !inOverlay) {
+        window.setTimeout(() => {
+          if (!event.defaultPrevented) exitFocus();
+        }, 0);
+        return;
+      }
+      const editing =
+        target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT" || target?.isContentEditable;
+      if (editing || inOverlay || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "f" || event.key === "F") {
+        event.preventDefault();
+        if (focusMode) exitFocus();
+        else enterFocus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusMode, enterFocus, exitFocus]);
+
+  function toggleNativeFullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else void document.documentElement.requestFullscreen?.().catch(() => undefined);
   }
 
   if (loading) {
@@ -709,37 +838,126 @@ export default function WorkflowStudioPage() {
     );
   }
 
-  return (
-    // El shell pone la ruta en modo full-bleed (ver `fullBleed` en App.tsx):
-    // aquí solo repartimos la altura entre cabecera, lienzo y dock.
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border pb-3">
-        <IconButton
-          label="Volver a workflows"
-          icon={ArrowLeft}
-          className="shrink-0"
-          onClick={back}
+  const mission = graph ? missionSummary(missionFromGraph(graph.metadata)) : "";
+
+  const focusToolbarExtra = focusMode ? (
+    <>
+      <Tooltip label="Salir del modo enfoque · Esc">
+        <button
+          type="button"
+          aria-label="Salir del modo enfoque"
+          data-testid="wf-focus-exit"
+          onClick={exitFocus}
+          className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-text outline-none hover:bg-soft focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <ArrowsIn size={15} aria-hidden /> Salir
+        </button>
+      </Tooltip>
+      <Tooltip label="Pantalla completa del navegador (opcional)">
+        <button
+          type="button"
+          aria-label="Pantalla completa del navegador"
+          onClick={toggleNativeFullscreen}
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted outline-none hover:bg-soft hover:text-text focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <CornersIn size={15} aria-hidden />
+        </button>
+      </Tooltip>
+    </>
+  ) : null;
+
+  const simulatorDock =
+    id && isDesktop && simulatorMounted ? (
+      <SimulatorDock
+        state={simulator}
+        onStateChange={setSimulator}
+        height={prefs.simulatorHeight}
+        onHeightChange={(height) => setPrefs((p) => ({ ...p, simulatorHeight: height }))}
+        availableHeight={viewportH - 100}
+        run={run}
+        trace={<RunTracePane run={run} graph={graph} selectedNodeId={selectedNode} onPickNode={focusNodeFromRun} />}
+      >
+        <WorkflowTestPanel
+          workflowId={id}
+          status={status}
+          effectLabels={effectLabels}
+          issues={issues}
+          dirty={dirty}
+          onRun={setRun}
+          onSelectNode={focusNodeFromRun}
+          onRan={() => void load(true)}
+          onSaveBeforeRun={save}
+          graph={graph}
+          graphHash={detail?.graph_hash}
+          embedded
         />
-        <div className="min-w-[12rem] flex-1">
-          <Input
-            className="h-9 border-transparent bg-transparent px-1.5 text-[17px] font-semibold hover:border-border focus:border-border focus:bg-soft"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-label="Nombre del workflow"
-            data-testid="wf-name"
-          />
-          <Input
-            className="h-8 border-transparent bg-transparent px-1.5 text-xs text-muted hover:border-border focus:border-border focus:bg-soft"
-            value={description}
-            placeholder="Añade una descripción corta"
-            onChange={(e) => setDescription(e.target.value)}
-            aria-label="Descripción del workflow"
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <SaveStatus state={saveIndicator} error={saveError || undefined} dirtyLabel="Cambios sin guardar" />
-          <StatusBadge status={status} />
-          <span data-testid="wf-active-toggle" className="inline-flex items-center">
+      </SimulatorDock>
+    ) : null;
+
+  return (
+    // El shell pone la ruta en modo full-bleed (ver `studioCanvas` en App.tsx).
+    // Modo enfoque: el estudio cubre la navegación (no usa la Fullscreen API).
+    <div
+      className={
+        focusMode
+          ? "fixed inset-0 z-[35] flex min-h-0 min-w-0 flex-col bg-bg"
+          : "flex min-h-0 min-w-0 flex-1 flex-col"
+      }
+      data-testid="wf-studio"
+      data-focus={focusMode ? "true" : "false"}
+    >
+      <header
+        className={`flex h-12 shrink-0 items-center gap-1.5 border-b border-border bg-surface px-2 ${focusMode ? "hidden" : ""}`}
+        data-testid="wf-studio-header"
+      >
+        <IconButton label="Volver a workflows" icon={ArrowLeft} iconSize={16} className="h-8 w-8 shrink-0" onClick={back} />
+        <Input
+          className="h-8 w-[clamp(10rem,16vw,17rem)] min-w-[7rem] shrink border-transparent bg-transparent px-1.5 text-[15px] font-semibold hover:border-border focus:border-border focus:bg-soft"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          aria-label="Nombre del workflow"
+          data-testid="wf-name"
+        />
+        <Tooltip label={mission ? `Misión: ${mission}` : "Define el objetivo, el público y los límites del flujo"}>
+          <button
+            type="button"
+            className="inline-flex h-8 min-w-0 max-w-[clamp(6rem,22vw,24rem)] shrink cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 text-[12px] text-muted outline-none hover:border-border-strong hover:text-text focus-visible:ring-2 focus-visible:ring-accent"
+            onClick={() => setMissionOpen(true)}
+            data-testid="wf-mission-summary"
+            aria-haspopup="dialog"
+            aria-label={mission ? `Misión: ${mission}` : "Definir misión"}
+          >
+            <Target size={14} className="shrink-0 text-accent" aria-hidden />
+            <span className="hidden truncate xl:inline">{mission || "Definir misión"}</span>
+          </button>
+        </Tooltip>
+        <span className="min-w-2 flex-1" />
+
+        <div className="flex shrink-0 items-center gap-1.5" data-testid="wf-studio-status">
+          <Tooltip label={persistence.detail ?? persistence.label}>
+            <span
+              className="inline-flex h-8 items-center gap-1.5 px-1 text-[12px] text-muted"
+              data-testid="wf-persistence"
+              data-state={persistence.key}
+              role="status"
+              aria-live="polite"
+              aria-label={persistence.label}
+            >
+              {persistence.key === "saving" ? (
+                <CircleNotch size={13} className="animate-spin text-info" aria-hidden />
+              ) : (
+                <span className={`h-2 w-2 rounded-full ${PERSISTENCE_DOT[persistence.key] ?? "bg-faint"}`} aria-hidden />
+              )}
+              <span className="hidden whitespace-nowrap xl:inline">{persistence.label}</span>
+            </span>
+          </Tooltip>
+          <span data-testid="wf-lifecycle" data-state={lifecycle.key} title={lifecycle.detail}>
+            <Badge tone={lifecycle.tone} dot className="whitespace-nowrap">
+              {lifecycle.label}
+            </Badge>
+          </span>
+          {id && <WorkflowHealthBar workflowId={id} refreshKey={detail?.updated_at ?? ""} variant="chip" />}
+          <span data-testid="wf-active-toggle" className="ml-1 inline-flex items-center" title="Activa o pausa la versión publicada">
             <Switch
               checked={status === "active"}
               disabled={statusBusy}
@@ -747,83 +965,52 @@ export default function WorkflowStudioPage() {
               label="Activo"
             />
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={ArrowCounterClockwise}
+        </div>
+
+        <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
+        <div className="flex shrink-0 items-center gap-1">
+          <IconButton
+            label="Deshacer (Ctrl+Z)"
+            icon={ArrowCounterClockwise}
+            iconSize={16}
+            className="h-8 w-8"
             disabled={!historyState.canUndo}
             onClick={undo}
-            title="Deshacer (Ctrl+Z)"
             aria-label="Deshacer"
             data-testid="wf-undo"
-          >
-            Deshacer
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={ArrowClockwise}
+          />
+          <IconButton
+            label="Rehacer (Ctrl+Shift+Z)"
+            icon={ArrowClockwise}
+            iconSize={16}
+            className="h-8 w-8"
             disabled={!historyState.canRedo}
             onClick={redo}
-            title="Rehacer (Ctrl+Shift+Z)"
             aria-label="Rehacer"
             data-testid="wf-redo"
-          >
-            Rehacer
-          </Button>
-          <Button variant="secondary" size="sm" leadingIcon={Code} onClick={() => openDrawer("api")} data-testid="wf-open-api">
-            API
-          </Button>
+          />
           <Button
             variant="secondary"
             size="sm"
-            leadingIcon={SlidersHorizontal}
-            onClick={() => openDrawer("advanced")}
-            data-testid="wf-open-advanced"
-          >
-            Avanzado
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            leadingIcon={Brain}
-            onClick={() => openDrawer("memory")}
-            data-testid="wf-open-memory"
-          >
-            Memoria
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            leadingIcon={Lightning}
-            onClick={() => openDrawer("library")}
-            data-testid="wf-open-library"
-          >
-            Subflujos
-          </Button>
-          <Button variant="secondary" size="sm" leadingIcon={MagicWand} onClick={() => setPatchOpen(true)} data-testid="wf-open-patch">
-            Editar con IA
-          </Button>
-          <ButtonLink
-            to={`/chat?target=workflow&id=${id}`}
-            variant="ghost"
-            size="sm"
-            leadingIcon={ChatCircleDots}
-          >
-            Probar en Playground
-          </ButtonLink>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="lg:hidden"
-            aria-expanded={dockOpen}
-            onClick={() => {
-              // Deja terminar el click antes de montar el overlay del drawer.
-              window.setTimeout(() => setDockOpen(true), 0);
-            }}
+            leadingIcon={Play}
+            aria-expanded={isDesktop ? simulator === "open" : dockOpen}
+            onClick={() => (isDesktop && simulator === "open" ? setSimulator("collapsed") : openSimulator())}
             data-testid="wf-open-dock"
+            title="Abrir el simulador bajo el lienzo"
           >
             Probar
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={RocketLaunch}
+            onClick={() => openDrawer("advanced")}
+            data-testid="wf-open-advanced"
+            title={unpublished ? "Hay cambios del borrador sin publicar" : "Versiones y publicación"}
+            className="relative"
+          >
+            <span className="hidden xl:inline">Publicar</span>
+            {unpublished && <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-warn" aria-label="cambios sin publicar" />}
           </Button>
           <Button
             variant="primary"
@@ -833,17 +1020,105 @@ export default function WorkflowStudioPage() {
             disabled={!name.trim()}
             onClick={() => void save()}
             data-testid="wf-save"
-            title="Guardar cambios en el borrador; no publica ni despliega."
+            title="Guardar cambios en el borrador (Ctrl+S); no publica ni despliega."
           >
-            Guardar borrador
+            Guardar
           </Button>
+          <Menu
+            label="Más acciones del workflow"
+            trigger={
+              <button
+                type="button"
+                aria-label="Más acciones"
+                title="Más acciones"
+                className="btn btn-ghost btn-icon h-8 w-8"
+                data-testid="wf-more"
+              >
+                <DotsThreeVertical size={17} aria-hidden />
+              </button>
+            }
+          >
+            <MenuItem className={menuItemClass} onSelect={() => openDrawer("api")} data-testid="wf-open-api">
+              <Code size={15} aria-hidden /> API
+            </MenuItem>
+            <MenuItem className={menuItemClass} onSelect={() => openDrawer("memory")} data-testid="wf-open-memory">
+              <Brain size={15} aria-hidden /> Memoria del agente
+            </MenuItem>
+            <MenuItem className={menuItemClass} onSelect={() => openDrawer("library")} data-testid="wf-open-library">
+              <Lightning size={15} aria-hidden /> Subflujos
+            </MenuItem>
+            <MenuItem className={menuItemClass} onSelect={() => setPatchOpen(true)} data-testid="wf-open-patch">
+              <MagicWand size={15} aria-hidden /> Editar con IA
+            </MenuItem>
+            <MenuItem className={menuItemClass} onSelect={() => navigate(`/chat?target=workflow&id=${id}`)}>
+              <ChatCircleDots size={15} aria-hidden /> Probar en Playground
+            </MenuItem>
+            {isSalesFunnel(graph) && (
+              <MenuItem className={menuItemClass} onSelect={() => setFunnelOpen(true)} data-testid="wf-open-funnel">
+                <ChartBar size={15} aria-hidden /> Embudo de ventas
+              </MenuItem>
+            )}
+            <MenuSeparator className={menuSeparatorClass} />
+            <MenuItem className={menuItemClass} onSelect={enterFocus}>
+              <ArrowsOut size={15} aria-hidden /> Modo enfoque
+              <kbd className="ml-auto text-[11px] text-faint">F</kbd>
+            </MenuItem>
+          </Menu>
+          <IconButton
+            label="Modo enfoque (F)"
+            icon={ArrowsOut}
+            iconSize={16}
+            className="h-8 w-8"
+            onClick={enterFocus}
+            data-testid="wf-focus-toggle"
+          />
         </div>
       </header>
 
-      {msg && <InlineFlash className="shrink-0">{msg}</InlineFlash>}
-      {error && <ErrorInline message={error} className="mb-0 shrink-0" />}
+      <div className="relative flex min-h-0 min-w-0 flex-1">
+        <WorkflowCanvasEditor
+          heightClass="h-full flex-1"
+          workflowId={id ?? null}
+          graph={graph}
+          onChangeGraph={(g, _tt, _tc, options) => commitGraph(structuredClone(g), options)}
+          kbs={kbs}
+          agents={agents}
+          overlay={overlay}
+          selectedNodeId={selectedNode}
+          onSelectNode={setSelectedNode}
+          configLevel={configLevel}
+          onConfigLevelChange={setConfigLevel}
+          run={run}
+          pinnedNodes={pinnedNodes}
+          onPinData={(nodeId, output) => void pinData(nodeId, output)}
+          onUnpinData={(nodeId) => void unpinData(nodeId)}
+          onRunPartial={(nodeId, mode) => void partialRun(nodeId, mode)}
+          partialBusy={partialBusy}
+          canvasRef={canvasRef}
+          viewportKey={id && session ? viewportStorageKey(session.email || session.organizationId, id) : null}
+          bottomPanel={simulatorDock}
+          chrome={focusMode ? "focus" : "full"}
+          toolbarExtra={focusToolbarExtra}
+          inspectorWidth={prefs.inspectorWidth}
+          onInspectorWidthChange={(width) => setPrefs((p) => ({ ...p, inspectorWidth: width }))}
+          minimap={prefs.minimap}
+          onToggleMinimap={() => setPrefs((p) => ({ ...p, minimap: !p.minimap }))}
+          onExitFocus={exitFocus}
+        />
+
+        {/* Avisos flotantes: no empujan el lienzo. */}
+        <div
+          className="pointer-events-none absolute top-3 left-1/2 z-30 flex w-[min(560px,calc(100%-9rem))] -translate-x-1/2 flex-col gap-2 [&>*]:pointer-events-auto"
+          aria-live="polite"
+        >
+      {error && (
+        <div className="flex items-start gap-1 rounded-md bg-surface shadow-pop" data-testid="wf-error">
+          <ErrorInline message={error} className="mb-0 min-w-0 flex-1" />
+          <IconButton label="Cerrar aviso" icon={X} iconSize={14} className="h-8 w-8" onClick={() => setError("")} />
+        </div>
+      )}
       {conflict && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[13px]" role="status" data-testid="wf-conflict">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] shadow-pop" role="status" data-testid="wf-conflict">
           <span className="min-w-0 flex-1">Otra pestaña guardó este flujo. Tus cambios no se borraron.</span>
           <Button size="sm" variant="secondary" data-testid="wf-conflict-keep" onClick={() => setConflict(false)}>
             Seguir con mis cambios
@@ -862,7 +1137,7 @@ export default function WorkflowStudioPage() {
         </div>
       )}
       {recovery && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-soft px-3 py-2 text-[13px]" role="status" data-testid="wf-recovery">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-raised px-3 py-2 text-[13px] shadow-pop" role="status" data-testid="wf-recovery">
           <span className="min-w-0 flex-1">Hay cambios locales de un guardado que no llegó al servidor.</span>
           <Button size="sm" variant="secondary" data-testid="wf-recovery-apply" onClick={applyRecovery}>
             Recuperar mis cambios
@@ -879,66 +1154,46 @@ export default function WorkflowStudioPage() {
           </Button>
         </div>
       )}
+        </div>
+      </div>
 
       {graph && (
-        <details className="shrink-0" data-testid="wf-mission-disclosure">
-          <summary className="cursor-pointer text-[13px] font-medium text-text">Ficha de misión</summary>
-          <div className="mt-2">
+        <Drawer
+          open={missionOpen}
+          onOpenChange={setMissionOpen}
+          title="Ficha de misión"
+          description="Qué hace el flujo, para quién y con qué límites. Viaja con el lienzo."
+          width={560}
+        >
+          <div className="space-y-4" data-testid="wf-mission-drawer">
+            <Field label="Qué hace" hint="Una línea sobre el resultado, no sobre la implementación.">
+              <Input
+                value={description}
+                placeholder="Añade una descripción corta"
+                onChange={(e) => setDescription(e.target.value)}
+                aria-label="Descripción del workflow"
+              />
+            </Field>
             <MissionCard value={missionFromGraph(graph.metadata)} onChange={updateMission} />
           </div>
-        </details>
+        </Drawer>
       )}
-
-      {id && <WorkflowHealthBar workflowId={id} refreshKey={detail?.updated_at ?? ""} />}
 
       {/* Embudo de ventas: checklist de configuración y KPIs del proceso vivo. */}
       {id && isSalesFunnel(graph) && (
-        <div className="grid shrink-0 gap-3 xl:grid-cols-2" data-testid="funnel-panels">
-          <SalesFunnelChecklist />
-          <SalesFunnelKpis />
-        </div>
+        <Drawer
+          open={funnelOpen}
+          onOpenChange={setFunnelOpen}
+          title="Embudo de ventas"
+          description="Checklist de configuración y KPIs del proceso vivo."
+          width={640}
+        >
+          <div className="grid gap-3" data-testid="funnel-panels">
+            <SalesFunnelChecklist />
+            <SalesFunnelKpis />
+          </div>
+        </Drawer>
       )}
-
-      <div className="flex min-h-0 flex-1 gap-3">
-        <div className="min-w-0 flex-1">
-          <WorkflowCanvasEditor
-            heightClass="h-full"
-            workflowId={id ?? null}
-            graph={graph}
-            onChangeGraph={(g) => commitGraph(structuredClone(g))}
-            kbs={kbs}
-            agents={agents}
-            overlay={overlay}
-            selectedNodeId={selectedNode}
-            onSelectNode={setSelectedNode}
-            configLevel={configLevel}
-            onConfigLevelChange={setConfigLevel}
-            run={run}
-            pinnedNodes={pinnedNodes}
-            onPinData={(nodeId, output) => void pinData(nodeId, output)}
-            onUnpinData={(nodeId) => void unpinData(nodeId)}
-            onRunPartial={(nodeId, mode) => void partialRun(nodeId, mode)}
-            partialBusy={partialBusy}
-          />
-        </div>
-        {id && isDesktop && (
-          <aside className="flex min-h-0 w-80 shrink-0 flex-col xl:w-[22rem]">
-            <WorkflowTestPanel
-              workflowId={id}
-              status={status}
-              effectLabels={effectLabels}
-              issues={issues}
-              dirty={dirty}
-              onRun={setRun}
-              onSelectNode={setSelectedNode}
-              onRan={() => void load(true)}
-              onSaveBeforeRun={save}
-              graph={graph}
-              graphHash={detail?.graph_hash}
-            />
-          </aside>
-        )}
-      </div>
 
       {/* Mobile: el dock de prueba es una hoja inferior. */}
       {id && !isDesktop && (

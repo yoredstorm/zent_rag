@@ -1,9 +1,9 @@
-import { CaretDown, Code, LockSimple, PushPin, Trash, X } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, CheckCircle, Code, LockSimple, PushPin, Trash, Warning, X, XCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { GraphEdge, GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
-import { describeEdge, nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
+import { describeEdge, graphIssues, nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
 import type {
   BusinessParameter,
   NodeBusinessSchema,
@@ -78,16 +78,27 @@ type Props = {
   onClose?: () => void;
   /** Agregar un nodo sugerido después de este (brief §19). */
   onAddSuggested?: (nodeType: string) => void;
+  /** Contrae el panel sin perder la selección. */
+  onCollapse?: () => void;
+  /** Abre una pestaña concreta (p. ej. "Probar este nodo" desde el lienzo); `key` fuerza el cambio. */
+  tabRequest?: { tab: NodeTab; key: number } | null;
+  /** Readiness del backend para este nodo. */
+  nodeIssue?: { status: string; message: string } | null;
+  /** Lleva el lienzo a otro nodo (conexiones de Entradas/Salidas). */
+  onFocusNode?: (id: string) => void;
 };
 
 const LEVELS: ParameterLevel[] = ["simple", "guided", "advanced"];
 
-const NODE_TABS = [
-  { key: "config", label: "Configurar" },
-  { key: "input", label: "Input" },
-  { key: "output", label: "Output" },
-  { key: "run", label: "Run" },
-] as const;
+export type NodeTab = "config" | "input" | "output" | "run" | "validation";
+
+const NODE_TABS: { key: NodeTab; label: string }[] = [
+  { key: "config", label: "Parámetros" },
+  { key: "input", label: "Entradas" },
+  { key: "output", label: "Salidas" },
+  { key: "run", label: "Ejecución" },
+  { key: "validation", label: "Validación" },
+];
 
 /** Claves que el NotificationBuilder edita; el resto las cubre el schema. */
 const NOTIFY_BUILDER_KEYS = new Set(["channel", "title", "message"]);
@@ -121,6 +132,10 @@ export function NodeConfigPanel({
   className = "w-72 shrink-0",
   onClose,
   onAddSuggested,
+  onCollapse,
+  tabRequest,
+  nodeIssue,
+  onFocusNode,
 }: Props) {
   const { session } = useAuth();
   const [localLevel, setLocalLevel] = useState<ParameterLevel>("simple");
@@ -135,11 +150,27 @@ export function NodeConfigPanel({
     if (fromCatalog.length > 0) return fromCatalog;
     return buildDataSources(graph, nodeSchemas ?? null, samples ?? null, n?.id ?? null);
   }, [dataCatalog, graph, nodeSchemas, samples, n?.id]);
-  const [tab, setTab] = useState<"config" | "input" | "output" | "run">("config");
+  const [tab, setTab] = useState<NodeTab>("config");
   const runStep = useMemo<RunStep | null>(
     () => (node ? (run?.steps ?? []).find((s) => s.node_id === node.id) ?? null : null),
     [run, node],
   );
+  const validation = useMemo(() => {
+    if (!node) return [];
+    const out: { tone: "error" | "warning"; message: string }[] = [];
+    for (const issue of graphIssues(graph)) if (issue.node_id === node.id) out.push({ tone: "warning", message: issue.message });
+    if (nodeIssue && nodeIssue.status !== "ok") out.push({ tone: nodeIssue.status === "error" ? "error" : "warning", message: nodeIssue.message });
+    if (runStep?.error) out.push({ tone: "error", message: `Último run: ${runStep.error}` });
+    // graphIssues ya marca los nodos inalcanzables salvo `end`.
+    if (node.type === "end" && !graph.edges.some((e) => e.to_node === node.id)) {
+      out.push({ tone: "warning", message: "Nada llega a este nodo: conecta una salida a su entrada." });
+    }
+    return out;
+  }, [graph, node, nodeIssue, runStep]);
+
+  useEffect(() => {
+    if (tabRequest) setTab(tabRequest.tab);
+  }, [tabRequest]);
 
   // Formulario de la acción del marketplace según su input_schema (misión §17).
   useEffect(() => {
@@ -288,8 +319,10 @@ export function NodeConfigPanel({
           {meta.icon}
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-[13px] font-semibold text-text">{business?.label || meta.label}</h3>
-          <p className="truncate font-mono text-[10px] text-faint">{current.type} · v{current.version}</p>
+          <h3 className="truncate text-[14px] font-semibold text-text">{current.label || business?.label || meta.label}</h3>
+          <p className="truncate text-[11px] text-faint">
+            {business?.label || meta.label} · <span className="font-mono">{current.id}</span>
+          </p>
         </div>
         {current.type !== "end" && !current.type.startsWith("trigger_") && (
           <IconButton
@@ -297,6 +330,15 @@ export function NodeConfigPanel({
             icon={Trash}
             className="h-8 w-8 shrink-0 text-danger"
             onClick={() => onDeleteNode(current.id)}
+          />
+        )}
+        {onCollapse && (
+          <IconButton
+            label="Contraer panel"
+            icon={CaretRight}
+            className="h-8 w-8 shrink-0"
+            onClick={onCollapse}
+            data-testid="wf-inspector-collapse"
           />
         )}
         {onClose && (
@@ -309,31 +351,51 @@ export function NodeConfigPanel({
         )}
       </header>
 
+      {/* Pestañas fijas: parámetros / entradas / salidas / ejecución / validación. */}
+      <div
+        className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border px-2 py-1.5"
+        role="tablist"
+        aria-label="Vista del nodo"
+        data-testid="wf-node-tabs"
+        onKeyDown={(ev) => {
+          if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") return;
+          const index = NODE_TABS.findIndex((t) => t.key === tab);
+          const next = NODE_TABS[(index + (ev.key === "ArrowRight" ? 1 : NODE_TABS.length - 1)) % NODE_TABS.length];
+          setTab(next.key);
+          (ev.currentTarget.querySelector(`[data-testid="wf-tab-${next.key}"]`) as HTMLElement | null)?.focus();
+        }}
+      >
+        {NODE_TABS.map((nodeTab) => (
+          <button
+            key={nodeTab.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === nodeTab.key}
+            tabIndex={tab === nodeTab.key ? 0 : -1}
+            className={cn(
+              SEGMENT_BASE,
+              "flex-none whitespace-nowrap",
+              tab === nodeTab.key ? "bg-soft text-text" : "text-muted hover:text-text",
+            )}
+            data-testid={`wf-tab-${nodeTab.key}`}
+            onClick={() => setTab(nodeTab.key)}
+          >
+            {nodeTab.label}
+            {nodeTab.key === "validation" && validation.length > 0 && (
+              <span
+                className={cn(
+                  "ml-1 inline-flex min-w-4 justify-center rounded-full px-1 text-[10px] tabular-nums",
+                  validation.some((v) => v.tone === "error") ? "bg-danger-soft text-danger" : "bg-warn-soft text-warn",
+                )}
+              >
+                {validation.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-        {/* Pestañas del nodo: configurar / input / output / run (Fase 1). */}
-        <div
-          className="flex items-center gap-0.5 rounded-md border border-border bg-soft p-0.5"
-          role="tablist"
-          aria-label="Vista del nodo"
-          data-testid="wf-node-tabs"
-        >
-          {NODE_TABS.map((nodeTab) => (
-            <button
-              key={nodeTab.key}
-              type="button"
-              role="tab"
-              aria-selected={tab === nodeTab.key}
-              className={cn(
-                SEGMENT_BASE,
-                tab === nodeTab.key ? "bg-surface text-text shadow-panel" : "text-muted hover:text-text",
-              )}
-              data-testid={`wf-tab-${nodeTab.key}`}
-              onClick={() => setTab(nodeTab.key)}
-            >
-              {nodeTab.label}
-            </button>
-          ))}
-        </div>
 
         {tab === "config" && (
           <>
@@ -665,6 +727,7 @@ export function NodeConfigPanel({
 
         {tab === "input" && (
           <div className="space-y-2" data-testid="wf-node-input">
+            <PortConnections graph={graph} node={current} side="in" onFocusNode={onFocusNode} />
             <p className="text-[12px] text-muted">Datos con los que corrió este paso en el run seleccionado.</p>
             <DataView
               data={runStep?.input ?? null}
@@ -676,6 +739,7 @@ export function NodeConfigPanel({
 
         {tab === "output" && (
           <div className="space-y-3" data-testid="wf-node-output">
+            <PortConnections graph={graph} node={current} side="out" onFocusNode={onFocusNode} />
             {pinned && (
               <p
                 className="flex items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2.5 py-2 text-[11px] text-text"
@@ -822,8 +886,105 @@ export function NodeConfigPanel({
             )}
           </div>
         )}
+
+        {tab === "validation" && (
+          <div className="space-y-2" data-testid="wf-node-validation">
+            {validation.length === 0 ? (
+              <p className="flex items-center gap-1.5 text-[12px] text-ok" data-testid="wf-node-valid">
+                <CheckCircle size={14} weight="fill" aria-hidden /> Sin problemas detectados en este nodo.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {validation.map((item, i) => (
+                  <li
+                    key={i}
+                    className={cn(
+                      "flex items-start gap-2 rounded-md border px-2.5 py-2 text-[12px] leading-relaxed",
+                      item.tone === "error" ? "border-danger/40 bg-danger-soft text-danger" : "border-warn/40 bg-warn-soft text-text",
+                    )}
+                  >
+                    {item.tone === "error" ? (
+                      <XCircle size={14} weight="fill" className="mt-0.5 shrink-0" aria-hidden />
+                    ) : (
+                      <Warning size={14} weight="fill" className="mt-0.5 shrink-0 text-warn" aria-hidden />
+                    )}
+                    <span>{item.message}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[11px] leading-relaxed text-faint">
+              La validación definitiva la hace el servidor al publicar; aquí ves lo que ya se sabe del borrador.
+            </p>
+          </div>
+        )}
       </div>
     </aside>
+  );
+}
+
+/** Puertos del nodo y a qué nodos están conectados (navegable). */
+function PortConnections({
+  graph,
+  node,
+  side,
+  onFocusNode,
+}: {
+  graph: WorkflowGraph;
+  node: GraphNode;
+  side: "in" | "out";
+  onFocusNode?: (id: string) => void;
+}) {
+  const ports = side === "in" ? node.input_ports : node.output_ports;
+  if (ports.length === 0) {
+    return <p className="text-[12px] text-faint">{side === "in" ? "Este nodo inicia el flujo: no tiene entradas." : "Este nodo termina el flujo: no tiene salidas."}</p>;
+  }
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  return (
+    <div className="rounded-md border border-border" data-testid={`wf-ports-${side}`}>
+      <p className="border-b border-border px-2.5 py-1.5 text-[11px] font-semibold text-muted">
+        {side === "in" ? "Puertos de entrada" : "Puertos de salida"}
+      </p>
+      <ul className="divide-y divide-border-soft">
+        {ports.map((port) => {
+          const links = graph.edges.filter((e) =>
+            side === "in" ? e.to_node === node.id && e.to_port === port.name : e.from_node === node.id && e.from_port === port.name,
+          );
+          return (
+            <li key={port.name} className="px-2.5 py-1.5">
+              <p className="flex items-center gap-1.5 text-[12px] text-text">
+                <span className="font-mono">{port.name}</span>
+                <span className="text-[11px] text-faint">{port.type}</span>
+              </p>
+              {links.length === 0 ? (
+                <p className="text-[11px] text-faint">Sin conexión</p>
+              ) : (
+                <ul className="mt-0.5 flex flex-wrap gap-1">
+                  {links.map((e) => {
+                    const otherId = side === "in" ? e.from_node : e.to_node;
+                    const other = byId.get(otherId);
+                    const label = other ? other.label || nodeMeta(other.type).label : otherId;
+                    return (
+                      <li key={e.id}>
+                        <button
+                          type="button"
+                          disabled={!onFocusNode}
+                          className="min-h-6 cursor-pointer rounded-sm border border-border px-1.5 text-[11px] text-muted hover:border-accent/50 hover:text-text disabled:cursor-default"
+                          onClick={() => onFocusNode?.(otherId)}
+                        >
+                          {side === "in" ? "desde " : "hacia "}
+                          {label}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

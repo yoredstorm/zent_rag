@@ -235,10 +235,25 @@ function ProtectedLayout() {
   const { pathname } = useLocation();
   // El estudio de workflows es un lienzo: necesita todo el ancho, sin max-w ni padding.
   const fullBleed = /^\/workflows\/[^/]+$/.test(pathname);
+  // Lienzo del estudio: la navegación cede el ancho (colapsada) sin tocar la preferencia guardada.
+  const studioCanvas = fullBleed && pathname !== "/workflows/new";
   const [navOpen, setNavOpen] = useState(false);
   const [tourActive, setTourActive] = useState(false);
   const tourOwnsNav = useRef(false);
-  const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
+  const [storedCollapsed, setStoredCollapsed] = useState(readSidebarCollapsed);
+  const [studioNavExpanded, setStudioNavExpanded] = useState(false);
+  const collapsed = studioCanvas ? !studioNavExpanded : storedCollapsed;
+  const setCollapsed = useCallback(
+    (update: (value: boolean) => boolean) => {
+      if (studioCanvas) setStudioNavExpanded((expanded) => !update(!expanded));
+      else setStoredCollapsed(update);
+    },
+    [studioCanvas],
+  );
+
+  useEffect(() => {
+    if (!studioCanvas) setStudioNavExpanded(false);
+  }, [studioCanvas]);
   const [signupKey, setSignupKey] = useState<string | null>(null);
   const [impersonationMeta, setImpersonationMeta] = useState<{
     tenant: string;
@@ -287,12 +302,15 @@ function ProtectedLayout() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-sidebar", collapsed ? "collapsed" : "expanded");
+  }, [collapsed]);
+
+  useEffect(() => {
     try {
-      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, storedCollapsed ? "1" : "0");
     } catch {
       // sin persistencia
     }
-  }, [collapsed]);
+  }, [storedCollapsed]);
 
   useEffect(() => {
     setNowTs(Math.floor(Date.now() / 1000));
@@ -400,7 +418,7 @@ function ProtectedLayout() {
             >
               <Topbar
                 sidebarCollapsed={collapsed}
-                onExpandSidebar={() => setCollapsed(false)}
+                onExpandSidebar={() => setCollapsed(() => false)}
               />
               <DemoBanner />
               <TenantStepUpModal />
@@ -436,7 +454,9 @@ function ProtectedLayout() {
               <main
                 id="contenido"
                 className={
-                  fullBleed
+                  studioCanvas
+                    ? "flex min-h-0 w-full min-w-0 flex-1 flex-col"
+                    : fullBleed
                     ? "flex min-h-0 w-full min-w-0 flex-1 flex-col px-3 py-3 sm:px-4"
                     : "mx-auto w-full max-w-[1360px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
                 }

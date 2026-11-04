@@ -31,16 +31,19 @@ test.describe("Workflow Studio", () => {
     await page.getByTestId("wf-new-name").fill("E2E Studio Flow");
     await page.getByTestId("wf-create").click();
 
-    // Estudio inmersivo: rail + lienzo + dock de prueba, sin pestañas.
+    // Canvas-first: el lienzo ocupa el estudio; catálogo y simulador bajo demanda.
     await expect(page.getByTestId("workflow-canvas-editor")).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId("wf-node-library")).toBeVisible();
-    await expect(page.getByTestId("wf-test-panel")).toBeVisible();
+    await expect(page.getByTestId("wf-canvas-rail")).toBeVisible();
+    await expect(page.getByTestId("wf-node-library")).toHaveCount(0);
+    await expect(page.getByTestId("wf-test-panel")).toBeHidden();
     await expect(async () => {
       const n = await page.getByTestId("wf-canvas-node").count();
       expect(n).toBeGreaterThanOrEqual(2);
     }).toPass({ timeout: 15_000 });
 
     // Agregar "Preguntar a un agente": se auto-conecta y abre su inspector.
+    await page.getByTestId("wf-rail-add").click();
+    await expect(page.getByTestId("wf-node-library")).toBeVisible();
     await page.getByTestId("wf-add-llm").click();
     await expect(async () => {
       const n = await page.getByTestId("wf-canvas-node").count();
@@ -75,7 +78,9 @@ test.describe("Workflow Studio", () => {
     ]);
     expect(saved.ok()).toBeTruthy();
 
-    // Probar: la pregunta llega como {{trigger.message}} y la respuesta es texto.
+    // Probar: abre el simulador inferior; la pregunta llega como {{trigger.message}}.
+    await page.getByTestId("wf-open-dock").click();
+    await expect(page.getByTestId("wf-simulator")).toHaveAttribute("data-state", "open");
     await page.getByTestId("wf-test-payload").fill("quien es el gerente");
     await expect(page.getByTestId("wf-payload-wrapped")).toBeVisible();
     await page.getByTestId("wf-test").click();
@@ -95,7 +100,8 @@ test.describe("Workflow Studio", () => {
     await page.getByTestId("wf-step-jump").first().click();
     await expect(page.getByTestId("wf-node-config")).toBeVisible({ timeout: 10_000 });
 
-    // API: drawer con endpoint, header del secret y contrato Android.
+    // API (menú "Más acciones"): drawer con endpoint, header del secret y contrato Android.
+    await page.getByTestId("wf-more").click();
     await page.getByTestId("wf-open-api").click();
     await expect(page.getByTestId("wf-drawer-api")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("wf-api-inactive")).toBeVisible();

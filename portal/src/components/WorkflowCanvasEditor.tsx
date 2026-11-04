@@ -1,22 +1,40 @@
-import { ChartLineUp, WarningOctagon } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { CaretLeft, ChartLineUp, Database, GearSix, MagnifyingGlass, Plus, WarningOctagon } from "@phosphor-icons/react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel } from "../lib/businessSchema";
 import type { DataCatalogPayload, NodeSamples } from "../lib/dataPicker";
+import { INSPECTOR_WIDTH, clampInspectorWidth } from "../lib/studioLayout";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import type { GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
 import { fetchNodeCatalog, libraryWithCatalog, catalogCategoryLabels } from "../lib/workflowCatalog";
-import { NodeConfigPanel } from "./NodeConfigPanel";
+import { NodeConfigPanel, type NodeTab } from "./NodeConfigPanel";
 import { NodeLibrary, type MarketplaceContext, type MxRecommendation } from "./NodeLibrary";
-import { WorkflowCanvas, type RunOverlay } from "./WorkflowCanvas";
+import { Tooltip } from "./ui";
+import {
+  WorkflowCanvas,
+  type CanvasChangeOptions,
+  type CanvasHandle,
+  type CanvasNodeAction,
+  type RunOverlay,
+} from "./WorkflowCanvas";
 import type { RunDetail } from "./WorkflowRunInspector";
+import type { Point } from "./workflowCanvas/geometry";
+import { ResizeHandle } from "./workflowStudio/ResizeHandle";
 import { WorkflowContextPanel } from "./workflowStudio/WorkflowContextPanel";
+
+type TriggerType = "webhook" | "schedule" | "event";
 
 type Props = {
   workflowId: string | null;
   graph: WorkflowGraph | null;
-  onChangeGraph: (g: WorkflowGraph, triggerType: "webhook" | "schedule" | "event", triggerConfig: Record<string, unknown>) => void;
+  onChangeGraph: (
+    g: WorkflowGraph,
+    triggerType: TriggerType,
+    triggerConfig: Record<string, unknown>,
+    options?: CanvasChangeOptions,
+  ) => void;
   kbs: { id: string; name: string }[];
   agents: { id: string; name: string }[];
   /** Resultado del último run: pinta estados y respuestas sobre el grafo. */
@@ -34,9 +52,63 @@ type Props = {
   onUnpinData?: (nodeId: string) => void;
   onRunPartial?: (nodeId: string, mode: "node" | "until_node" | "from_node") => void;
   partialBusy?: string;
-  /** Alto del lienzo y del rail (el estudio lo pone a viewport). */
+  /** Alto del editor (el estudio lo pone a viewport). */
   heightClass?: string;
+  canvasRef?: RefObject<CanvasHandle | null>;
+  /** Clave de persistencia del viewport (usuario + workflow). */
+  viewportKey?: string | null;
+  /** Panel inferior bajo el lienzo (simulador). */
+  bottomPanel?: ReactNode;
+  /** `focus`: solo lienzo y barra flotante. */
+  chrome?: "full" | "focus";
+  toolbarExtra?: ReactNode;
+  inspectorWidth?: number;
+  onInspectorWidthChange?: (width: number) => void;
+  minimap?: boolean;
+  onToggleMinimap?: () => void;
+  /** "Configurar" en modo enfoque sale del modo para mostrar el inspector. */
+  onExitFocus?: () => void;
 };
+
+const RAIL_INSET = 60;
+const FLYOUT_W = 304;
+const OVERLAY_INSPECTOR_W = 380;
+
+function RailButton({
+  label,
+  shortcut,
+  pressed,
+  expanded,
+  testId,
+  onClick,
+  children,
+}: {
+  label: string;
+  shortcut?: string;
+  pressed?: boolean;
+  expanded?: boolean;
+  testId: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip label={shortcut ? `${label} · ${shortcut}` : label} side="right">
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={pressed}
+        aria-expanded={expanded}
+        data-testid={testId}
+        onClick={onClick}
+        className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent ${
+          pressed ? "bg-accent/15 text-accent" : "text-muted hover:bg-soft hover:text-text"
+        }`}
+      >
+        {children}
+      </button>
+    </Tooltip>
+  );
+}
 
 /** Nodos que solo sirven de marco: no cuentan como "el usuario ya armó algo". */
 function isScaffold(n: GraphNode): boolean {
@@ -61,8 +133,26 @@ export function WorkflowCanvasEditor({
   onRunPartial,
   partialBusy,
   heightClass = "h-[560px]",
+  canvasRef,
+  viewportKey,
+  bottomPanel,
+  chrome = "full",
+  toolbarExtra,
+  inspectorWidth = INSPECTOR_WIDTH.initial,
+  onInspectorWidthChange,
+  minimap = true,
+  onToggleMinimap,
+  onExitFocus,
 }: Props) {
   const { session } = useAuth();
+  const innerCanvasRef = useRef<CanvasHandle | null>(null);
+  const canvas = canvasRef ?? innerCanvasRef;
+  const wide = useMediaQuery("(min-width: 1280px)", true);
+  const [leftPanel, setLeftPanel] = useState<"catalog" | "context" | null>(null);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [tabRequest, setTabRequest] = useState<{ tab: NodeTab; key: number } | null>(null);
+  const insertAt = useRef<Point | null>(null);
+  const [viewportW, setViewportW] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
   const [catalogNodes, setCatalogNodes] = useState<Record<string, NodeMeta> | null>(null);
@@ -84,7 +174,6 @@ export function WorkflowCanvasEditor({
     warnings?: { code: string; message: string }[];
   } | null>(null);
   const [emptyDismissed, setEmptyDismissed] = useState(false);
-  const [showContext, setShowContext] = useState(false);
   const [nodeIssues, setNodeIssues] = useState<Record<string, { status: string; message: string }> | undefined>(undefined);
 
   // Readiness por nodo (workflow portability): badges verde/amarillo/rojo en el
@@ -287,16 +376,20 @@ export function WorkflowCanvasEditor({
    * Si el origen ya apuntaba a otro nodo, el nuevo se intercala en medio para
    * que nunca quede huérfano.
    */
-  function insertNode(nodeType: string, config?: Record<string, unknown>) {
+  function insertNode(nodeType: string, config?: Record<string, unknown>, at?: Point | null) {
     if (!graph) return;
     const source =
       graph.nodes.find((n) => n.id === selectedNodeId && n.output_ports.length > 0) ??
       graph.nodes.find((n) => n.type.startsWith("trigger_")) ??
       null;
 
-    const spawn = source
-      ? { x: source.position.x + 300, y: source.position.y + 20 }
-      : { x: 60, y: 80 };
+    const target = at ?? insertAt.current;
+    insertAt.current = null;
+    const spawn = target
+      ? { x: Math.round(target.x), y: Math.round(target.y) }
+      : source
+        ? { x: source.position.x + 300, y: source.position.y + 20 }
+        : { x: 60, y: 80 };
     while (graph.nodes.some((n) => Math.abs(n.position.x - spawn.x) < 40 && Math.abs(n.position.y - spawn.y) < 40)) {
       spawn.y += 150;
     }
@@ -323,7 +416,7 @@ export function WorkflowCanvasEditor({
       edges,
       entrypoints: graph.entrypoints.length ? graph.entrypoints : [n.id],
     };
-    onChangeGraph(copy, triggerTypeOf(copy), triggerConfigOf(copy));
+    onChangeGraph(copy, triggerTypeOf(copy), triggerConfigOf(copy), { checkpoint: true });
     onSelectNode(n.id);
     setSelectedEdge(null);
   }
@@ -441,7 +534,77 @@ export function WorkflowCanvasEditor({
 
   const selectedNodeObj = local?.nodes.find((n) => n.id === selectedNodeId) ?? null;
   const selectedEdgeObj = local?.edges.find((e) => e.id === selectedEdge) ?? null;
-  const inspectorOpen = Boolean(selectedNodeObj || selectedEdgeObj);
+  const focus = chrome === "focus";
+  const hasSelection = Boolean(selectedNodeObj || selectedEdgeObj);
+  const inspectorOpen = hasSelection && !inspectorCollapsed && !focus;
+  const docked = wide;
+  const dockedWidth = clampInspectorWidth(inspectorWidth, viewportW);
+  const leftInset = focus ? 0 : RAIL_INSET + (leftPanel ? FLYOUT_W + 8 : 0);
+  const rightInset = inspectorOpen && !docked ? Math.min(OVERLAY_INSPECTOR_W, viewportW - 120) + 16 : 0;
+
+  useEffect(() => {
+    const onResize = () => setViewportW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Selección nueva: el inspector vuelve a abrirse. En pantallas reducidas el
+  // catálogo y el inspector no conviven.
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    setInspectorCollapsed(false);
+    if (!wide) setLeftPanel(null);
+  }, [selectedNodeId, wide]);
+
+  useEffect(() => {
+    if (selectedEdge) setInspectorCollapsed(false);
+  }, [selectedEdge]);
+
+  function toggleLeftPanel(next: "catalog" | "context") {
+    setLeftPanel((cur) => {
+      const value = cur === next ? null : next;
+      if (value && !wide) setInspectorCollapsed(true);
+      return value;
+    });
+  }
+
+  const handleNodeAction = useCallback(
+    (action: CanvasNodeAction, nodeId: string) => {
+      if (focus) onExitFocus?.();
+      onSelectNode(nodeId);
+      setSelectedEdge(null);
+      setInspectorCollapsed(false);
+      setTabRequest({ tab: action === "run_node" ? "run" : "config", key: Date.now() });
+    },
+    [focus, onExitFocus, onSelectNode],
+  );
+
+  function openCanvasSearch() {
+    canvas.current?.openSearch();
+  }
+
+  const requestAddNode = useCallback(
+    (world: Point | null) => {
+      insertAt.current = world;
+      setLeftPanel("catalog");
+      if (!wide) setInspectorCollapsed(true);
+    },
+    [wide],
+  );
+
+  useEffect(() => {
+    if (focus) return;
+    function onKey(ev: KeyboardEvent) {
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || (ev.key !== "n" && ev.key !== "N")) return;
+      const t = ev.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (t?.closest?.('[role="dialog"],[role="menu"]')) return;
+      ev.preventDefault();
+      requestAddNode(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus, requestAddNode]);
 
   const suggestions = useMemo(
     () =>
@@ -455,46 +618,141 @@ export function WorkflowCanvasEditor({
     []
   );
 
-  return (
-    <div className={`flex min-h-0 gap-3 ${heightClass}`} data-testid="workflow-canvas-editor">
-      <NodeLibrary
-        className="h-full"
-        usedTypes={local ? local.nodes.map((n) => n.type) : []}
-        nodes={catalogNodes}
-        categoryLabels={categoryLabels}
-        businessMode={configLevel !== "advanced"}
-        onAdd={(meta) => insertNode(meta.type)}
-        marketplace={mkt}
-        onAddMarketplaceAction={addMarketplaceAction}
-        onAddRecommendation={addRecommendation}
-        returnTo={workflowId ? `/workflows/${workflowId}` : "/workflows/new/manual"}
-        nodeId={selectedNodeId}
+  const inspector =
+    local && (selectedNodeObj || selectedEdgeObj) ? (
+      <NodeConfigPanel
+        className="h-full w-full rounded-none border-0 shadow-none"
+        graph={local}
+        node={selectedNodeObj}
+        edge={selectedEdgeObj}
+        onChange={(g) => onChangeGraph(g, triggerTypeOf(g), triggerConfigOf(g))}
+        onDeleteNode={deleteNode}
+        onDeleteEdge={deleteEdge}
+        onClose={() => {
+          onSelectNode(null);
+          setSelectedEdge(null);
+        }}
+        onCollapse={() => setInspectorCollapsed(true)}
+        tabRequest={tabRequest}
+        nodeIssue={selectedNodeObj ? nodeIssues?.[selectedNodeObj.id] ?? null : null}
+        onFocusNode={(id) => {
+          onSelectNode(id);
+          canvas.current?.centerNode(id);
+        }}
+        kbs={kbs}
+        agents={agents}
+        mxInstalls={mxInstalls}
+        mxActions={mxActions}
+        nodeSchemas={nodeSchemas}
+        catalogNodes={catalogNodes}
+        dataCatalog={dataCatalog}
+        samples={samples}
+        run={run}
+        pinned={Boolean(selectedNodeObj && pinnedNodes?.includes(selectedNodeObj.id))}
+        onPinData={onPinData}
+        onUnpinData={onUnpinData}
+        onRunPartial={onRunPartial}
+        partialBusy={partialBusy}
+        configLevel={configLevel}
+        onConfigLevelChange={onConfigLevelChange}
+        onAddSuggested={insertNode}
       />
+    ) : null;
 
-      <div className="relative min-w-0 flex-1">
+  return (
+    <div className={`flex min-h-0 min-w-0 ${heightClass}`} data-testid="workflow-canvas-editor" data-chrome={chrome}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative min-h-0 min-w-0 flex-1">
         {local ? (
           <WorkflowCanvas
+            key={workflowId ?? "draft"}
+            ref={canvas}
             className="h-full"
             graph={local}
             agents={agents}
-            onChange={(g) => onChangeGraph(g, triggerTypeOf(g), triggerConfigOf(g))}
+            onChange={(g, options) => onChangeGraph(g, triggerTypeOf(g), triggerConfigOf(g), options)}
             selectedNodeId={selectedNodeId}
             onSelectNode={onSelectNode}
             selectedEdgeId={selectedEdge}
             onSelectEdge={setSelectedEdge}
             overlay={overlay}
-            rightInset={inspectorOpen ? 320 : 0}
+            leftInset={leftInset}
+            rightInset={rightInset}
             nodeIssues={nodeIssues}
+            viewportKey={viewportKey}
+            minimap={minimap}
+            onToggleMinimap={onToggleMinimap}
+            onRequestAddNode={focus ? undefined : requestAddNode}
+            onDropNode={(type, world) => insertNode(type, undefined, world)}
+            onNodeAction={handleNodeAction}
+            toolbarExtra={toolbarExtra}
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center rounded-lg border border-dashed border-border bg-soft/30 text-xs text-faint">
+          <div className="flex h-full w-full items-center justify-center border border-dashed border-border bg-soft/30 text-xs text-faint">
             {workflowId ? "Cargando grafo…" : "Guarda el workflow para empezar a editar su canvas."}
           </div>
         )}
 
-        {isEmptyCanvas && (
+        {!focus && (
+          <nav
+            className="absolute top-3 left-3 z-20 flex flex-col gap-1 rounded-lg border border-border bg-raised/95 p-1 shadow-pop backdrop-blur-sm"
+            aria-label="Herramientas del lienzo"
+            data-testid="wf-canvas-rail"
+          >
+            <RailButton
+              label="Añadir nodo"
+              shortcut="N"
+              pressed={leftPanel === "catalog"}
+              expanded={leftPanel === "catalog"}
+              testId="wf-rail-add"
+              onClick={() => toggleLeftPanel("catalog")}
+            >
+              <Plus size={17} aria-hidden />
+            </RailButton>
+            <RailButton label="Buscar en el lienzo" shortcut="Ctrl + F" testId="wf-rail-search" onClick={openCanvasSearch}>
+              <MagnifyingGlass size={17} aria-hidden />
+            </RailButton>
+            <RailButton
+              label="Contexto y datos"
+              pressed={leftPanel === "context"}
+              expanded={leftPanel === "context"}
+              testId="wf-context-toggle"
+              onClick={() => toggleLeftPanel("context")}
+            >
+              <Database size={17} aria-hidden />
+            </RailButton>
+            {hasSelection && inspectorCollapsed && (
+              <RailButton label="Mostrar configuración del nodo" testId="wf-inspector-expand" onClick={() => setInspectorCollapsed(false)}>
+                <GearSix size={17} aria-hidden />
+              </RailButton>
+            )}
+          </nav>
+        )}
+
+        {!focus && leftPanel === "catalog" && (
+          <div className="absolute top-3 bottom-3 z-30 flex" style={{ left: RAIL_INSET, width: `min(${FLYOUT_W}px, calc(100% - ${RAIL_INSET + 12}px))` }}>
+            <NodeLibrary
+              className="h-full w-full shadow-pop"
+              autoFocus
+              onClose={() => setLeftPanel(null)}
+              usedTypes={local ? local.nodes.map((n) => n.type) : []}
+              nodes={catalogNodes}
+              categoryLabels={categoryLabels}
+              businessMode={configLevel !== "advanced"}
+              onAdd={(meta) => insertNode(meta.type)}
+              marketplace={mkt}
+              onAddMarketplaceAction={addMarketplaceAction}
+              onAddRecommendation={addRecommendation}
+              returnTo={workflowId ? `/workflows/${workflowId}` : "/workflows/new/manual"}
+              nodeId={selectedNodeId}
+            />
+          </div>
+        )}
+
+        {isEmptyCanvas && !focus && (
           <div
-            className="absolute bottom-4 left-4 z-20 w-[min(340px,calc(100%-2rem))] rounded-lg border border-accent/30 bg-surface/95 p-3 shadow-panel backdrop-blur-sm"
+            className="absolute top-3 z-20 w-[min(340px,calc(100%-6rem))] rounded-lg border border-accent/30 bg-surface/95 p-3 shadow-panel backdrop-blur-sm"
+            style={{ left: leftInset + 8 }}
             data-testid="wf-empty-hint"
           >
             <p className="text-sm font-medium text-text">¿Qué quieres automatizar?</p>
@@ -525,10 +783,13 @@ export function WorkflowCanvasEditor({
           </div>
         )}
 
-        {cost && cost.calls_per_run > 0 && !isEmptyCanvas && (
-          <div className="absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-2">
+        {cost && cost.calls_per_run > 0 && !isEmptyCanvas && !focus && (
+          <div
+            className="pointer-events-none absolute top-3 z-20 flex max-w-[50%] flex-wrap justify-end gap-1.5 [&>*]:pointer-events-auto"
+            style={{ right: 12 + rightInset }}
+          >
             <span
-              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface/95 px-2 py-1 text-[10px] text-muted"
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface/95 px-2 py-1 text-[11px] text-muted"
               data-testid="wf-cost"
               title={`${cost.calls_per_run} llamadas por run`}
             >
@@ -536,7 +797,7 @@ export function WorkflowCanvasEditor({
             </span>
             {cost.bulk_warning && (
               <span
-                className="inline-flex items-center gap-1 rounded-md border border-danger/40 bg-danger-soft px-2 py-1 text-[10px] text-danger"
+                className="inline-flex items-center gap-1 rounded-md border border-danger/40 bg-danger-soft px-2 py-1 text-[11px] text-danger"
                 data-testid="wf-bulk-warning"
               >
                 <WarningOctagon size={12} aria-hidden />
@@ -546,7 +807,7 @@ export function WorkflowCanvasEditor({
             {(cost.warnings ?? []).slice(0, 2).map((warning) => (
               <span
                 key={warning.code}
-                className="inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[10px] text-warn"
+                className="inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[11px] text-warn"
                 data-testid={`wf-cost-warning-${warning.code}`}
                 title={warning.message}
               >
@@ -557,19 +818,11 @@ export function WorkflowCanvasEditor({
           </div>
         )}
 
-        {!inspectorOpen && (
-          <button
-            type="button"
-            className="absolute top-3 left-3 z-20 rounded-md border border-border bg-surface/95 px-2 py-1 text-[10px] text-muted hover:border-accent/50"
-            data-testid="wf-context-toggle"
-            onClick={() => setShowContext((value) => !value)}
+        {!focus && leftPanel === "context" && (
+          <div
+            className="absolute top-3 bottom-3 z-30 flex"
+            style={{ left: RAIL_INSET, width: `min(${FLYOUT_W + 36}px, calc(100% - ${RAIL_INSET + 12}px))` }}
           >
-            Contexto
-          </button>
-        )}
-
-        {showContext && !inspectorOpen && (
-          <div className="absolute top-12 bottom-3 left-3 z-30 w-[min(340px,calc(100%-1.5rem))]">
             <WorkflowContextPanel
               sources={dataCatalog?.sources}
               contributions={run?.contributions}
@@ -610,47 +863,60 @@ export function WorkflowCanvasEditor({
                   triggerConfigOf(local),
                 );
               }}
-              onClose={() => setShowContext(false)}
+              onClose={() => setLeftPanel(null)}
             />
           </div>
         )}
 
-        {inspectorOpen && local && (
-          <div className="absolute top-3 right-3 bottom-3 z-30 flex w-[19rem] max-w-[calc(100%-1.5rem)]">
-            <NodeConfigPanel
-              className="w-full"
-              graph={local}
-              node={selectedNodeObj}
-              edge={selectedEdgeObj}
-              onChange={(g) => onChangeGraph(g, triggerTypeOf(g), triggerConfigOf(g))}
-              onDeleteNode={deleteNode}
-              onDeleteEdge={deleteEdge}
-              onClose={() => {
-                onSelectNode(null);
-                setSelectedEdge(null);
-              }}
-              kbs={kbs}
-              agents={agents}
-              mxInstalls={mxInstalls}
-              mxActions={mxActions}
-              nodeSchemas={nodeSchemas}
-              catalogNodes={catalogNodes}
-              dataCatalog={dataCatalog}
-              samples={samples}
-              run={run}
-              pinned={Boolean(selectedNodeObj && pinnedNodes?.includes(selectedNodeObj.id))}
-              onPinData={onPinData}
-              onUnpinData={onUnpinData}
-              onRunPartial={onRunPartial}
-              partialBusy={partialBusy}
-              configLevel={configLevel}
-              onConfigLevelChange={onConfigLevelChange}
-              onAddSuggested={insertNode}
-            />
+        {inspectorOpen && !docked && inspector && (
+          <div
+            className="absolute top-3 right-3 bottom-3 z-30 flex overflow-hidden rounded-lg border border-border bg-surface shadow-pop"
+            style={{ width: `min(${OVERLAY_INSPECTOR_W}px, calc(100% - ${RAIL_INSET + 24}px))` }}
+            data-testid="wf-inspector"
+            data-docked="false"
+          >
+            {inspector}
           </div>
         )}
       </div>
+      {bottomPanel && <div className={focus ? "hidden" : "contents"}>{bottomPanel}</div>}
+      </div>
 
+      {inspectorOpen && docked && inspector && (
+        <aside
+          className="relative flex min-h-0 shrink-0 border-l border-border bg-surface"
+          style={{ width: dockedWidth }}
+          data-testid="wf-inspector"
+          data-docked="true"
+          aria-label="Configuración del nodo"
+        >
+          <ResizeHandle
+            axis="x"
+            value={dockedWidth}
+            min={INSPECTOR_WIDTH.min}
+            max={clampInspectorWidth(INSPECTOR_WIDTH.max, viewportW)}
+            resetTo={INSPECTOR_WIDTH.initial}
+            onChange={(width) => onInspectorWidthChange?.(width)}
+            label="Ancho del panel de configuración"
+            testId="wf-inspector-resize"
+          />
+          {inspector}
+        </aside>
+      )}
+      {hasSelection && inspectorCollapsed && docked && !focus && (
+        <div className="flex w-10 shrink-0 flex-col items-center border-l border-border bg-surface pt-2">
+          <Tooltip label="Mostrar configuración del nodo" side="left">
+            <button
+              type="button"
+              aria-label="Mostrar configuración del nodo"
+              className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted hover:bg-soft hover:text-text"
+              onClick={() => setInspectorCollapsed(false)}
+            >
+              <CaretLeft size={15} aria-hidden />
+            </button>
+          </Tooltip>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import { NODE_LIBRARY, nodeMeta } from "../lib/workflowGraph";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CATEGORY_META, NODE_LIBRARY, nodeMeta } from "../lib/workflowGraph";
 import { NodeLibrary, type MarketplaceContext } from "./NodeLibrary";
 
 const MKT: MarketplaceContext = {
@@ -61,21 +61,66 @@ describe("NodeLibrary", () => {
     expect(button).toHaveTextContent("Agente backend");
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("title", "No hay agentes disponibles.");
-    expect(screen.getByText("Inteligencia (backend)")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Inteligencia (backend)" })).toBeInTheDocument();
   });
 
   it("modo negocio agrupa por propósito y avanzado por categoría", () => {
     const { rerender } = render(
       <NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} businessMode />
     );
-    expect(screen.getByText("Entender")).toBeInTheDocument();
-    expect(screen.getByText("Consultar")).toBeInTheDocument();
-    expect(screen.getByText("Esperar")).toBeInTheDocument();
-    expect(screen.getByText("Finalizar")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Entender" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Consultar" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Esperar" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Finalizar" })).toBeInTheDocument();
     expect(screen.queryByText("Empezar")).toBeNull();
 
     rerender(<NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} />);
-    expect(screen.getByText("AI & Agents")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "AI & Agents" })).toBeInTheDocument();
+  });
+});
+
+describe("NodeLibrary catálogo contextual", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it("filtra por categoría y busca también en la descripción", async () => {
+    const user = userEvent.setup();
+    const nodes = {
+      ...NODE_LIBRARY,
+      condition: { ...nodeMeta("condition"), description: "Bifurca según una regla de negocio" },
+    };
+    render(<NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} nodes={nodes} />);
+    await user.click(screen.getByRole("button", { name: "AI & Agents" }));
+    expect(screen.getByRole("region", { name: "AI & Agents" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: CATEGORY_META.logic.label })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "AI & Agents" }));
+    await user.type(screen.getByLabelText("Buscar nodo"), "bifurca");
+    expect(screen.getByTestId("wf-add-condition")).toHaveTextContent("Bifurca según una regla de negocio");
+    expect(screen.queryByTestId("wf-add-llm")).toBeNull();
+  });
+
+  it("recuerda recientes y favoritos entre aperturas", async () => {
+    const user = userEvent.setup();
+    const onAdd = vi.fn();
+    const { unmount } = render(<NodeLibrary onAdd={onAdd} usedTypes={["trigger_webhook"]} />);
+    await user.click(screen.getByTestId("wf-add-llm"));
+    expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ type: "llm" }));
+    await user.click(screen.getByRole("button", { name: `Marcar ${nodeMeta("condition").label} como favorito` }));
+    unmount();
+
+    render(<NodeLibrary onAdd={onAdd} usedTypes={["trigger_webhook"]} />);
+    expect(screen.getByTestId("wf-recent-llm")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-fav-condition")).toBeInTheDocument();
+  });
+
+  it("los nodos se arrastran con el tipo MIME del lienzo y Esc cierra el flyout", async () => {
+    const onClose = vi.fn();
+    render(<NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} onClose={onClose} autoFocus />);
+    expect(screen.getByLabelText("Buscar nodo")).toHaveFocus();
+    const setData = vi.fn();
+    fireEvent.dragStart(screen.getByTestId("wf-add-llm"), { dataTransfer: { setData, effectAllowed: "" } });
+    expect(setData).toHaveBeenCalledWith("application/x-zent-node", "llm");
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
   });
 });
 

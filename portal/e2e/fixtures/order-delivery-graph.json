@@ -1,0 +1,1108 @@
+{
+ "workflow_version": 2,
+ "nodes": [
+  {
+   "id": "inicio",
+   "type": "trigger_webhook",
+   "label": "Simular pedido",
+   "config": {
+    "note": "Ejecutar manualmente con customer_ref, sku, quantity y delivery."
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 80,
+    "y": 80
+   }
+  },
+  {
+   "id": "guardar_pedido",
+   "type": "state_merge",
+   "label": "Guardar datos del pedido",
+   "config": {
+    "path": "pedido",
+    "value": {
+     "customer_ref": "{{trigger.customer_ref}}",
+     "sku": "{{trigger.sku}}",
+     "quantity": "{{trigger.quantity}}",
+     "delivery": "{{trigger.delivery}}",
+     "address": "{{trigger.address}}",
+     "order_number": "{{trigger.order_number}}"
+    }
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 400,
+    "y": 80
+   }
+  },
+  {
+   "id": "precio",
+   "type": "data_query",
+   "label": "Precio y stock",
+   "config": {
+    "capability": "bodega.product.get",
+    "params": {
+     "sku": "{{instance.state.pedido.sku}}"
+    }
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 720,
+    "y": 80
+   }
+  },
+  {
+   "id": "stock_ok",
+   "type": "condition",
+   "label": "¿Hay stock suficiente?",
+   "config": {
+    "field": "{{nodes.precio.output.record.available}}",
+    "operator": ">=",
+    "value": "{{instance.state.pedido.quantity}}"
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    },
+    {
+     "name": "then",
+     "type": "json"
+    },
+    {
+     "name": "else",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 1040,
+    "y": 80
+   }
+  },
+  {
+   "id": "sin_stock",
+   "type": "notify",
+   "label": "Sin stock",
+   "config": {
+    "channel": "in_app",
+    "title": "Sin stock",
+    "message": "No hay stock suficiente para {{instance.state.pedido.sku}}. Disponible: {{nodes.precio.output.record.available}}."
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 80,
+    "y": 240
+   }
+  },
+  {
+   "id": "historial",
+   "type": "data_query",
+   "label": "Pedidos del cliente",
+   "config": {
+    "capability": "p19.customer.orders",
+    "params": {
+     "customer_ref": "{{instance.state.pedido.customer_ref}}"
+    }
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 80,
+    "y": 400
+   }
+  },
+  {
+   "id": "recurrente",
+   "type": "condition",
+   "label": "¿Cliente con pedidos?",
+   "config": {
+    "field": "{{nodes.historial.output.row_count}}",
+    "operator": ">",
+    "value": 0
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    },
+    {
+     "name": "then",
+     "type": "json"
+    },
+    {
+     "name": "else",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 400,
+    "y": 240
+   }
+  },
+  {
+   "id": "marcar_recurrente",
+   "type": "state_set",
+   "label": "Cliente recurrente",
+   "config": {
+    "path": "customer_type",
+    "value": "recurrente"
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 720,
+    "y": 240
+   }
+  },
+  {
+   "id": "marcar_nuevo",
+   "type": "state_set",
+   "label": "Cliente nuevo",
+   "config": {
+    "path": "customer_type",
+    "value": "nuevo"
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 720,
+    "y": 400
+   }
+  },
+  {
+   "id": "delivery_check",
+   "type": "condition",
+   "label": "¿Delivery?",
+   "config": {
+    "field": "{{instance.state.pedido.delivery}}",
+    "operator": "==",
+    "value": true
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    },
+    {
+     "name": "then",
+     "type": "json"
+    },
+    {
+     "name": "else",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 1040,
+    "y": 240
+   }
+  },
+  {
+   "id": "address_check",
+   "type": "condition",
+   "label": "¿Tiene dirección?",
+   "config": {
+    "field": "{{instance.state.pedido.address}}",
+    "operator": "!=",
+    "value": ""
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    },
+    {
+     "name": "then",
+     "type": "json"
+    },
+    {
+     "name": "else",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 80,
+    "y": 400
+   }
+  },
+  {
+   "id": "sin_direccion",
+   "type": "notify",
+   "label": "Falta dirección",
+   "config": {
+    "channel": "in_app",
+    "title": "Delivery sin dirección",
+    "message": "El pedido es delivery pero falta la dirección de entrega."
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 400,
+    "y": 400
+   }
+  },
+  {
+   "id": "marcar_delivery",
+   "type": "state_set",
+   "label": "Delivery",
+   "config": {
+    "path": "delivery_mode",
+    "value": "delivery"
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 400,
+    "y": 560
+   }
+  },
+  {
+   "id": "marcar_recojo",
+   "type": "state_set",
+   "label": "Recojo",
+   "config": {
+    "path": "delivery_mode",
+    "value": "pickup"
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 80,
+    "y": 560
+   }
+  },
+  {
+   "id": "crear_pedido",
+   "type": "capability_call",
+   "label": "Crear pedido Bodega",
+   "config": {
+    "capability": "bodega.order.create",
+    "inputs": {
+     "order_number": "{{trigger.order_number}}",
+     "customer_ref": "{{instance.state.pedido.customer_ref}}",
+     "currency": "{{variables.currency}}",
+     "items": [
+      {
+       "sku": "{{instance.state.pedido.sku}}",
+       "quantity": "{{instance.state.pedido.quantity}}",
+       "unit_price": "{{nodes.precio.output.record.price}}"
+      }
+     ]
+    }
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 720,
+    "y": 400
+   }
+  },
+  {
+   "id": "reservar",
+   "type": "capability_call",
+   "label": "Reservar stock",
+   "config": {
+    "capability": "bodega.stock.reserve_batch",
+    "inputs": {
+     "order_number": "{{nodes.crear_pedido.output.order_number}}",
+     "ttl_seconds": "{{variables.reservation_ttl_seconds}}",
+     "items": [
+      {
+       "sku": "{{instance.state.pedido.sku}}",
+       "quantity": "{{instance.state.pedido.quantity}}"
+      }
+     ]
+    }
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 1040,
+    "y": 400
+   }
+  },
+  {
+   "id": "aprobacion",
+   "type": "human_approval",
+   "label": "Validar pago simulado",
+   "config": {
+    "action": "Aprobar venta simulada",
+    "summary": "Pedido {{nodes.crear_pedido.output.order_number}} · {{nodes.crear_pedido.output.total}} {{nodes.crear_pedido.output.currency}} · {{nodes.crear_pedido.output.items}} ítem(s) · cliente {{instance.state.pedido.customer_ref}} ({{instance.state.customer_type}}) · {{instance.state.delivery_mode}}",
+    "data": {
+     "order_number": "{{nodes.crear_pedido.output.order_number}}",
+     "customer_ref": "{{instance.state.pedido.customer_ref}}",
+     "customer_type": "{{instance.state.customer_type}}",
+     "delivery_mode": "{{instance.state.delivery_mode}}",
+     "address": "{{instance.state.pedido.address}}",
+     "total": "{{nodes.crear_pedido.output.total}}",
+     "currency": "{{nodes.crear_pedido.output.currency}}",
+     "sku": "{{instance.state.pedido.sku}}",
+     "quantity": "{{instance.state.pedido.quantity}}"
+    },
+    "expires_minutes": 60
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 80,
+    "y": 560
+   }
+  },
+  {
+   "id": "commit",
+   "type": "capability_call",
+   "label": "Confirmar stock",
+   "config": {
+    "capability": "bodega.stock.commit_batch",
+    "inputs": {
+     "order_number": "{{nodes.crear_pedido.output.order_number}}"
+    }
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 400,
+    "y": 560
+   }
+  },
+  {
+   "id": "entrega_final",
+   "type": "condition",
+   "label": "¿Delivery o recojo?",
+   "config": {
+    "field": "{{instance.state.delivery_mode}}",
+    "operator": "==",
+    "value": "delivery"
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    },
+    {
+     "name": "then",
+     "type": "json"
+    },
+    {
+     "name": "else",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 720,
+    "y": 560
+   }
+  },
+  {
+   "id": "aviso_delivery",
+   "type": "notify",
+   "label": "Pedido en reparto",
+   "config": {
+    "channel": "in_app",
+    "title": "Pedido en reparto",
+    "message": "Pedido {{nodes.crear_pedido.output.order_number}} confirmado. Sale a {{instance.state.pedido.address}}."
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 1040,
+    "y": 560
+   }
+  },
+  {
+   "id": "aviso_recojo",
+   "type": "notify",
+   "label": "Listo para recojo",
+   "config": {
+    "channel": "in_app",
+    "title": "Pedido listo para recojo",
+    "message": "Pedido {{nodes.crear_pedido.output.order_number}} confirmado. El cliente puede recogerlo."
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 1040,
+    "y": 720
+   }
+  },
+  {
+   "id": "resultado",
+   "type": "business_result",
+   "label": "Registrar venta simulada",
+   "config": {
+    "title": "Venta simulada de bodega",
+    "section": "completed",
+    "summary": "Pedido {{nodes.crear_pedido.output.order_number}} · {{nodes.crear_pedido.output.total}} {{nodes.crear_pedido.output.currency}} · {{instance.state.pedido.customer_ref}} · {{instance.state.customer_type}} · {{instance.state.delivery_mode}}"
+   },
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 80,
+    "y": 720
+   }
+  },
+  {
+   "id": "fin",
+   "type": "end",
+   "label": "Fin",
+   "config": {},
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 400,
+    "y": 720
+   }
+  },
+  {
+   "id": "fin_sin_stock",
+   "type": "end",
+   "label": "Fin sin stock",
+   "config": {},
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 400,
+    "y": 400
+   }
+  },
+  {
+   "id": "fin_sin_direccion",
+   "type": "end",
+   "label": "Fin sin dirección",
+   "config": {},
+   "input_ports": [
+    {
+     "name": "in",
+     "type": "json"
+    }
+   ],
+   "output_ports": [
+    {
+     "name": "out",
+     "type": "json"
+    }
+   ],
+   "retry_policy": {
+    "max_attempts": 1,
+    "backoff_seconds": 0
+   },
+   "timeout_ms": 60000,
+   "error_policy": "fail",
+   "metadata": {},
+   "position": {
+    "x": 720,
+    "y": 560
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from_node": "inicio",
+   "from_port": "out",
+   "to_node": "guardar_pedido",
+   "to_port": "in"
+  },
+  {
+   "id": "e1b",
+   "from_node": "guardar_pedido",
+   "from_port": "out",
+   "to_node": "precio",
+   "to_port": "in"
+  },
+  {
+   "id": "e2",
+   "from_node": "precio",
+   "from_port": "out",
+   "to_node": "stock_ok",
+   "to_port": "in"
+  },
+  {
+   "id": "e3",
+   "from_node": "stock_ok",
+   "from_port": "then",
+   "to_node": "historial",
+   "to_port": "in",
+   "label": "sí"
+  },
+  {
+   "id": "e4",
+   "from_node": "stock_ok",
+   "from_port": "else",
+   "to_node": "sin_stock",
+   "to_port": "in",
+   "label": "no"
+  },
+  {
+   "id": "e5",
+   "from_node": "sin_stock",
+   "from_port": "out",
+   "to_node": "fin_sin_stock",
+   "to_port": "in"
+  },
+  {
+   "id": "e6",
+   "from_node": "historial",
+   "from_port": "out",
+   "to_node": "recurrente",
+   "to_port": "in"
+  },
+  {
+   "id": "e7",
+   "from_node": "recurrente",
+   "from_port": "then",
+   "to_node": "marcar_recurrente",
+   "to_port": "in",
+   "label": "sí"
+  },
+  {
+   "id": "e8",
+   "from_node": "recurrente",
+   "from_port": "else",
+   "to_node": "marcar_nuevo",
+   "to_port": "in",
+   "label": "no"
+  },
+  {
+   "id": "e9",
+   "from_node": "marcar_recurrente",
+   "from_port": "out",
+   "to_node": "delivery_check",
+   "to_port": "in"
+  },
+  {
+   "id": "e10",
+   "from_node": "marcar_nuevo",
+   "from_port": "out",
+   "to_node": "delivery_check",
+   "to_port": "in"
+  },
+  {
+   "id": "e11",
+   "from_node": "delivery_check",
+   "from_port": "then",
+   "to_node": "address_check",
+   "to_port": "in",
+   "label": "sí"
+  },
+  {
+   "id": "e12",
+   "from_node": "delivery_check",
+   "from_port": "else",
+   "to_node": "marcar_recojo",
+   "to_port": "in",
+   "label": "no"
+  },
+  {
+   "id": "e13",
+   "from_node": "address_check",
+   "from_port": "then",
+   "to_node": "marcar_delivery",
+   "to_port": "in",
+   "label": "sí"
+  },
+  {
+   "id": "e14",
+   "from_node": "address_check",
+   "from_port": "else",
+   "to_node": "sin_direccion",
+   "to_port": "in",
+   "label": "no"
+  },
+  {
+   "id": "e15",
+   "from_node": "sin_direccion",
+   "from_port": "out",
+   "to_node": "fin_sin_direccion",
+   "to_port": "in"
+  },
+  {
+   "id": "e16",
+   "from_node": "marcar_delivery",
+   "from_port": "out",
+   "to_node": "crear_pedido",
+   "to_port": "in"
+  },
+  {
+   "id": "e17",
+   "from_node": "marcar_recojo",
+   "from_port": "out",
+   "to_node": "crear_pedido",
+   "to_port": "in"
+  },
+  {
+   "id": "e18",
+   "from_node": "crear_pedido",
+   "from_port": "out",
+   "to_node": "reservar",
+   "to_port": "in"
+  },
+  {
+   "id": "e19",
+   "from_node": "reservar",
+   "from_port": "out",
+   "to_node": "aprobacion",
+   "to_port": "in"
+  },
+  {
+   "id": "e20",
+   "from_node": "aprobacion",
+   "from_port": "out",
+   "to_node": "commit",
+   "to_port": "in"
+  },
+  {
+   "id": "e21",
+   "from_node": "commit",
+   "from_port": "out",
+   "to_node": "entrega_final",
+   "to_port": "in"
+  },
+  {
+   "id": "e22",
+   "from_node": "entrega_final",
+   "from_port": "then",
+   "to_node": "aviso_delivery",
+   "to_port": "in",
+   "label": "delivery"
+  },
+  {
+   "id": "e23",
+   "from_node": "entrega_final",
+   "from_port": "else",
+   "to_node": "aviso_recojo",
+   "to_port": "in",
+   "label": "recojo"
+  },
+  {
+   "id": "e24",
+   "from_node": "aviso_delivery",
+   "from_port": "out",
+   "to_node": "resultado",
+   "to_port": "in"
+  },
+  {
+   "id": "e25",
+   "from_node": "aviso_recojo",
+   "from_port": "out",
+   "to_node": "resultado",
+   "to_port": "in"
+  },
+  {
+   "id": "e26",
+   "from_node": "resultado",
+   "from_port": "out",
+   "to_node": "fin",
+   "to_port": "in"
+  }
+ ],
+ "variables": {
+  "currency": "PEN",
+  "reservation_ttl_seconds": 900,
+  "approval_expires_minutes": 60,
+  "default_address": "Av. Demo 123"
+ },
+ "entrypoints": [
+  "inicio"
+ ],
+ "metadata": {
+  "template": "retail_order_delivery_demo",
+  "category": "ventas",
+  "applies_to": [
+   "WORKFLOWS"
+  ],
+  "simulation": "manual_approval"
+ }
+}

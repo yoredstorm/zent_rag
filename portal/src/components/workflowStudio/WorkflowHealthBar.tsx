@@ -7,7 +7,7 @@ import { CaretDown, CheckCircle, Warning, XCircle } from "@phosphor-icons/react"
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
-import { Badge, Button } from "../ui";
+import { Badge, Button, Popover } from "../ui";
 
 type Check = {
   key: string;
@@ -30,6 +30,8 @@ type Props = {
   workflowId: string;
   /** Cambia cuando el grafo se guarda para refrescar el checklist. */
   refreshKey?: string | number;
+  /** `chip`: indicador compacto de cabecera con el detalle en un popover. */
+  variant?: "bar" | "chip";
 };
 
 function Icon({ status }: { status: Check["status"] }) {
@@ -38,7 +40,7 @@ function Icon({ status }: { status: Check["status"] }) {
   return <XCircle size={13} weight="fill" className="text-danger" aria-hidden />;
 }
 
-export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
+export function WorkflowHealthBar({ workflowId, refreshKey, variant = "bar" }: Props) {
   const { session } = useAuth();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
@@ -67,7 +69,7 @@ export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
   }, [session, workflowId, refreshKey]);
 
   if (!summary && !readiness) return null;
-  const problems = readiness?.checks.filter((c) => c.status !== "ok") ?? [];
+  const problems = (readiness?.checks ?? []).filter((c) => c.status !== "ok");
   const problemCount = (readiness?.errors ?? 0) + (readiness?.warnings ?? 0);
   const blocked = (readiness?.errors ?? 0) > 0;
   const readinessLabel = blocked
@@ -78,6 +80,61 @@ export function WorkflowHealthBar({ workflowId, refreshKey }: Props) {
         ? "Listo para publicar"
         : "Borrador incompleto";
   const needsMarketplace = problems.some((p) => (p.hint || "").includes("Marketplace"));
+
+  if (variant === "chip") {
+    const tone = blocked ? "text-danger" : problemCount > 0 ? "text-warn" : "text-ok";
+    const ChipIcon = blocked ? XCircle : problemCount > 0 ? Warning : CheckCircle;
+    return (
+      <Popover
+        align="start"
+        width={420}
+        trigger={
+          <button
+            type="button"
+            className="inline-flex h-8 max-w-[14rem] cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 text-[12px] text-muted outline-none hover:border-border-strong hover:text-text focus-visible:ring-2 focus-visible:ring-accent"
+            data-testid="wf-health-chip"
+            aria-label={`Estado de preparación: ${readinessLabel}${problemCount ? `, ${problemCount} pendientes` : ""}`}
+          >
+            <ChipIcon size={14} weight="fill" className={`shrink-0 ${tone}`} aria-hidden />
+            <span className="hidden truncate 2xl:inline">{readinessLabel}</span>
+            {problemCount > 0 && <span className="tabular-nums">{problemCount}</span>}
+          </button>
+        }
+      >
+        <div className="space-y-2.5" data-testid="wf-health">
+          {summary?.text && (
+            <p className="text-[12px] leading-relaxed text-muted" data-testid="wf-summary-text">
+              {summary.text}
+            </p>
+          )}
+          {readiness && (
+            <p className={`text-[12px] font-medium ${blocked ? "text-danger" : "text-text"}`} data-testid="wf-readiness-score">
+              {readinessLabel}
+            </p>
+          )}
+          <ul className="space-y-1.5" data-testid="wf-readiness-list">
+            {(readiness?.checks ?? []).map((check) => (
+              <li key={check.key} className="flex items-start gap-2 text-[12px] leading-relaxed" data-testid={`wf-check-${check.key}`}>
+                <span className="mt-0.5 shrink-0">
+                  <Icon status={check.status} />
+                </span>
+                <span className="min-w-0">
+                  <span className="text-text">{check.label}</span>
+                  {check.status !== "ok" && <span className="block text-muted">{check.message}</span>}
+                  {check.status !== "ok" && check.hint && <span className="block text-faint">{check.hint}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {needsMarketplace && (
+            <a href="/marketplace" className="text-[12px] text-accent underline-offset-2 hover:underline" data-testid="wf-readiness-resolve">
+              Resolver en Marketplace
+            </a>
+          )}
+        </div>
+      </Popover>
+    );
+  }
 
   return (
     <section

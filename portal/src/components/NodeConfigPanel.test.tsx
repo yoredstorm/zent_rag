@@ -133,3 +133,61 @@ describe("NodeConfigPanel tabs", () => {
     expect(onUnpinData).toHaveBeenCalledWith("n1");
   });
 });
+
+describe("NodeConfigPanel inspector", () => {
+  it("Entradas lista los puertos y navega al nodo conectado", async () => {
+    const user = userEvent.setup();
+    const onFocusNode = vi.fn();
+    renderPanel({ onFocusNode });
+    await user.click(screen.getByTestId("wf-tab-input"));
+    const ports = screen.getByTestId("wf-ports-in");
+    expect(ports).toHaveTextContent("in");
+    expect(ports).toHaveTextContent("json");
+    await user.click(screen.getByRole("button", { name: "desde trigger_webhook" }));
+    expect(onFocusNode).toHaveBeenCalledWith("t");
+  });
+
+  it("Validación junta readiness, el error del último run y entradas sin conectar", async () => {
+    const user = userEvent.setup();
+    const orphan = node({ id: "n2", type: "notify", label: "Suelto" });
+    const graph = { ...GRAPH, nodes: [...GRAPH.nodes, orphan] };
+    const run: RunDetail = {
+      id: "r",
+      status: "failed",
+      steps: [{ step_index: 0, step_type: "notify", node_id: "n2", status: "failed", error: "SMTP caído" }],
+    };
+    renderPanel({ graph, node: orphan, run, nodeIssue: { status: "error", message: "Falta el destinatario" } });
+    const tab = screen.getByTestId("wf-tab-validation");
+    expect(tab).toHaveTextContent("3");
+    await user.click(tab);
+    const list = screen.getByTestId("wf-node-validation");
+    expect(list).toHaveTextContent("Falta el destinatario");
+    expect(list).toHaveTextContent("Último run: SMTP caído");
+    expect(list).toHaveTextContent("No está conectado al trigger");
+    expect(list).not.toHaveTextContent("Nada llega a este nodo");
+  });
+
+  it("un nodo final sin entradas conectadas avisa en validación", async () => {
+    const user = userEvent.setup();
+    const end = node({ id: "z", type: "end", label: "Fin" });
+    renderPanel({ graph: { ...GRAPH, nodes: [...GRAPH.nodes, end] }, node: end, run: null });
+    await user.click(screen.getByTestId("wf-tab-validation"));
+    expect(screen.getByTestId("wf-node-validation")).toHaveTextContent("Nada llega a este nodo");
+  });
+
+  it("sin problemas lo dice explícitamente", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByTestId("wf-tab-validation"));
+    expect(screen.getByTestId("wf-node-valid")).toBeInTheDocument();
+  });
+
+  it("tabRequest abre la pestaña pedida desde el lienzo y colapsar avisa al padre", async () => {
+    const user = userEvent.setup();
+    const onCollapse = vi.fn();
+    renderPanel({ tabRequest: { tab: "run", key: 1 }, onCollapse });
+    expect(screen.getByTestId("wf-tab-run")).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByTestId("wf-inspector-collapse"));
+    expect(onCollapse).toHaveBeenCalled();
+  });
+});

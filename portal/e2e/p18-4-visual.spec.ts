@@ -53,6 +53,7 @@ test.describe("P18.4 visual capture", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/workflows/${WORKFLOW_ID}`);
     await ready(page);
+    await openDock(page);
     await shot(page, "1440-setup-dark.png");
     await expectPanelA11y(page);
 
@@ -72,6 +73,7 @@ test.describe("P18.4 visual capture", () => {
     await page.evaluate(() => localStorage.setItem("zent_theme", "light"));
     await page.reload();
     await ready(page);
+    await openDock(page);
     await shot(page, "1440-setup-light.png");
     await page.getByTestId("wf-test-payload").fill("¿Sabes quién es el zorro?");
     await page.getByTestId("wf-test").click();

@@ -14,6 +14,7 @@ test.describe("Marketplace-native workflow canvas", () => {
     await page.getByTestId("wf-new-name").fill("E2E Mkt Canvas");
     await page.getByTestId("wf-create").click();
     await expect(page.getByTestId("workflow-canvas-editor")).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId("wf-rail-add").click();
     await expect(page.getByTestId("wf-node-library")).toBeVisible();
 
     await expect(page.getByTestId("wf-capabilities")).toBeVisible({ timeout: 20_000 });
