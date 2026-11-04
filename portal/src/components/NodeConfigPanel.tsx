@@ -296,7 +296,7 @@ export function NodeConfigPanel({
         return (mxActions?.[installId] ?? []).map((a) => ({ value: a.action_id, label: a.display_name }));
       }
       case "event_types":
-        return eventOptions ?? EVENTS_OPTIONS;
+        return eventOptions?.length ? eventOptions : EVENTS_OPTIONS;
       default:
         return undefined;
     }
@@ -1007,6 +1007,6 @@ function selectOptions(
     const installId = String(current.config.install_id ?? "");
     return (mxActions?.[installId] ?? []).map((a) => ({ value: a.action_id, label: a.display_name }));
   }
-  if (key === "event_type") return eventOptions ?? EVENTS_OPTIONS;
+  if (key === "event_type") return eventOptions?.length ? eventOptions : EVENTS_OPTIONS;
   return [];
 }

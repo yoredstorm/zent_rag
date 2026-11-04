@@ -542,7 +542,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
     color: "bg-warn",
     fields: [
       { key: "path", label: "Ruta del estado", type: "text", placeholder: "order.quantity" },
-      { key: "value", label: "Valor", type: "text", refs: true, placeholder: "{{trigger.text}}" },
+      { key: "value", label: "Valor (JSON)", type: "json", refs: true, placeholder: "{{trigger.text}}" },
     ],
     summary: (c) => `Guarda ${String(c.path || "estado")}`,
   },
