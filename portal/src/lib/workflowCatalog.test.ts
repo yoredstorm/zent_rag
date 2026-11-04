@@ -4,10 +4,14 @@ import {
   catalogCategoryLabels,
   catalogIndex,
   catalogNodeToMeta,
+  clearEventCatalogCache,
   clearNodeCatalogCache,
+  eventOptionsFromCatalog,
+  fetchEventCatalog,
   fetchNodeCatalog,
   libraryWithCatalog,
   parameterToField,
+  type EventCatalogPayload,
   type NodeCatalogPayload,
 } from "./workflowCatalog";
 
@@ -41,6 +45,20 @@ const PAYLOAD: NodeCatalogPayload = {
       recommended_next: [{ node_type: "llm", label: "Preguntar a un agente" }],
       available: false,
       unavailable_reason: "No hay una base de datos de negocio conectada.",
+    },
+  ],
+};
+
+const EVENT_PAYLOAD: EventCatalogPayload = {
+  count: 2,
+  categories: [
+    {
+      key: "ventas",
+      label: "Ventas",
+      events: [
+        { id: "conversation.message", business_name: "Un cliente envió un mensaje" },
+        { id: "payment.succeeded", business_name: "Se confirmó un pago" },
+      ],
     },
   ],
 };
@@ -140,5 +158,33 @@ describe("workflowCatalog — fetch con caché y fallback", () => {
     await fetchNodeCatalog(fetcher, "org-1");
     await fetchNodeCatalog(fetcher, "org-2");
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("workflowCatalog — catálogo de eventos", () => {
+  beforeEach(() => {
+    clearEventCatalogCache();
+  });
+
+  it("muestra nombre de negocio e id técnico", () => {
+    const options = eventOptionsFromCatalog(EVENT_PAYLOAD);
+    expect(options).toEqual([
+      { value: "conversation.message", label: "Un cliente envió un mensaje (conversation.message)" },
+      { value: "payment.succeeded", label: "Se confirmó un pago (payment.succeeded)" },
+    ]);
+    expect(eventOptionsFromCatalog(null)).toEqual([]);
+  });
+
+  it("cachea por key y devuelve null si falla", async () => {
+    const fetcher = vi.fn().mockResolvedValue(EVENT_PAYLOAD);
+    const first = await fetchEventCatalog(fetcher, "org-1");
+    const second = await fetchEventCatalog(fetcher, "org-1");
+    expect(first).toBe(EVENT_PAYLOAD);
+    expect(second).toBe(EVENT_PAYLOAD);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    clearEventCatalogCache();
+    const failing = vi.fn().mockRejectedValue(new Error("boom"));
+    expect(await fetchEventCatalog(failing, "org-1")).toBeNull();
   });
 });

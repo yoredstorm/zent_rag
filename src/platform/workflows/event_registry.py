@@ -112,6 +112,8 @@ _EVENTS: list[EventSchema] = [
             _field("conversation_id", "Conversación", "text", "a4f2c1e0-0000-0000-0000-000000000000"),
             _field("channel", "Canal", "text", "chat"),
             _field("participant_id", "Participante", "text", "cliente-42"),
+            _field("customer_ref", "Cliente", "text", "CUST-CONV"),
+            _field("order_number", "Número de pedido", "text", "CONV-AB12CD34"),
         ],
     ),
     EventSchema(

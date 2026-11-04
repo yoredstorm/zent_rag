@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { NodeConfigPanel } from "./NodeConfigPanel";
+import type { NodeBusinessSchema } from "../lib/businessSchema";
 import type { GraphNode, WorkflowGraph } from "../lib/workflowGraph";
 import type { RunDetail } from "./WorkflowRunInspector";
 
@@ -131,6 +132,58 @@ describe("NodeConfigPanel tabs", () => {
     expect(screen.getByTestId("wf-pinned-badge")).toHaveTextContent("Datos fijados");
     await user.click(screen.getByTestId("wf-unpin-data"));
     expect(onUnpinData).toHaveBeenCalledWith("n1");
+  });
+});
+
+describe("NodeConfigPanel eventos", () => {
+  it("el trigger usa el catálogo backend y muestra conversation.message", () => {
+    const trigger = node({
+      id: "t",
+      type: "trigger_event",
+      label: "Mensaje del cliente",
+      config: { event_type: "conversation.message" },
+    });
+    const schema: NodeBusinessSchema = {
+      node_type: "trigger_event",
+      label: "Cuando ocurra algo",
+      category: "trigger",
+      risk_level: "normal",
+      parameters: [
+        {
+          key: "event_type",
+          label: "Evento",
+          type: "enum",
+          required: true,
+          default: "source.synced",
+          examples: [],
+          advanced: false,
+          min_level: "simple",
+          secret: false,
+          dynamic_options: "event_types",
+          data_source: null,
+          unit: null,
+          validation: {},
+          help: null,
+          business_group: null,
+        },
+      ],
+      outputs: [],
+    };
+    renderPanel({
+      graph: { ...GRAPH, nodes: [trigger, NOTIFY] },
+      node: trigger,
+      nodeSchemas: { trigger_event: schema },
+      eventOptions: [
+        {
+          value: "conversation.message",
+          label: "Un cliente envió un mensaje (conversation.message)",
+        },
+      ],
+    });
+    expect(screen.getByTestId("wf-param-event_type")).toHaveValue("conversation.message");
+    expect(
+      screen.getByRole("option", { name: "Un cliente envió un mensaje (conversation.message)" }),
+    ).toBeInTheDocument();
   });
 });
 

@@ -5,6 +5,7 @@
  * como fallback cuando el endpoint no está disponible (Fase 5). Los tipos
  * visuales (icono/color/summary/defaults) se conservan del registry local.
  */
+import type { SelectOption } from "./businessSchema";
 import {
   NODE_LIBRARY,
   type FieldDef,
@@ -222,6 +223,79 @@ export async function fetchNodeCatalog(
     const payload = await fetcher<NodeCatalogPayload>("/api/v1/workflows/node-catalog");
     if (!payload || !Array.isArray(payload.nodes)) return null;
     catalogCache = { key: cacheKey, payload, at: now };
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Catálogo de eventos (GET /api/v1/workflows/event-catalog)
+// ---------------------------------------------------------------------------
+
+export type EventCatalogField = {
+  key: string;
+  label: string;
+  type?: string;
+  example?: unknown;
+};
+
+export type EventCatalogEntry = {
+  id: string;
+  version?: number;
+  business_name: string;
+  description?: string | null;
+  category?: string;
+  fields?: EventCatalogField[];
+};
+
+export type EventCatalogCategory = {
+  key: string;
+  label: string;
+  events: EventCatalogEntry[];
+};
+
+export type EventCatalogPayload = {
+  categories: EventCatalogCategory[];
+  count: number;
+};
+
+/**
+ * Opciones para el selector de eventos. Muestra nombre de negocio + id técnico
+ * para que el usuario reconozca el evento y el grafo conserve el id real.
+ */
+export function eventOptionsFromCatalog(
+  payload: EventCatalogPayload | null | undefined
+): SelectOption[] {
+  const options: SelectOption[] = [];
+  for (const category of payload?.categories ?? []) {
+    for (const event of category.events ?? []) {
+      if (!event?.id) continue;
+      const name = event.business_name || event.id;
+      options.push({ value: event.id, label: `${name} (${event.id})` });
+    }
+  }
+  return options;
+}
+
+let eventCatalogCache: { key: string; payload: EventCatalogPayload; at: number } | null = null;
+
+export function clearEventCatalogCache(): void {
+  eventCatalogCache = null;
+}
+
+export async function fetchEventCatalog(
+  fetcher: CatalogFetcher,
+  cacheKey: string
+): Promise<EventCatalogPayload | null> {
+  const now = Date.now();
+  if (eventCatalogCache && eventCatalogCache.key === cacheKey && now - eventCatalogCache.at < CACHE_TTL_MS) {
+    return eventCatalogCache.payload;
+  }
+  try {
+    const payload = await fetcher<EventCatalogPayload>("/api/v1/workflows/event-catalog");
+    if (!payload || !Array.isArray(payload.categories)) return null;
+    eventCatalogCache = { key: cacheKey, payload, at: now };
     return payload;
   } catch {
     return null;

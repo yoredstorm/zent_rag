@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { GraphEdge, GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
-import { describeEdge, graphIssues, nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
+import { describeEdge, EVENTS_OPTIONS, graphIssues, nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
 import type {
   BusinessParameter,
   NodeBusinessSchema,
@@ -57,6 +57,8 @@ type Props = {
   nodeSchemas?: Record<string, NodeBusinessSchema> | null;
   /** Catálogo backend (GET /workflows/node-catalog) con disponibilidad. */
   catalogNodes?: Record<string, NodeMeta> | null;
+  /** Catálogo backend de eventos (GET /workflows/event-catalog). */
+  eventOptions?: SelectOption[] | null;
   /** Catálogo de datos backend (GET /workflows/{id}/data-catalog). */
   dataCatalog?: DataCatalogPayload | null;
   /** Últimos outputs reales por nodo (Live Preview / Data Picker). */
@@ -119,6 +121,7 @@ export function NodeConfigPanel({
   mxActions,
   nodeSchemas,
   catalogNodes,
+  eventOptions,
   dataCatalog,
   samples,
   run,
@@ -293,7 +296,7 @@ export function NodeConfigPanel({
         return (mxActions?.[installId] ?? []).map((a) => ({ value: a.action_id, label: a.display_name }));
       }
       case "event_types":
-        return EVENT_TYPE_OPTIONS;
+        return eventOptions ?? EVENTS_OPTIONS;
       default:
         return undefined;
     }
@@ -618,7 +621,7 @@ export function NodeConfigPanel({
                         onChange={(e) => setField(f.key, e.target.value)}
                       >
                         <option value="">{f.key === "agent_id" ? "Elige un agente…" : "—"}</option>
-                        {selectOptions(f.key, current, kbs, agents, mxInstalls, mxActions).map((o) => (
+                        {selectOptions(f.key, current, kbs, agents, mxInstalls, mxActions, eventOptions).map((o) => (
                           <option key={o.value} value={o.value}>
                             {o.label}
                           </option>
@@ -988,14 +991,6 @@ function PortConnections({
   );
 }
 
-/** Catálogo de eventos para pickers (espejo de events.STANDARD_EVENTS). */
-const EVENT_TYPE_OPTIONS: SelectOption[] = [
-  "source.connected", "source.synced", "document.uploaded", "document.processed",
-  "entity.created", "entity.updated", "semantic.mapping.approved", "agent.run.completed",
-  "invoice.detected", "customer.created", "sales.closed", "workflow.completed",
-  "integration.connected",
-].map((v) => ({ value: v, label: v }));
-
 function selectOptions(
   key: string,
   current: GraphNode,
@@ -1003,6 +998,7 @@ function selectOptions(
   agents: { id: string; name: string }[],
   mxInstalls?: { id: string; integration: { slug: string; name: string } }[],
   mxActions?: Record<string, { action_id: string; display_name: string }[]>,
+  eventOptions?: SelectOption[] | null,
 ): SelectOption[] {
   if (key === "knowledge_base_id") return kbs.map((k) => ({ value: k.id, label: k.name }));
   if (key === "agent_id") return agents.map((a) => ({ value: a.id, label: a.name }));
@@ -1011,5 +1007,6 @@ function selectOptions(
     const installId = String(current.config.install_id ?? "");
     return (mxActions?.[installId] ?? []).map((a) => ({ value: a.action_id, label: a.display_name }));
   }
+  if (key === "event_type") return eventOptions ?? EVENTS_OPTIONS;
   return [];
 }

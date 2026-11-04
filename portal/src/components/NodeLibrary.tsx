@@ -87,10 +87,25 @@ function fold(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
+function exampleTitle(meta: NodeMeta): string {
+  const example = meta.example;
+  if (example && typeof example === "object" && "title" in example) {
+    return String((example as { title?: unknown }).title ?? "");
+  }
+  return "";
+}
+
 function matches(meta: NodeMeta, q: string): boolean {
   if (!q) return true;
   const needle = fold(q.trim());
-  return [meta.label, meta.type, meta.description ?? ""].some((text) => fold(text).includes(needle));
+  return [
+    meta.label,
+    meta.type,
+    meta.description ?? "",
+    meta.longDescription ?? "",
+    exampleTitle(meta),
+    ...(meta.whenToUse ?? []),
+  ].some((text) => fold(text).includes(needle));
 }
 
 /** Fila del catálogo: clic para insertar, arrastrar al lienzo, estrella para favorito. */
@@ -138,7 +153,9 @@ function NodeItem({
             <span className="block truncate text-[11px] leading-tight text-warn">riesgo {meta.risk}</span>
           ) : meta.description ? (
             <span className="block truncate text-[11px] leading-tight text-faint">{meta.description}</span>
-          ) : null}
+          ) : (
+            <span className="block truncate font-mono text-[10px] leading-tight text-faint">{meta.type}</span>
+          )}
         </span>
       </button>
       <button

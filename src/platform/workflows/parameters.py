@@ -11,7 +11,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from src.platform.workflows.business_schema import (
     BusinessOutputField,
@@ -684,6 +684,164 @@ def _control_schema(
     )
 
 
+_WAIT_PRESET_OPTIONS = [
+    {"value": "message", "label": "Mensaje del cliente"},
+    {"value": "payment", "label": "Pago"},
+    {"value": "webhook", "label": "Webhook"},
+    {"value": "timer", "label": "Tiempo"},
+    {"value": "human", "label": "Aprobación humana"},
+    {"value": "signal", "label": "Señal genérica"},
+]
+
+_ON_TIMEOUT_OPTIONS = [
+    {"value": "expire", "label": "Expirar la instancia"},
+    {"value": "branch", "label": "Seguir por la rama de timeout"},
+    {"value": "continue", "label": "Continuar por la salida normal"},
+    {"value": "fail", "label": "Fallar el proceso"},
+]
+
+
+def _state_schema(
+    node_type: str,
+    label: str,
+    description: str,
+    *,
+    include_value: bool = True,
+    value_required: bool = False,
+    value_level: Literal["simple", "guided", "advanced"] = "simple",
+) -> NodeBusinessSchema:
+    parameters = [
+        _p(
+            "path",
+            "Ruta del estado",
+            "text",
+            required=True,
+            placeholder="order.customer_ref",
+            help="Ruta dentro del estado durable de la instancia.",
+        )
+    ]
+    if include_value:
+        parameters.append(
+            _p(
+                "value",
+                "Valor",
+                "json",
+                required=value_required,
+                min_level=value_level,
+                data_source="any",
+                help="Valor fijo o referencia, por ejemplo {{trigger.text}}.",
+            )
+        )
+    return _logic_schema(
+        node_type,
+        label,
+        description,
+        parameters,
+        [
+            _out("state", "Estado", "json"),
+            _out("value", "Valor", "json"),
+        ],
+    )
+
+
+def _capability_call_schema() -> NodeBusinessSchema:
+    return NodeBusinessSchema(
+        node_type="capability_call",
+        label="Capacidad de negocio",
+        category="integration",
+        description="Ejecuta una capacidad resuelta por el binding del tenant.",
+        risk_level="elevated",
+        parameters=[
+            _p(
+                "capability",
+                "Capacidad",
+                "text",
+                required=True,
+                placeholder="bodega.product.search",
+                help="Capacidad lógica; el binding del tenant resuelve el proveedor.",
+            ),
+            _p(
+                "inputs",
+                "Entradas",
+                "json",
+                data_source="any",
+                help="Datos de entrada de la capacidad. Acepta referencias del flujo.",
+            ),
+        ],
+        outputs=[
+            _out("out", "Resultado", "json"),
+            _out("capability", "Capacidad", "text"),
+            _out("provider_kind", "Proveedor", "text"),
+        ],
+    )
+
+
+def _wait_event_schema() -> NodeBusinessSchema:
+    return NodeBusinessSchema(
+        node_type="wait_event",
+        label="Esperar evento",
+        category="control",
+        description="Pausa el proceso hasta que llegue un evento o venza el timeout.",
+        parameters=[
+            _p(
+                "preset",
+                "Tipo de espera",
+                "enum",
+                default="message",
+                validation={"options": _WAIT_PRESET_OPTIONS},
+                help="Define el evento por defecto y cómo se correlaciona la señal.",
+            ),
+            _p(
+                "event_type",
+                "Evento",
+                "enum",
+                dynamic_options="event_types",
+                help="Opcional. Si está vacío se usa el evento del tipo de espera.",
+            ),
+            _p(
+                "correlation",
+                "Correlación",
+                "json",
+                min_level="advanced",
+                help='Opcional: {"order_number": "{{instance.state.order.order_number}}"}.',
+            ),
+            _p("timeout_seconds", "Timeout (s)", "number", min_level="guided", default=86400),
+            _p(
+                "on_timeout",
+                "Si vence",
+                "enum",
+                min_level="guided",
+                default="expire",
+                validation={"options": _ON_TIMEOUT_OPTIONS},
+            ),
+        ],
+        outputs=[
+            _out("waiting", "Esperando", "boolean"),
+            _out("event_type", "Evento", "text"),
+            _out("correlation", "Correlación", "json"),
+            _out("timeout_seconds", "Timeout", "number"),
+        ],
+    )
+
+
+def _loop_schema() -> NodeBusinessSchema:
+    return NodeBusinessSchema(
+        node_type="loop",
+        label="Volver a un paso",
+        category="control",
+        description="Vuelve a un nodo anterior sin crear ciclos en el grafo.",
+        parameters=[
+            _p("target", "Nodo de re-entrada", "text", required=True, placeholder="pedir_opcion"),
+            _p("max_iterations", "Máximo de repeticiones", "number", min_level="guided", default=20),
+        ],
+        outputs=[
+            _out("looping", "Repitiendo", "boolean"),
+            _out("target", "Destino", "text"),
+            _out("iteration", "Iteración", "number"),
+        ],
+    )
+
+
 def _trigger_schedule_schema() -> NodeBusinessSchema:
     return NodeBusinessSchema(
         node_type="trigger_schedule",
@@ -804,6 +962,36 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         _marketplace_action_schema(),
         _business_node_schema(),
         _business_result_schema(),
+        _state_schema(
+            "state_get",
+            "Leer estado de negocio",
+            "Lee un dato del estado durable del proceso.",
+            include_value=False,
+        ),
+        _state_schema(
+            "state_set",
+            "Guardar estado de negocio",
+            "Guarda un dato durable del proceso.",
+        ),
+        _state_schema(
+            "state_merge",
+            "Combinar estado de negocio",
+            "Combina un objeto sobre el estado durable del proceso.",
+        ),
+        _state_schema(
+            "state_append",
+            "Agregar a estado de negocio",
+            "Agrega un elemento a una lista durable del proceso.",
+        ),
+        _state_schema(
+            "state_remove",
+            "Quitar de estado de negocio",
+            "Quita un elemento o clave del estado durable.",
+            value_level="advanced",
+        ),
+        _capability_call_schema(),
+        _wait_event_schema(),
+        _loop_schema(),
         _logic_schema(
             "for_each",
             "Hacer esto por cada...",

@@ -2,13 +2,19 @@ import { CaretLeft, ChartLineUp, Database, GearSix, MagnifyingGlass, Plus, Warni
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel } from "../lib/businessSchema";
+import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel, SelectOption } from "../lib/businessSchema";
 import type { DataCatalogPayload, NodeSamples } from "../lib/dataPicker";
 import { INSPECTOR_WIDTH, clampInspectorWidth } from "../lib/studioLayout";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import type { GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
-import { fetchNodeCatalog, libraryWithCatalog, catalogCategoryLabels } from "../lib/workflowCatalog";
+import {
+  catalogCategoryLabels,
+  eventOptionsFromCatalog,
+  fetchEventCatalog,
+  fetchNodeCatalog,
+  libraryWithCatalog,
+} from "../lib/workflowCatalog";
 import { NodeConfigPanel, type NodeTab } from "./NodeConfigPanel";
 import { NodeLibrary, type MarketplaceContext, type MxRecommendation } from "./NodeLibrary";
 import { Tooltip } from "./ui";
@@ -157,6 +163,7 @@ export function WorkflowCanvasEditor({
   const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
   const [catalogNodes, setCatalogNodes] = useState<Record<string, NodeMeta> | null>(null);
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string> | null>(null);
+  const [eventOptions, setEventOptions] = useState<SelectOption[] | null>(null);
   const [samples, setSamples] = useState<NodeSamples | null>(null);
   const [dataCatalog, setDataCatalog] = useState<DataCatalogPayload | null>(null);
   const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
@@ -246,6 +253,23 @@ export function WorkflowCanvasEditor({
       alive = false;
     };
   }, [session, workflowId]);
+
+  // Catálogo de eventos en lenguaje de negocio. El selector del trigger y de
+  // `wait_event` lo usa; sin endpoint cae a `EVENTS_OPTIONS` local.
+  useEffect(() => {
+    if (!session) return;
+    let alive = true;
+    void fetchEventCatalog(
+      <T,>(path: string) =>
+        api<T>(path, { token: session.token, organizationId: session.organizationId }),
+      session.organizationId,
+    ).then((payload) => {
+      if (alive) setEventOptions(payload ? eventOptionsFromCatalog(payload) : null);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [session]);
 
   // Live Preview / Data Picker: outputs reales del último run (se refresca
   // cuando el estudio pinta un nuevo overlay).
@@ -645,6 +669,7 @@ export function WorkflowCanvasEditor({
         mxActions={mxActions}
         nodeSchemas={nodeSchemas}
         catalogNodes={catalogNodes}
+        eventOptions={eventOptions}
         dataCatalog={dataCatalog}
         samples={samples}
         run={run}

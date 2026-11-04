@@ -40,7 +40,9 @@ export type WorkflowGraph = {
   metadata: Record<string, unknown>;
 };
 
-let _seq = 0;export function newGraphNodeId(): string {
+let _seq = 0;
+
+export function newGraphNodeId(): string {
   _seq += 1;
   return `n${Date.now().toString(36)}_${_seq}`;
 }
@@ -120,7 +122,7 @@ export const PURPOSE_GROUPS: PurposeGroup[] = [
   {
     id: "act",
     label: "Actuar",
-    types: ["notify", "marketplace_action", "business_node", "state_set", "state_merge", "state_append"],
+    types: ["notify", "marketplace_action", "business_node", "state_set", "state_merge", "state_append", "state_remove"],
   },
   {
     id: "control",
@@ -152,11 +154,17 @@ const COND_OPS = [
   { value: "contains", label: "contiene" },
 ];
 
-const EVENTS_OPTIONS = [
+/**
+ * Fallback de eventos estándar. El catálogo real llega de
+ * `GET /api/v1/workflows/event-catalog`; esta lista evita un selector vacío si
+ * el endpoint falla. Debe reflejar `events.STANDARD_EVENTS`.
+ */
+export const EVENTS_OPTIONS = [
   "source.connected", "source.synced", "document.uploaded", "document.processed",
   "entity.created", "entity.updated", "semantic.mapping.approved", "agent.run.completed",
-  "invoice.detected", "customer.created", "sales.closed", "workflow.completed",
-  "integration.connected",
+  "invoice.detected", "customer.created", "sales.closed", "conversation.message",
+  "payment.succeeded", "payment.failed", "payment.pending", "payment.expired",
+  "payment.refunded", "workflow.completed", "integration.connected", "workflow.run",
 ].map((v) => ({ value: v, label: v }));
 
 const P_IN = [{ name: "in", type: "json" }];
@@ -515,6 +523,204 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
     summary: (c) => String(c.action || "aprobación").slice(0, 44),
     risk: "critical",
   },
+  state_get: {
+    type: "state_get",
+    category: "logic",
+    label: "Leer estado de negocio",
+    icon: "🗂️",
+    color: "bg-warn",
+    fields: [
+      { key: "path", label: "Ruta del estado", type: "text", placeholder: "order.customer_ref" },
+    ],
+    summary: (c) => `Lee ${String(c.path || "estado")}`,
+  },
+  state_set: {
+    type: "state_set",
+    category: "logic",
+    label: "Guardar estado de negocio",
+    icon: "💾",
+    color: "bg-warn",
+    fields: [
+      { key: "path", label: "Ruta del estado", type: "text", placeholder: "order.quantity" },
+      { key: "value", label: "Valor", type: "text", refs: true, placeholder: "{{trigger.text}}" },
+    ],
+    summary: (c) => `Guarda ${String(c.path || "estado")}`,
+  },
+  state_merge: {
+    type: "state_merge",
+    category: "logic",
+    label: "Combinar estado de negocio",
+    icon: "💾",
+    color: "bg-warn",
+    fields: [
+      { key: "path", label: "Ruta del estado", type: "text", placeholder: "order" },
+      { key: "value", label: "Valor (JSON)", type: "json", refs: true },
+    ],
+    summary: (c) => `Combina ${String(c.path || "estado")}`,
+  },
+  state_append: {
+    type: "state_append",
+    category: "logic",
+    label: "Agregar a estado de negocio",
+    icon: "💾",
+    color: "bg-warn",
+    fields: [
+      { key: "path", label: "Ruta de la lista", type: "text", placeholder: "cart.items" },
+      { key: "value", label: "Valor (JSON)", type: "json", refs: true },
+    ],
+    summary: (c) => `Agrega a ${String(c.path || "lista")}`,
+  },
+  state_remove: {
+    type: "state_remove",
+    category: "logic",
+    label: "Quitar de estado de negocio",
+    icon: "🗑️",
+    color: "bg-warn",
+    fields: [
+      { key: "path", label: "Ruta del estado", type: "text", placeholder: "order.address" },
+      { key: "value", label: "Valor (JSON)", type: "json", refs: true, adv: true },
+    ],
+    summary: (c) => `Quita ${String(c.path || "estado")}`,
+  },
+  capability_call: {
+    type: "capability_call",
+    category: "integration",
+    label: "Capacidad de negocio",
+    icon: "🔌",
+    color: "bg-fuchsia-500",
+    fields: [
+      { key: "capability", label: "Capacidad", type: "text", placeholder: "bodega.product.search" },
+      { key: "inputs", label: "Entradas (JSON)", type: "json", refs: true },
+    ],
+    summary: (c) => String(c.capability || "capacidad").slice(0, 48),
+    risk: "elevated",
+  },
+  wait_event: {
+    type: "wait_event",
+    category: "control",
+    label: "Esperar evento",
+    icon: "⏳",
+    color: "bg-info",
+    ports: { input: P_IN, output: [{ name: "out", type: "json" }, { name: "timeout", type: "json" }] },
+    fields: [
+      {
+        key: "preset", label: "Tipo de espera", type: "select",
+        options: [
+          { value: "message", label: "Mensaje del cliente" },
+          { value: "payment", label: "Pago" },
+          { value: "webhook", label: "Webhook" },
+          { value: "timer", label: "Tiempo" },
+          { value: "human", label: "Aprobación humana" },
+          { value: "signal", label: "Señal genérica" },
+        ],
+        default: "message",
+      },
+      { key: "event_type", label: "Evento", type: "select", options: EVENTS_OPTIONS },
+      { key: "correlation", label: "Correlación (JSON)", type: "json", refs: true, adv: true },
+      { key: "timeout_seconds", label: "Timeout (s)", type: "number", default: 86400 },
+      {
+        key: "on_timeout", label: "Si vence", type: "select",
+        options: [
+          { value: "expire", label: "Expirar la instancia" },
+          { value: "branch", label: "Seguir por la rama de timeout" },
+          { value: "continue", label: "Continuar por la salida normal" },
+          { value: "fail", label: "Fallar el proceso" },
+        ],
+        default: "expire",
+      },
+    ],
+    defaults: { preset: "message", timeout_seconds: 86400, on_timeout: "expire" },
+    summary: (c) => `Espera ${String(c.event_type || c.preset || "evento")}`,
+  },
+  loop: {
+    type: "loop",
+    category: "control",
+    label: "Volver a un paso",
+    icon: "🔁",
+    color: "bg-danger",
+    fields: [
+      { key: "target", label: "Nodo de re-entrada", type: "text", placeholder: "pedir_opcion" },
+      { key: "max_iterations", label: "Máx. repeticiones", type: "number", default: 20 },
+    ],
+    defaults: { max_iterations: 20 },
+    summary: (c) => `Vuelve a ${String(c.target || "un paso")}`,
+  },
+  business_result: {
+    type: "business_result",
+    category: "output",
+    label: "Resultado de negocio",
+    icon: "📊",
+    color: "bg-emerald-500",
+    fields: [
+      { key: "title", label: "Título", type: "text", placeholder: "Resumen diario de ventas" },
+      {
+        key: "section", label: "Sección", type: "select",
+        options: [
+          { value: "reports", label: "Reportes" },
+          { value: "sales", label: "Ventas" },
+          { value: "finance", label: "Finanzas" },
+          { value: "operations", label: "Operaciones" },
+          { value: "alerts", label: "Alertas" },
+        ],
+        default: "reports",
+      },
+      {
+        key: "importance", label: "Importancia", type: "select",
+        options: [
+          { value: "INFO", label: "Informativo" },
+          { value: "WARNING", label: "Atención" },
+          { value: "CRITICAL", label: "Crítico" },
+        ],
+        default: "INFO",
+      },
+      { key: "summary", label: "Resumen", type: "textarea", refs: true },
+      { key: "metrics", label: "Métricas (JSON)", type: "json", adv: true },
+      { key: "insights", label: "Hallazgos (JSON)", type: "json", adv: true },
+      { key: "entities", label: "Entidades (JSON)", type: "json", adv: true },
+    ],
+    defaults: { section: "reports", importance: "INFO" },
+    summary: (c) => String(c.title || "resultado de negocio").slice(0, 44),
+  },
+  adaptive_route: {
+    type: "adaptive_route",
+    category: "logic",
+    label: "Router adaptativo",
+    icon: "🧭",
+    color: "bg-warn",
+    fields: [
+      { key: "stage", label: "Etapa", type: "text", default: "decision" },
+      { key: "confidence_min", label: "Confianza mínima", type: "number", default: 0.6, adv: true },
+      { key: "allowlist", label: "Allowlist (JSON)", type: "json" },
+      { key: "registry_refs", label: "Registry congelado (JSON)", type: "json" },
+      { key: "proposal", label: "Propuesta (JSON)", type: "json", adv: true },
+      { key: "failure_mode", label: "Fallo explícito", type: "text", adv: true },
+      { key: "on_unauthorized", label: "Si no está autorizada", type: "text", default: "handoff", adv: true },
+      { key: "handoff", label: "Handoff (JSON)", type: "json", adv: true },
+    ],
+    defaults: { stage: "decision", confidence_min: 0.6, on_unauthorized: "handoff" },
+    summary: (c) => `Etapa ${String(c.stage || "decision")}`,
+  },
+  subworkflow_call: {
+    type: "subworkflow_call",
+    category: "control",
+    label: "Subflujo congelado",
+    icon: "📦",
+    color: "bg-danger",
+    fields: [
+      { key: "workflow_ref", label: "Subflujo", type: "text" },
+      { key: "version", label: "Versión", type: "number" },
+      { key: "snapshot", label: "Snapshot (JSON)", type: "json" },
+      { key: "registry_refs", label: "Registry congelado (JSON)", type: "json" },
+      { key: "inputs", label: "Entradas (JSON)", type: "json", refs: true },
+      { key: "idempotency_key", label: "Idempotencia", type: "text" },
+      { key: "max_depth", label: "Profundidad", type: "number", default: 3, adv: true },
+      { key: "max_retries", label: "Reintentos", type: "number", default: 1, adv: true },
+      { key: "timeout_seconds", label: "Timeout (s)", type: "number", default: 60, adv: true },
+      { key: "permissions", label: "Permisos (JSON)", type: "json", adv: true },
+    ],
+    defaults: { max_depth: 3, max_retries: 1, timeout_seconds: 60 },
+    summary: (c) => String(c.workflow_ref || "subflujo").slice(0, 44),
+  },
   notify: {
     type: "notify",
     category: "output",
@@ -732,7 +938,8 @@ export function isConversationalGraph(graph: WorkflowGraph | null | undefined): 
   return String(node.config?.event_type ?? "") === "conversation.message";
 }
 
-/** Extrae trigger_config del nodo trigger (para persistir schedules v2). */export function triggerConfigOf(graph: WorkflowGraph): Record<string, unknown> {
+/** Extrae trigger_config del nodo trigger (para persistir schedules v2). */
+export function triggerConfigOf(graph: WorkflowGraph): Record<string, unknown> {
   const t = graph.nodes.find((n) => _TRIGGER_TYPES.includes(n.type as (typeof _TRIGGER_TYPES)[number]));
   if (!t) return {};
   const c = { ...t.config };
@@ -816,6 +1023,26 @@ const OUTPUT_FIELDS: Record<string, string[]> = {
   marketplace_action: ["evidence_id", "cached", "cost", "latency_ms", "renderer"],
   business_node: ["result_id", "evidence_ids", "total_cost", "title", "action_0"],
   business_result: ["result_id", "importance"],
+  state_get: ["state", "value"],
+  state_set: ["state", "value"],
+  state_merge: ["state", "value"],
+  state_append: ["state", "value"],
+  state_remove: ["state", "value"],
+  capability_call: ["out", "capability", "provider_kind"],
+  wait_event: ["waiting", "event_type", "correlation", "timeout_seconds"],
+  loop: ["looping", "target", "iteration"],
+  adaptive_route: [
+    "route",
+    "confidence",
+    "rationale_summary",
+    "missing_information",
+    "recommended_next_action",
+    "allowed_transition_id",
+    "decision",
+    "port",
+    "failure_mode",
+  ],
+  subworkflow_call: ["workflow_ref", "workflow_version", "snapshot_hash", "replayed", "failure_mode"],
   trigger_schedule: [],
   trigger_webhook: [],
   trigger_event: [],

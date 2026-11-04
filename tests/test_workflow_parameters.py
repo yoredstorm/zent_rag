@@ -36,6 +36,32 @@ def test_registry_covers_business_nodes() -> None:
     assert len(all_node_schemas()) == len(NODE_BUSINESS_SCHEMAS)
 
 
+def test_durable_nodes_declare_business_parameters() -> None:
+    expected = {
+        "state_get": {"path"},
+        "state_set": {"path", "value"},
+        "state_merge": {"path", "value"},
+        "state_append": {"path", "value"},
+        "state_remove": {"path", "value"},
+        "capability_call": {"capability", "inputs"},
+        "wait_event": {"preset", "event_type", "correlation", "timeout_seconds", "on_timeout"},
+        "loop": {"target", "max_iterations"},
+    }
+    for node_type, keys in expected.items():
+        schema = node_business_schema(node_type)
+        assert schema is not None, node_type
+        assert keys <= {parameter.key for parameter in schema.parameters}, node_type
+        assert schema.outputs, node_type
+
+
+def test_conversation_message_event_exposes_bodega_context() -> None:
+    from src.platform.workflows.event_registry import get_event_schema
+
+    schema = get_event_schema("conversation.message")
+    keys = {field.key for field in schema.fields}
+    assert {"text", "conversation_id", "customer_ref", "order_number"} <= keys
+
+
 def test_notify_parameters_levels() -> None:
     simple = {p.key for p in business_parameters_for("notify", "simple")}
     assert {"channel", "title", "message"} <= simple

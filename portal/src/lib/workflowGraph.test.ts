@@ -3,6 +3,7 @@ import {
   describeEdge,
   effectNodes,
   emptyGraph,
+  EVENTS_OPTIONS,
   graphIssues,
   isConversationalGraph,
   layoutGraph,
@@ -98,6 +99,22 @@ describe("workflowGraph — IR del canvas", () => {
     chat.nodes[0].config = { event_type: "conversation.message" };
     expect(isConversationalGraph(chat)).toBe(true);
     expect(isConversationalGraph(null)).toBe(false);
+  });
+
+  it("el fallback de eventos incluye los eventos durables y de pago", () => {
+    const values = EVENTS_OPTIONS.map((option) => option.value);
+    expect(values).toContain("conversation.message");
+    expect(values).toContain("payment.succeeded");
+    expect(values).toContain("payment.failed");
+    expect(values).toContain("workflow.run");
+  });
+
+  it("los nodos durables tienen nombre de negocio en la biblioteca local", () => {
+    expect(nodeMeta("state_merge").label).toBe("Combinar estado de negocio");
+    expect(nodeMeta("capability_call").label).toBe("Capacidad de negocio");
+    expect(nodeMeta("wait_event").label).toBe("Esperar evento");
+    expect(nodeMeta("loop").label).toBe("Volver a un paso");
+    expect(nodeMeta("business_result").label).toBe("Resultado de negocio");
   });
 
   it("layoutGraph rellena posiciones vacías de grafos importados", () => {
