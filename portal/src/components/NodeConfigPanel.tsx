@@ -245,6 +245,12 @@ export function NodeConfigPanel({
       nodes: graph.nodes.map((x) => (x.id === current.id ? { ...x, config: { ...x.config, ...patch } } : x)),
     });
   }
+  function setLabel(label: string) {
+    onChange({
+      ...graph,
+      nodes: graph.nodes.map((x) => (x.id === current.id ? { ...x, label } : x)),
+    });
+  }
   function setField(key: string, value: unknown) {
     if (key === "agent_id") {
       const picked = agents.find((a) => a.id === String(value));
@@ -404,6 +410,17 @@ export function NodeConfigPanel({
         {tab === "config" && (
           <>
             <NodeHelpCard meta={meta} onAddSuggested={onAddSuggested} />
+
+            <Field
+              label="Nombre del paso"
+              hint="Solo cambia la etiqueta visible. El tipo técnico no cambia."
+            >
+              <Input
+                value={current.label}
+                placeholder={meta.label}
+                onChange={(event) => setLabel(event.target.value)}
+              />
+            </Field>
 
             {/* Nivel de configuración: mismo grafo, distinta vista. */}
             <div

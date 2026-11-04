@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -132,6 +132,20 @@ describe("NodeConfigPanel tabs", () => {
     expect(screen.getByTestId("wf-pinned-badge")).toHaveTextContent("Datos fijados");
     await user.click(screen.getByTestId("wf-unpin-data"));
     expect(onUnpinData).toHaveBeenCalledWith("n1");
+  });
+});
+
+describe("NodeConfigPanel etiqueta", () => {
+  it("renombra el paso sin cambiar su tipo técnico", () => {
+    const onChange = vi.fn();
+    renderPanel({ onChange });
+    fireEvent.change(screen.getByLabelText("Nombre del paso"), {
+      target: { value: "Guardar cliente" },
+    });
+    const next = onChange.mock.calls.at(-1)?.[0] as WorkflowGraph;
+    const changed = next.nodes.find((item) => item.id === "n1");
+    expect(changed?.label).toBe("Guardar cliente");
+    expect(changed?.type).toBe("notify");
   });
 });
 
