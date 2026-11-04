@@ -190,7 +190,7 @@ function CanvasNodeView({
             )}
             {lod === "detail" && (
               <p className="mt-0.5 truncate font-mono text-[9px] text-faint">
-                {n.id}
+                {n.id} · {n.type}
                 {run?.duration_ms != null ? ` · ${run.duration_ms} ms` : ""}
               </p>
             )}

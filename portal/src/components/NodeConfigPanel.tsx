@@ -324,7 +324,8 @@ export function NodeConfigPanel({
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[14px] font-semibold text-text">{current.label || business?.label || meta.label}</h3>
           <p className="truncate text-[11px] text-faint">
-            {business?.label || meta.label} · <span className="font-mono">{current.id}</span>
+            {business?.label || meta.label} · <span className="font-mono">{current.type}</span> ·{" "}
+            <span className="font-mono">{current.id}</span>
           </p>
         </div>
         {current.type !== "end" && !current.type.startsWith("trigger_") && (

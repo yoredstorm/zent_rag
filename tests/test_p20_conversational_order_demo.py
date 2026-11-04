@@ -25,6 +25,19 @@ def test_conversational_graph_is_valid_and_acyclic() -> None:
     assert graph_dict["metadata"]["template"] == TEMPLATE_SLUG
 
 
+def test_conversational_graph_layout_has_no_overlaps() -> None:
+    graph = build_graph()
+    nodes = graph["nodes"]
+    for index, first in enumerate(nodes):
+        for second in nodes[index + 1 :]:
+            ax = float(first["position"]["x"])
+            ay = float(first["position"]["y"])
+            bx = float(second["position"]["x"])
+            by = float(second["position"]["y"])
+            overlaps = abs(ax - bx) < 248 and abs(ay - by) < 112
+            assert not overlaps, (first["id"], second["id"], first["position"], second["position"])
+
+
 def test_conversational_graph_waits_for_each_step() -> None:
     graph = build_graph()
     waits = [node for node in graph["nodes"] if node["type"] == "wait_event"]

@@ -123,14 +123,21 @@ def _layout_nodes(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> N
         groups.setdefault(level[node["id"]], []).append(node["id"])
     positions: dict[str, dict[str, float]] = {}
     columns = 4
+    x_gap = 320
+    y_gap = 180
+    column_gap = 80
+    # Cursor por columna: dos niveles distintos pueden caer en la misma
+    # columna, así que la Y avanza con el contenido real de cada nivel.
+    # Evita que el nivel 4 y el nivel 8 compartan (x, y).
+    cursors = [80.0] * columns
     for value in sorted(groups):
         column = value % columns
-        row = value // columns
         for index, node_id in enumerate(groups[value]):
             positions[node_id] = {
-                "x": 80 + column * 320,
-                "y": 80 + (row + index) * 160,
+                "x": 80 + column * x_gap,
+                "y": cursors[column] + index * y_gap,
             }
+        cursors[column] += len(groups[value]) * y_gap + column_gap
     for node in nodes:
         node["position"] = positions.get(node["id"], {"x": 80, "y": 80})
 

@@ -33,6 +33,10 @@ export function NodeHelpCard({ meta, onAddSuggested }: Props) {
         {meta.longDescription && (
           <p data-testid="wf-node-help-does">{meta.longDescription}</p>
         )}
+        <p data-testid="wf-node-help-type">
+          <span className="text-faint">Tipo técnico: </span>
+          <span className="font-mono">{meta.type}</span>
+        </p>
         {(meta.whenToUse?.length ?? 0) > 0 && (
           <p data-testid="wf-node-help-when">
             <span className="text-faint">Úsalo cuando: </span>

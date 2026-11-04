@@ -70,6 +70,44 @@ describe("workflowGraph — IR del canvas", () => {
     expect(not.position.y).toBe(llm.position.y);
   });
 
+  it("layoutGraph no solapa niveles que comparten columna", () => {
+    const g = emptyGraph("webhook");
+    const root = g.nodes[0];
+    root.id = "t";
+    for (let level = 0; level < 9; level += 1) {
+      for (const suffix of ["a", "b"]) {
+        const n = makeNode("set_variable", { x: 0, y: 0 });
+        n.id = `${suffix}${level}`;
+        g.nodes.push(n);
+      }
+    }
+    g.edges.push(
+      { id: "e-a0", from_node: "t", from_port: "out", to_node: "a0", to_port: "in" },
+      { id: "e-b0", from_node: "t", from_port: "out", to_node: "b0", to_port: "in" },
+    );
+    for (let level = 0; level < 8; level += 1) {
+      for (const suffix of ["a", "b"]) {
+        g.edges.push({
+          id: `e-${suffix}${level}`,
+          from_node: `${suffix}${level}`,
+          from_port: "out",
+          to_node: `${suffix}${level + 1}`,
+          to_port: "in",
+        });
+      }
+    }
+    layoutGraph(g);
+    const nodes = g.nodes;
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = nodes[i].position;
+        const b = nodes[j].position;
+        const overlap = Math.abs(a.x - b.x) < 248 && Math.abs(a.y - b.y) < 112;
+        expect(overlap, `${nodes[i].id} vs ${nodes[j].id}`).toBe(false);
+      }
+    }
+  });
+
   it("layoutGraph termina con ciclos de loop", () => {
     const g = emptyGraph("event");
     const a = makeNode("set_variable", { x: 0, y: 0 });
