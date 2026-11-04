@@ -34,6 +34,7 @@ export function useWorkflowTestRunner({
   workflowId,
   dirty,
   hasRealLane,
+  conversational = false,
   onRun,
   onRan,
   onSaveBeforeRun,
@@ -41,6 +42,8 @@ export function useWorkflowTestRunner({
   workflowId: string;
   dirty: boolean;
   hasRealLane: boolean;
+  /** El grafo escucha `conversation.message` y espera respuestas. */
+  conversational?: boolean;
   onRun: (run: RunDetail | null) => void;
   onRan?: () => void;
   onSaveBeforeRun?: () => Promise<boolean>;
@@ -207,6 +210,19 @@ export function useWorkflowTestRunner({
     onRun(null);
     try {
       if (!(await saveIfNeeded(operationId))) return;
+      // Un grafo conversacional necesita una llave estable para correlacionar
+      // cada mensaje con ESTA conversación y un número de pedido para bodega.
+      const effectivePayload = conversational
+        ? {
+            ...payload,
+            customer_ref:
+              String(payload.customer_ref || "").trim() ||
+              `WEB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+            order_number:
+              String(payload.order_number || "").trim() ||
+              `WEB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+          }
+        : payload;
       // Una intención real = una llave. Reintentos del mismo payload reutilizan
       // la llave; un payload nuevo debe generar otra intención en la UI.
       const idempotencyKey = options?.idempotencyKey || `wf-run-${crypto.randomUUID()}`;
@@ -215,7 +231,7 @@ export function useWorkflowTestRunner({
         token: session?.token,
         organizationId: session?.organizationId,
         headers: { "Idempotency-Key": idempotencyKey },
-        body: JSON.stringify({ payload, simulate: false }),
+        body: JSON.stringify({ payload: effectivePayload, simulate: false }),
       });
       if (!isCurrent(operationId)) return;
       const runId = out.run_id ?? out.run?.run_id;
@@ -386,6 +402,118 @@ export function useWorkflowTestRunner({
     }
   }
 
+  /**
+   * Responde a una instancia durable que espera `conversation.message`.
+   * La correlación sale del propio estado de la instancia, no de memoria local:
+   * recargar la página no rompe la conversación.
+   */
+  async function sendMessage(text: string): Promise<string | null> {
+    const trimmed = text.trim();
+    if (!trimmed) return "Escribe un mensaje para el flujo.";
+    const instanceId = state.instanceId;
+    if (!instanceId) {
+      return "No hay una instancia durable activa. Ejecuta el flujo en modo Real.";
+    }
+    const operationId = beginOperation();
+    if (operationId === null) return null;
+    dispatch({ type: "sending-message" });
+    try {
+      const instance = await api<{
+        id: string;
+        status: string;
+        last_run_id?: string | null;
+        waiting_event_type?: string | null;
+        waiting_for?: { correlation?: Record<string, unknown> };
+        state?: { order?: { order_number?: string } };
+      }>(`/api/v1/workflows/instances/${instanceId}`, {
+        token: session?.token,
+        organizationId: session?.organizationId,
+      });
+      if (!isCurrent(operationId)) return null;
+      if (String(instance.status || "").toUpperCase() !== "WAITING") {
+        return "La instancia ya no está esperando un mensaje. Inicia una conversación nueva.";
+      }
+      const correlationValue = String(
+        instance.waiting_for?.correlation?.order_number ??
+          instance.state?.order?.order_number ??
+          "",
+      );
+      const result = await api<{
+        status: string;
+        resumed: boolean;
+        results?: Array<{ status?: string; run?: { run_id?: string } }>;
+      }>(`/api/v1/workflows/instances/${instanceId}/signal`, {
+        method: "POST",
+        token: session?.token,
+        organizationId: session?.organizationId,
+        body: JSON.stringify({
+          event_type: "conversation.message",
+          correlation: correlationValue ? { order_number: correlationValue } : {},
+          payload: { text: trimmed },
+        }),
+      });
+      if (!isCurrent(operationId)) return null;
+      if (!result.resumed) {
+        return "El mensaje no despertó la instancia (correlación distinta). Vuelve a iniciar la conversación.";
+      }
+      const runId =
+        result.results?.[0]?.run?.run_id || instance.last_run_id || null;
+      const detail = runId
+        ? await api<RunDetail>(`/api/v1/workflows/runs/${runId}`, {
+            token: session?.token,
+            organizationId: session?.organizationId,
+          })
+        : null;
+      if (!isCurrent(operationId)) return null;
+      const durableStatus = String(
+        result.results?.[0]?.status || instance.status || "",
+      ).toUpperCase();
+      if (detail) {
+        dispatch({
+          type: "run-refreshed",
+          run: detail,
+          durableStatus,
+          notice: "",
+        });
+        onRun(detail);
+        if (detail.id) void followInstance(instanceId, operationId, detail.id);
+      }
+      void loadRuns();
+      return null;
+    } catch (error) {
+      fail(operationId, errorText(error));
+      return null;
+    } finally {
+      if (operationRef.current === operationId) busyRef.current = false;
+    }
+  }
+
+  /** Refresca el run de la instancia (p. ej. tras aprobar o rechazar). */
+  async function refreshInstance(): Promise<void> {
+    const instanceId = state.instanceId;
+    if (!instanceId || !session) return;
+    try {
+      const instance = await api<{ status: string; last_run_id?: string | null }>(
+        `/api/v1/workflows/instances/${instanceId}`,
+        { token: session.token, organizationId: session.organizationId },
+      );
+      if (!instance.last_run_id) return;
+      const detail = await api<RunDetail>(
+        `/api/v1/workflows/runs/${instance.last_run_id}`,
+        { token: session.token, organizationId: session.organizationId },
+      );
+      dispatch({
+        type: "run-refreshed",
+        run: detail,
+        durableStatus: String(instance.status || "").toUpperCase(),
+        notice: "",
+      });
+      onRun(detail);
+    } catch {
+      // El polling de la instancia sigue activo; un fallo puntual no rompe el panel.
+    }
+  }
+
   return {
     state,
     dispatch,
@@ -394,6 +522,8 @@ export function useWorkflowTestRunner({
     elapsedMs,
     executeTest,
     confirmRealRun,
+    sendMessage,
+    refreshInstance,
     loadLastSample,
     showRun,
   };

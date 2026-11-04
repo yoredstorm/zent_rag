@@ -465,7 +465,7 @@ describe("WorkflowTestPanel (dock de prueba)", () => {
     const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
     const runCall = calls.find((call) => String(call[0]).endsWith("/run"));
     const body = JSON.parse(String((runCall?.[1] as RequestInit | undefined)?.body));
-    expect(body.payload).toEqual({ message: "hola", query: "hola" });
+    expect(body.payload).toEqual({ message: "hola", query: "hola", text: "hola" });
     expect(body.simulate).toBe(false);
   });
 

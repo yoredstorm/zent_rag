@@ -238,7 +238,14 @@ async def test_branch_simulation_covers_taken_port_and_skips_other() -> None:
                     output={"stock": 0},
                 )
             ],
-            expected_outputs={"yes": {"simulated": True, "channel": "in_app", "title": "Sin stock"}},
+            expected_outputs={
+                "yes": {
+                    "simulated": True,
+                    "channel": "in_app",
+                    "title": "Sin stock",
+                    "text": "Reponer",
+                }
+            },
         ),
     )
     report = result.scenarios[0]

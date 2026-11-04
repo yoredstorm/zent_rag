@@ -8,10 +8,14 @@ describe("normalizeTestPayload", () => {
     expect(out.payload).toEqual({ stock: 3, sku: "ABC" });
   });
 
-  it("envuelve texto libre en message y query", () => {
+  it("envuelve texto libre en message, query y text", () => {
     const out = normalizeTestPayload("quien es el gerente");
     expect(out.wrapped).toBe(true);
-    expect(out.payload).toEqual({ message: "quien es el gerente", query: "quien es el gerente" });
+    expect(out.payload).toEqual({
+      message: "quien es el gerente",
+      query: "quien es el gerente",
+      text: "quien es el gerente",
+    });
   });
 
   it("envuelve JSON inválido como el que escribe la gente entre llaves", () => {
@@ -20,12 +24,13 @@ describe("normalizeTestPayload", () => {
     expect(out.payload).toEqual({
       message: "{quien es el gerente}",
       query: "{quien es el gerente}",
+      text: "{quien es el gerente}",
     });
   });
 
   it("envuelve arrays y escalares (el trigger necesita un objeto)", () => {
     expect(normalizeTestPayload("[1,2]").wrapped).toBe(true);
-    expect(normalizeTestPayload("42").payload).toEqual({ message: "42", query: "42" });
+    expect(normalizeTestPayload("42").payload).toEqual({ message: "42", query: "42", text: "42" });
   });
 
   it("vacío es un payload vacío sin envolver", () => {
@@ -85,6 +90,19 @@ describe("answerFromSteps", () => {
     expect(
       answerFromSteps([{ node_id: "n1", node_type: "notify", status: "simulated", output: { simulated: true } }]),
     ).toBeNull();
+  });
+
+  it("en un flujo conversacional muestra la pregunta, no el mensaje del cliente", () => {
+    const out = answerFromSteps([
+      { node_id: "preguntar", node_type: "notify", status: "succeeded", output: { text: "¿Delivery o recojo?" } },
+      { node_id: "esperar", node_type: "wait_event", status: "succeeded", output: { text: "delivery", signal_received: true } },
+    ]);
+    expect(out).toEqual({
+      text: "¿Delivery o recojo?",
+      node_id: "preguntar",
+      echo: false,
+      error: null,
+    });
   });
 });
 

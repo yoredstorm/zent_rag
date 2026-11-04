@@ -79,4 +79,5 @@ async def execute_conversation_capability(
         "channel": channel,
         "conversation_id": conversation_id,
         "message": message,
+        "text": message,
     }

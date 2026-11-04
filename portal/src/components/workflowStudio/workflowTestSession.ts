@@ -95,6 +95,9 @@ export function workflowTestSessionReducer(
         durableNotice: undefined,
       };
 
+    case "sending-message":
+      return { ...state, operation: "executing", error: "", notice: "" };
+
     case "loading-result":
       return { ...state, operation: "loading_result", error: "" };
 
