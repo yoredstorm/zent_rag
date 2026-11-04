@@ -25,9 +25,9 @@ TEMPLATE_SLUG = "bodega_conversational_order"
 TEMPLATE_NAME = "Bodega: pedido por conversación"
 TEMPLATE_CATEGORY = "ventas"
 TEMPLATE_DESCRIPTION = (
-    "Pedido paso a paso por chat: busca el producto real, pregunta cantidad, "
-    "delivery o recojo, dirección y confirmación; reserva stock y pide "
-    "aprobación humana para simular el pago."
+    "Pedido por chat en 8 fases: entrada, producto, cantidad, stock, entrega, "
+    "confirmación, pedido y cierre. Cada pregunta pausa el proceso hasta el "
+    "siguiente mensaje; el stock y el total salen de Bodega."
 )
 PACKAGE_VERSION = "1.0.0"
 
@@ -47,6 +47,260 @@ CAPABILITIES = (
     "bodega.stock.commit_batch",
     "bodega.stock.release_batch",
 )
+
+# El flujo se lee por fases. El id del nodo no cambia (los waits durables
+# dependen de él); solo cambian la etiqueta visible, la nota y la columna.
+PHASES: tuple[str, ...] = (
+    "entrada",
+    "producto",
+    "cantidad",
+    "stock",
+    "entrega",
+    "confirmacion",
+    "pedido",
+    "cierre",
+    "fin",
+)
+
+PHASE_LABELS: dict[str, str] = {
+    "entrada": "Entrada",
+    "producto": "Producto",
+    "cantidad": "Cantidad",
+    "stock": "Stock",
+    "entrega": "Entrega",
+    "confirmacion": "Confirmación",
+    "pedido": "Pedido",
+    "cierre": "Cierre",
+    "fin": "Fin",
+}
+
+NODE_COPY: dict[str, dict[str, str]] = {
+    "cliente": {
+        "phase": "entrada",
+        "label": "Entrada · Mensaje del cliente",
+        "note": "Cada mensaje inicia el pedido o reanuda la espera actual.",
+    },
+    "guardar_cliente": {
+        "phase": "entrada",
+        "label": "Entrada · Guardar cliente y pedido",
+        "note": "Guarda customer_ref y order_number en el estado durable.",
+    },
+    "buscar": {
+        "phase": "producto",
+        "label": "Producto · Buscar catálogo",
+        "note": "Consulta el catálogo real con el texto que escribió el cliente.",
+    },
+    "encontrado": {
+        "phase": "producto",
+        "label": "Producto · ¿Encontrado?",
+        "note": "Si no hay coincidencias, avisa y termina sin pedido.",
+    },
+    "sin_producto": {
+        "phase": "producto",
+        "label": "Producto · Avisar no encontrado",
+        "note": "Mensaje al cliente cuando el catálogo no devuelve opciones.",
+    },
+    "guardar_opciones": {
+        "phase": "producto",
+        "label": "Producto · Guardar opciones",
+        "note": "Guarda las coincidencias para elegir después de la espera.",
+    },
+    "unico": {
+        "phase": "producto",
+        "label": "Producto · ¿Una sola opción?",
+        "note": "Si hay una sola, se elige automáticamente.",
+    },
+    "elegir_uno": {
+        "phase": "producto",
+        "label": "Producto · Elegir opción 1",
+        "note": "Toma la primera opción. También sirve cuando era la única.",
+    },
+    "pedir_opcion": {
+        "phase": "producto",
+        "label": "Producto · Preguntar cuál",
+        "note": "Muestra hasta dos opciones y pide responder 1 o 2.",
+    },
+    "esperar_opcion": {
+        "phase": "producto",
+        "label": "Producto · Esperar elección",
+        "note": "Pausa durable hasta que llegue la respuesta del cliente.",
+    },
+    "opcion_uno": {
+        "phase": "producto",
+        "label": "Producto · ¿Respondió 1?",
+        "note": "Rama para la primera opción del catálogo.",
+    },
+    "elegir_dos": {
+        "phase": "producto",
+        "label": "Producto · Elegir opción 2",
+        "note": "Toma la segunda opción del catálogo.",
+    },
+    "opcion_dos": {
+        "phase": "producto",
+        "label": "Producto · ¿Respondió 2?",
+        "note": "Rama para la segunda opción del catálogo.",
+    },
+    "opcion_invalida": {
+        "phase": "producto",
+        "label": "Producto · Avisar opción inválida",
+        "note": "Pide responder 1 o 2 sin crear un pedido.",
+    },
+    "repetir_opcion": {
+        "phase": "producto",
+        "label": "Producto · Repetir pregunta",
+        "note": "Vuelve a preguntar sin crear ciclos en el grafo.",
+    },
+    "preguntar_cantidad": {
+        "phase": "cantidad",
+        "label": "Cantidad · Preguntar",
+        "note": "Paso común para las dos opciones de producto.",
+    },
+    "esperar_cantidad": {
+        "phase": "cantidad",
+        "label": "Cantidad · Esperar respuesta",
+        "note": "Pausa durable hasta que el cliente escribe la cantidad.",
+    },
+    "guardar_cantidad": {
+        "phase": "cantidad",
+        "label": "Cantidad · Guardar",
+        "note": "Guarda la cantidad en el estado del pedido.",
+    },
+    "precio": {
+        "phase": "stock",
+        "label": "Stock · Consultar precio y stock",
+        "note": "Lee precio y stock reales del producto elegido.",
+    },
+    "stock_ok": {
+        "phase": "stock",
+        "label": "Stock · ¿Hay suficiente?",
+        "note": "Compara el stock disponible con la cantidad pedida.",
+    },
+    "sin_stock": {
+        "phase": "stock",
+        "label": "Stock · Avisar sin stock",
+        "note": "Informa cuánto queda y no reserva nada.",
+    },
+    "preguntar_entrega": {
+        "phase": "entrega",
+        "label": "Entrega · Preguntar modalidad",
+        "note": "Pregunta si el pedido es delivery o recojo.",
+    },
+    "esperar_entrega": {
+        "phase": "entrega",
+        "label": "Entrega · Esperar modalidad",
+        "note": "Pausa durable hasta la respuesta de delivery o recojo.",
+    },
+    "guardar_entrega": {
+        "phase": "entrega",
+        "label": "Entrega · Guardar modalidad",
+        "note": "Guarda el texto de delivery o recojo.",
+    },
+    "es_delivery": {
+        "phase": "entrega",
+        "label": "Entrega · ¿Es delivery?",
+        "note": "Si es delivery pide dirección; si no, marca recojo.",
+    },
+    "preguntar_direccion": {
+        "phase": "entrega",
+        "label": "Entrega · Preguntar dirección",
+        "note": "Pide la dirección de entrega.",
+    },
+    "esperar_direccion": {
+        "phase": "entrega",
+        "label": "Entrega · Esperar dirección",
+        "note": "Pausa durable hasta que llega la dirección.",
+    },
+    "guardar_direccion": {
+        "phase": "entrega",
+        "label": "Entrega · Guardar dirección",
+        "note": "Guarda modo delivery y dirección.",
+    },
+    "marcar_recojo": {
+        "phase": "entrega",
+        "label": "Entrega · Marcar recojo",
+        "note": "Guarda modo recojo sin dirección.",
+    },
+    "preguntar_confirmacion": {
+        "phase": "confirmacion",
+        "label": "Confirmación · Pedir",
+        "note": "Paso común para delivery y recojo.",
+    },
+    "esperar_confirmacion": {
+        "phase": "confirmacion",
+        "label": "Confirmación · Esperar",
+        "note": "Pausa durable hasta que el cliente responde sí o no.",
+    },
+    "confirmado": {
+        "phase": "confirmacion",
+        "label": "Confirmación · ¿Confirmado?",
+        "note": "Si dice no, cancela sin reservar stock.",
+    },
+    "cancelado": {
+        "phase": "confirmacion",
+        "label": "Confirmación · Avisar cancelado",
+        "note": "Mensaje final cuando el cliente cancela.",
+    },
+    "crear_pedido": {
+        "phase": "pedido",
+        "label": "Pedido · Crear en Bodega",
+        "note": "Crea el pedido con el precio y stock reales.",
+    },
+    "reservar": {
+        "phase": "pedido",
+        "label": "Pedido · Reservar stock",
+        "note": "Reserva stock por el tiempo configurado.",
+    },
+    "aprobacion": {
+        "phase": "pedido",
+        "label": "Pedido · Aprobar pago simulado",
+        "note": "Pausa para aprobación humana antes de confirmar.",
+    },
+    "commit": {
+        "phase": "pedido",
+        "label": "Pedido · Confirmar stock",
+        "note": "Convierte la reserva en salida de stock.",
+    },
+    "entrega_final": {
+        "phase": "cierre",
+        "label": "Cierre · ¿Delivery o recojo?",
+        "note": "Rama final según la modalidad elegida.",
+    },
+    "aviso_delivery": {
+        "phase": "cierre",
+        "label": "Cierre · Avisar reparto",
+        "note": "Mensaje con dirección y total del pedido.",
+    },
+    "aviso_recojo": {
+        "phase": "cierre",
+        "label": "Cierre · Avisar recojo",
+        "note": "Mensaje con total y punto de recojo.",
+    },
+    "resultado": {
+        "phase": "cierre",
+        "label": "Cierre · Registrar venta",
+        "note": "Resultado de negocio común a ambas entregas.",
+    },
+    "fin": {
+        "phase": "fin",
+        "label": "Fin · Pedido completado",
+        "note": "Termina el proceso exitoso.",
+    },
+    "fin_sin_producto": {
+        "phase": "fin",
+        "label": "Fin · Sin producto",
+        "note": "Termina sin crear pedido.",
+    },
+    "fin_sin_stock": {
+        "phase": "fin",
+        "label": "Fin · Sin stock",
+        "note": "Termina sin reservar stock.",
+    },
+    "fin_cancelado": {
+        "phase": "fin",
+        "label": "Fin · Cancelado",
+        "note": "Termina sin crear pedido ni reservar stock.",
+    },
+}
 
 
 def _node(
@@ -92,54 +346,43 @@ def _edge(
     return edge
 
 
-def _layout_nodes(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
-    """Posiciones deterministas para el canvas (columnas por nivel).
-
-    BFS con visitados: un `loop` vuelve a un nodo anterior y no debe bloquear
-    el layout del resto del grafo.
-    """
-    outgoing: dict[str, list[str]] = {node["id"]: [] for node in nodes}
-    for edge in edges:
-        if edge["from_node"] in outgoing and edge["to_node"] in outgoing:
-            outgoing[edge["from_node"]].append(edge["to_node"])
-
-    entry = nodes[0]["id"] if nodes else ""
-    level: dict[str, int] = {entry: 0}
-    queue = [entry]
-    head = 0
-    while head < len(queue):
-        current = queue[head]
-        head += 1
-        for target in outgoing.get(current, []):
-            if target in level:
-                continue
-            level[target] = level[current] + 1
-            queue.append(target)
+def _decorate_nodes(nodes: list[dict[str, Any]]) -> None:
+    """Aplica copy de negocio y fase sin tocar ids, edges ni configuración."""
     for node in nodes:
-        level.setdefault(node["id"], 0)
-
-    groups: dict[int, list[str]] = {}
-    for node in nodes:
-        groups.setdefault(level[node["id"]], []).append(node["id"])
-    positions: dict[str, dict[str, float]] = {}
-    columns = 4
-    x_gap = 320
-    y_gap = 180
-    column_gap = 80
-    # Cursor por columna: dos niveles distintos pueden caer en la misma
-    # columna, así que la Y avanza con el contenido real de cada nivel.
-    # Evita que el nivel 4 y el nivel 8 compartan (x, y).
-    cursors = [80.0] * columns
-    for value in sorted(groups):
-        column = value % columns
-        for index, node_id in enumerate(groups[value]):
-            positions[node_id] = {
-                "x": 80 + column * x_gap,
-                "y": cursors[column] + index * y_gap,
+        copy = NODE_COPY.get(str(node.get("id") or ""))
+        if not copy:
+            continue
+        phase = copy["phase"]
+        node["label"] = copy["label"]
+        metadata = node.get("metadata")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        metadata.update(
+            {
+                "phase": phase,
+                "phase_label": PHASE_LABELS.get(phase, phase),
+                "note": copy["note"],
             }
-        cursors[column] += len(groups[value]) * y_gap + column_gap
+        )
+        node["metadata"] = metadata
+
+
+def _layout_phases(nodes: list[dict[str, Any]]) -> None:
+    """Una columna por fase; los nodos de la fase se apilan en orden.
+
+    El flujo deja de mezclar nodos de fases distintas en la misma columna.
+    """
+    phase_index = {phase: index for index, phase in enumerate(PHASES)}
+    groups: dict[str, list[dict[str, Any]]] = {phase: [] for phase in PHASES}
     for node in nodes:
-        node["position"] = positions.get(node["id"], {"x": 80, "y": 80})
+        metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+        phase = str(metadata.get("phase") or "entrada")
+        groups.setdefault(phase, []).append(node)
+    x_gap = 360
+    y_gap = 170
+    for phase, items in groups.items():
+        column = phase_index.get(phase, len(phase_index))
+        for index, node in enumerate(items):
+            node["position"] = {"x": 80 + column * x_gap, "y": 80 + index * y_gap}
 
 
 def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -676,7 +919,8 @@ def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
         _edge("e49", "resultado", "fin"),
     ]
 
-    _layout_nodes(nodes, edges)
+    _decorate_nodes(nodes)
+    _layout_phases(nodes)
 
     return {
         "workflow_version": 2,
@@ -688,6 +932,7 @@ def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
             "template": TEMPLATE_SLUG,
             "category": TEMPLATE_CATEGORY,
             "applies_to": ["WORKFLOWS", "AGENTS"],
+            "phases": [{"id": phase, "label": PHASE_LABELS[phase]} for phase in PHASES],
             "conversation": {
                 "trigger": "conversation.message",
                 "waits": [

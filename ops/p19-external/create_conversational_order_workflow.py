@@ -110,8 +110,10 @@ async def _ensure_workflow(org: UUID, workspace: UUID, created_by: UUID | None) 
         trigger_type="event",
         trigger_config={"event_type": "conversation.message"},
         description=(
-            "Pedido paso a paso por chat: producto, cantidad, delivery o recojo, "
-            "dirección y confirmación; reserva stock y pide aprobación humana."
+            "Pedido por chat en 8 fases: entrada, producto, cantidad, stock, "
+            "entrega, confirmación, pedido y cierre. Cada pregunta pausa el "
+            "proceso hasta el siguiente mensaje; reserva stock y pide "
+            "aprobación humana."
         ),
         created_by=created_by,
         workspace_id=workspace,

@@ -238,6 +238,7 @@ export function NodeConfigPanel({
   const current = node!;
   const meta = catalogNodes?.[current.type] ?? nodeMeta(current.type);
   const ports = nodePorts(current.type);
+  const note = typeof current.metadata?.note === "string" ? current.metadata.note : "";
 
   function patchConfig(patch: Record<string, unknown>) {
     onChange({
@@ -409,6 +410,14 @@ export function NodeConfigPanel({
 
         {tab === "config" && (
           <>
+            {note && (
+              <p
+                className="rounded-md border border-border-soft bg-soft/50 px-2.5 py-2 text-[12px] leading-relaxed text-muted"
+                data-testid="wf-node-note"
+              >
+                {note}
+              </p>
+            )}
             <NodeHelpCard meta={meta} onAddSuggested={onAddSuggested} />
 
             <Field

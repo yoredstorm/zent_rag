@@ -38,6 +38,31 @@ def test_conversational_graph_layout_has_no_overlaps() -> None:
             assert not overlaps, (first["id"], second["id"], first["position"], second["position"])
 
 
+def test_conversational_graph_is_grouped_by_business_phases() -> None:
+    graph = build_graph()
+    phases = [item["id"] for item in graph["metadata"]["phases"]]
+    assert phases == [
+        "entrada",
+        "producto",
+        "cantidad",
+        "stock",
+        "entrega",
+        "confirmacion",
+        "pedido",
+        "cierre",
+        "fin",
+    ]
+    x_by_phase: dict[str, set[float]] = {}
+    for node in graph["nodes"]:
+        metadata = node["metadata"]
+        assert metadata["phase"] in phases, node["id"]
+        assert metadata["note"], node["id"]
+        assert node["label"].startswith(f"{metadata['phase_label']} ·"), node["id"]
+        x_by_phase.setdefault(metadata["phase"], set()).add(float(node["position"]["x"]))
+    for phase in phases:
+        assert len(x_by_phase[phase]) == 1, phase
+
+
 def test_conversational_graph_waits_for_each_step() -> None:
     graph = build_graph()
     waits = [node for node in graph["nodes"] if node["type"] == "wait_event"]

@@ -136,6 +136,19 @@ describe("NodeConfigPanel tabs", () => {
 });
 
 describe("NodeConfigPanel etiqueta", () => {
+  it("muestra la nota de negocio del nodo", () => {
+    const withNote = node({
+      id: "n1",
+      type: "notify",
+      label: "Confirmación · Pedir",
+      metadata: { note: "Paso común para delivery y recojo." },
+    });
+    renderPanel({ node: withNote });
+    expect(screen.getByTestId("wf-node-note")).toHaveTextContent(
+      "Paso común para delivery y recojo.",
+    );
+  });
+
   it("renombra el paso sin cambiar su tipo técnico", () => {
     const onChange = vi.fn();
     renderPanel({ onChange });

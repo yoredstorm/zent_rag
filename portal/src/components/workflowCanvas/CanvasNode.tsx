@@ -104,8 +104,10 @@ function CanvasNodeView({
       : title !== meta.label
         ? meta.label
         : CATEGORY_LABEL[meta.category];
+  const note = typeof n.metadata?.note === "string" ? n.metadata.note.trim() : "";
   const detail =
-    n.type === "llm" ? String(n.config.prompt ?? "").trim() || "sin pregunta" : (meta.summary?.(n.config) ?? "sin configurar");
+    note ||
+    (n.type === "llm" ? String(n.config.prompt ?? "").trim() || "sin pregunta" : (meta.summary?.(n.config) ?? "sin configurar"));
   const statusLabel = run ? STATUS_TEXT[run.status] ?? run.status : "";
   const ariaLabel = [title, kindMeta.label, statusLabel && `estado ${statusLabel}`, issue && issue.message]
     .filter(Boolean)
