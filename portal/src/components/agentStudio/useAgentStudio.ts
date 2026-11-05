@@ -327,20 +327,28 @@ export function useAgentStudio() {
 
   useEffect(() => {
     if (!session) return;
+    let active = true;
     setProfileCatalogLoading(true);
     api<ResponseProfileCatalog>("/api/v1/agents/response-profile/catalog", {
       token: session.token,
       organizationId: session.organizationId,
     })
       .then((catalog) => {
+        if (!active) return;
         setProfilePresets(Array.isArray(catalog.presets) ? catalog.presets : []);
         if (catalog.defaults) setProfileDefaults(catalog.defaults);
       })
       .catch(() => {
+        if (!active) return;
         // Sin catálogo la UI no inventa presets: muestra el perfil guardado.
         setProfilePresets([]);
       })
-      .finally(() => setProfileCatalogLoading(false));
+      .finally(() => {
+        if (active) setProfileCatalogLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [session]);
 
   useEffect(() => {

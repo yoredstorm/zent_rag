@@ -41,6 +41,9 @@ docs/*
 # Architecture ADRs are product artifacts (Enterprise Knowledge Engine Phase A+)
 !docs/architecture/
 !docs/architecture/**
+# Baseline y resultados de la optimizacion de CI: evidencia auditable del PR.
+!docs/ci-performance-baseline.md
+!docs/ci-optimization-results.md
 
 # Portal
 portal/node_modules/
