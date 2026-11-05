@@ -17,7 +17,7 @@ export type TestOperation =
   | "completed"
   | "failed";
 export type TestRunKind = "test_report" | "execution_run";
-export type ResultPane = "answer" | "path" | "verification";
+export type ResultPane = "answer" | "path" | "verification" | "context" | "state";
 export type RealLane = "sandbox" | "provider";
 
 export type TestReportOut = {

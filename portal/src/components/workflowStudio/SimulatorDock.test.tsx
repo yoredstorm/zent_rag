@@ -1,22 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-import { makeNode, type WorkflowGraph } from "../../lib/workflowGraph";
+import { describe, expect, it } from "vitest";
 import type { RunDetail } from "../WorkflowRunInspector";
-import { RunTracePane, SimulatorDock, type SimulatorState } from "./SimulatorDock";
-
-const graph: WorkflowGraph = {
-  workflow_version: 2,
-  nodes: [
-    { ...makeNode("trigger_webhook"), id: "t1", label: "Pedido recibido" },
-    { ...makeNode("notify"), id: "n1", label: "Avisar al cliente" },
-  ],
-  edges: [],
-  variables: {},
-  entrypoints: ["t1"],
-  metadata: {},
-};
+import { SimulatorDock, type SimulatorState } from "./SimulatorDock";
 
 const run: RunDetail = {
   id: "run-42",
@@ -30,33 +17,6 @@ const run: RunDetail = {
   ],
 };
 
-describe("RunTracePane", () => {
-  it("sin run explica qué aparecerá", () => {
-    render(<RunTracePane run={null} graph={graph} selectedNodeId={null} onPickNode={vi.fn()} />);
-    expect(screen.getByTestId("wf-trace-empty")).toBeInTheDocument();
-  });
-
-  it("abre en errores cuando algo falló y cada paso lleva a su nodo", async () => {
-    const onPickNode = vi.fn();
-    const user = userEvent.setup();
-    render(<RunTracePane run={run} graph={graph} selectedNodeId="n1" onPickNode={onPickNode} />);
-    expect(screen.getByTestId("wf-trace-tab-errors")).toHaveAttribute("data-state", "active");
-    const failedStep = screen.getByTestId("wf-trace-step");
-    expect(failedStep).toHaveTextContent("Avisar al cliente");
-    expect(failedStep).toHaveTextContent("Falta el correo del cliente");
-    expect(failedStep).toHaveAttribute("aria-current", "true");
-    await user.click(failedStep);
-    expect(onPickNode).toHaveBeenCalledWith("n1");
-
-    await user.click(screen.getByTestId("wf-trace-tab-trace"));
-    expect(screen.getAllByTestId("wf-trace-step").map((s) => s.dataset.nodeId)).toEqual(["t1", "n1"]);
-
-    await user.click(screen.getByTestId("wf-trace-tab-state"));
-    expect(screen.getByTestId("wf-trace-state")).toHaveTextContent("Simulación");
-    expect(screen.getByTestId("wf-trace-state")).toHaveTextContent("run-42");
-  });
-});
-
 function DockHarness({ initial = "open" as SimulatorState }) {
   const [state, setState] = useState<SimulatorState>(initial);
   const [height, setHeight] = useState(320);
@@ -68,7 +28,6 @@ function DockHarness({ initial = "open" as SimulatorState }) {
       onHeightChange={setHeight}
       availableHeight={800}
       run={run}
-      trace={<p>traza</p>}
     >
       <textarea aria-label="Mensaje de prueba" />
     </SimulatorDock>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { isConversationalGraph, type GraphIssue, type WorkflowGraph } from "../../lib/workflowGraph";
-import { ConfirmDialog, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
+import { Badge, ConfirmDialog, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import type { RunDetail } from "../WorkflowRunInspector";
 import { WorkflowTestFooter } from "./WorkflowTestFooter";
 import { WorkflowTestHeader } from "./WorkflowTestHeader";
@@ -34,6 +34,8 @@ type Props = {
   embedded?: boolean;
   /** Huella del grafo actual para comparar el historial. */
   graphHash?: string | null;
+  /** Desktop: entrada a la izquierda y resultado a la derecha, sin tabs. */
+  split?: boolean;
 };
 
 export function WorkflowTestPanel({
@@ -49,6 +51,7 @@ export function WorkflowTestPanel({
   graph,
   embedded = false,
   graphHash,
+  split = false,
 }: Props) {
   const [raw, setRaw] = useState("");
   const [realLane, setRealLane] = useState<RealLane | null>(null);
@@ -184,6 +187,82 @@ export function WorkflowTestPanel({
     (currentMode === "real" && !realLane) ||
     (currentMode !== "preview" && !hasInput);
 
+  const setupPane = (
+    <WorkflowTestSetup
+      level={state.requestedLevel}
+      realLane={realLane}
+      onSelectMode={selectMode}
+      onSelectRealLane={selectRealLane}
+      raw={raw}
+      onChange={(value) => {
+        setRaw(value);
+        setLastSampleNote("");
+        setFormError("");
+      }}
+      normalized={normalized}
+      disabled={busy}
+      busy={busy}
+      error={formError || state.error}
+      lastSampleNote={lastSampleNote}
+      canRestore={restoreRaw !== null && restoreRaw !== raw}
+      onSubmit={() => runTest(state.requestedLevel)}
+      onGenerate={generateSample}
+      onUseLast={() => void applyLastSample()}
+      onRestore={restoreDraft}
+      onApplyExample={applyExample}
+      issues={issues}
+      graph={graph}
+      effectLabels={effectLabels}
+      report={state.report}
+      onSelectNode={onSelectNode}
+      status={status}
+    />
+  );
+
+  const resultPane = (
+    <WorkflowTestResult
+      report={state.report}
+      run={state.run}
+      runKind={state.runKind}
+      operation={state.operation}
+      error={state.error}
+      providerVerified={state.providerVerified}
+      graph={graph}
+      effectLabels={effectLabels}
+      selectedPane={state.selectedPane}
+      historicalRun={state.historicalRun}
+      history={runs}
+      historyOpen={state.historyOpen}
+      activeRunId={state.activeRunId}
+      elapsedMs={elapsedMs}
+      durableStatus={state.durableStatus}
+      durableNotice={state.durableNotice}
+      currentGraphHash={graphHash}
+      onSendMessage={sendMessage}
+      onApprovalDecided={() => void refreshInstance()}
+      onSelectPane={(pane) => dispatch({ type: "show-result", pane })}
+      onSelectNode={onSelectNode}
+      onModify={() => dispatch({ type: "show-setup" })}
+      onRepeat={repeat}
+      onRetry={retry}
+      onToggleHistory={(open) => dispatch({ type: "toggle-history", open })}
+      onOpenHistoricalRun={(runId) => void showRun(runId)}
+      showModify={!split}
+    />
+  );
+
+  const footer = (
+    <WorkflowTestFooter
+      ctaLabel={ctaLabel}
+      ctaDisabled={ctaDisabled}
+      busy={busy}
+      hasInput={hasInput}
+      effectLabels={effectLabels}
+      onTest={() => runTest(state.requestedLevel)}
+      onRealRun={() => setConfirmOpen(true)}
+    />
+  );
+
   return (
     <section
       className="panel flex min-h-0 w-full flex-1 flex-col overflow-hidden"
@@ -197,97 +276,54 @@ export function WorkflowTestPanel({
         saving={state.operation === "saving"}
       />
 
-      <Tabs
-        value={state.view}
-        onValueChange={(value) => {
-          if (value === "result") dispatch({ type: "show-result" });
-          else dispatch({ type: "show-setup" });
-        }}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        <TabsList className="mx-3 mt-2">
-          <TabsTrigger value="setup" data-testid="wf-test-tab-setup">
-            Probar
-          </TabsTrigger>
-          <TabsTrigger value="result" data-testid="wf-test-tab-result">
-            Resultado{hasResult ? "" : " · vacío"}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="setup" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <WorkflowTestSetup
-            level={state.requestedLevel}
-            realLane={realLane}
-            onSelectMode={selectMode}
-            onSelectRealLane={selectRealLane}
-            raw={raw}
-            onChange={(value) => {
-              setRaw(value);
-              setLastSampleNote("");
-              setFormError("");
+      {split ? (
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-[3] flex-col border-r border-border">
+            <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+              <p className="text-[13px] font-semibold text-text">Entrada</p>
+              <span className="text-[11px] text-faint">Mensaje o payload que activa el flujo</span>
+            </div>
+            {setupPane}
+            {footer}
+          </div>
+          <div className="flex min-h-0 w-[min(42%,520px)] shrink-0 flex-col">
+            <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+              <p className="text-[13px] font-semibold text-text">Resultado del flujo</p>
+              {state.historicalRun && <Badge tone="neutral">Histórico</Badge>}
+            </div>
+            {resultPane}
+          </div>
+        </div>
+      ) : (
+        <>
+          <Tabs
+            value={state.view}
+            onValueChange={(value) => {
+              if (value === "result") dispatch({ type: "show-result" });
+              else dispatch({ type: "show-setup" });
             }}
-            normalized={normalized}
-            disabled={busy}
-            busy={busy}
-            error={formError || state.error}
-            lastSampleNote={lastSampleNote}
-            canRestore={restoreRaw !== null && restoreRaw !== raw}
-            onSubmit={() => runTest(state.requestedLevel)}
-            onGenerate={generateSample}
-            onUseLast={() => void applyLastSample()}
-            onRestore={restoreDraft}
-            onApplyExample={applyExample}
-            issues={issues}
-            graph={graph}
-            effectLabels={effectLabels}
-            report={state.report}
-            onSelectNode={onSelectNode}
-            status={status}
-          />
-        </TabsContent>
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            <TabsList className="mx-3 mt-2">
+              <TabsTrigger value="setup" data-testid="wf-test-tab-setup">
+                Probar
+              </TabsTrigger>
+              <TabsTrigger value="result" data-testid="wf-test-tab-result">
+                Resultado{hasResult ? "" : " · vacío"}
+              </TabsTrigger>
+            </TabsList>
 
-        <TabsContent value="result" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <WorkflowTestResult
-            report={state.report}
-            run={state.run}
-            runKind={state.runKind}
-            operation={state.operation}
-            error={state.error}
-            providerVerified={state.providerVerified}
-            graph={graph}
-            effectLabels={effectLabels}
-            selectedPane={state.selectedPane}
-            historicalRun={state.historicalRun}
-            history={runs}
-            historyOpen={state.historyOpen}
-            activeRunId={state.activeRunId}
-            elapsedMs={elapsedMs}
-            durableStatus={state.durableStatus}
-            durableNotice={state.durableNotice}
-            currentGraphHash={graphHash}
-            onSendMessage={sendMessage}
-            onApprovalDecided={() => void refreshInstance()}
-            onSelectPane={(pane) => dispatch({ type: "show-result", pane })}
-            onSelectNode={onSelectNode}
-            onModify={() => dispatch({ type: "show-setup" })}
-            onRepeat={repeat}
-            onRetry={retry}
-            onToggleHistory={(open) => dispatch({ type: "toggle-history", open })}
-            onOpenHistoricalRun={(runId) => void showRun(runId)}
-          />
-        </TabsContent>
-      </Tabs>
+            <TabsContent value="setup" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+              {setupPane}
+            </TabsContent>
 
-      {state.view === "setup" && (
-        <WorkflowTestFooter
-          ctaLabel={ctaLabel}
-          ctaDisabled={ctaDisabled}
-          busy={busy}
-          hasInput={hasInput}
-          effectLabels={effectLabels}
-          onTest={() => runTest(state.requestedLevel)}
-          onRealRun={() => setConfirmOpen(true)}
-        />
+            <TabsContent value="result" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+              {resultPane}
+            </TabsContent>
+          </Tabs>
+
+          {state.view === "setup" && footer}
+        </>
       )}
 
       <ConfirmDialog

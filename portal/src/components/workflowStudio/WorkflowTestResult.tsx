@@ -1,6 +1,7 @@
 import { CheckCircle, Clock, WarningCircle } from "@phosphor-icons/react";
 import { useState } from "react";
-import { Badge, Button, EmptyState, ErrorInline, Input, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
+import { Badge, Button, EmptyState, ErrorInline, Input, Spinner, StatusBadge, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
+import { DataView } from "./DataView";
 import { humanizeWorkflowError } from "../../lib/workflowErrors";
 import type { WorkflowGraph } from "../../lib/workflowGraph";
 import type { RunDetail } from "../WorkflowRunInspector";
@@ -61,6 +62,7 @@ export function WorkflowTestResult({
   onRetry,
   onToggleHistory,
   onOpenHistoricalRun,
+  showModify = true,
 }: {
   report: TestReportOut | null;
   run: RunDetail | null;
@@ -90,6 +92,8 @@ export function WorkflowTestResult({
   onRetry: () => void;
   onToggleHistory: (open: boolean) => void;
   onOpenHistoricalRun: (runId: string) => void;
+  /** En el dock dividido la entrada siempre está visible: no hace falta "Modificar prueba". */
+  showModify?: boolean;
 }) {
   const headline = resultHeadline(report, run, runKind);
   const provider = providerSummary(report);
@@ -211,7 +215,7 @@ export function WorkflowTestResult({
           variant="pill"
           className="flex min-h-0 flex-1 flex-col"
         >
-          <TabsList className="mx-3 mt-2">
+          <TabsList className="mx-3 mt-2 flex-wrap">
             <TabsTrigger value="answer" data-testid="wf-result-tab-answer">
               Respuesta
             </TabsTrigger>
@@ -220,6 +224,12 @@ export function WorkflowTestResult({
             </TabsTrigger>
             <TabsTrigger value="verification" data-testid="wf-result-tab-verification">
               Verificación
+            </TabsTrigger>
+            <TabsTrigger value="context" data-testid="wf-result-tab-context">
+              Contexto
+            </TabsTrigger>
+            <TabsTrigger value="state" data-testid="wf-result-tab-state">
+              Estado
             </TabsTrigger>
           </TabsList>
 
@@ -369,13 +379,68 @@ export function WorkflowTestResult({
               <WorkflowTestTechnical report={report} run={run} />
             </div>
           </TabsContent>
+
+          <TabsContent value="context" className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-2">
+            <DataView
+              data={run?.context ?? null}
+              testId="wf-result-context"
+              emptyHint="El run no expuso contexto."
+            />
+          </TabsContent>
+
+          <TabsContent value="state" className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-2">
+            {run ? (
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px]" data-testid="wf-result-state">
+                <div>
+                  <dt className="eyebrow">Estado</dt>
+                  <dd className="mt-0.5">
+                    <StatusBadge status={run.status} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="eyebrow">Duración</dt>
+                  <dd className="mt-0.5 tabular-nums text-text">
+                    {run.duration_ms != null ? formatElapsed(run.duration_ms) : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="eyebrow">Modo</dt>
+                  <dd className="mt-0.5 text-text">
+                    {run.simulated ? "Simulación" : run.effective_level || "Real"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="eyebrow">Run</dt>
+                  <dd className="mt-0.5 truncate font-mono text-[11px] text-muted">{run.id}</dd>
+                </div>
+                {run.instance_id && (
+                  <div className="col-span-2">
+                    <dt className="eyebrow">Instancia durable</dt>
+                    <dd className="mt-0.5 truncate font-mono text-[11px] text-muted">{run.instance_id}</dd>
+                  </div>
+                )}
+                {run.error && (
+                  <div className="col-span-2">
+                    <dt className="eyebrow">Error</dt>
+                    <dd className="mt-0.5 text-danger">{run.error}</dd>
+                  </div>
+                )}
+              </dl>
+            ) : (
+              <EmptyState compact title="Sin run asociado" body="Esta prueba no generó un run inspeccionable." />
+            )}
+          </TabsContent>
         </Tabs>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2.5">
-        <Button variant="secondary" size="sm" onClick={onModify} data-testid="wf-modify-test">
-          Modificar prueba
-        </Button>
+        {showModify ? (
+          <Button variant="secondary" size="sm" onClick={onModify} data-testid="wf-modify-test">
+            Modificar prueba
+          </Button>
+        ) : (
+          <span />
+        )}
         <Button
           variant="primary"
           size="sm"

@@ -9,7 +9,7 @@ type UiMode = "preview" | "simulation" | "real";
 const MODES: { id: UiMode; label: string; icon: Icon; level: TestLevel }[] = [
   { id: "preview", label: "Vista previa", icon: Eye, level: "preview" },
   { id: "simulation", label: "Simular", icon: Play, level: "simulation" },
-  { id: "real", label: "Real", icon: ShieldCheck, level: "sandbox" },
+  { id: "real", label: "Prueba real", icon: ShieldCheck, level: "sandbox" },
 ];
 
 function modeOfLevel(level: TestLevel): UiMode {
@@ -47,7 +47,7 @@ export function WorkflowTestModePicker({
           Modo de prueba
         </p>
         <Badge tone={current === "real" ? "warn" : "neutral"}>
-          {current === "real" ? "Nivel real" : "Nivel seguro"}
+          {current === "real" ? "Prueba controlada" : "Nivel seguro"}
         </Badge>
       </div>
 
@@ -130,6 +130,10 @@ export function WorkflowTestModePicker({
           <p className="text-[11.5px] leading-relaxed text-warn" data-testid="wf-level-unavailable">
             La disponibilidad no se deduce de esta pantalla. Se comprueba al ejecutar y el servidor
             informa el nivel efectivo.
+          </p>
+          <p className="text-[11.5px] leading-relaxed text-muted">
+            Esta prueba no ejecuta producción. Para aplicar efectos reales usa el botón rojo
+            «Ejecutar con efectos reales».
           </p>
         </div>
       ) : (

@@ -33,33 +33,31 @@ export function WorkflowTestFooter({
         {ctaLabel}
       </Button>
 
-      <details className="group" data-testid="wf-more-actions">
-        <summary className="flex cursor-pointer items-center gap-1.5 text-[11.5px] font-medium text-muted select-none">
-          <Warning size={13} aria-hidden />
-          Más acciones
-        </summary>
-        <div className="mt-2 space-y-1.5">
-          <Button
-            variant="danger"
-            size="sm"
-            leadingIcon={Lightning}
-            disabled={busy || !hasInput}
-            onClick={onRealRun}
-            data-testid="wf-run"
-          >
-            Ejecutar workflow con efectos reales
-          </Button>
-          <p className="text-[11px] leading-relaxed text-faint">
-            No es una prueba. Ejecuta la operación real y puede disparar efectos externos. Requiere
-            permiso, confirmación y no se puede deshacer desde esta pantalla.
+      <div className="space-y-1.5" data-testid="wf-real-actions">
+        <Button
+          variant="danger"
+          size="sm"
+          leadingIcon={Lightning}
+          className="w-full"
+          disabled={busy || !hasInput}
+          onClick={onRealRun}
+          data-testid="wf-run"
+        >
+          Ejecutar con efectos reales
+        </Button>
+        <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-faint">
+          <Warning size={12} className="mt-0.5 shrink-0" aria-hidden />
+          <span>
+            No es una prueba. Aplica cambios reales, pide confirmación y no se puede deshacer desde
+            esta pantalla.
+          </span>
+        </p>
+        {effectLabels.length > 0 && (
+          <p className="text-[11px] leading-relaxed text-warn">
+            {effectLabels.length} nodo(s) con efectos: {effectLabels.join(", ")}.
           </p>
-          {effectLabels.length > 0 && (
-            <p className="text-[11px] leading-relaxed text-warn">
-              {effectLabels.length} nodo(s) con efectos: {effectLabels.join(", ")}.
-            </p>
-          )}
-        </div>
-      </details>
+        )}
+      </div>
     </footer>
   );
 }

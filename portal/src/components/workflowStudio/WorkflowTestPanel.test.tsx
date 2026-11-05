@@ -25,6 +25,7 @@ function stubApi(
   runStatus = "succeeded",
   runOut: Record<string, unknown> = {},
   testSteps: Record<string, unknown>[] = [],
+  runDetail: Record<string, unknown> = {},
 ) {
   vi.stubGlobal(
     "fetch",
@@ -57,7 +58,7 @@ function stubApi(
         );
       }
       if (url.includes("/workflows/runs/r1")) {
-        return Promise.resolve(json({ id: "r1", status: runStatus, steps }));
+        return Promise.resolve(json({ id: "r1", status: runStatus, steps, ...runDetail }));
       }
       return Promise.resolve(json({}));
     }),
@@ -99,6 +100,44 @@ afterEach(() => {
 });
 
 describe("WorkflowTestPanel (dock de prueba)", () => {
+  it("split muestra mandato y resultado a la vez, sin tabs duplicados", async () => {
+    const testSteps = [
+      { step_index: 0, step_type: "llm", node_id: "ask", node_type: "llm", status: "succeeded", output: { text: "ok" } },
+    ];
+    stubApi(testSteps, "succeeded", {}, testSteps);
+    const user = userEvent.setup();
+    renderDock({ split: true });
+
+    expect(screen.getByTestId("wf-test-setup")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-test-result")).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-test-tab-setup")).toBeNull();
+    expect(screen.queryByTestId("wf-test-tab-result")).toBeNull();
+    expect(screen.getByTestId("wf-run")).toBeVisible();
+
+    await user.type(screen.getByTestId("wf-test-payload"), "hola");
+    await user.click(screen.getByTestId("wf-test"));
+    await waitFor(() => expect(screen.getByTestId("wf-chat-answer")).toHaveTextContent("ok"));
+  });
+
+  it("el resultado real expone contexto y estado en el mismo panel", async () => {
+    stubApi([], "succeeded", {}, [], {
+      simulated: false,
+      context: { pedido: { id: "P-1" } },
+    });
+    const user = userEvent.setup();
+    renderDock({ split: true });
+
+    await user.type(screen.getByTestId("wf-test-payload"), "hola");
+    await user.click(screen.getByTestId("wf-run"));
+    await confirmReal(user);
+
+    await waitFor(() => expect(screen.getByTestId("wf-result-headline")).toHaveTextContent("Corrida real"));
+    await user.click(screen.getByTestId("wf-result-tab-context"));
+    expect(screen.getByTestId("wf-result-context")).toHaveTextContent("Pedido");
+    await user.click(screen.getByTestId("wf-result-tab-state"));
+    expect(screen.getByTestId("wf-result-state")).toHaveTextContent("r1");
+  });
+
   it("muestra la respuesta del agente como texto, no como JSON", async () => {
     const steps = [
       { step_index: 0, step_type: "llm", node_id: "ask", node_type: "llm", status: "succeeded", output: { text: "El gerente es Ana." } },

@@ -50,7 +50,7 @@ import {
 import { WorkflowCanvasEditor } from "../components/WorkflowCanvasEditor";
 import type { CanvasChangeOptions, CanvasHandle, RunOverlay } from "../components/WorkflowCanvas";
 import type { RunDetail } from "../components/WorkflowRunInspector";
-import { RunTracePane, SimulatorDock, type SimulatorState } from "../components/workflowStudio/SimulatorDock";
+import { SimulatorDock, type SimulatorState } from "../components/workflowStudio/SimulatorDock";
 import { viewportStorageKey, type Viewport } from "../lib/canvasViewport";
 import { hasUnpublishedChanges, lifecycleIndicator, missionSummary, persistenceIndicator } from "../lib/studioState";
 import { loadStudioPrefs, saveStudioPrefs, type StudioPrefs } from "../lib/studioLayout";
@@ -875,7 +875,6 @@ export default function WorkflowStudioPage() {
         onHeightChange={(height) => setPrefs((p) => ({ ...p, simulatorHeight: height }))}
         availableHeight={viewportH - 100}
         run={run}
-        trace={<RunTracePane run={run} graph={graph} selectedNodeId={selectedNode} onPickNode={focusNodeFromRun} />}
       >
         <WorkflowTestPanel
           workflowId={id}
@@ -890,6 +889,7 @@ export default function WorkflowStudioPage() {
           graph={graph}
           graphHash={detail?.graph_hash}
           embedded
+          split
         />
       </SimulatorDock>
     ) : null;
