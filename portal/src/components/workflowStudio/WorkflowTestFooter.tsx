@@ -53,9 +53,14 @@ export function WorkflowTestFooter({
           </span>
         </p>
         {effectLabels.length > 0 && (
-          <p className="text-[11px] leading-relaxed text-warn">
-            {effectLabels.length} nodo(s) con efectos: {effectLabels.join(", ")}.
-          </p>
+          <details className="rounded-sm border border-border-soft bg-raised/40 px-2 py-1">
+            <summary className="cursor-pointer text-[11px] font-medium text-warn select-none">
+              {effectLabels.length} nodo(s) con efectos
+            </summary>
+            <p className="mt-1 text-[11px] leading-relaxed text-warn">
+              {effectLabels.join(", ")}.
+            </p>
+          </details>
         )}
       </div>
     </footer>

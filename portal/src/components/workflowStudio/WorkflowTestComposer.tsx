@@ -28,6 +28,7 @@ export function WorkflowTestComposer({
   onUseLast,
   onRestore,
   onApplyExample,
+  placeholder,
 }: {
   raw: string;
   onChange: (value: string) => void;
@@ -43,6 +44,7 @@ export function WorkflowTestComposer({
   onUseLast: () => void;
   onRestore: () => void;
   onApplyExample: (message: string) => void;
+  placeholder?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [examplesOpen, setExamplesOpen] = useState(false);
@@ -80,7 +82,7 @@ export function WorkflowTestComposer({
           ref={ref}
           className="min-h-[88px] max-h-[168px] resize-none text-[13px] leading-relaxed"
           rows={3}
-          placeholder="Ej. ¿Sabes quién es el zorro?"
+          placeholder={placeholder ?? "Ej. ¿Sabes quién es el zorro?"}
           value={raw}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}

@@ -11,7 +11,9 @@ export type StudioPrefs = {
 };
 
 export const INSPECTOR_WIDTH = { min: 320, max: 640, initial: 400 } as const;
-export const SIMULATOR_HEIGHT = { min: 180, initial: 320, maxRatio: 0.7 } as const;
+export const SIMULATOR_HEIGHT = { min: 180, initial: 500, maxRatio: 0.7 } as const;
+/** Debajo de este alto la consola dividida no muestra la entrada completa. */
+const SIMULATOR_COMFORT_HEIGHT = 400;
 
 const PREFS_KEY = "zent.wf.studio.prefs.v1";
 
@@ -41,12 +43,16 @@ export function loadStudioPrefs(): StudioPrefs {
     const raw = window.localStorage.getItem(PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
     const parsed = JSON.parse(raw) as Partial<StudioPrefs>;
+    const storedHeight =
+      typeof parsed.simulatorHeight === "number" ? clampSimulatorHeight(parsed.simulatorHeight) : null;
     return {
       inspectorWidth:
         typeof parsed.inspectorWidth === "number" ? clampInspectorWidth(parsed.inspectorWidth) : DEFAULT_PREFS.inspectorWidth,
+      // Migración: el dock antiguo guardaba 320 px. La consola dividida necesita
+      // más alto para mostrar modo, mensaje y acciones sin que el footer lo tape.
       simulatorHeight:
-        typeof parsed.simulatorHeight === "number"
-          ? clampSimulatorHeight(parsed.simulatorHeight)
+        storedHeight !== null && storedHeight >= SIMULATOR_COMFORT_HEIGHT
+          ? storedHeight
           : DEFAULT_PREFS.simulatorHeight,
       minimap: typeof parsed.minimap === "boolean" ? parsed.minimap : DEFAULT_PREFS.minimap,
     };

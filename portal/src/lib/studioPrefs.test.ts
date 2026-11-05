@@ -36,10 +36,12 @@ describe("studioLayout", () => {
     expect(clampSimulatorHeight(900, 800)).toBe(560);
   });
 
-  it("persiste preferencias y tolera datos corruptos", () => {
+  it("persiste preferencias y migra el simulador bajo a la consola dividida", () => {
     expect(loadStudioPrefs()).toEqual(DEFAULT_PREFS);
+    saveStudioPrefs({ inspectorWidth: 420, simulatorHeight: 460, minimap: false });
+    expect(loadStudioPrefs()).toEqual({ inspectorWidth: 420, simulatorHeight: 460, minimap: false });
     saveStudioPrefs({ inspectorWidth: 420, simulatorHeight: 260, minimap: false });
-    expect(loadStudioPrefs()).toEqual({ inspectorWidth: 420, simulatorHeight: 260, minimap: false });
+    expect(loadStudioPrefs().simulatorHeight).toBe(DEFAULT_PREFS.simulatorHeight);
     window.localStorage.setItem("zent.wf.studio.prefs.v1", "nope");
     expect(loadStudioPrefs()).toEqual(DEFAULT_PREFS);
   });

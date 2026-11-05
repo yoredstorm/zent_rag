@@ -127,31 +127,33 @@ export function WorkflowTestResult({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="wf-test-result">
-      <div className="flex items-start gap-2 border-b border-border px-3 py-2.5" aria-live="polite" data-testid="wf-result-headline">
-        {headline.tone === "ok" ? (
-          <CheckCircle size={16} weight="fill" className="mt-0.5 shrink-0 text-ok" aria-hidden />
-        ) : headline.tone === "warn" || headline.tone === "danger" ? (
-          <WarningCircle size={16} weight="fill" className={`mt-0.5 shrink-0 ${headline.tone === "danger" ? "text-danger" : "text-warn"}`} aria-hidden />
-        ) : (
-          <Clock size={16} className="mt-0.5 shrink-0 text-muted" aria-hidden />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <p className="text-[13px] font-medium text-text">{headline.label}</p>
-            {report && <Badge tone={headline.tone}>{report.result}</Badge>}
-            {run?.status && runKind === "execution_run" && <Badge tone={headline.tone}>{run.status}</Badge>}
+      {hasResult && (
+        <div className="flex items-start gap-2 border-b border-border px-3 py-2.5" aria-live="polite" data-testid="wf-result-headline">
+          {headline.tone === "ok" ? (
+            <CheckCircle size={16} weight="fill" className="mt-0.5 shrink-0 text-ok" aria-hidden />
+          ) : headline.tone === "warn" || headline.tone === "danger" ? (
+            <WarningCircle size={16} weight="fill" className={`mt-0.5 shrink-0 ${headline.tone === "danger" ? "text-danger" : "text-warn"}`} aria-hidden />
+          ) : (
+            <Clock size={16} className="mt-0.5 shrink-0 text-muted" aria-hidden />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-[13px] font-medium text-text">{headline.label}</p>
+              {report && <Badge tone={headline.tone}>{report.result}</Badge>}
+              {run?.status && runKind === "execution_run" && <Badge tone={headline.tone}>{run.status}</Badge>}
+            </div>
+            <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted">{headline.detail}</p>
+            {report && (
+              <p className="mt-0.5 text-[11px] text-faint">
+                {testRunSummary(report)} · {provider.label}
+              </p>
+            )}
+            {runKind === "execution_run" && run && (
+              <p className="mt-0.5 text-[11px] text-faint">Corrida real · {run.id}</p>
+            )}
           </div>
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted">{headline.detail}</p>
-          {report && (
-            <p className="mt-0.5 text-[11px] text-faint">
-              {testRunSummary(report)} · {provider.label}
-            </p>
-          )}
-          {runKind === "execution_run" && run && (
-            <p className="mt-0.5 text-[11px] text-faint">Corrida real · {run.id}</p>
-          )}
         </div>
-      </div>
+      )}
 
       {historicalRun && (
         <div className="border-b border-border px-3 py-2">
@@ -433,24 +435,26 @@ export function WorkflowTestResult({
         </Tabs>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2.5">
-        {showModify ? (
-          <Button variant="secondary" size="sm" onClick={onModify} data-testid="wf-modify-test">
-            Modificar prueba
+      {hasResult && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2.5">
+          {showModify ? (
+            <Button variant="secondary" size="sm" onClick={onModify} data-testid="wf-modify-test">
+              Modificar prueba
+            </Button>
+          ) : (
+            <span />
+          )}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onRepeat}
+            disabled={loading}
+            data-testid="wf-repeat-test"
+          >
+            {runKind === "execution_run" ? "Repetir ejecución" : "Repetir prueba"}
           </Button>
-        ) : (
-          <span />
-        )}
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={onRepeat}
-          disabled={loading}
-          data-testid="wf-repeat-test"
-        >
-          {runKind === "execution_run" ? "Repetir ejecución" : "Repetir prueba"}
-        </Button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

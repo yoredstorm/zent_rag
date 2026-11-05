@@ -1,4 +1,4 @@
-import type { GraphIssue, WorkflowGraph } from "../../lib/workflowGraph";
+import { isConversationalGraph, type GraphIssue, type WorkflowGraph } from "../../lib/workflowGraph";
 import type { NormalizedPayload } from "./types";
 import { WorkflowTestComposer } from "./WorkflowTestComposer";
 import { WorkflowTestModePicker } from "./WorkflowTestModePicker";
@@ -81,6 +81,11 @@ export function WorkflowTestSetup({
           onUseLast={onUseLast}
           onRestore={onRestore}
           onApplyExample={onApplyExample}
+          placeholder={
+            isConversationalGraph(graph)
+              ? "Ej. tienes arroz?"
+              : undefined
+          }
         />
 
         <WorkflowTestReadiness
