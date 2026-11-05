@@ -191,7 +191,7 @@ def normalize_text(
     max_terms: Any = 6,
 ) -> dict[str, Any]:
     """Normaliza un texto según el modo configurado en el nodo."""
-    original = str(text or "")
+    original = str(text or "").strip()
     normalized_mode = str(mode or "product_query").strip().lower()
     if normalized_mode not in MODES:
         normalized_mode = "product_query"

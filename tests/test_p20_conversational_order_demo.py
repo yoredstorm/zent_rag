@@ -70,7 +70,7 @@ def test_conversational_graph_normalizes_before_search() -> None:
 
     normalizer = nodes["normalizar_busqueda"]
     assert normalizer["type"] == "text_normalize"
-    assert normalizer["config"]["text"] == "{{trigger.text}}"
+    assert normalizer["config"]["text"] == "{{trigger.text}} {{trigger.message}}"
     assert normalizer["config"]["mode"] == "product_query"
     assert nodes["buscar"]["config"]["inputs"]["query"] == (
         "{{nodes.normalizar_busqueda.output.text}}"

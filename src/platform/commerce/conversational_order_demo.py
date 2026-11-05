@@ -428,7 +428,9 @@ def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
             "text_normalize",
             "Preparar búsqueda",
             {
-                "text": "{{trigger.text}}",
+                # `text` es el payload conversacional real; `message` es el
+                # nombre que usa el simulador del Studio. El nodo acepta ambos.
+                "text": "{{trigger.text}} {{trigger.message}}",
                 "mode": "product_query",
                 "ignore_phrases": "en venta, venden, productos",
                 "lowercase": "true",
