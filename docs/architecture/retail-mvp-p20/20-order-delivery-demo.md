@@ -116,14 +116,16 @@ resultado.
 ### Qué hace
 
 1. El cliente escribe `tienes arroz?`.
-2. `bodega.product.search` busca por texto libre en `bodega.product_catalog_v`
+2. El nodo `text_normalize` (`Producto · Preparar búsqueda`) quita preguntas,
+   artículos y frases de venta. `tienes bicicleta en venta?` queda `bicicleta`.
+3. `bodega.product.search` busca por texto libre en `bodega.product_catalog_v`
    y devuelve hasta 2 coincidencias con precio y stock reales.
-3. Si no hay coincidencias, responde el fallback y termina **sin crear pedido**.
-4. Si hay varias, pregunta `1` o `2` y espera.
-5. Pregunta cantidad, valida stock, pregunta delivery o recojo y, si es delivery,
+4. Si no hay coincidencias, responde el fallback y termina **sin crear pedido**.
+5. Si hay varias, pregunta `1` o `2` y espera.
+6. Pregunta cantidad, valida stock, pregunta delivery o recojo y, si es delivery,
    la dirección.
-6. Pide confirmación. Si responde `no`, cancela sin reservar stock.
-7. Crea el pedido, reserva stock y pide aprobación humana. Al aprobar, confirma
+7. Pide confirmación. Si responde `no`, cancela sin reservar stock.
+8. Crea el pedido, reserva stock y pide aprobación humana. Al aprobar, confirma
    stock y responde con el total real.
 
 Cada pregunta es un `wait_event` con `event_type=conversation.message`. El
@@ -132,7 +134,7 @@ wait usa `order_number`, así un mensaje no despierta otra conversación.
 
 ### Cómo probarlo
 
-- Studio → workflow → **Probar** → **Real** → sandbox → `tienes arroz?`.
+- Studio → workflow → **Probar** → **Prueba real** → sandbox → `tienes arroz?`.
 - **Simular no sirve** para este flujo: no ejecuta `capability_call`, así que no
   hay precio, stock ni pedido reales.
 - Cuando la instancia queda `WAITING`, el panel muestra **Responder al flujo**.

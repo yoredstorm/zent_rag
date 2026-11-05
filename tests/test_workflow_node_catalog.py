@@ -112,6 +112,7 @@ def test_simulation_supported_flags() -> None:
         "state_remove",
         "state_set",
         "subworkflow_call",
+        "text_normalize",
         "wait_event",
     }
     for node_def in registry.all():

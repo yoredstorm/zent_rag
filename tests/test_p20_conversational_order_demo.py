@@ -63,6 +63,22 @@ def test_conversational_graph_is_grouped_by_business_phases() -> None:
         assert len(x_by_phase[phase]) == 1, phase
 
 
+def test_conversational_graph_normalizes_before_search() -> None:
+    graph = build_graph()
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    edges = {(edge["from_node"], edge["to_node"]) for edge in graph["edges"]}
+
+    normalizer = nodes["normalizar_busqueda"]
+    assert normalizer["type"] == "text_normalize"
+    assert normalizer["config"]["text"] == "{{trigger.text}}"
+    assert normalizer["config"]["mode"] == "product_query"
+    assert nodes["buscar"]["config"]["inputs"]["query"] == (
+        "{{nodes.normalizar_busqueda.output.text}}"
+    )
+    assert ("guardar_cliente", "normalizar_busqueda") in edges
+    assert ("normalizar_busqueda", "buscar") in edges
+
+
 def test_conversational_graph_waits_for_each_step() -> None:
     graph = build_graph()
     waits = [node for node in graph["nodes"] if node["type"] == "wait_event"]

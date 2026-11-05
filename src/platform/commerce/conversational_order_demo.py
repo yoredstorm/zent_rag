@@ -85,10 +85,15 @@ NODE_COPY: dict[str, dict[str, str]] = {
         "label": "Entrada · Guardar cliente y pedido",
         "note": "Guarda customer_ref y order_number en el estado durable.",
     },
+    "normalizar_busqueda": {
+        "phase": "producto",
+        "label": "Producto · Preparar búsqueda",
+        "note": "Limpia la pregunta y deja solo el producto buscado.",
+    },
     "buscar": {
         "phase": "producto",
         "label": "Producto · Buscar catálogo",
-        "note": "Consulta el catálogo real con el texto que escribió el cliente.",
+        "note": "Consulta el catálogo real con el texto normalizado.",
     },
     "encontrado": {
         "phase": "producto",
@@ -419,13 +424,26 @@ def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
             },
         ),
         _node(
+            "normalizar_busqueda",
+            "text_normalize",
+            "Preparar búsqueda",
+            {
+                "text": "{{trigger.text}}",
+                "mode": "product_query",
+                "ignore_phrases": "en venta, venden, productos",
+                "lowercase": "true",
+                "strip_accents": "true",
+                "max_terms": 6,
+            },
+        ),
+        _node(
             "buscar",
             "capability_call",
             "Buscar producto",
             {
                 "capability": "bodega.product.search",
                 "inputs": {
-                    "query": "{{trigger.text}}",
+                    "query": "{{nodes.normalizar_busqueda.output.text}}",
                     "limit": "{{variables.max_matches}}",
                 },
             },
@@ -869,7 +887,8 @@ def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
 
     edges = [
         _edge("e1", "cliente", "guardar_cliente"),
-        _edge("e2", "guardar_cliente", "buscar"),
+        _edge("e2", "guardar_cliente", "normalizar_busqueda"),
+        _edge("e2b", "normalizar_busqueda", "buscar"),
         _edge("e3", "buscar", "encontrado"),
         _edge("e4", "encontrado", "guardar_opciones", from_port="then", label="sí"),
         _edge("e5", "encontrado", "sin_producto", from_port="else", label="no"),

@@ -98,6 +98,13 @@ describe("NodeLibrary catálogo contextual", () => {
     expect(screen.queryByTestId("wf-add-llm")).toBeNull();
   });
 
+  it("encuentra Normalizar texto en el buscador", async () => {
+    const user = userEvent.setup();
+    render(<NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} />);
+    await user.type(screen.getByLabelText("Buscar nodo"), "normalizar");
+    expect(screen.getByTestId("wf-add-text_normalize")).toBeInTheDocument();
+  });
+
   it("recuerda recientes y favoritos entre aperturas", async () => {
     const user = userEvent.setup();
     const onAdd = vi.fn();

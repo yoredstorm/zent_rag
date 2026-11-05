@@ -153,6 +153,7 @@ describe("workflowGraph — IR del canvas", () => {
     expect(nodeMeta("wait_event").label).toBe("Esperar evento");
     expect(nodeMeta("loop").label).toBe("Volver a un paso");
     expect(nodeMeta("business_result").label).toBe("Resultado de negocio");
+    expect(nodeMeta("text_normalize").label).toBe("Normalizar texto");
   });
 
   it("layoutGraph rellena posiciones vacías de grafos importados", () => {

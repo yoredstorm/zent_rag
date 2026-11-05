@@ -111,7 +111,7 @@ export type PurposeGroup = { id: string; label: string; types: string[] };
 
 export const PURPOSE_GROUPS: PurposeGroup[] = [
   { id: "start", label: "Iniciar", types: ["trigger_webhook", "trigger_schedule", "trigger_event"] },
-  { id: "understand", label: "Entender", types: ["llm", "adaptive_route", "intent_route"] },
+  { id: "understand", label: "Entender", types: ["llm", "adaptive_route", "intent_route", "text_normalize"] },
   {
     id: "consult",
     label: "Consultar",
@@ -313,6 +313,47 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
     defaults: { params: {} },
     summary: (c) =>
       String(c.capability ? `Consulta ${String(c.capability).slice(0, 34)}` : "Falta elegir consulta"),
+  },
+  text_normalize: {
+    type: "text_normalize",
+    category: "data",
+    label: "Normalizar texto",
+    icon: "🧹",
+    color: "bg-accent",
+    fields: [
+      { key: "text", label: "Texto de entrada", type: "text", placeholder: "{{trigger.text}}", refs: true },
+      {
+        key: "mode", label: "Modo", type: "select",
+        options: [
+          { value: "product_query", label: "Consulta de producto" },
+          { value: "email", label: "Correo electrónico" },
+          { value: "name", label: "Nombre de persona" },
+          { value: "free", label: "Texto libre" },
+        ],
+        default: "product_query",
+      },
+      { key: "ignore_phrases", label: "Quitar frases", type: "text", placeholder: "en venta, venden, productos" },
+      {
+        key: "lowercase", label: "Minúsculas", type: "select",
+        options: [{ value: "true", label: "Sí" }, { value: "false", label: "No" }],
+        default: "true",
+      },
+      {
+        key: "strip_accents", label: "Quitar acentos", type: "select",
+        options: [{ value: "true", label: "Sí" }, { value: "false", label: "No" }],
+        default: "true",
+        adv: true,
+      },
+      { key: "max_terms", label: "Máximo de términos", type: "number", default: 6, adv: true },
+    ],
+    defaults: {
+      text: "{{trigger.text}}",
+      mode: "product_query",
+      lowercase: "true",
+      strip_accents: "true",
+      max_terms: 6,
+    },
+    summary: (c) => `Modo ${String(c.mode || "producto")}`,
   },
   intent_route: {
     type: "intent_route",
@@ -1004,6 +1045,7 @@ const OUTPUT_FIELDS: Record<string, string[]> = {
     "reason_code",
     "provenance",
   ],
+  text_normalize: ["text", "terms", "original", "removed", "status", "mode"],
   intent_route: [
     "intent",
     "confidence",

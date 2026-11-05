@@ -42,6 +42,7 @@ NODE_NEXT_STEPS: dict[str, tuple[str, ...]] = {
     "trigger_schedule": ("query_business_data", "kb_query", "condition", "llm"),
     "trigger_webhook": ("query_business_data", "kb_query", "condition", "llm"),
     "query_business_data": ("llm", "condition", "filter", "join"),
+    "text_normalize": ("capability_call", "query_business_data", "condition", "llm"),
     "kb_query": ("llm", "condition", "notify", "join"),
     "api_call": ("llm", "condition", "notify"),
     "marketplace_action": ("llm", "condition", "notify", "business_result"),
@@ -298,6 +299,39 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         ),
         context_reads=("trigger", "variables", "data"),
         context_writes=("data",),
+        supports_simulation=True,
+    ),
+    "text_normalize": _meta(
+        "Normalizar texto",
+        "Limpia una frase y extrae los términos útiles para buscar o validar.",
+        long_description=(
+            "Convierte preguntas como «tienes bicicleta en venta?» en «bicicleta». "
+            "Es determinista: no consulta fuentes ni inventa datos. El modo y las "
+            "frases que se ignoran se configuran en el nodo."
+        ),
+        when_to_use=(
+            "necesitas buscar por texto libre sin el ruido de la pregunta",
+            "quieres separar correo, nombre o términos de producto antes de otro paso",
+        ),
+        when_not_to_use=(
+            "el texto ya viene normalizado por el sistema",
+            "necesitas interpretar intención o entidades; usa Identificar solicitud",
+        ),
+        examples=(
+            {
+                "title": "Preparar búsqueda de producto",
+                "config": {
+                    "text": "{{trigger.text}}",
+                    "mode": "product_query",
+                    "ignore_phrases": "en venta, venden, productos",
+                },
+            },
+            {
+                "title": "Extraer correo",
+                "config": {"text": "{{trigger.text}}", "mode": "email"},
+            },
+        ),
+        context_reads=("trigger", "variables"),
         supports_simulation=True,
     ),
     "marketplace_action": _meta(

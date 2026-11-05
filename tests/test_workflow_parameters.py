@@ -25,6 +25,7 @@ def test_registry_covers_business_nodes() -> None:
         "condition",
         "llm",
         "query_business_data",
+        "text_normalize",
         "kb_query",
         "api_call",
         "marketplace_action",

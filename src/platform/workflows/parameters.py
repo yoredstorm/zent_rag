@@ -418,6 +418,88 @@ def _data_query_schema() -> NodeBusinessSchema:
     )
 
 
+def _text_normalize_schema() -> NodeBusinessSchema:
+    return NodeBusinessSchema(
+        node_type="text_normalize",
+        label="Normalizar texto",
+        category="data",
+        description="Limpia una frase y extrae los términos útiles para buscar o validar.",
+        parameters=[
+            _p(
+                "text",
+                "Texto de entrada",
+                "text",
+                required=True,
+                default="{{trigger.text}}",
+                placeholder="{{trigger.text}}",
+                data_source="any",
+            ),
+            _p(
+                "mode",
+                "Modo",
+                "enum",
+                default="product_query",
+                validation={
+                    "options": [
+                        {"value": "product_query", "label": "Consulta de producto"},
+                        {"value": "email", "label": "Correo electrónico"},
+                        {"value": "name", "label": "Nombre de persona"},
+                        {"value": "free", "label": "Texto libre"},
+                    ]
+                },
+                help="Producto quita preguntas, artículos y unidades; libre solo limpia espacios.",
+            ),
+            _p(
+                "ignore_phrases",
+                "Quitar frases",
+                "text",
+                placeholder="en venta, venden, productos",
+                help="Frases separadas por coma que se eliminan antes de extraer términos.",
+            ),
+            _p(
+                "lowercase",
+                "Minúsculas",
+                "enum",
+                default="true",
+                validation={
+                    "options": [
+                        {"value": "true", "label": "Sí"},
+                        {"value": "false", "label": "No"},
+                    ]
+                },
+            ),
+            _p(
+                "strip_accents",
+                "Quitar acentos",
+                "enum",
+                min_level="guided",
+                default="true",
+                validation={
+                    "options": [
+                        {"value": "true", "label": "Sí"},
+                        {"value": "false", "label": "No"},
+                    ]
+                },
+            ),
+            _p(
+                "max_terms",
+                "Máximo de términos",
+                "number",
+                min_level="guided",
+                default=6,
+            ),
+        ],
+        outputs=[
+            _out("text", "Texto normalizado", "text"),
+            _out("terms", "Términos", "record_list"),
+            _out("original", "Texto original", "text"),
+            _out("removed", "Términos descartados", "record_list"),
+            _out("status", "Estado", "text"),
+            _out("mode", "Modo", "text"),
+        ],
+    )
+
+
 def _query_business_data_schema() -> NodeBusinessSchema:
     return NodeBusinessSchema(
         node_type="query_business_data",
@@ -956,6 +1038,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         ),
         _query_business_data_schema(),
         _data_query_schema(),
+        _text_normalize_schema(),
         _intent_route_schema(),
         _kb_query_schema(),
         _api_call_schema(),

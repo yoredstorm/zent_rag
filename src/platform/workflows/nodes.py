@@ -3377,6 +3377,33 @@ async def _exec_set_variable(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output={"variable": name, "value": value})
 
 
+async def _exec_text_normalize(rctx: NodeContext) -> NodeOutcome:
+    """Limpia un texto y extrae términos útiles sin consultar fuentes."""
+    from src.platform.workflows.text_normalize import normalize_text
+
+    cfg = rctx.node.config or {}
+    raw_text = cfg.get("text")
+    if raw_text is None:
+        raw_text = "{{trigger.text}}"
+    text = _resolve_ref(raw_text, rctx)
+    ignore = _resolve_ref(cfg.get("ignore_phrases") or "", rctx)
+    result = normalize_text(
+        str(text or ""),
+        mode=str(cfg.get("mode") or "product_query"),
+        ignore_phrases=ignore,
+        lowercase=cfg.get("lowercase", True),
+        strip_accents=cfg.get("strip_accents", True),
+        max_terms=cfg.get("max_terms", 6),
+    )
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "text_normalize", "mode": result["mode"]},
+            output=result,
+        )
+    return NodeOutcome(output=result)
+
+
 def _field_of(item: Any, field: str) -> Any:
     if field.startswith("."):
         field = field[1:]
@@ -4837,6 +4864,18 @@ def _register_defaults() -> None:
         outputs={"out": {"type": "json"}},
         execute=_exec_data_query,
         **semantic_metadata("data_query"),
+    )
+    registry.register(
+        "text_normalize",
+        version=1,
+        label="Normalizar texto",
+        category="data",
+        risk_level="info",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_text_normalize,
+        **semantic_metadata("text_normalize"),
     )
     registry.register(
         "intent_route",
