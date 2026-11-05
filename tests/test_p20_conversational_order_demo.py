@@ -111,6 +111,15 @@ def test_conversational_graph_has_product_fallback_without_order() -> None:
     assert "crear_pedido" not in reachable
 
 
+def test_not_found_message_is_natural_and_does_not_echo_the_question() -> None:
+    graph = build_graph()
+    node = next(item for item in graph["nodes"] if item["id"] == "sin_producto")
+    message = str(node["config"]["message"])
+    assert "{{trigger.text}}" not in message
+    assert message.startswith("No encontré ese producto en el catálogo.")
+    assert "¿Quieres que busque otro?" in message
+
+
 def test_conversational_graph_keeps_state_across_messages() -> None:
     blob = str(build_graph())
     assert "{{instance.state.order.customer_ref}}" in blob
@@ -162,6 +171,8 @@ def test_search_terms_drop_question_words() -> None:
     assert _search_terms("tienes arroz?") == ["arroz"]
     assert _search_terms("quiero leche") == ["leche"]
     assert _search_terms("precio del aceite") == ["aceite"]
+    assert _search_terms("tienes bicicleta en venta?") == ["bicicleta"]
+    assert _search_terms("venden productos de limpieza") == ["limpieza"]
     assert _search_terms("BD-ARROZ-01") == ["bd-arroz-01"]
     assert _search_terms("   ") == []
 

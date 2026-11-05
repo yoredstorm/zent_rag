@@ -450,8 +450,8 @@ def build_graph(parameters: dict[str, Any] | None = None) -> dict[str, Any]:
                 "channel": "in_app",
                 "title": "Producto no encontrado",
                 "message": (
-                    "No tengo «{{trigger.text}}» en el catálogo. "
-                    "Puedes pedirme otro producto, por ejemplo: arroz, leche o aceite."
+                    "No encontré ese producto en el catálogo. "
+                    "¿Quieres que busque otro? Por ejemplo: arroz, leche o aceite."
                 ),
             },
         ),
