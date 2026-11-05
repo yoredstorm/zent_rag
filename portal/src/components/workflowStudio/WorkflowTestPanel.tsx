@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { clampTestResultWidth, TEST_RESULT_WIDTH } from "../../lib/studioLayout";
 import { isConversationalGraph, type GraphIssue, type WorkflowGraph } from "../../lib/workflowGraph";
 import { Badge, ConfirmDialog, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import type { RunDetail } from "../WorkflowRunInspector";
@@ -6,6 +7,7 @@ import { WorkflowTestFooter } from "./WorkflowTestFooter";
 import { WorkflowTestHeader } from "./WorkflowTestHeader";
 import { WorkflowTestResult } from "./WorkflowTestResult";
 import { WorkflowTestSetup } from "./WorkflowTestSetup";
+import { ResizeHandle } from "./ResizeHandle";
 import { normalizeTestPayload } from "./types";
 import { generateSampleForGraph, normalizeLevel } from "./workflowTestPresentation";
 import type { RealLane, TestLevel } from "./workflowTestTypes";
@@ -36,6 +38,9 @@ type Props = {
   graphHash?: string | null;
   /** Desktop: entrada a la izquierda y resultado a la derecha, sin tabs. */
   split?: boolean;
+  /** Ancho del resultado en el modo dividido. Si falta, el panel lo recuerda en memoria. */
+  resultWidth?: number;
+  onResultWidthChange?: (width: number) => void;
 };
 
 export function WorkflowTestPanel({
@@ -52,6 +57,8 @@ export function WorkflowTestPanel({
   embedded = false,
   graphHash,
   split = false,
+  resultWidth: resultWidthProp,
+  onResultWidthChange,
 }: Props) {
   const [raw, setRaw] = useState("");
   const [realLane, setRealLane] = useState<RealLane | null>(null);
@@ -59,6 +66,10 @@ export function WorkflowTestPanel({
   const [lastSampleNote, setLastSampleNote] = useState("");
   const [restoreRaw, setRestoreRaw] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [localResultWidth, setLocalResultWidth] = useState(TEST_RESULT_WIDTH.initial);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const [splitWidth, setSplitWidth] = useState(0);
+  const resultWidth = resultWidthProp ?? localResultWidth;
 
   const conversational = useMemo(() => isConversationalGraph(graph), [graph]);
   const {
@@ -90,6 +101,16 @@ export function WorkflowTestPanel({
     state.requestedLevel === "preview" || state.requestedLevel === "simulation"
       ? state.requestedLevel
       : "real";
+
+  useEffect(() => {
+    const el = splitRef.current;
+    if (!el || !split || typeof ResizeObserver === "undefined") return;
+    const apply = () => setSplitWidth(el.clientWidth);
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [split]);
 
   useEffect(() => {
     setRaw("");
@@ -277,8 +298,8 @@ export function WorkflowTestPanel({
       />
 
       {split ? (
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-h-0 min-w-0 flex-[3] flex-col border-r border-border">
+        <div ref={splitRef} className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-border">
             <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
               <p className="text-[13px] font-semibold text-text">Entrada</p>
               <span className="text-[11px] text-faint">Mensaje o payload que activa el flujo</span>
@@ -286,7 +307,25 @@ export function WorkflowTestPanel({
             {setupPane}
             {footer}
           </div>
-          <div className="flex min-h-0 w-[min(42%,520px)] shrink-0 flex-col">
+          <div
+            className="relative flex min-h-0 shrink-0 flex-col"
+            style={{ width: clampTestResultWidth(resultWidth, splitWidth) }}
+            data-testid="wf-test-result-pane"
+          >
+            <ResizeHandle
+              axis="x"
+              value={clampTestResultWidth(resultWidth, splitWidth)}
+              min={TEST_RESULT_WIDTH.min}
+              max={clampTestResultWidth(Number.POSITIVE_INFINITY, splitWidth)}
+              resetTo={TEST_RESULT_WIDTH.initial}
+              onChange={(width) => {
+                const next = clampTestResultWidth(width, splitWidth);
+                if (onResultWidthChange) onResultWidthChange(next);
+                else setLocalResultWidth(next);
+              }}
+              label="Ancho del resultado"
+              testId="wf-test-split-resize"
+            />
             <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
               <p className="text-[13px] font-semibold text-text">Resultado del flujo</p>
               {state.historicalRun && <Badge tone="neutral">Histórico</Badge>}

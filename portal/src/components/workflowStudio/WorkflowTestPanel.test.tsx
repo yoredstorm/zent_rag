@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -117,6 +117,23 @@ describe("WorkflowTestPanel (dock de prueba)", () => {
     await user.type(screen.getByTestId("wf-test-payload"), "hola");
     await user.click(screen.getByTestId("wf-test"));
     await waitFor(() => expect(screen.getByTestId("wf-chat-answer")).toHaveTextContent("ok"));
+  });
+
+  it("el separador redimensiona entrada y resultado", () => {
+    renderDock({ split: true });
+    const handle = screen.getByRole("separator", { name: "Ancho del resultado" });
+    const pane = screen.getByTestId("wf-test-result-pane");
+    expect(pane).toHaveStyle({ width: "520px" });
+    fireEvent.pointerDown(handle, { button: 0, clientX: 800 });
+    fireEvent.pointerMove(handle, { clientX: 700 });
+    expect(pane).toHaveStyle({ width: "620px" });
+    fireEvent.doubleClick(handle);
+    expect(pane).toHaveStyle({ width: "520px" });
+  });
+
+  it("sin split no hay separador", () => {
+    renderDock();
+    expect(screen.queryByTestId("wf-test-split-resize")).toBeNull();
   });
 
   it("el resultado real expone contexto y estado en el mismo panel", async () => {

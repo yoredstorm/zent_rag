@@ -5,8 +5,10 @@ import { MAX_RECENTS, loadFavorites, loadRecents, pushRecent, toggleFavorite } f
 import {
   DEFAULT_PREFS,
   INSPECTOR_WIDTH,
+  TEST_RESULT_WIDTH,
   clampInspectorWidth,
   clampSimulatorHeight,
+  clampTestResultWidth,
   inspectorDocked,
   loadStudioPrefs,
   panelMode,
@@ -34,14 +36,24 @@ describe("studioLayout", () => {
     expect(clampInspectorWidth(900, 1000)).toBe(500);
     expect(clampSimulatorHeight(50)).toBe(180);
     expect(clampSimulatorHeight(900, 800)).toBe(560);
+    expect(clampTestResultWidth(10)).toBe(TEST_RESULT_WIDTH.min);
+    expect(clampTestResultWidth(400)).toBe(400);
+    expect(clampTestResultWidth(9000, 1600)).toBe(1152);
+    expect(clampTestResultWidth(9000, 800)).toBe(520);
   });
 
   it("persiste preferencias y migra el simulador bajo a la consola dividida", () => {
     expect(loadStudioPrefs()).toEqual(DEFAULT_PREFS);
-    saveStudioPrefs({ inspectorWidth: 420, simulatorHeight: 460, minimap: false });
-    expect(loadStudioPrefs()).toEqual({ inspectorWidth: 420, simulatorHeight: 460, minimap: false });
-    saveStudioPrefs({ inspectorWidth: 420, simulatorHeight: 260, minimap: false });
+    saveStudioPrefs({ inspectorWidth: 420, simulatorHeight: 460, minimap: false, testResultWidth: 640 });
+    expect(loadStudioPrefs()).toEqual({ inspectorWidth: 420, simulatorHeight: 460, minimap: false, testResultWidth: 640 });
+    saveStudioPrefs({ inspectorWidth: 420, simulatorHeight: 260, minimap: false, testResultWidth: 640 });
     expect(loadStudioPrefs().simulatorHeight).toBe(DEFAULT_PREFS.simulatorHeight);
+    expect(loadStudioPrefs().testResultWidth).toBe(640);
+    window.localStorage.setItem(
+      "zent.wf.studio.prefs.v1",
+      JSON.stringify({ inspectorWidth: 420, simulatorHeight: 460, minimap: true }),
+    );
+    expect(loadStudioPrefs().testResultWidth).toBe(DEFAULT_PREFS.testResultWidth);
     window.localStorage.setItem("zent.wf.studio.prefs.v1", "nope");
     expect(loadStudioPrefs()).toEqual(DEFAULT_PREFS);
   });

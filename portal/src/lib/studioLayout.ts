@@ -8,10 +8,17 @@ export type StudioPrefs = {
   inspectorWidth: number;
   simulatorHeight: number;
   minimap: boolean;
+  /** Ancho del panel de resultado dentro del simulador dividido. */
+  testResultWidth: number;
 };
 
 export const INSPECTOR_WIDTH = { min: 320, max: 640, initial: 400 } as const;
 export const SIMULATOR_HEIGHT = { min: 180, initial: 500, maxRatio: 0.7 } as const;
+/** Panel derecho del simulador. El izquierdo conserva al menos `TEST_ENTRY_MIN`. */
+export const TEST_RESULT_WIDTH = { min: 280, initial: 520 } as const;
+const TEST_ENTRY_MIN = 280;
+const TEST_RESULT_MAX_RATIO = 0.72;
+const TEST_RESULT_UNMEASURED_MAX = 1200;
 /** Debajo de este alto la consola dividida no muestra la entrada completa. */
 const SIMULATOR_COMFORT_HEIGHT = 400;
 
@@ -21,6 +28,7 @@ export const DEFAULT_PREFS: StudioPrefs = {
   inspectorWidth: INSPECTOR_WIDTH.initial,
   simulatorHeight: SIMULATOR_HEIGHT.initial,
   minimap: true,
+  testResultWidth: TEST_RESULT_WIDTH.initial,
 };
 
 export function clamp(value: number, min: number, max: number): number {
@@ -36,6 +44,18 @@ export function clampInspectorWidth(width: number, viewportWidth = Infinity): nu
 export function clampSimulatorHeight(height: number, availableHeight = Infinity): number {
   const max = Math.max(SIMULATOR_HEIGHT.min, availableHeight * SIMULATOR_HEIGHT.maxRatio);
   return Math.round(clamp(height, SIMULATOR_HEIGHT.min, max));
+}
+
+/** Ancho del resultado. Sin medir el contenedor, solo aplica el techo absoluto. */
+export function clampTestResultWidth(width: number, containerWidth = Infinity): number {
+  const measured = Number.isFinite(containerWidth) && containerWidth > 0;
+  const max = measured
+    ? Math.max(
+        TEST_RESULT_WIDTH.min,
+        Math.min(containerWidth * TEST_RESULT_MAX_RATIO, containerWidth - TEST_ENTRY_MIN),
+      )
+    : TEST_RESULT_UNMEASURED_MAX;
+  return Math.round(clamp(width, TEST_RESULT_WIDTH.min, max));
 }
 
 export function loadStudioPrefs(): StudioPrefs {
@@ -55,6 +75,10 @@ export function loadStudioPrefs(): StudioPrefs {
           ? storedHeight
           : DEFAULT_PREFS.simulatorHeight,
       minimap: typeof parsed.minimap === "boolean" ? parsed.minimap : DEFAULT_PREFS.minimap,
+      testResultWidth:
+        typeof parsed.testResultWidth === "number"
+          ? clampTestResultWidth(parsed.testResultWidth)
+          : DEFAULT_PREFS.testResultWidth,
     };
   } catch {
     return { ...DEFAULT_PREFS };

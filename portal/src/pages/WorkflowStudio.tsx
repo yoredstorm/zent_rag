@@ -890,6 +890,8 @@ export default function WorkflowStudioPage() {
           graphHash={detail?.graph_hash}
           embedded
           split
+          resultWidth={prefs.testResultWidth}
+          onResultWidthChange={(width) => setPrefs((p) => ({ ...p, testResultWidth: width }))}
         />
       </SimulatorDock>
     ) : null;
