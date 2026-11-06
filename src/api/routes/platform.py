@@ -1525,6 +1525,166 @@ async def set_staff_screens_route(
     return {"user_id": str(uid), "screens": screens}
 
 
+# ---------------------------------------------------------------------------
+# Usuarios en Zitadel — cuando está conectado, las credenciales viven allá
+# ---------------------------------------------------------------------------
+
+
+class ZitadelUserIn(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+    given_name: str = Field(..., min_length=1, max_length=200)
+    family_name: str = Field(..., min_length=1, max_length=200)
+    password: str | None = Field(None, min_length=8, max_length=200)
+    change_required: bool = True
+
+
+class ZitadelUserPatch(BaseModel):
+    email: str | None = Field(None, max_length=320)
+    given_name: str | None = Field(None, max_length=200)
+    family_name: str | None = Field(None, max_length=200)
+
+
+class ZitadelPasswordIn(BaseModel):
+    password: str = Field(..., min_length=8, max_length=200)
+    change_required: bool = True
+
+
+@router.get("/zitadel/users", summary="Usuarios de Zitadel")
+async def zitadel_list_users(request: Request, search: str | None = None):
+    require_platform_permission(request, "platform.users.manage")
+    from src.platform.auth import zitadel_admin
+
+    if not zitadel_admin.is_enabled():
+        return {"enabled": False, "users": []}
+    try:
+        return {"enabled": True, "users": await zitadel_admin.list_users(search)}
+    except zitadel_admin.ZitadelError as exc:
+        raise HTTPException(
+            exc.status,
+            {"error_code": "zitadel_error", "message": exc.message},
+        ) from None
+
+
+@router.post("/zitadel/users", status_code=201, summary="Crear usuario en Zitadel")
+async def zitadel_create_user(body: ZitadelUserIn, request: Request):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    from src.platform.auth import zitadel_admin
+
+    try:
+        created = await zitadel_admin.create_user(
+            email=body.email.strip().lower(),
+            given_name=body.given_name.strip(),
+            family_name=body.family_name.strip(),
+            password=body.password,
+            change_required=body.change_required,
+        )
+    except zitadel_admin.ZitadelError as exc:
+        raise HTTPException(
+            exc.status, {"error_code": "zitadel_error", "message": exc.message}
+        ) from None
+    await _audit().write_or_raise(
+        ctx,
+        "platform.zitadel_user_created",
+        "user",
+        created["id"],
+        metadata={"email": body.email, "change_required": body.change_required},
+    )
+    return created
+
+
+@router.patch("/zitadel/users/{user_id}", summary="Editar usuario en Zitadel")
+async def zitadel_update_user(
+    user_id: str, body: ZitadelUserPatch, request: Request
+):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    from src.platform.auth import zitadel_admin
+
+    try:
+        result = await zitadel_admin.update_user(
+            user_id,
+            given_name=body.given_name,
+            family_name=body.family_name,
+            email=body.email,
+        )
+    except zitadel_admin.ZitadelError as exc:
+        raise HTTPException(
+            exc.status, {"error_code": "zitadel_error", "message": exc.message}
+        ) from None
+    await _audit().write_or_raise(
+        ctx,
+        "platform.zitadel_user_updated",
+        "user",
+        user_id,
+        metadata={"fields": sorted(body.model_dump(exclude_none=True))},
+    )
+    return result
+
+
+@router.post(
+    "/zitadel/users/{user_id}/password",
+    summary="Fijar contraseña temporal (cambio obligatorio)",
+)
+async def zitadel_set_password(
+    user_id: str, body: ZitadelPasswordIn, request: Request
+):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    from src.platform.auth import zitadel_admin
+
+    try:
+        result = await zitadel_admin.set_password(
+            user_id, body.password, body.change_required
+        )
+    except zitadel_admin.ZitadelError as exc:
+        raise HTTPException(
+            exc.status, {"error_code": "zitadel_error", "message": exc.message}
+        ) from None
+    await _audit().write_or_raise(
+        ctx,
+        "platform.zitadel_password_set",
+        "user",
+        user_id,
+        metadata={"change_required": body.change_required},
+    )
+    return result
+
+
+@router.post(
+    "/zitadel/users/{user_id}/reset",
+    summary="Enviar reseteo de contraseña por email",
+)
+async def zitadel_reset_password(user_id: str, request: Request):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    from src.platform.auth import zitadel_admin
+
+    try:
+        result = await zitadel_admin.trigger_password_reset(user_id)
+    except zitadel_admin.ZitadelError as exc:
+        raise HTTPException(
+            exc.status, {"error_code": "zitadel_error", "message": exc.message}
+        ) from None
+    await _audit().write_or_raise(
+        ctx, "platform.zitadel_password_reset", "user", user_id
+    )
+    return result
+
+
+@router.post("/zitadel/users/{user_id}/deactivate", summary="Desactivar usuario en Zitadel")
+async def zitadel_deactivate_user(user_id: str, request: Request):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    from src.platform.auth import zitadel_admin
+
+    try:
+        result = await zitadel_admin.deactivate_user(user_id)
+    except zitadel_admin.ZitadelError as exc:
+        raise HTTPException(
+            exc.status, {"error_code": "zitadel_error", "message": exc.message}
+        ) from None
+    await _audit().write_or_raise(
+        ctx, "platform.zitadel_user_deactivated", "user", user_id
+    )
+    return result
+
+
 @router.get("/role-screens", summary="Pantallas asignadas a cada rol")
 async def role_screens_route(request: Request):
     require_platform_permission(request, "platform.users.manage")

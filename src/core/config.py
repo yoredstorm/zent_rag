@@ -2778,6 +2778,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ZITADEL_PORTAL_URL", "RAG_ZITADEL_PORTAL_URL"),
         description="Base del portal para redirigir tras el login.",
     )
+    ZITADEL_API_TOKEN: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ZITADEL_API_TOKEN", "RAG_ZITADEL_API_TOKEN"),
+        description="Personal Access Token del service user con permiso de gestión de usuarios.",
+    )
     ZITADEL_ROLES_CLAIM: str = Field(
         default="roles",
         validation_alias=AliasChoices("ZITADEL_ROLES_CLAIM", "RAG_ZITADEL_ROLES_CLAIM"),
