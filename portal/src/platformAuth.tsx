@@ -35,6 +35,11 @@ function savePlatformSession(session: PlatformSession) {
   localStorage.setItem(EMAIL_KEY, session.email);
 }
 
+/** Guarda una sesión ya emitida (retorno de Zitadel, impersonación). */
+export function persistPlatformSession(session: PlatformSession): void {
+  savePlatformSession(session);
+}
+
 function clearPlatformSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EMAIL_KEY);

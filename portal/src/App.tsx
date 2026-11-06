@@ -121,6 +121,7 @@ const AdminChangeRequestsPage = lazy(() => import("./pages/admin/ChangeRequests"
 const AdminFinOpsPage = lazy(() => import("./pages/admin/FinOps"));
 const AdminSystemStatusPage = lazy(() => import("./pages/admin/SystemStatus"));
 const SsoCallbackPage = lazy(() => import("./pages/SsoCallback"));
+const SsoPlatformCallbackPage = lazy(() => import("./pages/admin/SsoPlatformCallback"));
 const AdminDisasterRecoveryPage = lazy(() => import("./pages/admin/DisasterRecovery"));
 const AdminGovernancePage = lazy(() => import("./pages/admin/Governance"));
 const DisasterRecoveryPage = lazy(() => import("./pages/DisasterRecovery"));
@@ -511,6 +512,7 @@ export default function App() {
       {/* Zent es interno: el único acceso es el del personal de Omnio. */}
       <Route path="/login" element={<Navigate to="/control-center/login" replace />} />
         <Route path="/sso/callback" element={<Suspense fallback={<PageFallback />}><SsoCallbackPage /></Suspense>} />
+        <Route path="/sso/platform" element={<Suspense fallback={<PageFallback />}><SsoPlatformCallbackPage /></Suspense>} />
         <Route path="/share/agent/:token" element={<Suspense fallback={<PageFallback />}><SharedAgentPage /></Suspense>} />
       <Route path="/admin/login" element={<Suspense fallback={<PageFallback />}><AdminLoginPage /></Suspense>} />
       <Route path="/control-center/login" element={<Suspense fallback={<PageFallback />}><AdminLoginPage /></Suspense>} />

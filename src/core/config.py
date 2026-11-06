@@ -2751,6 +2751,38 @@ class Settings(BaseSettings):
         default="",
         description="Comma-separated IPs/CIDRs de proxies confiables para X-Forwarded-For.",
     )
+    # --- Login del Control Center con Zitadel (OIDC) -------------------------
+    # Sin issuer y client_id, el SSO queda deshabilitado y se usa email+password.
+    ZITADEL_ISSUER: str = Field(
+        default="",
+        validation_alias=AliasChoices("ZITADEL_ISSUER", "RAG_ZITADEL_ISSUER"),
+        description="Issuer OIDC de Zitadel, ej. https://zent.zitadel.cloud",
+    )
+    ZITADEL_CLIENT_ID: str = Field(
+        default="",
+        validation_alias=AliasChoices("ZITADEL_CLIENT_ID", "RAG_ZITADEL_CLIENT_ID"),
+        description="client_id de la aplicación Web creada en Zitadel.",
+    )
+    ZITADEL_CLIENT_SECRET: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ZITADEL_CLIENT_SECRET", "RAG_ZITADEL_CLIENT_SECRET"),
+        description="client_secret de la aplicación (solo servidor).",
+    )
+    ZITADEL_REDIRECT_URI: str = Field(
+        default="http://localhost:8000/api/v1/auth/platform/oidc/callback",
+        validation_alias=AliasChoices("ZITADEL_REDIRECT_URI", "RAG_ZITADEL_REDIRECT_URI"),
+        description="URI de retorno registrada en Zitadel (endpoint del API).",
+    )
+    ZITADEL_PORTAL_URL: str = Field(
+        default="http://localhost:8081",
+        validation_alias=AliasChoices("ZITADEL_PORTAL_URL", "RAG_ZITADEL_PORTAL_URL"),
+        description="Base del portal para redirigir tras el login.",
+    )
+    ZITADEL_ROLES_CLAIM: str = Field(
+        default="roles",
+        validation_alias=AliasChoices("ZITADEL_ROLES_CLAIM", "RAG_ZITADEL_ROLES_CLAIM"),
+        description="Claim que trae los roles del usuario en Zitadel.",
+    )
     SELF_SERVICE_UPGRADE_ENABLED: bool = Field(
         default=False,
         description=(

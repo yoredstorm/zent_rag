@@ -2,6 +2,7 @@ import { ArrowLeft, Key, ShieldCheck } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
+import { platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
 import { AuthShell } from "../../components/auth/AuthShell";
 import { AuthButton } from "../../components/auth/AuthButton";
@@ -34,6 +35,13 @@ export default function AdminLoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [holdExit, setHoldExit] = useState(false);
+  const [ssoEnabled, setSsoEnabled] = useState(false);
+
+  useEffect(() => {
+    platformApi<{ enabled?: boolean }>("/api/v1/auth/platform/oidc/config")
+      .then((config) => setSsoEnabled(Boolean(config.enabled)))
+      .catch(() => setSsoEnabled(false));
+  }, []);
 
   const succeeded = holdExit && Boolean(session);
   // La travesía neuronal manda el tiempo: se entra cuando el zoom termina.
@@ -221,6 +229,25 @@ export default function AdminLoginPage() {
             {succeeded ? "Acceso concedido" : "Entrar"}
           </AuthButton>
         </motion.div>
+
+        {ssoEnabled && (
+          <motion.div {...reveal(3)} className="flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <span className="h-px flex-1 bg-border" />
+              <span className="text-xs text-faint">o</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+            <a
+              href="/api/v1/auth/platform/oidc/start"
+              className="flex min-h-10 w-full items-center justify-center rounded-md border border-border bg-surface px-4 text-[13px] font-medium text-text transition-colors hover:border-border-strong hover:bg-soft"
+            >
+              Continuar con Zitadel
+            </a>
+            <p className="text-center text-[11px] text-faint">
+              Usá tu cuenta de Omnio. No hace falta contraseña de Zent.
+            </p>
+          </motion.div>
+        )}
       </form>
     </AuthShell>
   );

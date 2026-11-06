@@ -8,7 +8,7 @@ import re
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 from src.infrastructure.observability.logging_config import get_logger
@@ -573,6 +573,106 @@ async def platform_mfa_status(request: Request):
         "enabled": bool(enrollment and enrollment["enabled"]),
         "pending": bool(enrollment and not enrollment["enabled"]),
     }
+
+
+@router.get(
+    "/platform/oidc/config",
+    summary="¿Está habilitado el login con Zitadel?",
+)
+async def platform_oidc_config():
+    from src.platform.auth.oidc_platform import public_config
+
+    return public_config()
+
+
+@router.get("/platform/oidc/start", summary="Inicia el login OIDC con Zitadel")
+async def platform_oidc_start():
+    from fastapi.responses import RedirectResponse as _Redirect
+
+    from src.platform.auth.oidc_platform import authorize_url, new_state
+
+    state, nonce = new_state()
+    try:
+        url = await authorize_url(state, nonce)
+    except Exception as exc:  # noqa: BLE001 — issuer inalcanzable o mal configurado
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "oidc_unavailable",
+                "message": f"No se pudo iniciar el login con Zitadel: {exc}",
+            },
+        ) from None
+    return _Redirect(url, status_code=302)
+
+
+@router.get(
+    "/platform/oidc/callback",
+    summary="Retorno de Zitadel: valida el token y emite la sesión de plataforma",
+)
+async def platform_oidc_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    error_description: str = "",
+):
+    from urllib.parse import quote
+
+    from src.platform.auth.oidc_platform import (
+        exchange_and_validate,
+        oidc_config,
+        verify_state,
+    )
+
+    cfg = oidc_config()
+    if cfg is None:
+        raise HTTPException(503, "OIDC no configurado")
+
+    portal = cfg["portal_url"]
+
+    def back(query: str) -> RedirectResponse:
+        return RedirectResponse(f"{portal}/sso/platform?{query}", status_code=302)
+
+    if error:
+        return back(f"error={quote(error_description or error)}")
+    if not code or not state:
+        return back("error=" + quote("Zitadel no devolvió el código de autorización."))
+    if not verify_state(state):
+        return back("error=" + quote("El estado del login no es válido. Intentá de nuevo."))
+
+    try:
+        claims = await exchange_and_validate(code, state)
+    except Exception as exc:  # noqa: BLE001 — token inválido, issuer caído, etc.
+        return back("error=" + quote(f"El proveedor rechazó la sesión: {exc}"))
+
+    email = str(claims.get("email") or "").strip().lower()
+    if not email:
+        return back("error=" + quote("Zitadel no devolvió el email del usuario."))
+
+    from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
+
+    await ensure_platform_admin_schema()
+    user = await PostgresUserRepository().get_by_email(email)
+    if user is None or not (user.is_platform_admin or user.is_platform_staff):
+        return back(
+            "error="
+            + quote(
+                f"{email} no es personal de Omnio. Pedile al superadmin que te habilite en Zent."
+            )
+            + f"&email={quote(email)}"
+        )
+    if user.disabled_at is not None:
+        return back("error=" + quote("Tu usuario de plataforma está desactivado."))
+
+    access_token = encrypt_session(user.id, None, typ="platform")
+    await _audit_login(
+        organization_id=None,
+        user_id=user.id,
+        ip=_client_ip(request),
+        action="auth.platform_login_oidc",
+        email=email,
+    )
+    return back(f"token={quote(access_token)}&email={quote(email)}")
 
 
 @router.post("/platform/login/mfa", summary="Completar login de plataforma con TOTP")
